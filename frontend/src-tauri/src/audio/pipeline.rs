@@ -744,7 +744,22 @@ pub struct AudioPipeline {
     level_sender: Option<mpsc::UnboundedSender<AudioLevels>>,
     last_mic_level_emit: std::time::Instant,
     last_sys_level_emit: std::time::Instant,
+    /// Whether the microphone was active in the most recently mixed window. Used
+    /// as a hint on outgoing transcription chunks so diarization can work out
+    /// which speaker is the local user (see the send site for the reasoning).
+    last_window_mic_dominant: bool,
+    /// Running estimate of the microphone's noise floor, so mic activity is
+    /// judged against room silence rather than against system audio.
+    mic_noise_floor: f32,
+    /// Recent per-window mic-activity flags. VAD emits a segment after speech
+    /// ends, so the decision must look back over the audio the segment came
+    /// from rather than at the instant of emission.
+    mic_activity_history: VecDeque<bool>,
 }
+
+/// How many mixing windows of mic activity to remember. At ~600 ms per window
+/// this spans roughly the length of a typical spoken turn.
+const MIC_HISTORY_WINDOWS: usize = 8;
 
 impl AudioPipeline {
     pub fn new(
@@ -814,6 +829,9 @@ impl AudioPipeline {
             level_sender: None,
             last_mic_level_emit: std::time::Instant::now(),
             last_sys_level_emit: std::time::Instant::now(),
+            last_window_mic_dominant: false,
+            mic_noise_floor: 0.0,
+            mic_activity_history: VecDeque::new(),
         }
     }
 
@@ -900,6 +918,61 @@ impl AudioPipeline {
                     // STEP 2: Mix audio in fixed windows when both streams have sufficient data
                     while self.ring_buffer.can_mix() {
                         if let Some((mic_window, sys_window)) = self.ring_buffer.extract_window() {
+                            // Which source dominated this window? Captured BEFORE
+                            // mixing, because mixing destroys the distinction.
+                            //
+                            // This is what lets diarization work out which
+                            // speaker cluster is the local user: their voice
+                            // arrives on the microphone, everyone else arrives
+                            // on system audio. The margin avoids flapping when
+                            // mic bleed picks up the remote participants.
+                            let rms = |w: &[f32]| -> f32 {
+                                if w.is_empty() {
+                                    0.0
+                                } else {
+                                    (w.iter().map(|&x| x * x).sum::<f32>() / w.len() as f32).sqrt()
+                                }
+                            };
+                            let mic_rms = rms(&mic_window);
+                            let _sys_rms = rms(&sys_window);
+
+                            // Track the microphone's own noise floor: fall to any
+                            // quieter level immediately, rise only very slowly.
+                            // After a few seconds this settles near room silence.
+                            if mic_rms < self.mic_noise_floor || self.mic_noise_floor == 0.0 {
+                                self.mic_noise_floor = mic_rms;
+                            } else {
+                                self.mic_noise_floor += (mic_rms - self.mic_noise_floor) * 0.001;
+                            }
+
+                            // "Is the local user talking?" is answered by the mic
+                            // rising clearly above its own floor — NOT by comparing
+                            // it to system audio. Comparing the two fails whenever
+                            // the remote side is loud (calls with music, games,
+                            // screen shares): the user's own speech never "wins",
+                            // so they were never identified as the user.
+                            let floor_gate = (self.mic_noise_floor * 4.0).max(0.004);
+                            let mic_active_now = mic_rms > floor_gate;
+
+                            // Keep a short history rather than only the current
+                            // window. VAD emits a segment *after* speech ends, by
+                            // which point the speaker has gone quiet — sampling
+                            // "right now" therefore reported mic-inactive for
+                            // every segment, and the user was never identified.
+                            self.mic_activity_history.push_back(mic_active_now);
+                            while self.mic_activity_history.len() > MIC_HISTORY_WINDOWS {
+                                self.mic_activity_history.pop_front();
+                            }
+
+                            // Treat the segment as the user's if the mic was live
+                            // for a meaningful share of the recent audio. A share
+                            // rather than "any" so brief bleed from the remote side
+                            // doesn't get attributed to the user.
+                            let active = self.mic_activity_history.iter().filter(|&&a| a).count();
+                            let total = self.mic_activity_history.len().max(1);
+                            self.last_window_mic_dominant =
+                                (active as f32 / total as f32) >= 0.35;
+
                             // Simple mixing without aggressive ducking
                             let mixed_clean = self.mixer.mix_window(&mic_window, &sys_window);
 
@@ -919,22 +992,29 @@ impl AudioPipeline {
                                             info!("📤 Sending VAD segment: {:.1}ms, {} samples",
                                                   duration_ms, segment.samples.len());
 
-                                            // ⚠️ `device_type` here is a placeholder, NOT the real
-                                            // source. By this point mic and system audio have been
-                                            // mixed into a single stream, so no single device owns
-                                            // the samples; `Microphone` is simply a required field.
+                                            // The samples themselves are mixed, so `device_type`
+                                            // cannot identify their origin exactly. It instead
+                                            // carries a *hint*: which source dominated the audio
+                                            // this segment came out of.
                                             //
-                                            // Consequence: downstream code must NOT infer the
-                                            // speaker from `device_type` — every transcription
-                                            // chunk looks like microphone audio. Speaker identity
-                                            // comes from diarization instead (see
-                                            // `diarization::online` and `transcription::worker`).
+                                            // `Microphone` therefore means "the local user was the
+                                            // loud one here", and `System` means "a remote
+                                            // participant was". Diarization aggregates these hints
+                                            // per speaker cluster to decide which cluster is the
+                                            // user (see `diarization::online`). It is a hint and
+                                            // not a guarantee — VAD buffers across windows, so a
+                                            // segment may span a source change — which is why it's
+                                            // used statistically rather than per-segment.
                                             let transcription_chunk = AudioChunk {
                                                 data: segment.samples,
                                                 sample_rate: 16000,
                                                 timestamp: segment.start_timestamp_ms / 1000.0,
                                                 chunk_id: self.chunk_id_counter,
-                                                device_type: DeviceType::Microphone,  // placeholder — audio is mixed
+                                                device_type: if self.last_window_mic_dominant {
+                                                    DeviceType::Microphone
+                                                } else {
+                                                    DeviceType::System
+                                                },
                                             };
 
                                             if let Err(e) = self.transcription_sender.send(transcription_chunk) {

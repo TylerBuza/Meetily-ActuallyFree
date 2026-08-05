@@ -14,7 +14,9 @@
  *   - otherwise  → converted inline from `transcripts` below
  */
 
+import { useState } from 'react';
 import { Transcript, TranscriptSegmentData } from '@/types';
+import { SpeakerRenameDialog } from './SpeakerRenameDialog';
 import { VirtualizedTranscriptView } from '@/components/VirtualizedTranscriptView';
 import { TranscriptButtonGroup } from './TranscriptButtonGroup';
 import { useMemo } from 'react';
@@ -62,6 +64,9 @@ export function TranscriptPanel({
   meetingFolderPath,
   onRefetchTranscripts,
 }: TranscriptPanelProps) {
+  // Which speaker label the rename dialog is currently editing, if any.
+  const [renameTarget, setRenameTarget] = useState<string | null>(null);
+
   // Convert transcripts to segments if pagination is not used but we want virtualization
   const convertedSegments = useMemo(() => {
     if (usePagination && segments) {
@@ -92,9 +97,21 @@ export function TranscriptPanel({
         />
       </div>
 
+      {/* Rename a speaker across the whole meeting. Automatic identification is
+          a heuristic and can be wrong (and can't know who anyone is in meetings
+          recorded before it existed), so the user can state it directly. */}
+      <SpeakerRenameDialog
+        open={renameTarget !== null}
+        speaker={renameTarget}
+        meetingId={meetingId}
+        onOpenChange={(open) => !open && setRenameTarget(null)}
+        onRenamed={onRefetchTranscripts}
+      />
+
       {/* Transcript content - use virtualized view for better performance */}
       <div className="flex-1 overflow-hidden pb-4">
         <VirtualizedTranscriptView
+          onRenameSpeaker={meetingId ? setRenameTarget : undefined}
           segments={convertedSegments}
           isRecording={isRecording}
           isPaused={false}

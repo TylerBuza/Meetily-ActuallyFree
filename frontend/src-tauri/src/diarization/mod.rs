@@ -383,6 +383,45 @@ pub async fn download_diarization_models<R: tauri::Runtime>(
     })
 }
 
+/// Rename every transcript segment belonging to one speaker in a meeting.
+///
+/// Automatic speaker identification is a heuristic and will sometimes be wrong,
+/// and it can never recover who is who in meetings recorded before it existed.
+/// This lets the user state the truth directly — including marking a speaker as
+/// themselves by naming them "You", which the UI renders with their display
+/// name.
+///
+/// Returns the number of segments relabelled.
+#[tauri::command]
+pub async fn rename_meeting_speaker(
+    state: tauri::State<'_, crate::state::AppState>,
+    meeting_id: String,
+    from: String,
+    to: String,
+) -> Result<u64, String> {
+    let to = to.trim();
+    if to.is_empty() {
+        return Err("Speaker name cannot be empty".to_string());
+    }
+
+    let result = sqlx::query(
+        "UPDATE transcripts SET speaker = ? WHERE meeting_id = ? AND speaker = ?",
+    )
+    .bind(to)
+    .bind(&meeting_id)
+    .bind(&from)
+    .execute(state.db_manager.pool())
+    .await
+    .map_err(|e| format!("Failed to rename speaker: {}", e))?;
+
+    let n = result.rows_affected();
+    log::info!(
+        "🧑‍🤝‍🧑 Renamed speaker '{}' → '{}' across {} segments of meeting {}",
+        from, to, n, meeting_id
+    );
+    Ok(n)
+}
+
 /// Run diarization on a recording and return speaker-labeled time segments.
 #[tauri::command]
 pub async fn diarize_recording(
@@ -587,18 +626,61 @@ pub async fn diarize_meeting(
     .map_err(|e| format!("Diarization task failed: {}", e))?
     .map_err(|e| e.to_string())?;
 
-    // Load transcript segments with their recording-relative timings.
-    let rows: Vec<(String, Option<f64>, Option<f64>)> = sqlx::query_as(
-        "SELECT id, audio_start_time, audio_end_time FROM transcripts WHERE meeting_id = ?",
+    // Load transcript segments with their recording-relative timings, plus any
+    // label they already carry from live diarization.
+    let rows: Vec<(String, Option<f64>, Option<f64>, Option<String>)> = sqlx::query_as(
+        "SELECT id, audio_start_time, audio_end_time, speaker FROM transcripts WHERE meeting_id = ?",
     )
     .bind(&meeting_id)
     .fetch_all(pool)
     .await
     .map_err(|e| format!("Failed to read transcripts: {}", e))?;
 
+    // Work out which of the freshly-clustered speakers is the local user.
+    //
+    // Live diarization could tell, because it saw mic-vs-system levels before
+    // mixing. This offline pass only has the mixed recording, so that signal is
+    // gone — but the live labels are still in the database. Whichever new
+    // speaker covers the most time that was previously marked "You" is the user.
+    let user_ranges: Vec<(f32, f32)> = rows
+        .iter()
+        .filter(|(_, _, _, spk)| {
+            spk.as_deref()
+                .map(|s| s.eq_ignore_ascii_case("you"))
+                .unwrap_or(false)
+        })
+        .filter_map(|(_, s, e, _)| match (s, e) {
+            (Some(s), Some(e)) if e > s => Some((*s as f32, *e as f32)),
+            _ => None,
+        })
+        .collect();
+
+    let user_speaker: Option<usize> = if user_ranges.is_empty() {
+        None
+    } else {
+        let mut overlap_per_speaker: std::collections::HashMap<usize, f32> =
+            std::collections::HashMap::new();
+        for seg in &result.segments {
+            for (us, ue) in &user_ranges {
+                let ov = seg.end.min(*ue) - seg.start.max(*us);
+                if ov > 0.0 {
+                    *overlap_per_speaker.entry(seg.speaker).or_insert(0.0) += ov;
+                }
+            }
+        }
+        overlap_per_speaker
+            .into_iter()
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(spk, _)| spk)
+    };
+
+    if let Some(u) = user_speaker {
+        log::info!("🧑‍🤝‍🧑 Speaker {} identified as the local user", u + 1);
+    }
+
     // Assign each segment the speaker with the greatest temporal overlap.
     let mut assignments: Vec<(String, String)> = Vec::new();
-    for (id, start, end) in rows {
+    for (id, start, end, _) in rows {
         let (s, e) = match (start, end) {
             (Some(s), Some(e)) if e > s => (s as f32, e as f32),
             _ => continue, // no timing info â€” can't map reliably
@@ -615,7 +697,12 @@ pub async fn diarize_meeting(
         }
 
         if let Some(spk) = best_speaker {
-            let label = format!("Speaker {}", spk + 1);
+            // "You" is a marker the frontend swaps for the user's display name.
+            let label = if Some(spk) == user_speaker {
+                "You".to_string()
+            } else {
+                format!("Speaker {}", spk + 1)
+            };
             sqlx::query("UPDATE transcripts SET speaker = ? WHERE id = ?")
                 .bind(&label)
                 .bind(&id)

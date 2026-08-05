@@ -178,13 +178,23 @@ pub fn start_transcription_task<R: Runtime>(
                             //
                             // This label flows to the UI as `TranscriptUpdate.source`,
                             // which the frontend maps onto `Transcript.speaker`.
-                            let chunk_source = match crate::diarization::online::assign_speaker(&chunk.data) {
-                                Some(idx) => format!("Speaker {}", idx + 1),
-                                None => match &chunk.device_type {
-                                    crate::audio::recording_state::DeviceType::Microphone => "You".to_string(),
-                                    crate::audio::recording_state::DeviceType::System => "Guest".to_string(),
-                                },
-                            };
+                            let mic_dominant = matches!(
+                                chunk.device_type,
+                                crate::audio::recording_state::DeviceType::Microphone
+                            );
+                            let chunk_source =
+                                match crate::diarization::online::assign_speaker(&chunk.data, mic_dominant) {
+                                    // The speaker arriving consistently on the microphone is the
+                                    // local user. Emit the bare marker "You" — the frontend
+                                    // substitutes the display name from settings, since the name
+                                    // lives there and can change without a restart.
+                                    Some(s) if s.is_user => "You".to_string(),
+                                    Some(s) => format!("Speaker {}", s.index + 1),
+                                    None => match &chunk.device_type {
+                                        crate::audio::recording_state::DeviceType::Microphone => "You".to_string(),
+                                        crate::audio::recording_state::DeviceType::System => "Guest".to_string(),
+                                    },
+                                };
 
                             // Transcribe with provider-agnostic approach
                             match transcribe_chunk_with_provider(

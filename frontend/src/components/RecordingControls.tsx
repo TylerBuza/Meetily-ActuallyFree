@@ -45,6 +45,10 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   // Use global recording state context for pause state (syncs with tray operations)
   const recordingState = useRecordingState();
   const isPaused = recordingState.isPaused;
+  // Phase text published by useRecordingStart ("Preparing transcription
+  // model…", "Starting audio capture…") so the wait is explained rather than
+  // just being a dead button.
+  const startupMessage = recordingState.statusMessage;
 
   const [showPlayback, setShowPlayback] = useState(false);
   const [recordingPath, setRecordingPath] = useState<string | null>(null);
@@ -95,6 +99,11 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
     setTranscript(''); // Clear any previous transcript
     setSpeechDetected(false); // Reset speech detection on new recording
 
+    // Mark the button busy for the whole start sequence. This was previously
+    // only ever read, never set, so the spinner never appeared and the button
+    // looked unresponsive during model load.
+    setIsStarting(true);
+
     try {
       // Call the validation callback which will:
       // 1. Check if model is ready
@@ -135,6 +144,8 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
           message: 'Unable to start recording. Please check your audio device settings and try again.'
         });
       }
+    } finally {
+      setIsStarting(false);
     }
   }, [onRecordingStart, isStarting, isValidatingModel, selectedDevices, meetingName, isRecording]);
 
@@ -403,10 +414,19 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
                           className={`w-12 h-12 flex items-center justify-center ${isStarting || isProcessing || isValidatingModel ? 'bg-gray-400' : 'bg-red-500 hover:bg-red-600'
                             } rounded-full text-white transition-colors relative`}
                         >
-                          {isValidatingModel ? (
+                          {isStarting || isValidatingModel ? (
                             <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
                           ) : (
                             <Mic size={20} />
+                          )}
+
+                          {/* Explain the wait. Readying the model can take
+                              several seconds on first record, and an unlabelled
+                              spinner just reads as "stuck". */}
+                          {(isStarting || isValidatingModel) && (
+                            <div className="absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-[var(--af-panel-2,#1f2937)] px-3 py-1 text-xs font-medium text-[var(--af-text,#e5e7eb)] shadow-lg">
+                              {startupMessage || 'Starting…'}
+                            </div>
                           )}
                         </button>
                       </TooltipTrigger>

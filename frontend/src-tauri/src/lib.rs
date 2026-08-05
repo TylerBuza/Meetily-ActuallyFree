@@ -659,6 +659,7 @@ pub fn run() {
             diarization::download_diarization_models,
             diarization::diarize_recording,
             diarization::diarize_meeting,
+            diarization::rename_meeting_speaker,
             api::api_get_profile,
             api::api_save_profile,
             api::api_update_profile,

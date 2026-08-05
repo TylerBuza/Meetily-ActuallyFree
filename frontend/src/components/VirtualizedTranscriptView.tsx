@@ -58,6 +58,13 @@ export interface VirtualizedTranscriptViewProps {
     totalCount?: number;
     loadedCount?: number;
     onLoadMore?: () => void;
+
+    /**
+     * Called when a speaker label is clicked. When omitted, labels render as
+     * plain text — the live recording view has no meeting to persist against
+     * yet, so renaming is only offered on saved meetings.
+     */
+    onRenameSpeaker?: (speaker: string) => void;
 }
 
 // Threshold for enabling virtualization (below this, use simple rendering)
@@ -88,6 +95,20 @@ function cleanStopWords(text: string): string {
 }
 
 // Memoized transcript segment component
+/**
+ * Turn a raw speaker label into what the user should read.
+ *
+ * Diarization emits the bare marker "You" for whichever voice arrives on the
+ * local microphone. The display name lives in settings (not in Rust) so it can
+ * be changed without restarting, which is why substitution happens here.
+ */
+function displaySpeaker(speaker: string, userName: string): string {
+    if (/^you\b/i.test(speaker)) {
+        return userName ? `${userName} (You)` : 'You';
+    }
+    return speaker;
+}
+
 /** Stable colour per speaker label so each speaker reads consistently. */
 function speakerColor(speaker: string): string {
     if (/^you\b/i.test(speaker)) return 'text-blue-500';
@@ -113,6 +134,8 @@ const TranscriptSegment = memo(function TranscriptSegment({
     isStreaming,
     showConfidence,
     speaker,
+    userName,
+    onRenameSpeaker,
 }: {
     id: string;
     timestamp: number;
@@ -121,6 +144,9 @@ const TranscriptSegment = memo(function TranscriptSegment({
     isStreaming: boolean;
     showConfidence: boolean;
     speaker?: string;
+    userName: string;
+    /** When provided, speaker labels become clickable for renaming. */
+    onRenameSpeaker?: (speaker: string) => void;
 }) {
     const displayText = cleanStopWords(text) || (text.trim() === '' ? '[Silence]' : text);
 
@@ -141,9 +167,20 @@ const TranscriptSegment = memo(function TranscriptSegment({
                 </Tooltip>
                 <div className="flex-1">
                     {speaker && (
-                        <span className={`block text-xs font-semibold ${speakerColor(speaker)}`}>
-                            {speaker}
-                        </span>
+                        onRenameSpeaker ? (
+                            <button
+                                type="button"
+                                onClick={() => onRenameSpeaker(speaker)}
+                                title={`Rename "${speaker}" — click to say who this is`}
+                                className={`block text-left text-xs font-semibold ${speakerColor(speaker)} rounded px-0.5 -mx-0.5 hover:bg-white/10 hover:underline`}
+                            >
+                                {displaySpeaker(speaker, userName)}
+                            </button>
+                        ) : (
+                            <span className={`block text-xs font-semibold ${speakerColor(speaker)}`}>
+                                {displaySpeaker(speaker, userName)}
+                            </span>
+                        )
                     )}
                     {isStreaming ? (
                         <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
@@ -172,7 +209,19 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     totalCount = 0,
     loadedCount = 0,
     onLoadMore,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    onRenameSpeaker,
 }) => {
+    // Greet the user by name when they've set one (Settings → General → Your
+    // Name). Read on mount rather than at module scope so it picks up changes
+    // without a reload, and guards `window` for SSR.
+    const [userName, setUserName] = useState<string>('');
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            setUserName(localStorage.getItem('meetily_user_name')?.trim() || '');
+        }
+    }, []);
+
     // Create scroll ref first - shared between virtualizer and auto-scroll hook
     const scrollRef = useRef<HTMLDivElement>(null);
     // Ref for infinite scroll trigger element
@@ -305,7 +354,9 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                         </>
                     ) : (
                         <>
-                            <p className="text-lg font-semibold">Welcome to meetily!</p>
+                            <p className="text-lg font-semibold">
+                                {userName ? `Welcome back, ${userName}!` : 'Welcome to Meetily · Actually Free'}
+                            </p>
                             <p className="text-xs mt-1">Start recording to see live transcription</p>
                         </>
                     )}
@@ -345,6 +396,8 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
                                         speaker={segment.speaker}
+                                        userName={userName}
+                                        onRenameSpeaker={onRenameSpeaker}
                                     />
                                 </div>
                             );
@@ -402,6 +455,8 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
                                         speaker={segment.speaker}
+                                        userName={userName}
+                                        onRenameSpeaker={onRenameSpeaker}
                                     />
                                 </motion.div>
                             );

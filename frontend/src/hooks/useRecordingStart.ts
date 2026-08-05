@@ -109,6 +109,12 @@ export function useRecordingStart(
     try {
       console.log('handleRecordingStart called - checking Parakeet model status');
 
+      // Report progress from the very first step. Readying the model can take
+      // several seconds (it loads a multi-hundred-MB model into memory), and
+      // without a status here the button looks unresponsive for that whole
+      // period — the single longest part of starting a recording.
+      setStatus(RecordingStatus.STARTING, 'Preparing transcription model…');
+
       // Check if Parakeet transcription model is ready before starting
       const parakeetReady = await checkParakeetReady();
       if (!parakeetReady) {
@@ -136,8 +142,8 @@ export function useRecordingStart(
       const randomTitle = generateMeetingTitle();
       setMeetingTitle(randomTitle);
 
-      // Set STARTING status before initiating backend recording
-      setStatus(RecordingStatus.STARTING, 'Initializing recording...');
+      // Model is ready; the remaining wait is audio device setup.
+      setStatus(RecordingStatus.STARTING, 'Starting audio capture…');
 
       // Start the actual backend recording
       console.log('Starting backend recording with meeting:', randomTitle);

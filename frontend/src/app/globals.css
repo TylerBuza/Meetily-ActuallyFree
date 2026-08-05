@@ -218,14 +218,33 @@
    <html class="dark"> is present (default on). Toggle in Settings.
    ============================================================ */
 :root {
-  --af-bg: #0e131a;       /* darker, grayish-blue slate */
-  --af-panel: #161c25;
-  --af-panel-2: #1b222d;
-  --af-hover: #273140;
-  --af-border: #2b3542;
-  --af-text: #cdd6e3;
-  --af-text-2: #90a0b5;
-  --af-text-3: #6a7789;
+  /* Elevation ramp. Each step is a deliberate, small lift — enough to read as
+     a distinct layer without the surfaces looking striped. */
+  --af-bg: #0a0d13;       /* app canvas */
+  --af-panel: #10141c;    /* level 1: sidebar, cards */
+  --af-panel-2: #161b25;  /* level 2: nested/raised surfaces, inputs */
+  --af-hover: #1c222e;    /* interactive hover */
+  --af-active: #222a38;   /* pressed / selected */
+
+  /* Borders whisper. In a dark UI, contrast between surfaces does most of the
+     separating; loud borders are what make an interface look boxy. */
+  --af-border: #1d232e;         /* default hairline */
+  --af-border-strong: #2a3240;  /* only where real definition is needed */
+
+  --af-text: #e6edf5;
+  --af-text-2: #9aa8bd;
+  --af-text-3: #6b7887;
+
+  --af-accent: #4a8bff;
+  --af-accent-soft: #16233d;
+
+  /* Layered shadows read as depth; a single heavy blur reads as a smudge. */
+  --af-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
+  --af-shadow-md: 0 2px 6px rgba(0, 0, 0, 0.32), 0 1px 2px rgba(0, 0, 0, 0.28);
+  --af-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.42), 0 2px 8px rgba(0, 0, 0, 0.30);
+
+  --af-radius: 10px;
+  --af-radius-sm: 8px;
 }
 
 html.dark, html.dark body { background-color: var(--af-bg) !important; color: var(--af-text); }
@@ -275,9 +294,11 @@ html.dark, html.dark body { background-color: var(--af-bg) !important; color: va
 .dark .prose { color: var(--af-text) !important; }
 .dark .prose strong, .dark .prose h1, .dark .prose h2, .dark .prose h3 { color: var(--af-text) !important; }
 
-.dark .shadow-sm, .dark .shadow, .dark .shadow-md, .dark .shadow-lg, .dark .shadow-xl, .dark .shadow-2xl {
-  box-shadow: 0 6px 24px rgba(0,0,0,0.45) !important;
-}
+/* Graduated shadows. Previously every shadow class got the same heavy blur,
+   which flattened the hierarchy — a card and a modal looked equally lifted. */
+.dark .shadow-sm { box-shadow: var(--af-shadow-sm) !important; }
+.dark .shadow, .dark .shadow-md { box-shadow: var(--af-shadow-md) !important; }
+.dark .shadow-lg, .dark .shadow-xl, .dark .shadow-2xl { box-shadow: var(--af-shadow-lg) !important; }
 
 /* Gradient "pill" buttons (Generate/Regenerate/Enhance/Stop) use light gradient
    stops that stay bright in dark mode — flatten them to a readable dark button. */
@@ -303,3 +324,97 @@ html.dark, html.dark body { background-color: var(--af-bg) !important; color: va
 /* Green "completed" banners readable on dark */
 .dark .bg-green-50 { background-color: #12251a !important; }
 .dark .text-green-800, .dark .text-green-700 { color: #7ee2a8 !important; }
+
+/* ============================================================
+   Polish layer
+   The details that separate a designed interface from a dark
+   repaint: typography rendering, consistent corners, calm
+   motion, deliberate focus states and styled scrollbars.
+   ============================================================ */
+
+html.dark {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Tighter tracking on large text. Default tracking is tuned for body copy and
+   makes headings look loose and amateurish at display sizes. */
+.dark h1, .dark h2, .dark h3,
+.dark .text-2xl, .dark .text-3xl, .dark .text-xl {
+  letter-spacing: -0.018em;
+}
+
+/* Softer, consistent corners. Tailwind's default rounded-lg (8px) reads sharp
+   next to modern desktop UI; card-level surfaces get a touch more. */
+.dark .rounded-lg { border-radius: var(--af-radius) !important; }
+.dark .rounded-md { border-radius: var(--af-radius-sm) !important; }
+
+/* Calm, uniform motion. Without this, some elements snap and others ease,
+   which is a large part of why an interface feels unfinished. */
+.dark button,
+.dark a,
+.dark [role="button"],
+.dark input,
+.dark textarea,
+.dark select,
+.dark [data-slot="input-group"] {
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease,
+    opacity 140ms ease;
+}
+
+/* Focus: a soft accent ring instead of the browser's hard outline. Visible for
+   keyboard users, unobtrusive for mouse users. */
+.dark :focus-visible {
+  outline: none !important;
+  box-shadow: 0 0 0 2px var(--af-bg), 0 0 0 4px rgba(74, 139, 255, 0.55) !important;
+  border-radius: var(--af-radius-sm);
+}
+.dark input:focus, .dark textarea:focus, .dark [data-slot="input-group"]:focus-within {
+  border-color: rgba(74, 139, 255, 0.55) !important;
+  box-shadow: 0 0 0 3px rgba(74, 139, 255, 0.12) !important;
+}
+
+/* Scrollbars. Default Windows scrollbars are bright and heavy, and this app is
+   mostly long scrolling surfaces (transcripts, summaries), so they're a
+   constant visual distraction if left alone. */
+.dark * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--af-active) transparent;
+}
+.dark ::-webkit-scrollbar { width: 10px; height: 10px; }
+.dark ::-webkit-scrollbar-track { background: transparent; }
+.dark ::-webkit-scrollbar-thumb {
+  background-color: var(--af-active);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.dark ::-webkit-scrollbar-thumb:hover { background-color: #2f3a4b; }
+.dark ::-webkit-scrollbar-corner { background: transparent; }
+
+/* Selection in the brand accent rather than the OS default blue. */
+.dark ::selection {
+  background-color: rgba(74, 139, 255, 0.28);
+  color: var(--af-text);
+}
+
+/* Dividers should separate, not partition. */
+.dark hr,
+.dark .border-t, .dark .border-b, .dark .border-l, .dark .border-r {
+  border-color: var(--af-border) !important;
+}
+
+/* Accent surfaces: keep informational panels tinted rather than grey, so
+   "selected" and "info" states remain legible without shouting. */
+.dark .bg-blue-50 { background-color: var(--af-accent-soft) !important; }
+.dark .text-blue-600, .dark .text-blue-500 { color: var(--af-accent) !important; }
+
+/* Primary actions keep their colour — flattening every gradient earlier left
+   the UI with no visual anchor for the main action on a screen. */
+.dark .bg-blue-600 { background-color: var(--af-accent) !important; }
+.dark .bg-blue-600:hover, .dark .hover\:bg-blue-700:hover { background-color: #3b7ae8 !important; }
