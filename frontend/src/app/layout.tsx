@@ -134,6 +134,47 @@ export default function RootLayout({
     };
   }, [showOnboarding]);
 
+  // Meeting Detection: prompt to start recording when a meeting app is detected.
+  useEffect(() => {
+    const unlisten = listen<{ app: string; process: string; notify: boolean }>(
+      'meeting-detected',
+      (event) => {
+        const { app, notify } = event.payload;
+        console.log('[Layout] meeting-detected:', event.payload);
+
+        // Optional native OS notification (best-effort).
+        if (notify) {
+          invoke('show_simple_notification', {
+            title: `${app} meeting detected`,
+            body: 'Open Meetily to start recording this meeting.',
+          }).catch(() => {});
+        }
+
+        // In-app prompt with a one-click start action.
+        toast(`${app} meeting detected`, {
+          description: 'Start recording this meeting in Meetily?',
+          duration: 15000,
+          action: {
+            label: 'Start recording',
+            onClick: () => {
+              if (showOnboarding) {
+                toast.error('Please complete setup first', {
+                  description: 'Finish onboarding before you can start recording.',
+                });
+              } else {
+                window.dispatchEvent(new CustomEvent('start-recording-from-sidebar'));
+              }
+            },
+          },
+        });
+      }
+    );
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [showOnboarding]);
+
   // Handle file drop for audio import
   const handleFileDrop = useCallback((paths: string[]) => {
     // Check if beta features are enabled (read from localStorage directly since we're outside ConfigProvider)

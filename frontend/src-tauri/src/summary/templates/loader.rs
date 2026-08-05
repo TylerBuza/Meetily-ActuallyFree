@@ -16,17 +16,13 @@ pub fn set_bundled_templates_dir(path: PathBuf) {
     }
 }
 
-/// Get the user's custom templates directory path
+/// Get the user's custom templates directory path.
 ///
-/// Returns the platform-specific application data directory for custom templates:
-/// - macOS: ~/Library/Application Support/Meetily/templates/
-/// - Windows: %APPDATA%\Meetily\templates\
-/// - Linux: ~/.config/Meetily/templates/
+/// Portable / self-contained build: templates live inside the program's own
+/// install directory (`<exe_dir>/data/templates`) rather than under
+/// `%APPDATA%` / `~/Library/Application Support`.
 fn get_custom_templates_dir() -> Option<PathBuf> {
-    let mut path = dirs::data_dir()?;
-    path.push("Meetily");
-    path.push("templates");
-    Some(path)
+    Some(crate::paths::install_data_root().join("templates"))
 }
 
 /// Load a template from the bundled resources directory

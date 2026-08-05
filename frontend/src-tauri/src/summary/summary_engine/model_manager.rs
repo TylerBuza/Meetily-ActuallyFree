@@ -140,14 +140,10 @@ impl ModelManager {
                 // Development mode
                 current_dir.join("models").join("summary")
             } else {
-                // Production mode fallback (caller should provide path)
-                log::warn!("ModelManager: No models directory provided, using fallback path");
-                dirs::data_dir()
-                    .or_else(|| dirs::home_dir())
-                    .ok_or_else(|| anyhow!("Could not find system data directory"))?
-                    .join("Meetily")
-                    .join("models")
-                    .join("summary")
+                // Production mode fallback (caller should provide path).
+                // Portable: models live next to the executable.
+                log::warn!("ModelManager: No models directory provided, using install-local fallback");
+                crate::paths::models_dir().join("summary")
             }
         };
 

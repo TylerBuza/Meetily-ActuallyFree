@@ -13,6 +13,19 @@ use super::recording_state::{AudioChunk, AudioError, RecordingState, DeviceType}
 use super::audio_processing::{audio_to_mono, LoudnessNormalizer, NoiseSuppressionProcessor, HighPassFilter};
 use super::vad::{ContinuousVadProcessor};
 
+/// Per-source live audio level sample emitted to the frontend visualizer.
+/// One of these is sent per incoming (single-source) audio chunk, throttled
+/// to ~25 updates/sec per source so the meter animates smoothly without spam.
+#[derive(Clone, serde::Serialize)]
+pub struct AudioLevels {
+    /// "mic" (your microphone) or "system" (other participants / computer audio)
+    pub source: String,
+    /// RMS energy of the chunk (0.0 – ~1.0)
+    pub rms: f32,
+    /// Peak absolute sample of the chunk (0.0 – ~1.0)
+    pub peak: f32,
+}
+
 /// Ring buffer for synchronized audio mixing
 /// Accumulates samples from mic and system streams until we have aligned windows
 struct AudioMixerRingBuffer {
@@ -694,6 +707,10 @@ pub struct AudioPipeline {
     mixer: ProfessionalAudioMixer,
     // Recording sender for pre-mixed audio
     recording_sender_for_mixed: Option<mpsc::UnboundedSender<AudioChunk>>,
+    // Live per-source level meter output (mic + system) for the frontend visualizer
+    level_sender: Option<mpsc::UnboundedSender<AudioLevels>>,
+    last_mic_level_emit: std::time::Instant,
+    last_sys_level_emit: std::time::Instant,
 }
 
 impl AudioPipeline {
@@ -760,6 +777,10 @@ impl AudioPipeline {
             ring_buffer,
             mixer,
             recording_sender_for_mixed: None,  // Will be set by manager
+            // Live level meter (set by manager); default to no output
+            level_sender: None,
+            last_mic_level_emit: std::time::Instant::now(),
+            last_sys_level_emit: std::time::Instant::now(),
         }
     }
 
@@ -812,6 +833,30 @@ impl AudioPipeline {
                         perf_debug!("Pipeline processed {} chunks, current chunk: {} ({} samples)",
                                    self.processed_chunks, chunk.chunk_id, chunk.data.len());
                         self.last_summary_time = std::time::Instant::now();
+                    }
+
+                    // LIVE METER: emit per-source RMS/peak for the frontend visualizer.
+                    // Each incoming chunk is single-source (mic OR system); throttle to
+                    // ~25 updates/sec per source so the meter stays smooth and cheap.
+                    if let Some(ref level_tx) = self.level_sender {
+                        let is_mic = matches!(chunk.device_type, DeviceType::Microphone);
+                        let now = std::time::Instant::now();
+                        let last = if is_mic {
+                            &mut self.last_mic_level_emit
+                        } else {
+                            &mut self.last_sys_level_emit
+                        };
+                        if !chunk.data.is_empty() && now.duration_since(*last).as_millis() >= 40 {
+                            *last = now;
+                            let n = chunk.data.len() as f32;
+                            let rms = (chunk.data.iter().map(|&x| x * x).sum::<f32>() / n).sqrt();
+                            let peak = chunk.data.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+                            let _ = level_tx.send(AudioLevels {
+                                source: if is_mic { "mic" } else { "system" }.to_string(),
+                                rms,
+                                peak,
+                            });
+                        }
                     }
 
                     // STEP 1: Add raw audio to ring buffer for mixing
@@ -966,6 +1011,7 @@ impl AudioPipelineManager {
         mic_device_kind: super::device_detection::InputDeviceKind,
         system_device_name: String,
         system_device_kind: super::device_detection::InputDeviceKind,
+        level_sender: Option<mpsc::UnboundedSender<AudioLevels>>,
     ) -> Result<()> {
         // Log device information for adaptive buffering
         info!("🎙️ Starting pipeline with device info:");
@@ -994,6 +1040,9 @@ impl AudioPipelineManager {
         // CRITICAL FIX: Connect recording sender to receive pre-mixed audio
         // This ensures both mic AND system audio are captured in recordings
         pipeline.recording_sender_for_mixed = recording_sender;
+
+        // Connect live level meter output (mic + system) for the frontend visualizer
+        pipeline.level_sender = level_sender;
 
         let handle = tokio::spawn(async move {
             pipeline.run().await

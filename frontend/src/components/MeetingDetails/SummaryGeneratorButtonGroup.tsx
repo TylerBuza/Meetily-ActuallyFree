@@ -63,6 +63,10 @@ export function SummaryGeneratorButtonGroup({
 }: SummaryGeneratorButtonGroupProps) {
   const [isCheckingModels, setIsCheckingModels] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+  // Regenerate-with-context popup: lets the user add one-off instructions
+  // (e.g. "focus on action items", "keep it short") before regenerating.
+  const [contextModalOpen, setContextModalOpen] = useState(false);
+  const [contextInput, setContextInput] = useState('');
 
   // Expose the function to open the modal via callback registration
   useEffect(() => {
@@ -85,7 +89,8 @@ export function SummaryGeneratorButtonGroup({
     return null;
   }
 
-  const checkBuiltInAIModelsAndGenerate = async () => {
+  const checkBuiltInAIModelsAndGenerate = async (promptOverride?: string) => {
+    const effectivePrompt = promptOverride !== undefined ? promptOverride : customPrompt;
     setIsCheckingModels(true);
     try {
       const selectedModel = modelConfig.model;
@@ -108,7 +113,7 @@ export function SummaryGeneratorButtonGroup({
 
       if (isReady) {
         // Model is available, proceed with generation
-        onGenerateSummary(customPrompt);
+        onGenerateSummary(effectivePrompt);
         return;
       }
 
@@ -182,16 +187,18 @@ export function SummaryGeneratorButtonGroup({
     }
   };
 
-  const checkOllamaModelsAndGenerate = async () => {
+  const checkOllamaModelsAndGenerate = async (promptOverride?: string) => {
+    const effectivePrompt = promptOverride !== undefined ? promptOverride : customPrompt;
+
     // Handle built-in AI provider
     if (modelConfig.provider === 'builtin-ai') {
-      await checkBuiltInAIModelsAndGenerate();
+      await checkBuiltInAIModelsAndGenerate(effectivePrompt);
       return;
     }
 
     // Only check for Ollama provider
     if (modelConfig.provider !== 'ollama') {
-      onGenerateSummary(customPrompt);
+      onGenerateSummary(effectivePrompt);
       return;
     }
 
@@ -211,7 +218,7 @@ export function SummaryGeneratorButtonGroup({
       }
 
       // Models are available, proceed with generation
-      onGenerateSummary(customPrompt);
+      onGenerateSummary(effectivePrompt);
     } catch (error) {
       console.error('Error checking Ollama models:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -244,6 +251,34 @@ export function SummaryGeneratorButtonGroup({
 
   const isGenerating = summaryStatus === 'processing' || summaryStatus === 'summarizing' || summaryStatus === 'regenerating';
 
+  // Called when the main button is clicked. For a first-time summary we generate
+  // immediately; when regenerating an existing summary we first open a small
+  // popup so the user can add one-off guidance for this run.
+  const handlePrimaryClick = () => {
+    Analytics.trackButtonClick(hasSummary ? 'regenerate_summary' : 'generate_summary', 'meeting_details');
+    if (hasSummary) {
+      setContextInput('');
+      setContextModalOpen(true);
+    } else {
+      checkOllamaModelsAndGenerate();
+    }
+  };
+
+  // Regenerate using the base custom prompt plus the one-off context the user typed.
+  const submitRegenerateWithContext = () => {
+    const extra = contextInput.trim();
+    const combined = [customPrompt.trim(), extra].filter(Boolean).join('\n\n');
+    setContextModalOpen(false);
+    checkOllamaModelsAndGenerate(combined);
+  };
+
+  const contextSuggestions = [
+    'Focus on action items and owners',
+    'Keep it short — 5 bullet points max',
+    'Highlight decisions and open questions',
+    'Summarize in a more formal tone',
+  ];
+
   return (
     <ButtonGroup>
       {/* Generate Summary or Stop button */}
@@ -266,10 +301,7 @@ export function SummaryGeneratorButtonGroup({
           variant="outline"
           size="sm"
           className="bg-gradient-to-r from-blue-50 to-purple-50 hover:from-blue-100 hover:to-purple-100 border-blue-200 xl:px-4"
-          onClick={() => {
-            Analytics.trackButtonClick('generate_summary', 'meeting_details');
-            checkOllamaModelsAndGenerate();
-          }}
+          onClick={handlePrimaryClick}
           disabled={isCheckingModels || isModelConfigLoading}
           title={
             isModelConfigLoading
@@ -365,6 +397,63 @@ export function SummaryGeneratorButtonGroup({
           </DropdownMenuContent>
         </DropdownMenu>
       )}
+
+      {/* Regenerate-with-context popup */}
+      <Dialog open={contextModalOpen} onOpenChange={setContextModalOpen}>
+        <DialogContent aria-describedby={undefined} className="sm:max-w-lg">
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <Sparkles size={18} className="text-blue-500" />
+            Regenerate summary
+          </DialogTitle>
+          <div className="mt-2 space-y-3">
+            <p className="text-sm text-gray-500">
+              Add any one-off instructions for this run (optional). This won’t change your saved
+              settings — it only guides this regeneration.
+            </p>
+            <textarea
+              autoFocus
+              value={contextInput}
+              onChange={(e) => setContextInput(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                  e.preventDefault();
+                  submitRegenerateWithContext();
+                }
+              }}
+              placeholder="e.g. Focus on decisions and next steps; ignore small talk…"
+              rows={4}
+              className="w-full resize-none rounded-md border border-[var(--af-border,#d1d5db)] bg-[var(--af-panel-2,#fff)] px-3 py-2 text-sm text-[var(--af-text,#111827)] outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <div className="flex flex-wrap gap-1.5">
+              {contextSuggestions.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() =>
+                    setContextInput((prev) => (prev.trim() ? `${prev.trim()}\n${s}` : s))
+                  }
+                  className="rounded-full border border-[var(--af-border,#e5e7eb)] px-2.5 py-1 text-xs text-gray-500 transition-colors hover:border-blue-400 hover:text-blue-500"
+                >
+                  + {s}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setContextModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700"
+              onClick={submitRegenerateWithContext}
+            >
+              <Sparkles size={16} className="mr-1.5" />
+              Regenerate
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </ButtonGroup>
   );
 }

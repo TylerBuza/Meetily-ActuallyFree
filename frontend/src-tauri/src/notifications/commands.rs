@@ -1,5 +1,5 @@
 use crate::notifications::{
-    types::Notification,
+    types::{Notification, NotificationType, NotificationPriority, NotificationTimeout},
     settings::NotificationSettings,
     manager::NotificationManager,
 };
@@ -86,6 +86,39 @@ pub async fn show_notification(
     let manager_lock = manager_state.read().await;
     if let Some(manager) = manager_lock.as_ref() {
         manager.show_notification(notification).await
+            .map_err(|e| format!("Failed to show notification: {}", e))
+    } else {
+        Err("Notification manager not initialized".to_string())
+    }
+}
+
+/// Show a simple native notification from a plain title + body.
+///
+/// Used by Meeting Detection (and any other lightweight prompt) so callers
+/// don't need to construct the full `Notification` type. Best-effort.
+#[tauri::command]
+pub async fn show_simple_notification(
+    title: String,
+    body: String,
+    manager_state: State<'_, NotificationManagerState<Wry>>,
+) -> Result<(), String> {
+    let notification = Notification {
+        id: None,
+        title,
+        body,
+        notification_type: NotificationType::Test,
+        priority: NotificationPriority::Normal,
+        timeout: NotificationTimeout::Default,
+        icon: None,
+        sound: true,
+        actions: Vec::new(),
+    };
+
+    let manager_lock = manager_state.read().await;
+    if let Some(manager) = manager_lock.as_ref() {
+        manager
+            .show_notification(notification)
+            .await
             .map_err(|e| format!("Failed to show notification: {}", e))
     } else {
         Err("Notification manager not initialized".to_string())

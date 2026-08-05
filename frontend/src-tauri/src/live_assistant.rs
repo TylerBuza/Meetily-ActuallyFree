@@ -99,8 +99,9 @@ pub async fn ask_live_assistant<R: Runtime>(
         api_key
     };
 
-    // App data dir is required for the BuiltInAI (local sidecar) provider
-    let app_data_dir = app.path().app_data_dir().ok();
+    // Install-local data dir for the BuiltInAI (local sidecar) provider (portable build)
+    let _ = &app;
+    let app_data_dir = Some(crate::paths::install_data_root());
 
     let persona_extra = persona.unwrap_or_default();
     let system_prompt = format!(

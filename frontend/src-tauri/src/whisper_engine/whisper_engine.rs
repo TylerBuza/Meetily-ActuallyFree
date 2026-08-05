@@ -114,13 +114,10 @@ impl WhisperEngine {
                     current_dir.join("models")
                 }
             } else {
-                // Production mode fallback (shouldn't reach here, caller should provide path)
-                log::warn!("WhisperEngine: No models directory provided, using fallback path");
-                dirs::data_dir()
-                    .or_else(|| dirs::home_dir())
-                    .ok_or_else(|| anyhow!("Could not find system data directory"))?
-                    .join("Meetily")
-                    .join("models")
+                // Production mode fallback (shouldn't reach here, caller should provide path).
+                // Portable build: resolve models relative to the executable.
+                log::warn!("WhisperEngine: No models directory provided, using install-local fallback");
+                crate::paths::models_dir()
             }
         };
         

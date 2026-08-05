@@ -436,8 +436,8 @@ impl SummaryService {
             100000  // Effectively unlimited for single-pass processing
         };
 
-        // Get app data directory for BuiltInAI provider
-        let app_data_dir = _app.path().app_data_dir().ok();
+        // Get install-local data directory for BuiltInAI provider (portable build)
+        let app_data_dir = Some(crate::paths::install_data_root());
 
         if let Some(code) = &summary_language {
             info!("📝 Summary language preference: {}", code);

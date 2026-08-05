@@ -49,7 +49,9 @@ pub mod anthropic;
 pub mod groq;
 pub mod openrouter;
 pub mod live_assistant;
+pub mod meeting_detection;
 pub mod parakeet_engine;
+pub mod paths;
 pub mod state;
 pub mod summary;
 pub mod tray;
@@ -452,7 +454,16 @@ pub fn run() {
                 }
             });
 
-            // Set models directory to use app_data_dir (unified storage location)
+            // Portable build: one-time, non-destructive migration of any legacy
+            // data from the OS app-data dir into the install-local root. Runs
+            // BEFORE model/DB init so migrated models + history are picked up.
+            crate::paths::migrate_legacy_data(&_app.handle());
+
+            // Meeting detection: load persisted settings and start the monitor
+            // if the user enabled it (default off).
+            crate::meeting_detection::initialize(&_app.handle());
+
+            // Set models directory (install-local, portable storage location)
             whisper_engine::commands::set_models_directory(&_app.handle());
 
             // Initialize Whisper engine on startup
@@ -633,6 +644,10 @@ pub fn run() {
             groq::groq::get_groq_models,
             api::api_get_meetings,
             api::api_search_transcripts,
+            meeting_detection::get_meeting_detection_settings,
+            meeting_detection::set_meeting_detection_settings,
+            meeting_detection::start_meeting_detection,
+            meeting_detection::stop_meeting_detection,
             api::api_get_profile,
             api::api_save_profile,
             api::api_update_profile,
@@ -703,6 +718,7 @@ pub fn run() {
             notifications::commands::set_notification_settings,
             notifications::commands::request_notification_permission,
             notifications::commands::show_notification,
+            notifications::commands::show_simple_notification,
             notifications::commands::show_test_notification,
             notifications::commands::is_dnd_active,
             notifications::commands::get_system_dnd_status,

@@ -110,12 +110,9 @@ impl<R: Runtime> ConsentManager<R> {
         })
     }
 
-    /// Get the path where notification settings are stored
+    /// Get the path where notification settings are stored (install-local).
     fn get_settings_path() -> Result<PathBuf> {
-        let mut path = dirs::config_dir()
-            .ok_or_else(|| anyhow!("Could not find config directory"))?;
-
-        path.push("meetily");
+        let mut path = crate::paths::install_data_root();
         path.push("notifications.json");
 
         // Ensure parent directory exists

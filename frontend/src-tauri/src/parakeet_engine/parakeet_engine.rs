@@ -135,13 +135,8 @@ impl ParakeetEngine {
                 // Development mode
                 current_dir.join("models").join("parakeet")
             } else {
-                // Production mode
-                dirs::data_dir()
-                    .or_else(|| dirs::home_dir())
-                    .ok_or_else(|| anyhow!("Could not find system data directory"))?
-                    .join("Meetily")
-                    .join("models")
-                    .join("parakeet")
+                // Production mode — portable: models live next to the executable.
+                crate::paths::models_dir().join("parakeet")
             }
         };
 

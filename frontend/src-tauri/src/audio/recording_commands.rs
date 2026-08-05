@@ -45,6 +45,25 @@ static TRANSCRIPTION_TASK: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 // Listener ID for proper cleanup - prevents microphone from staying active after recording stops
 static TRANSCRIPT_LISTENER_ID: Mutex<Option<tauri::EventId>> = Mutex::new(None);
 
+/// Create the live audio-level channel and spawn a task that forwards each
+/// per-source level sample (mic + system) to the frontend as a
+/// `recording-audio-levels` event. The returned sender is handed to the audio
+/// pipeline; when recording stops the pipeline drops it, closing the channel
+/// and ending the forwarder task automatically.
+fn spawn_level_forwarder<R: Runtime>(
+    app: &AppHandle<R>,
+) -> tokio::sync::mpsc::UnboundedSender<super::pipeline::AudioLevels> {
+    let (tx, mut rx) =
+        tokio::sync::mpsc::unbounded_channel::<super::pipeline::AudioLevels>();
+    let app = app.clone();
+    tokio::spawn(async move {
+        while let Some(levels) = rx.recv().await {
+            let _ = app.emit("recording-audio-levels", &levels);
+        }
+    });
+    tx
+}
+
 // ============================================================================
 // PUBLIC TYPES
 // ============================================================================
@@ -232,9 +251,12 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         let _ = app_for_error.emit("recording-error", error.user_message());
     });
 
+    // Live audio-level meter: forward per-source (mic + system) levels to the UI visualizer
+    let level_sender = spawn_level_forwarder(&app);
+
     // Start recording with resolved devices (replaces start_recording_with_defaults_and_auto_save call)
     let transcription_receiver = manager
-        .start_recording(microphone_device, system_device, auto_save)
+        .start_recording(microphone_device, system_device, auto_save, Some(level_sender))
         .await
         .map_err(|e| format!("Failed to start recording: {}", e))?;
 
@@ -403,9 +425,12 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
         let _ = app_for_error.emit("recording-error", error.user_message());
     });
 
+    // Live audio-level meter: forward per-source (mic + system) levels to the UI visualizer
+    let level_sender = spawn_level_forwarder(&app);
+
     // Start recording with specified devices and auto_save setting
     let transcription_receiver = manager
-        .start_recording(mic_device, system_device, auto_save)
+        .start_recording(mic_device, system_device, auto_save, Some(level_sender))
         .await
         .map_err(|e| format!("Failed to start recording: {}", e))?;
 
