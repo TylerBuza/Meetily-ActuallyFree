@@ -23,9 +23,27 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 
     TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
+        // Tauri shows the tray menu on left-click by default, which swallows the
+        // click before any handler runs — so clicking the icon only ever opened
+        // the menu and never the app. Reserve left-click for "open the window"
+        // and leave the menu on right-click, which is what people expect.
+        .show_menu_on_left_click(false)
         .tooltip("Meetily - Actually Free")
         .icon(app.default_window_icon().unwrap().clone())
         .on_menu_event(|app, event| handle_menu_event(app, event.id.as_ref()))
+        .on_tray_icon_event(|tray, event| {
+            use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
+            // Act on release rather than press, so a click-and-drag doesn't
+            // count, and only for the left button.
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                focus_main_window(tray.app_handle());
+            }
+        })
         .build(app)?;
 
     // Update tray menu with actual recording state after creation
