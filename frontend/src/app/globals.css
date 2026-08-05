@@ -251,6 +251,21 @@ html.dark, html.dark body { background-color: var(--af-bg) !important; color: va
 }
 .dark input::placeholder, .dark textarea::placeholder { color: var(--af-text-3) !important; }
 
+/* InputGroup (icon + field as one control) draws its own surface, and its inner
+   input is deliberately transparent. The blanket rule above would repaint that
+   inner input, so the wrapper and the field ended up painting two different
+   backgrounds - visible as a lighter box behind the search icon. Give the
+   surface to the wrapper and keep the control transparent. */
+.dark [data-slot="input-group"] {
+  background-color: var(--af-panel) !important;
+  border-color: var(--af-border) !important;
+}
+.dark [data-slot="input-group"] input,
+.dark [data-slot="input-group-control"] {
+  background-color: transparent !important;
+  border-color: transparent !important;
+}
+
 .dark .bg-blue-50 { background-color: #14284d !important; }
 .dark .bg-blue-100 { background-color: var(--af-panel-2) !important; }
 .dark .bg-blue-200, .dark .hover\:bg-blue-200:hover { background-color: var(--af-hover) !important; }

@@ -19,8 +19,10 @@ const Logo = React.forwardRef<HTMLButtonElement, LogoProps>(({ isCollapsed }, re
         </DialogTrigger>
       ) : (
         <DialogTrigger asChild>
-          <span className="mb-2 block cursor-pointer text-center text-lg font-bold tracking-tight text-blue-500 transition-opacity hover:opacity-80">
-            Meetily <span className="text-blue-400/70">· Free</span>
+          {/* text-base rather than text-lg: "Meetily · Actually Free" is long
+              enough to crowd the 256px sidebar at the larger size. */}
+          <span className="mb-2 block cursor-pointer whitespace-nowrap text-center text-base font-bold tracking-tight text-blue-500 transition-opacity hover:opacity-80">
+            Meetily <span className="text-blue-400/70">· Actually Free</span>
           </span>
         </DialogTrigger>
       )}

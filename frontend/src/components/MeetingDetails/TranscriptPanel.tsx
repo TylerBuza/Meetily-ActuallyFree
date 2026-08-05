@@ -12,12 +12,9 @@
  * speaker labels vanish on this screen:
  *   - paginated  → `segments` prop, built by `hooks/usePaginatedTranscripts.ts`
  *   - otherwise  → converted inline from `transcripts` below
- *
- * The `TranscriptView` import below is vestigial — that component is dead code.
  */
 
 import { Transcript, TranscriptSegmentData } from '@/types';
-import { TranscriptView } from '@/components/TranscriptView';
 import { VirtualizedTranscriptView } from '@/components/VirtualizedTranscriptView';
 import { TranscriptButtonGroup } from './TranscriptButtonGroup';
 import { useMemo } from 'react';

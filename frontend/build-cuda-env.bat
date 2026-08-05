@@ -45,6 +45,7 @@ if /I "%MODE%"=="lib"       goto :lib
 if /I "%MODE%"=="bundle"    goto :bundle
 if /I "%MODE%"=="check"     goto :check
 if /I "%MODE%"=="test"      goto :test
+if /I "%MODE%"=="fix"       goto :fix
 echo Unknown mode: %MODE%
 exit /b 1
 
@@ -80,6 +81,13 @@ exit /b 0
 echo [check] cargo check meetily --release --features cuda,custom-protocol (no exe link)
 cd /d "%ROOT%src-tauri"
 cargo check --release --features cuda,custom-protocol
+exit /b %errorlevel%
+
+:fix
+REM Apply rustc's own suggested fixes (unused imports/variables etc.)
+echo [fix] cargo fix --lib --release --features cuda,custom-protocol
+cd /d "%ROOT%src-tauri"
+cargo fix --lib -p meetily --release --features cuda,custom-protocol --allow-dirty --allow-staged
 exit /b %errorlevel%
 
 :test

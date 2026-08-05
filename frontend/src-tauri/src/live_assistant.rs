@@ -11,7 +11,7 @@
 
 use crate::database::repositories::setting::SettingsRepository;
 use crate::summary::llm_client::{generate_summary, LLMProvider};
-use tauri::{AppHandle, Manager, Runtime, State};
+use tauri::{AppHandle, Runtime, State};
 use tracing::info;
 
 /// Ask the live assistant a question, grounded in the recent meeting transcript.

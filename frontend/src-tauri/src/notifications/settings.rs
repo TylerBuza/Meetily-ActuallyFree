@@ -3,7 +3,6 @@ use anyhow::{Result, anyhow};
 use log::info as log_info;
 use std::path::PathBuf;
 use tauri::{AppHandle, Runtime};
-use dirs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationSettings {

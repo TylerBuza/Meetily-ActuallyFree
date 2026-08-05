@@ -1,7 +1,6 @@
 use sqlx::{migrate::MigrateDatabase, Result, Sqlite, SqlitePool, Transaction};
 use std::fs;
 use std::path::Path;
-use tauri::Manager;
 
 #[derive(Clone)]
 pub struct DatabaseManager {

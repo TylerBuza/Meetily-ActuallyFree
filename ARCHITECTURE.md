@@ -169,21 +169,23 @@ The most error-prone area in the codebase, because of duplicated components.
 
 ```
 live screen        → app/_components/TranscriptPanel.tsx        ─┐
-meeting details    → components/MeetingDetails/TranscriptPanel  ─┼─▶ VirtualizedTranscriptView
-                                                                 │
-components/TranscriptView.tsx  ← DEAD CODE, nothing renders it ──┘
+                                                                 ├─▶ VirtualizedTranscriptView
+meeting details    → components/MeetingDetails/TranscriptPanel  ─┘
 ```
 
-Three traps, all of which have bitten:
+Two traps, both of which have bitten:
 
 1. **Two components named `TranscriptPanel`.** Editing the wrong one compiles
    and does nothing visible.
-2. **`TranscriptView.tsx` is dead code.** Same symptom.
-3. **Three separate transcript→segment converters**, and every one must copy
+2. **Three separate transcript→segment converters**, and every one must copy
    `speaker` or labels silently vanish on that screen:
    - `app/_components/TranscriptPanel.tsx` (live)
    - `components/MeetingDetails/TranscriptPanel.tsx` (non-paginated)
    - `hooks/usePaginatedTranscripts.ts` (paginated)
+
+(A third, unrendered `components/TranscriptView.tsx` used to exist and caused
+exactly this confusion; it has been deleted along with `SettingTabs.tsx`,
+`CustomDialog.tsx` and the never-compiled `src-tauri/src/audio_v2/`.)
 
 The label also has to survive the Rust side: `MeetingTranscript` must include
 `speaker`, and every place constructing it must set it.
