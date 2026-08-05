@@ -18,6 +18,7 @@ pub mod clustering;
 pub mod download;
 pub mod dsp;
 pub mod models;
+pub mod online;
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -409,50 +410,130 @@ pub struct MeetingDiarizationResult {
     pub assignments: Vec<(String, String)>,
 }
 
-/// Locate the recording WAV for a meeting: prefer the meeting's own folder,
-/// then fall back to the install-local data root (where tray/UI saves land).
-fn find_meeting_wav(folder_path: Option<String>, meeting_id: &str) -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(folder) = folder_path {
+/// Audio container extensions a meeting recording may use. Recordings are
+/// normally written as `audio.mp4`; `.wav` covers imports and older saves.
+const AUDIO_EXTS: [&str; 5] = ["mp4", "m4a", "wav", "mp3", "webm"];
+
+fn is_audio_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| AUDIO_EXTS.iter().any(|a| a.eq_ignore_ascii_case(e)))
+        .unwrap_or(false)
+}
+
+/// Newest audio file directly inside `dir`, if any.
+fn newest_audio_in(dir: &Path) -> Option<PathBuf> {
+    let mut found: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.is_file() && is_audio_file(&path) {
+            let mtime = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            found.push((mtime, path));
+        }
+    }
+    found.sort_by_key(|(t, _)| *t);
+    found.pop().map(|(_, p)| p)
+}
+
+/// Locate a meeting's recording.
+///
+/// Recordings are saved per-meeting as `<recordings folder>/<meeting name>/audio.mp4`,
+/// so we search: the meeting's own `folder_path`, then each meeting subfolder of
+/// the configured recordings folder, then the install-local data root (tray saves).
+fn find_meeting_audio(folder_path: Option<String>, meeting_title: Option<&str>) -> Option<PathBuf> {
+    // 1. The meeting's recorded folder (or a direct file path).
+    if let Some(folder) = folder_path.as_deref() {
         let p = PathBuf::from(folder);
-        if p.is_dir() {
-            candidates.push(p);
-        } else if p.extension().map(|e| e.eq_ignore_ascii_case("wav")).unwrap_or(false) && p.exists() {
+        if p.is_file() && is_audio_file(&p) {
             return Some(p);
         }
-    }
-    candidates.push(crate::paths::install_data_root());
-
-    for dir in candidates {
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let mut wavs: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().map(|e| e.eq_ignore_ascii_case("wav")).unwrap_or(false) {
-                // Prefer a file whose name mentions the meeting id.
-                if path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().contains(meeting_id))
-                    .unwrap_or(false)
-                {
-                    return Some(path);
-                }
-                let mtime = entry
-                    .metadata()
-                    .and_then(|m| m.modified())
-                    .unwrap_or(std::time::UNIX_EPOCH);
-                wavs.push((mtime, path));
+        if p.is_dir() {
+            if let Some(found) = newest_audio_in(&p) {
+                return Some(found);
             }
         }
-        if !wavs.is_empty() {
-            wavs.sort_by_key(|(t, _)| *t);
-            return wavs.pop().map(|(_, p)| p);
+    }
+
+    // 2. The configured recordings folder, matched by meeting title.
+    let recordings_root = crate::audio::recording_preferences::get_default_recordings_folder();
+    if recordings_root.is_dir() {
+        if let Some(title) = meeting_title {
+            // Folder names are sanitized versions of the meeting title, and get a
+            // timestamp suffix, so match on prefix rather than equality.
+            let needle = title.to_lowercase();
+            for entry in std::fs::read_dir(&recordings_root).ok()?.flatten() {
+                let dir = entry.path();
+                if !dir.is_dir() {
+                    continue;
+                }
+                let name = dir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                if name.starts_with(&needle) || needle.starts_with(name.as_str()) {
+                    if let Some(found) = newest_audio_in(&dir) {
+                        return Some(found);
+                    }
+                }
+            }
         }
     }
-    None
+
+    // 3. Install-local data root (where tray/UI stop-recording saves land).
+    newest_audio_in(&crate::paths::install_data_root())
+}
+
+/// Decode any supported audio container to a temporary 16 kHz mono WAV using
+/// the bundled ffmpeg. Returns the original path unchanged if it's already WAV.
+fn ensure_wav(path: &Path) -> Result<(PathBuf, bool)> {
+    if path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("wav"))
+        .unwrap_or(false)
+    {
+        return Ok((path.to_path_buf(), false));
+    }
+
+    let ffmpeg = crate::audio::ffmpeg::find_ffmpeg_path()
+        .ok_or_else(|| anyhow!("ffmpeg not found — cannot decode {}", path.display()))?;
+
+    let out = std::env::temp_dir().join(format!(
+        "meetily-diarize-{}.wav",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    ));
+
+    log::info!("🎞️ Decoding {} → 16 kHz mono WAV for diarization", path.display());
+    let mut cmd = std::process::Command::new(&ffmpeg);
+    cmd.args([
+        "-hide_banner",
+        "-loglevel", "error",
+        "-y",
+        "-i",
+    ])
+    .arg(path)
+    .args(["-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"])
+    .arg(&out);
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let status = cmd
+        .status()
+        .map_err(|e| anyhow!("Failed to run ffmpeg: {}", e))?;
+    if !status.success() || !out.exists() {
+        return Err(anyhow!("ffmpeg failed to decode {}", path.display()));
+    }
+    Ok((out, true))
 }
 
 /// Diarize a meeting's recording and assign "Speaker N" labels to its
@@ -468,24 +549,39 @@ pub async fn diarize_meeting(
     let pool = state.db_manager.pool();
 
     // Resolve the recording.
-    let folder: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT folder_path FROM meetings WHERE id = ?")
+    let meeting: Option<(Option<String>, String)> =
+        sqlx::query_as("SELECT folder_path, title FROM meetings WHERE id = ?")
             .bind(&meeting_id)
             .fetch_optional(pool)
             .await
             .map_err(|e| format!("Failed to read meeting: {}", e))?;
 
-    let wav = match audio_path {
-        Some(p) => PathBuf::from(p),
-        None => find_meeting_wav(folder.and_then(|f| f.0), &meeting_id)
-            .ok_or_else(|| "No recording (.wav) found for this meeting".to_string())?,
+    let (folder_path, title) = match meeting {
+        Some((f, t)) => (f, Some(t)),
+        None => (None, None),
     };
-    log::info!("ðŸ§‘â€ðŸ¤â€ðŸ§‘ Diarizing meeting {} using {}", meeting_id, wav.display());
 
-    // Run the (CPU-heavy) pipeline off the async core threads.
-    let wav_for_task = wav.clone();
-    let result = tokio::task::spawn_blocking(move || {
-        diarize_file(&wav_for_task, num_speakers, threshold)
+    let source = match audio_path {
+        Some(p) => PathBuf::from(p),
+        None => find_meeting_audio(folder_path, title.as_deref()).ok_or_else(|| {
+            format!(
+                "No recording found for this meeting. Looked in the meeting folder, \
+                 {} and the app data folder.",
+                crate::audio::recording_preferences::get_default_recordings_folder().display()
+            )
+        })?,
+    };
+    log::info!("🧑‍🤝‍🧑 Diarizing meeting {} using {}", meeting_id, source.display());
+
+    // Run the (CPU-heavy) pipeline off the async core threads. Non-WAV
+    // recordings (the normal case: audio.mp4) are decoded first.
+    let result = tokio::task::spawn_blocking(move || -> Result<DiarizationResult> {
+        let (wav, is_temp) = ensure_wav(&source)?;
+        let out = diarize_file(&wav, num_speakers, threshold);
+        if is_temp {
+            let _ = std::fs::remove_file(&wav);
+        }
+        out
     })
     .await
     .map_err(|e| format!("Diarization task failed: {}", e))?

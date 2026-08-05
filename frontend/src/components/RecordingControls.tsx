@@ -3,7 +3,8 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import { useCallback, useEffect, useState, useRef } from 'react';
-import { Play, Pause, Square, Mic, AlertCircle, X } from 'lucide-react';
+import { Play, Pause, Square, Mic, Volume2, AlertCircle, X } from 'lucide-react';
+import { LiveAudioVisualizer } from './LiveAudioVisualizer';
 import { ProcessRequest, SummaryResponse } from '@/types/summary';
 import { listen } from '@tauri-apps/api/event';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -473,18 +474,25 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
                     </>
                   )}
 
-                  <div className="flex items-center space-x-1 mx-4">
-                    {barHeights.map((height, index) => (
-                      <div
-                        key={index}
-                        className={`w-1 rounded-full transition-all duration-200 ${isPaused ? 'bg-orange-500' : 'bg-red-500'
-                          }`}
-                        style={{
-                          height: isRecording && !isPaused ? height : '4px',
-                          opacity: isPaused ? 0.6 : 1,
-                        }}
+                  {/* Live input meters, driven by real per-source audio levels
+                      from the Rust pipeline (mic vs. system audio). */}
+                  <div className="flex items-center gap-3 mx-4">
+                    <div className="flex items-center gap-1.5" title="Your microphone">
+                      <Mic size={12} className="text-blue-500 shrink-0" />
+                      <LiveAudioVisualizer
+                        active={isRecording && !isPaused}
+                        source="mic"
+                        bars={5}
                       />
-                    ))}
+                    </div>
+                    <div className="flex items-center gap-1.5" title="System audio (other participants)">
+                      <Volume2 size={12} className="text-purple-500 shrink-0" />
+                      <LiveAudioVisualizer
+                        active={isRecording && !isPaused}
+                        source="system"
+                        bars={5}
+                      />
+                    </div>
                   </div>
                 </>
               )}

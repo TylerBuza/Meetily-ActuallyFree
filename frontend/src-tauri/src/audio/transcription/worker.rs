@@ -143,12 +143,20 @@ pub fn start_transcription_task<R: Runtime>(
                             let chunk_timestamp = chunk.timestamp;
                             let chunk_duration = chunk.data.len() as f64 / chunk.sample_rate as f64;
 
-                            // Speaker source from audio origin: the microphone is always the
-                            // user of this app; system audio is always the other party/parties.
-                            // (Phase 1 of speaker labelling — reliable, no ML needed.)
-                            let chunk_source = match &chunk.device_type {
-                                crate::audio::recording_state::DeviceType::Microphone => "You".to_string(),
-                                crate::audio::recording_state::DeviceType::System => "Guest".to_string(),
+                            // Speaker label for this segment.
+                            //
+                            // Prefer live diarization: it distinguishes individual
+                            // voices ("Speaker 1/2/3"). The capture-source fallback
+                            // below can only ever say "You", because the audio
+                            // reaching transcription is the *mixed* mic+system
+                            // stream (see AudioPipeline), so its device_type is
+                            // always Microphone.
+                            let chunk_source = match crate::diarization::online::assign_speaker(&chunk.data) {
+                                Some(idx) => format!("Speaker {}", idx + 1),
+                                None => match &chunk.device_type {
+                                    crate::audio::recording_state::DeviceType::Microphone => "You".to_string(),
+                                    crate::audio::recording_state::DeviceType::System => "Guest".to_string(),
+                                },
                             };
 
                             // Transcribe with provider-agnostic approach
