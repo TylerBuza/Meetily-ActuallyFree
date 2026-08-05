@@ -10,6 +10,7 @@ import { RecordingSettings } from '@/components/RecordingSettings';
 import { PreferenceSettings } from '@/components/PreferenceSettings';
 import { SummaryModelSettings } from '@/components/SummaryModelSettings';
 import { MeetingDetectionSettings } from '@/components/MeetingDetectionSettings';
+import { DiarizationSettings } from '@/components/DiarizationSettings';
 import { AboutSettings } from '@/components/AboutSettings';
 import { BetaSettings } from '@/components/BetaSettings';
 import { useConfig } from '@/contexts/ConfigContext';
@@ -126,6 +127,9 @@ export default function SettingsPage() {
                 transcriptModelConfig={transcriptModelConfig}
                 setTranscriptModelConfig={setTranscriptModelConfig}
               />
+              <div className="mt-6">
+                <DiarizationSettings />
+              </div>
             </TabsContent>
             <TabsContent value="summaryModels">
               <SummaryModelSettings />

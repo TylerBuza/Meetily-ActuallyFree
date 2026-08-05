@@ -15,7 +15,7 @@
     {
       "title": "Milestones & Status",
       "instruction": "Current milestones with status and estimated completion date",
-      "format": "list",
+      "format": "table",
       "item_format": "| **Milestone** | **Status** | **ETA** |\n| --- | --- | --- |"
     },
     {
@@ -26,25 +26,25 @@
     {
       "title": "Top Risks & Mitigations",
       "instruction": "List top risks with impact level, mitigation plan, and owner",
-      "format": "list",
+      "format": "table",
       "item_format": "| **Risk** | **Impact** | **Mitigation** | **Owner** |\n| --- | --- | --- | --- |"
     },
     {
       "title": "Key Decisions",
       "instruction": "Decisions made in this meeting with rationale and timestamp",
-      "format": "list",
+      "format": "table",
       "item_format": "| **Decision** | **Rationale** | **Timestamp** |\n| --- | --- | --- |"
     },
     {
       "title": "Action Items",
       "instruction": "Tasks with owners, due dates, priority, and status",
-      "format": "list",
+      "format": "table",
       "item_format": "| **Owner** | **Task** | **Due Date** | **Priority** | **Status** |\n| --- | --- | --- | --- | --- |"
     },
     {
       "title": "Related Documents",
       "instruction": "Links to relevant documents, tickets, or designs discussed",
-      "format": "list",
+      "format": "table",
       "item_format": "| **Document Title** | **URL** | **Type** |\n| --- | --- | --- |"
     }
   ]

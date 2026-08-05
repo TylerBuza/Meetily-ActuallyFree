@@ -15,19 +15,19 @@
     {
       "title": "Yesterday",
       "instruction": "What I completed yesterday (short bullets)",
-      "format": "list",
-      "example_item_format": "| **Owner** | **Completed Work** |\n| --- | --- |"
+      "format": "table",
+      "item_format": "| **Owner** | **Completed Work** |\n| --- | --- |"
     },
     {
       "title": "Today",
       "instruction": "Planned work for today (short bullets)",
-      "format": "list",
-      "example_item_format": "| **Owner** | **Planned Work** |\n| --- | --- |"
+      "format": "table",
+      "item_format": "| **Owner** | **Planned Work** |\n| --- | --- |"
     },
     {
       "title": "Blockers",
       "instruction": "Any impediments and owner if known",
-      "format": "list",
+      "format": "table",
       "item_format": "| **Owner** | **Blocker** | Impact |\n| --- | --- | --- |"
     },
     {

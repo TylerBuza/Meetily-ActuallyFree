@@ -41,6 +41,7 @@ pub mod audio;
 pub mod config;
 pub mod console_utils;
 pub mod database;
+pub mod diarization;
 pub mod notifications;
 pub mod ollama;
 pub mod onboarding;
@@ -648,6 +649,10 @@ pub fn run() {
             meeting_detection::set_meeting_detection_settings,
             meeting_detection::start_meeting_detection,
             meeting_detection::stop_meeting_detection,
+            diarization::diarization_models_available,
+            diarization::diarization_model_directory,
+            diarization::diarize_recording,
+            diarization::diarize_meeting,
             api::api_get_profile,
             api::api_save_profile,
             api::api_update_profile,

@@ -35,6 +35,8 @@ pub struct Transcript {
     pub audio_start_time: Option<f64>,
     pub audio_end_time: Option<f64>,
     pub duration: Option<f64>,
+    /// Speaker label: capture source ("You"/"Guest") or diarization ("Speaker N")
+    pub speaker: Option<String>,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]

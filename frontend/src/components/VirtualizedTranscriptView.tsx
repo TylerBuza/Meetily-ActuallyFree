@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useCallback, useRef, useReducer, startTransition, useEffect, useState, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -64,6 +64,23 @@ function cleanStopWords(text: string): string {
 }
 
 // Memoized transcript segment component
+/** Stable colour per speaker label so each speaker reads consistently. */
+function speakerColor(speaker: string): string {
+    if (/^you\b/i.test(speaker)) return 'text-blue-500';
+    if (/^guest\b/i.test(speaker)) return 'text-purple-500';
+    const palette = [
+        'text-blue-500',
+        'text-purple-500',
+        'text-emerald-500',
+        'text-amber-500',
+        'text-pink-500',
+        'text-cyan-500',
+    ];
+    let hash = 0;
+    for (let i = 0; i < speaker.length; i++) hash = (hash * 31 + speaker.charCodeAt(i)) >>> 0;
+    return palette[hash % palette.length];
+}
+
 const TranscriptSegment = memo(function TranscriptSegment({
     id,
     timestamp,
@@ -71,6 +88,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
     confidence,
     isStreaming,
     showConfidence,
+    speaker,
 }: {
     id: string;
     timestamp: number;
@@ -78,6 +96,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
     confidence?: number;
     isStreaming: boolean;
     showConfidence: boolean;
+    speaker?: string;
 }) {
     const displayText = cleanStopWords(text) || (text.trim() === '' ? '[Silence]' : text);
 
@@ -97,6 +116,11 @@ const TranscriptSegment = memo(function TranscriptSegment({
                     </TooltipContent>
                 </Tooltip>
                 <div className="flex-1">
+                    {speaker && (
+                        <span className={`block text-xs font-semibold ${speakerColor(speaker)}`}>
+                            {speaker}
+                        </span>
+                    )}
                     {isStreaming ? (
                         <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
                             <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
@@ -296,6 +320,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         confidence={segment.confidence}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
+                                        speaker={segment.speaker}
                                     />
                                 </div>
                             );
@@ -352,6 +377,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         confidence={segment.confidence}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
+                                        speaker={segment.speaker}
                                     />
                                 </motion.div>
                             );

@@ -9,7 +9,7 @@ pub struct TemplateSection {
     /// Instruction for the LLM on what to extract/include
     pub instruction: String,
 
-    /// Format type: "paragraph", "list", or "string"
+    /// Format type: "paragraph", "list", "table", or "string"
     pub format: String,
 
     /// Optional markdown formatting hint for list items (e.g., table structure)
@@ -59,9 +59,9 @@ impl Template {
             }
 
             match section.format.as_str() {
-                "paragraph" | "list" | "string" => {},
+                "paragraph" | "list" | "table" | "string" => {},
                 other => return Err(format!(
-                    "Section '{}' has invalid format '{}'. Must be 'paragraph', 'list', or 'string'",
+                    "Section '{}' has invalid format '{}'. Must be 'paragraph', 'list', 'table', or 'string'",
                     section.title, other
                 )),
             }
@@ -97,7 +97,21 @@ impl Template {
             let item_format = section.item_format.as_ref()
                 .or(section.example_item_format.as_ref());
 
-            if let Some(format) = item_format {
+            if section.format == "table" {
+                // Render as a real markdown table. When the template supplies a
+                // header row (item_format), reuse it verbatim so columns match.
+                match item_format {
+                    Some(header) => instructions.push_str(&format!(
+                        "  - Render this section as a Markdown table using exactly this header and \
+                         separator row, then one row per item:\n    `{}`\n",
+                        header
+                    )),
+                    None => instructions.push_str(
+                        "  - Render this section as a Markdown table with a header row, a \
+                         `| --- |` separator row, and one row per item.\n",
+                    ),
+                }
+            } else if let Some(format) = item_format {
                 instructions.push_str(&format!(
                     "  - Items in this section should follow the format: `{}`.\n",
                     format

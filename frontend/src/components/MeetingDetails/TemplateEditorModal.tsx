@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 
-type Format = 'paragraph' | 'list' | 'string';
+type Format = 'paragraph' | 'list' | 'table' | 'string';
 
 interface SectionDraft {
   title: string;
@@ -158,6 +158,7 @@ export function TemplateEditorModal({
                     >
                       <option value="list">List</option>
                       <option value="paragraph">Paragraph</option>
+                      <option value="table">Table</option>
                       <option value="string">Single line</option>
                     </select>
                     {sections.length > 1 && (

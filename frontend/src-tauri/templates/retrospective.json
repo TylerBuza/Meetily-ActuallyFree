@@ -15,25 +15,25 @@
         {
           "title": "Start Doing",
           "instruction": "Actions or experiments to start next sprint",
-          "format": "list",
+          "format": "table",
           "item_format": "| **Idea** | **Proposer** |\n| --- | --- |"
         },
         {
           "title": "Stop Doing",
           "instruction": "Practices to stop",
-          "format": "list",
+          "format": "table",
           "item_format": "| **Practice** | **Reason** |\n| --- | --- |"
         },
         {
           "title": "Continue Doing",
           "instruction": "Practices to continue",
-          "format": "list",
+          "format": "table",
           "item_format": "| **Practice** | **Notes** |\n| --- | --- |"
         },
         {
           "title": "Action Items",
           "instruction": "Concrete experiments with owners and success metrics",
-          "format": "list",
+          "format": "table",
           "item_format": "| **Owner** | **Task** | **Due Date** | **Success Metric** |\n| --- | --- | --- | --- |"
         },
         {

@@ -108,4 +108,5 @@ export interface TranscriptSegmentData {
   endTime?: number; // audio_end_time in seconds
   text: string;
   confidence?: number;
+  speaker?: string; // "You"/"Guest" (capture source) or "Speaker N" (diarization)
 }

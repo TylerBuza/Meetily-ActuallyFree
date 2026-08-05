@@ -20,7 +20,7 @@
         {
           "title": "Agreed Deliverables",
           "instruction": "Deliverables, owners, and due dates",
-          "format": "list",
+          "format": "table",
           "item_format": "| **Deliverable** | **Owner** | **Due Date** |\n| --- | --- | --- |"
         },
         {
@@ -31,13 +31,13 @@
         {
           "title": "Risks & Concerns",
           "instruction": "Client concerns, blockers, or escalation items",
-          "format": "list",
+          "format": "table",
           "item_format": "| **Concern** | **Impact** | **Owner** |\n| --- | --- | --- |"
         },
         {
           "title": "Next Steps",
           "instruction": "Actions, owners, and due dates",
-          "format": "list",
+          "format": "table",
           "item_format": "| **Owner** | **Action** | **Due Date** |\n| --- | --- | --- |"
         }
       ]

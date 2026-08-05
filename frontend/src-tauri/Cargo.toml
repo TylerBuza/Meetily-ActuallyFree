@@ -135,6 +135,7 @@ lazy_static = { version = "1.4.0" }
 realfft = "3.4.0"
 regex = "1.11.0"
 ndarray = "0.16"
+zip = "2.2"           # Reading .npz (zip of .npy) diarization transforms
 bytes = { version = "1.9.0", features = ["serde"] }
 
 esaxx-rs = "0.1.10"
