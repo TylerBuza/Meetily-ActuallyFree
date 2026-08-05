@@ -136,7 +136,11 @@ function InputGroupInput({
     <Input
       data-slot="input-group-control"
       className={cn(
-        "flex-1 rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent",
+        // `min-w-0` is required: a flex item defaults to `min-width: auto`, so
+        // without it the input refuses to shrink below the intrinsic width of
+        // its placeholder text and overflows narrow containers (e.g. the
+        // sidebar search, which was being clipped at the right edge).
+        "min-w-0 flex-1 rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent",
         className
       )}
       {...props}
