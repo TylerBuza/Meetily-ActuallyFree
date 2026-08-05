@@ -63,6 +63,9 @@ pub(crate) fn create_transcript_segments(transcripts: &[(String, f64, f64)]) -> 
                 audio_start_time: Some(start_seconds),
                 audio_end_time: Some(end_seconds),
                 duration: Some(duration),
+                // Import/retranscribe path: no live capture, so no speaker
+                // hint exists; offline diarization can label these later.
+                speaker: None,
             }
         })
         .collect()

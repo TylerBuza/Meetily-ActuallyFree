@@ -191,6 +191,12 @@ pub struct TranscriptSegment {
     pub audio_end_time: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<f64>,
+    /// Live speaker label ("You" / "Speaker N"). Must be persisted with the
+    /// meeting: the offline diarization pass identifies which cluster is the
+    /// local user by matching against the live "You" ranges, so dropping this
+    /// at save time silently erases the user's identity from every meeting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -278,6 +278,21 @@ export default function RootLayout({
     window.location.reload()
   }
 
+  // The compact recording bar lives in its own tiny frameless window and must
+  // render bare: mounting the app chrome here put the collapsed sidebar (the
+  // logo square) and the floating Ask-AI button inside a 520×76 overlay, and
+  // their opaque backgrounds squared off the window's rounded corners.
+  // Checked via location rather than usePathname so no hook order changes.
+  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/minibar')) {
+    return (
+      <html lang="en" className="dark minibar-window">
+        <body className={`${sourceSans3.variable} font-sans antialiased bg-transparent`}>
+          {children}
+        </body>
+      </html>
+    )
+  }
+
   return (
     <html lang="en" className="dark">
       <body className={`${sourceSans3.variable} font-sans antialiased`}>
