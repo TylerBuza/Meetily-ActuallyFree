@@ -1,7 +1,7 @@
 ﻿'use client';
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { ChevronDown, ChevronRight, File, Settings, ChevronLeftCircle, ChevronRightCircle, Calendar, StickyNote, Home, Trash2, Mic, Square, Plus, Search, Pencil, NotebookPen, SearchIcon, X, Upload } from 'lucide-react';
+import { ShieldCheck, ChevronDown, ChevronRight, File, Settings, ChevronLeftCircle, ChevronRightCircle, Calendar, StickyNote, Home, Trash2, Mic, Square, Plus, Search, Pencil, NotebookPen, SearchIcon, X, Upload } from 'lucide-react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useSidebar } from './SidebarProvider';
 import type { CurrentMeeting } from '@/components/Sidebar/SidebarProvider';
@@ -800,6 +800,18 @@ const Sidebar: React.FC = () => {
                 <span>Import Audio</span>
               </button>
             )}
+
+            {/* Privacy statement — the app's core promise, kept visible. */}
+            <div className="w-full flex items-center gap-2.5 px-3 py-2 mt-2 mb-1 rounded-lg border border-[var(--af-border,#e5e7eb)] bg-[var(--af-panel-2,#f9fafb)]">
+              <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-gray-700">
+                  Local Mode
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                </div>
+                <div className="text-[11px] text-gray-400">Nothing leaves this device</div>
+              </div>
+            </div>
 
             <button
               onClick={() => router.push('/settings')}

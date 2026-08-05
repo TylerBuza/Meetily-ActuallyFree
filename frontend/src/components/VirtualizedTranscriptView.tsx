@@ -109,6 +109,24 @@ function displaySpeaker(speaker: string, userName: string): string {
     return speaker;
 }
 
+/** Dot colour on the timeline rail — same mapping as the text colour. */
+function speakerDot(speaker?: string): string {
+    if (!speaker) return 'bg-gray-600';
+    if (/^you\b/i.test(speaker)) return 'bg-blue-500';
+    if (/^guest\b/i.test(speaker)) return 'bg-purple-500';
+    const palette = [
+        'bg-blue-500',
+        'bg-purple-500',
+        'bg-emerald-500',
+        'bg-amber-500',
+        'bg-pink-500',
+        'bg-cyan-500',
+    ];
+    let hash = 0;
+    for (let i = 0; i < speaker.length; i++) hash = (hash * 31 + speaker.charCodeAt(i)) >>> 0;
+    return palette[hash % palette.length];
+}
+
 /** Stable colour per speaker label so each speaker reads consistently. */
 function speakerColor(speaker: string): string {
     if (/^you\b/i.test(speaker)) return 'text-blue-500';
@@ -150,12 +168,27 @@ const TranscriptSegment = memo(function TranscriptSegment({
 }) {
     const displayText = cleanStopWords(text) || (text.trim() === '' ? '[Silence]' : text);
 
+    // Timeline layout: a colored dot per speaker on a vertical rail, with
+    // "timestamp  Speaker" on one line and the utterance beneath. The rail
+    // makes the conversation scan as a sequence of turns rather than a wall
+    // of undifferentiated rows.
     return (
-        <div id={`segment-${id}`} className="mb-3">
-            <div className="flex items-start gap-2">
+        <div id={`segment-${id}`} className="relative pl-6 pb-5">
+            {/* Rail segment — sits under the dot, connects to the next turn. */}
+            <span
+                aria-hidden
+                className="absolute left-[4px] top-[14px] -bottom-1 w-px bg-[var(--af-border-strong,#e5e7eb)]"
+            />
+            {/* Speaker dot */}
+            <span
+                aria-hidden
+                className={`absolute left-0 top-[5px] h-[9px] w-[9px] rounded-full ${speakerDot(speaker)}`}
+            />
+
+            <div className="flex items-baseline gap-3">
                 <Tooltip>
                     <TooltipTrigger>
-                        <span className="text-xs text-gray-400 mt-1 flex-shrink-0 min-w-[50px]">
+                        <span className="text-xs text-gray-400 tabular-nums flex-shrink-0 min-w-[52px] text-left">
                             {formatRecordingTime(timestamp)}
                         </span>
                     </TooltipTrigger>
@@ -165,31 +198,34 @@ const TranscriptSegment = memo(function TranscriptSegment({
                         )}
                     </TooltipContent>
                 </Tooltip>
-                <div className="flex-1">
-                    {speaker && (
-                        onRenameSpeaker ? (
-                            <button
-                                type="button"
-                                onClick={() => onRenameSpeaker(speaker)}
-                                title={`Rename "${speaker}" — click to say who this is`}
-                                className={`block text-left text-xs font-semibold ${speakerColor(speaker)} rounded px-0.5 -mx-0.5 hover:bg-white/10 hover:underline`}
-                            >
-                                {displaySpeaker(speaker, userName)}
-                            </button>
-                        ) : (
-                            <span className={`block text-xs font-semibold ${speakerColor(speaker)}`}>
-                                {displaySpeaker(speaker, userName)}
-                            </span>
-                        )
-                    )}
-                    {isStreaming ? (
-                        <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
-                            <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
-                        </div>
+
+                {speaker && (
+                    onRenameSpeaker ? (
+                        <button
+                            type="button"
+                            onClick={() => onRenameSpeaker(speaker)}
+                            title={`Rename "${speaker}" - click to say who this is`}
+                            className={`text-sm font-semibold ${speakerColor(speaker)} rounded px-0.5 -mx-0.5 hover:bg-white/10 hover:underline`}
+                        >
+                            {displaySpeaker(speaker, userName)}
+                        </button>
                     ) : (
+                        <span className={`text-sm font-semibold ${speakerColor(speaker)}`}>
+                            {displaySpeaker(speaker, userName)}
+                        </span>
+                    )
+                )}
+            </div>
+
+            {/* Indented past the timestamp column so text aligns under the name. */}
+            <div className="mt-1 pl-[64px]">
+                {isStreaming ? (
+                    <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
                         <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
-                    )}
-                </div>
+                    </div>
+                ) : (
+                    <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
+                )}
             </div>
         </div>
     );

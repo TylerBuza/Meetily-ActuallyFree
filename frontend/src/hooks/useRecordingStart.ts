@@ -162,6 +162,22 @@ export function useRecordingStart(
       setIsMeetingActive(true);
       Analytics.trackButtonClick('start_recording', 'home_page');
 
+      // Offer compact mode. During a meeting the user is usually working in
+      // other apps, so the full window is in the way — but switching is offered
+      // rather than forced, since some people do want the live transcript up.
+      toast('Recording started', {
+        description: 'Shrink to a floating bar so it stays out of your way?',
+        duration: 10000,
+        action: {
+          label: 'Minimize',
+          onClick: () => {
+            invoke('enter_compact_mode', { elapsedSeconds: 0 }).catch((e) =>
+              console.error('Failed to enter compact mode:', e)
+            );
+          },
+        },
+      });
+
       // Show recording notification if enabled
       await showRecordingNotification();
     } catch (error) {

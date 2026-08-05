@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+﻿use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex as StdMutex;
 // Removed unused import
@@ -49,6 +49,7 @@ pub mod groq;
 pub mod openrouter;
 pub mod live_assistant;
 pub mod meeting_detection;
+pub mod minibar;
 pub mod parakeet_engine;
 pub mod paths;
 pub mod state;
@@ -89,9 +90,9 @@ async fn start_recording<R: Runtime>(
     system_device_name: Option<String>,
     meeting_name: Option<String>,
 ) -> Result<(), String> {
-    log_info!("🔥 CALLED start_recording with meeting: {:?}", meeting_name);
+    log_info!("ðŸ”¥ CALLED start_recording with meeting: {:?}", meeting_name);
     log_info!(
-        "📋 Backend received parameters - mic: {:?}, system: {:?}, meeting: {:?}",
+        "ðŸ“‹ Backend received parameters - mic: {:?}, system: {:?}, meeting: {:?}",
         mic_device_name,
         system_device_name,
         meeting_name
@@ -312,7 +313,7 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
     system_device_name: Option<String>,
     meeting_name: Option<String>,
 ) -> Result<(), String> {
-    log_info!("🚀 CALLED start_recording_with_devices_and_meeting - Mic: {:?}, System: {:?}, Meeting: {:?}",
+    log_info!("ðŸš€ CALLED start_recording_with_devices_and_meeting - Mic: {:?}, System: {:?}, Meeting: {:?}",
              mic_device_name, system_device_name, meeting_name);
 
     // Clone meeting_name for notification use later
@@ -660,6 +661,9 @@ pub fn run() {
             diarization::diarize_recording,
             diarization::diarize_meeting,
             diarization::rename_meeting_speaker,
+            minibar::enter_compact_mode,
+            minibar::exit_compact_mode,
+            minibar::is_compact_mode,
             api::api_get_profile,
             api::api_save_profile,
             api::api_update_profile,

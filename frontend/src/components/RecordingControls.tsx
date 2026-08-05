@@ -88,6 +88,25 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
     checkTauri();
   }, []);
 
+  // Holds the stop handler, which is defined further down. The compact-bar
+  // listener below is registered once on mount and would otherwise capture a
+  // stale closure (or force the listener to re-subscribe on every render).
+  const handleStopRecordingRef = useRef<null | (() => void)>(null);
+
+  // Stop requested from the compact recording bar. That window intentionally
+  // doesn't implement stopping itself — saving audio, persisting transcripts,
+  // summarising and navigating all live here, and duplicating that sequence
+  // would be two implementations to keep in step.
+  useEffect(() => {
+    const unlisten = listen('minibar-stop-requested', () => {
+      console.log('[RecordingControls] stop requested from compact bar');
+      handleStopRecordingRef.current?.();
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   const handleStartRecording = useCallback(async () => {
     if (isStarting || isValidatingModel) return;
     console.log('Starting recording...');
@@ -214,6 +233,11 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
     // Immediately trigger the stop action
     await stopRecordingAction();
   }, [isRecording, isStarting, isStopping, stopRecordingAction, onStopInitiated]);
+
+  // Keep the ref pointing at the current handler for the compact-bar listener.
+  useEffect(() => {
+    handleStopRecordingRef.current = handleStopRecording;
+  }, [handleStopRecording]);
 
   const handlePauseRecording = useCallback(async () => {
     if (!isRecording || isPaused || isPausing) return;
