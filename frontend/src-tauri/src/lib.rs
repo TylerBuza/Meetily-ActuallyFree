@@ -518,6 +518,12 @@ pub fn run() {
                 let templates_dir = resource_path.join("templates");
                 log::info!("Setting bundled templates directory to: {:?}", templates_dir);
                 summary::templates::set_bundled_templates_dir(templates_dir);
+
+                // Speaker-diarization models ship inside the app bundle, so
+                // diarization works out of the box with no download.
+                let diarization_dir = resource_path.join("resources").join("diarization");
+                log::info!("Setting bundled diarization models directory to: {:?}", diarization_dir);
+                diarization::set_bundled_dir(diarization_dir);
             } else {
                 log::warn!("Failed to resolve resource directory for templates");
             }
@@ -651,6 +657,8 @@ pub fn run() {
             meeting_detection::stop_meeting_detection,
             diarization::diarization_models_available,
             diarization::diarization_model_directory,
+            diarization::diarization_download_size,
+            diarization::download_diarization_models,
             diarization::diarize_recording,
             diarization::diarize_meeting,
             api::api_get_profile,

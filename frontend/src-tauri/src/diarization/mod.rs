@@ -15,12 +15,13 @@
 //! Models live install-locally in `<install>/data/models/diarization`.
 
 pub mod clustering;
+pub mod download;
 pub mod dsp;
 pub mod models;
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use models::{DiarizationModels, MAX_LOCAL_SPEAKERS};
 
@@ -50,17 +51,54 @@ pub struct DiarizationResult {
     pub duration: f32,
 }
 
-/// Where the diarization models live.
-pub fn diarization_model_dir() -> PathBuf {
+/// Required model files.
+const REQUIRED_FILES: [&str; 3] = [
+    "segmentation-3.0-fp16.onnx",
+    "wespeaker-resnet34-LM.onnx",
+    "xvec_transform.npz",
+];
+
+/// Directory of the models shipped inside the app bundle, resolved once at
+/// startup from Tauri's resource directory.
+static BUNDLED_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Record where the bundled diarization models live (called during setup).
+pub fn set_bundled_dir(dir: PathBuf) {
+    let _ = BUNDLED_DIR.set(dir);
+}
+
+/// True when every required model file exists in `dir`.
+fn dir_has_models(dir: &Path) -> bool {
+    REQUIRED_FILES.iter().all(|f| dir.join(f).exists())
+}
+
+/// Where the app's *writable* diarization model directory is — the target for
+/// manual installs and downloads.
+pub fn diarization_user_model_dir() -> PathBuf {
     crate::paths::models_dir().join("diarization")
 }
 
-/// Whether all required model files are present.
+/// Resolve the directory the models should actually be loaded from.
+///
+/// A user-supplied copy in the install-local data folder wins (so models can be
+/// swapped or upgraded without rebuilding), otherwise the copy bundled with the
+/// app is used. Falls back to the user directory so downloads have a target.
+pub fn diarization_model_dir() -> PathBuf {
+    let user_dir = diarization_user_model_dir();
+    if dir_has_models(&user_dir) {
+        return user_dir;
+    }
+    if let Some(bundled) = BUNDLED_DIR.get() {
+        if dir_has_models(bundled) {
+            return bundled.clone();
+        }
+    }
+    user_dir
+}
+
+/// Whether all required model files are present (bundled or user-supplied).
 pub fn models_available() -> bool {
-    let d = diarization_model_dir();
-    d.join("segmentation-3.0-fp16.onnx").exists()
-        && d.join("wespeaker-resnet34-LM.onnx").exists()
-        && d.join("xvec_transform.npz").exists()
+    dir_has_models(&diarization_model_dir())
 }
 
 /// One local speaker's activity inside one window.
@@ -239,10 +277,29 @@ pub async fn diarization_models_available() -> Result<bool, String> {
     Ok(models_available())
 }
 
-/// Where diarization models should be placed.
+/// The writable folder where a user can drop their own models to override the
+/// bundled ones (also the download target).
 #[tauri::command]
 pub async fn diarization_model_directory() -> Result<String, String> {
-    Ok(diarization_model_dir().to_string_lossy().to_string())
+    Ok(diarization_user_model_dir().to_string_lossy().to_string())
+}
+
+/// Total size of the diarization model download, in bytes.
+#[tauri::command]
+pub async fn diarization_download_size() -> Result<u64, String> {
+    Ok(download::total_download_bytes())
+}
+
+/// Download the diarization models from this fork's GitHub release.
+/// Progress is emitted as `diarization-download-progress` events.
+#[tauri::command]
+pub async fn download_diarization_models<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<(), String> {
+    download::download_models(&app).await.map_err(|e| {
+        log::error!("Diarization model download failed: {}", e);
+        e.to_string()
+    })
 }
 
 /// Run diarization on a recording and return speaker-labeled time segments.

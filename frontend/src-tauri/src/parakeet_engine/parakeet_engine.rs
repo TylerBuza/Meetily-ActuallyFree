@@ -585,12 +585,17 @@ impl ParakeetEngine {
             }
         }
 
-        // HuggingFace base URL for Parakeet models (version-specific)
+        // Model download sources (version-specific).
+        //
+        // v2 comes from the upstream community ONNX export on HuggingFace.
+        // v3 is mirrored on this fork's own GitHub release so the app is
+        // self-sufficient and doesn't rely on (or bill) any third party's
+        // hosting. Parakeet TDT is NVIDIA's model, CC-BY-4.0.
         let base_url = if model_name.contains("-v2-") {
             "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main"
         } else {
             // Default to v3 for v3 models
-            "https://meetily.towardsgeneralintelligence.com/models/parakeet-tdt-0.6b-v3-onnx"
+            "https://github.com/TylerBuza/Meetily-ActuallyFree/releases/download/parakeet-tdt-0.6b-v3-onnx"
         };
 
         // Determine which files to download based on quantization

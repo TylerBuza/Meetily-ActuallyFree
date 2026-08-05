@@ -63,7 +63,17 @@ exit /b 0
 echo [lib] building meetily --release --features cuda,custom-protocol
 cd /d "%ROOT%src-tauri"
 cargo build --release --features cuda,custom-protocol
-exit /b %errorlevel%
+if errorlevel 1 exit /b %errorlevel%
+REM Stage bundled resources next to the exe. For a packaged build Tauri does
+REM this itself, but a plain `cargo build` doesn't - and resource_dir() resolves
+REM to the exe folder, so diarization models + templates must be copied here.
+set "STAGE=%REPO%\target\release"
+if not exist "%STAGE%\resources\diarization" mkdir "%STAGE%\resources\diarization"
+copy /Y "%ROOT%src-tauri\resources\diarization\*" "%STAGE%\resources\diarization\" >nul
+if not exist "%STAGE%\templates" mkdir "%STAGE%\templates"
+copy /Y "%ROOT%src-tauri\templates\*.json" "%STAGE%\templates\" >nul
+echo [lib] staged bundled resources (diarization models, templates)
+exit /b 0
 
 :check
 echo [check] cargo check meetily --release --features cuda,custom-protocol (no exe link)
