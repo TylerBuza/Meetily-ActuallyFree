@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import { useTranscripts } from '@/contexts/TranscriptContext';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
@@ -14,6 +15,49 @@ import {
 } from '@/lib/summary-language-preferences';
 
 type SummaryStatus = 'idle' | 'processing' | 'summarizing' | 'regenerating' | 'completed' | 'error';
+
+/**
+ * Event dispatched once background diarization has rewritten a meeting's
+ * speaker labels, so any open view can refetch and show them.
+ */
+export const DIARIZATION_UPDATED_EVENT = 'meetily:diarization-updated';
+
+/**
+ * Run full offline speaker diarization for a finished meeting and persist the
+ * resulting labels, without blocking the caller.
+ *
+ * This deliberately fails quietly. Live diarization has already labelled the
+ * transcript, so if this pass can't run (models absent, recording still being
+ * flushed, unreadable audio) the user simply keeps the live labels — there is
+ * nothing for them to act on, so an error toast would be noise.
+ */
+async function autoDiarizeMeeting(meetingId: string): Promise<void> {
+  try {
+    const available = await invoke<boolean>('diarization_models_available');
+    if (!available) return;
+
+    // The recording is written by the Rust side as the meeting is finalized;
+    // give the file a moment to be fully flushed before reading it back.
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    const result = await invoke<{ num_speakers: number; labeled: number }>(
+      'diarize_meeting',
+      { meetingId, numSpeakers: null }
+    );
+
+    if (result.labeled > 0) {
+      console.log(
+        `[auto-diarize] ${result.num_speakers} speakers, ${result.labeled} segments labeled`
+      );
+      // Tell any open meeting view to refresh its transcript labels.
+      window.dispatchEvent(
+        new CustomEvent(DIARIZATION_UPDATED_EVENT, { detail: { meetingId } })
+      );
+    }
+  } catch (error) {
+    console.warn('[auto-diarize] skipped:', error);
+  }
+}
 
 interface UseRecordingStopReturn {
   handleRecordingStop: (callApi: boolean) => Promise<void>;
@@ -295,6 +339,16 @@ export function useRecordingStop(
 
           // Mark meeting as saved in IndexedDB (for recovery system)
           await markMeetingAsSaved();
+
+          // Refine speaker labels in the background.
+          //
+          // Live transcription already labels segments via streaming
+          // diarization, but that runs blind to the future and can't revise
+          // earlier guesses. Now that the whole recording exists on disk we can
+          // run the full offline pass, which clusters every voice globally and
+          // produces better labels. Fire-and-forget: the user is navigating to
+          // the meeting straight away and shouldn't wait for this.
+          void autoDiarizeMeeting(meetingId);
 
           // Clean up session storage
           sessionStorage.removeItem('last_recording_folder_path');

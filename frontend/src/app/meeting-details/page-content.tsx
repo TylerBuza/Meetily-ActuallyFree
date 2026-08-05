@@ -1,5 +1,6 @@
-"use client";
+﻿"use client";
 import { useState, useEffect, useRef } from 'react';
+import { DIARIZATION_UPDATED_EVENT } from '@/hooks/useRecordingStop';
 import { motion } from 'framer-motion';
 import { Summary, SummaryResponse } from '@/types';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
@@ -48,7 +49,7 @@ export default function PageContent({
   loadedCount?: number;
   onLoadMore?: () => void;
 }) {
-  console.log('📄 PAGE CONTENT: Initializing with data:', {
+  console.log('ðŸ“„ PAGE CONTENT: Initializing with data:', {
     meetingId: meeting.id,
     summaryDataKeys: summaryData ? Object.keys(summaryData) : null,
     transcriptsCount: meeting.transcripts?.length
@@ -75,17 +76,17 @@ export default function PageContent({
 
   // Callback to register the modal open function
   const handleRegisterModalOpen = (openFn: () => void) => {
-    console.log('📝 Registering modal open function in PageContent');
+    console.log('ðŸ“ Registering modal open function in PageContent');
     openModelSettingsRef.current = openFn;
   };
 
   // Callback to trigger modal open (called from error handler)
   const handleOpenModelSettings = () => {
-    console.log('🔔 Opening model settings from PageContent');
+    console.log('ðŸ”” Opening model settings from PageContent');
     if (openModelSettingsRef.current) {
       openModelSettingsRef.current();
     } else {
-      console.warn('⚠️ Modal open function not yet registered');
+      console.warn('âš ï¸ Modal open function not yet registered');
     }
   };
 
@@ -141,13 +142,27 @@ export default function PageContent({
     Analytics.trackPageView('meeting_details');
   }, []);
 
+  // Speaker labels are refined by a background diarization pass that finishes
+  // after a recording is saved â€” often once this screen is already open. Refetch
+  // the transcript when that lands so the better labels appear on their own.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ meetingId?: string }>).detail;
+      if (detail?.meetingId && detail.meetingId !== meeting.id) return;
+      console.log('[meeting-details] diarization updated â€” refreshing transcript');
+      void onRefetchTranscripts?.();
+    };
+    window.addEventListener(DIARIZATION_UPDATED_EVENT, handler);
+    return () => window.removeEventListener(DIARIZATION_UPDATED_EVENT, handler);
+  }, [meeting.id, onRefetchTranscripts]);
+
   // Auto-generate summary when flag is set
   useEffect(() => {
     let cancelled = false;
 
     const autoGenerate = async () => {
       if (shouldAutoGenerate && meetingData.transcripts.length > 0 && !cancelled) {
-        console.log(`🤖 Auto-generating summary with ${modelConfig.provider}/${modelConfig.model}...`);
+        console.log(`ðŸ¤– Auto-generating summary with ${modelConfig.provider}/${modelConfig.model}...`);
         await summaryGeneration.handleGenerateSummary('');
 
         // Notify parent that auto-generation is complete (only if not cancelled)
