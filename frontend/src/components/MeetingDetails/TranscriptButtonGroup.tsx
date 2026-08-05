@@ -9,6 +9,7 @@ import { RetranscribeDialog } from './RetranscribeDialog';
 import { useConfig } from '@/contexts/ConfigContext';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 
 
 interface TranscriptButtonGroupProps {
@@ -36,6 +37,8 @@ export function TranscriptButtonGroup({
   // models are installed.
   const [diarizeAvailable, setDiarizeAvailable] = useState(false);
   const [isDiarizing, setIsDiarizing] = useState(false);
+  const [showSpeakerDialog, setShowSpeakerDialog] = useState(false);
+  const [expectedSpeakers, setExpectedSpeakers] = useState<string>('');
 
   useEffect(() => {
     invoke<boolean>('diarization_models_available')
@@ -50,9 +53,10 @@ export function TranscriptButtonGroup({
     }
   }, [onRefetchTranscripts]);
 
-  const handleIdentifySpeakers = useCallback(async () => {
+  const handleIdentifySpeakers = useCallback(async (expected?: number) => {
     if (!meetingId || isDiarizing) return;
     Analytics.trackButtonClick('identify_speakers', 'meeting_details');
+    setShowSpeakerDialog(false);
     setIsDiarizing(true);
     const toastId = toast.loading('Identifying speakers…', {
       description: 'Analyzing the recording on-device. This can take a minute.',
@@ -60,6 +64,7 @@ export function TranscriptButtonGroup({
     try {
       const res = await invoke<{ num_speakers: number; labeled: number }>('diarize_meeting', {
         meetingId,
+        numSpeakers: expected ?? null,
       });
       toast.success(
         res.num_speakers > 0
@@ -114,7 +119,10 @@ export function TranscriptButtonGroup({
             size="sm"
             variant="outline"
             className="xl:px-4"
-            onClick={handleIdentifySpeakers}
+            onClick={() => {
+              setExpectedSpeakers('');
+              setShowSpeakerDialog(true);
+            }}
             disabled={isDiarizing || transcriptCount === 0}
             title={
               transcriptCount === 0
@@ -147,6 +155,71 @@ export function TranscriptButtonGroup({
           </Button>
         )}
       </ButtonGroup>
+
+      {/* Ask how many speakers to expect before diarizing */}
+      <Dialog open={showSpeakerDialog} onOpenChange={setShowSpeakerDialog}>
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md">
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <Users size={18} className="text-blue-500" />
+            Identify speakers
+          </DialogTitle>
+          <div className="mt-2 space-y-3">
+            <p className="text-sm text-gray-500">
+              How many people spoke in this meeting? Telling us is far more accurate than letting
+              the app guess — leave it blank to auto-detect.
+            </p>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              autoFocus
+              value={expectedSpeakers}
+              onChange={(e) => setExpectedSpeakers(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  const n = parseInt(expectedSpeakers, 10);
+                  handleIdentifySpeakers(Number.isFinite(n) && n > 0 ? n : undefined);
+                }
+              }}
+              placeholder="Auto-detect"
+              className="w-full rounded-md border border-[var(--af-border,#d1d5db)] bg-[var(--af-panel-2,#fff)] px-3 py-2 text-sm text-[var(--af-text,#111827)] outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <div className="flex flex-wrap gap-1.5">
+              {[2, 3, 4, 5, 6, 8].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setExpectedSpeakers(String(n))}
+                  className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                    expectedSpeakers === String(n)
+                      ? 'border-blue-500 bg-blue-50 text-blue-600'
+                      : 'border-[var(--af-border,#e5e7eb)] text-gray-500 hover:border-blue-400 hover:text-blue-500'
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setShowSpeakerDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="bg-blue-600 text-white hover:bg-blue-700"
+              onClick={() => {
+                const n = parseInt(expectedSpeakers, 10);
+                handleIdentifySpeakers(Number.isFinite(n) && n > 0 ? n : undefined);
+              }}
+            >
+              <Users size={16} className="mr-1.5" />
+              {expectedSpeakers ? `Find ${expectedSpeakers} speakers` : 'Auto-detect'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {betaFeatures.importAndRetranscribe && meetingId && meetingFolderPath && (
         <RetranscribeDialog

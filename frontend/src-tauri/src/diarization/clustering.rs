@@ -1,4 +1,4 @@
-//! Agglomerative hierarchical clustering (AHC) of speaker embeddings.
+﻿//! Agglomerative hierarchical clustering (AHC) of speaker embeddings.
 //!
 //! Embeddings are length-normalized, so cosine distance = 1 - dot product.
 //! Uses average linkage via the Lance-Williams update. Stops either at a fixed
@@ -7,8 +7,8 @@
 
 /// Cluster `embeddings` (each already length-normalized) into speaker labels.
 ///
-/// * `num_speakers` – if `Some(k)`, force exactly `k` clusters (when possible).
-/// * `threshold` – cosine-distance stop threshold when `num_speakers` is None.
+/// * `num_speakers` â€“ if `Some(k)`, force exactly `k` clusters (when possible).
+/// * `threshold` â€“ cosine-distance stop threshold when `num_speakers` is None.
 ///
 /// Returns a label (0-based, contiguous) for each input embedding.
 pub fn agglomerative(

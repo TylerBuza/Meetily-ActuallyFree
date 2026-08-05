@@ -44,6 +44,7 @@ if /I "%MODE%"=="libhelper" goto :helper
 if /I "%MODE%"=="lib"       goto :lib
 if /I "%MODE%"=="bundle"    goto :bundle
 if /I "%MODE%"=="check"     goto :check
+if /I "%MODE%"=="test"      goto :test
 echo Unknown mode: %MODE%
 exit /b 1
 
@@ -79,6 +80,14 @@ exit /b 0
 echo [check] cargo check meetily --release --features cuda,custom-protocol (no exe link)
 cd /d "%ROOT%src-tauri"
 cargo check --release --features cuda,custom-protocol
+exit /b %errorlevel%
+
+:test
+REM Run a specific test with output shown, e.g.:
+REM   build-cuda-env.bat test diarize_sample
+echo [test] cargo test --release --features cuda %~2
+cd /d "%ROOT%src-tauri"
+cargo test --release --features cuda %~2 -- --nocapture --test-threads=1
 exit /b %errorlevel%
 
 :bundle
