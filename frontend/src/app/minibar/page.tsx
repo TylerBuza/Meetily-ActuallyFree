@@ -1,13 +1,13 @@
-'use client';
+﻿'use client';
 
 /**
- * Compact recording bar — the entire UI of the frameless `minibar` window.
+ * Compact recording bar â€” the entire UI of the frameless `minibar` window.
  *
  * Shown while recording so the user can keep an eye on the timer and input
  * levels, and pause/stop, without the full window taking over their screen.
  *
  * Deliberately does NOT own the stop logic. Stopping a meeting saves audio,
- * persists transcripts, kicks off summarisation and navigates — all of which
+ * persists transcripts, kicks off summarisation and navigates â€” all of which
  * lives in the main window. Stop here asks the main window to do it, so there
  * is exactly one implementation of that sequence.
  */
@@ -82,7 +82,7 @@ export default function MiniBarPage() {
   return (
     <div
       data-tauri-drag-region
-      className="flex h-screen w-screen items-center gap-4 rounded-2xl border border-white/10 bg-[#0f1218]/95 px-4 text-white shadow-2xl backdrop-blur-xl select-none"
+      className="flex h-screen w-screen items-center gap-4 border border-white/10 bg-[#0f1218]/85 px-4 text-white shadow-2xl backdrop-blur-xl select-none"
     >
       {/* Status + timer */}
       <div data-tauri-drag-region className="flex items-center gap-3 pl-1">
@@ -102,7 +102,7 @@ export default function MiniBarPage() {
 
       <div className="h-8 w-px bg-white/10" />
 
-      {/* Live input levels — same Rust events the main window listens to. */}
+      {/* Live input levels â€” same Rust events the main window listens to. */}
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center gap-2">
           <Mic size={12} className="shrink-0 text-gray-400" />

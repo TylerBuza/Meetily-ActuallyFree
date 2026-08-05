@@ -1,6 +1,6 @@
-//! Compact recording mode.
+﻿//! Compact recording mode.
 //!
-//! While a meeting is being recorded the full window is mostly in the way — the
+//! While a meeting is being recorded the full window is mostly in the way â€” the
 //! user is working in other apps. Compact mode hides it and shows a small
 //! frameless, always-on-top bar with just the timer, input meters and the
 //! pause/stop controls, so recording stays visible and controllable without
@@ -14,7 +14,7 @@
 use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 
 const MINIBAR_LABEL: &str = "minibar";
-const MINIBAR_WIDTH: f64 = 520.0;
+const MINIBAR_WIDTH: f64 = 580.0;
 const MINIBAR_HEIGHT: f64 = 76.0;
 
 /// Show the compact recording bar and hide the main window.
@@ -28,7 +28,7 @@ pub async fn enter_compact_mode<R: Runtime>(
 ) -> Result<(), String> {
     let elapsed = elapsed_seconds.unwrap_or(0);
 
-    // Reuse the window if it already exists — rebuilding it would flash.
+    // Reuse the window if it already exists â€” rebuilding it would flash.
     if let Some(existing) = app.get_webview_window(MINIBAR_LABEL) {
         let _ = existing.eval(&format!(
             "window.dispatchEvent(new CustomEvent('minibar-sync',{{detail:{{elapsed:{}}}}}))",
@@ -67,7 +67,7 @@ pub async fn enter_compact_mode<R: Runtime>(
         main.hide().map_err(|e| e.to_string())?;
     }
 
-    log::info!("🎬 Entered compact recording mode");
+    log::info!("ðŸŽ¬ Entered compact recording mode");
     Ok(())
 }
 
@@ -82,7 +82,7 @@ pub async fn exit_compact_mode<R: Runtime>(app: AppHandle<R>) -> Result<(), Stri
         let _ = main.unminimize();
         let _ = main.set_focus();
     }
-    log::info!("🎬 Left compact recording mode");
+    log::info!("ðŸŽ¬ Left compact recording mode");
     Ok(())
 }
 
