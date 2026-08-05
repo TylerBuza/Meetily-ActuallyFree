@@ -1,5 +1,29 @@
 ﻿'use client';
 
+/**
+ * The transcript renderer actually used by the app — both during live recording
+ * and on the meeting-details screen. (`components/TranscriptView.tsx` is dead
+ * code; edit this file instead.)
+ *
+ * Rows are virtualized with @tanstack/react-virtual so multi-hour meetings stay
+ * responsive: only visible segments are mounted.
+ *
+ * ## Speaker labels
+ * Each segment may carry a `speaker` string, rendered above its text and given
+ * a stable colour by `speakerColor()`. Two sources produce it:
+ *   - live recording  → streaming diarization ("Speaker 1/2/3"), see
+ *     `src-tauri/src/diarization/online.rs`
+ *   - after the fact  → the Speakers action re-runs offline diarization and
+ *     persists labels to the DB `transcripts.speaker` column
+ *
+ * ⚠️ The label only appears if every hop preserves it. Three separate
+ * transcript→segment converters exist and each must copy `speaker`:
+ *   1. `app/_components/TranscriptPanel.tsx`        (live)
+ *   2. `components/MeetingDetails/TranscriptPanel.tsx` (non-paginated)
+ *   3. `hooks/usePaginatedTranscripts.ts`            (paginated)
+ * Dropping it in any one of them silently hides speakers on that screen.
+ */
+
 import { useCallback, useRef, useReducer, startTransition, useEffect, useState, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useAutoScroll } from "@/hooks/useAutoScroll";

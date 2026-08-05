@@ -1,3 +1,24 @@
+//! Where meeting audio recordings are saved, and the user's preferences for it.
+//!
+//! ⚠️ Recordings are the one thing this otherwise-portable app does **not** put
+//! under `<exe dir>/data` (see `crate::paths`). They live in a user-facing media
+//! folder so people can find, play and share them with normal tools:
+//!
+//! | OS      | Default location                                  |
+//! |---------|---------------------------------------------------|
+//! | Windows | `%USERPROFILE%\Music\meetily-recordings`           |
+//! | macOS   | `~/Movies/meetily-recordings`                      |
+//! | Linux   | `~/Videos/meetily-recordings` (or Documents)       |
+//!
+//! Layout is `<folder>/<sanitized meeting name>/audio.mp4`, alongside
+//! `metadata.json` and `transcripts.json`.
+//!
+//! Two things regularly catch people out:
+//!   1. The container is **`.mp4`**, not `.wav` — anything reading recordings
+//!      back (e.g. diarization) must decode it first.
+//!   2. The folder is **not** the app data root, so searching only there finds
+//!      nothing. See `diarization::find_meeting_audio` for the correct lookup.
+
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

@@ -1,6 +1,25 @@
-// audio/transcription/worker.rs
-//
-// Parallel transcription worker pool and chunk processing logic.
+//! Transcription worker pool: consumes VAD speech segments and produces
+//! transcript lines, which are emitted to the UI as `transcript-update` events.
+//!
+//! ## Where the input comes from
+//! Segments arrive from `AudioPipeline` and are **mixed** mic+system audio at
+//! 16 kHz. Their `device_type` is a placeholder and carries no speaker
+//! information — see the pipeline module docs.
+//!
+//! ## Speaker labelling
+//! Each segment is labelled before being emitted:
+//!
+//! 1. **Live diarization** (preferred) — `crate::diarization::online` embeds the
+//!    segment and matches it against voices heard so far, yielding
+//!    "Speaker 1/2/3". Active only when the diarization models are installed.
+//! 2. **Capture-source fallback** — reads `device_type`, which for mixed audio
+//!    can only ever produce "You". Retained purely so transcripts still carry
+//!    some label without the models.
+//!
+//! The label travels to the frontend as `TranscriptUpdate.source`, which
+//! `TranscriptContext` maps onto `Transcript.speaker` for rendering. Running the
+//! "Speakers" action on a finished meeting re-runs full offline diarization and
+//! overwrites these live labels with more accurate ones.
 
 use super::engine::TranscriptionEngine;
 use super::provider::TranscriptionError;
@@ -145,12 +164,20 @@ pub fn start_transcription_task<R: Runtime>(
 
                             // Speaker label for this segment.
                             //
-                            // Prefer live diarization: it distinguishes individual
-                            // voices ("Speaker 1/2/3"). The capture-source fallback
-                            // below can only ever say "You", because the audio
+                            // Prefer live diarization: it embeds the segment and
+                            // matches it against voices heard so far, so it can
+                            // distinguish individual people ("Speaker 1/2/3").
+                            //
+                            // The capture-source fallback below is a historical
+                            // path that can only ever say "You": the audio
                             // reaching transcription is the *mixed* mic+system
-                            // stream (see AudioPipeline), so its device_type is
-                            // always Microphone.
+                            // stream, whose `device_type` is a hard-coded
+                            // placeholder (see AudioPipeline). It is kept only so
+                            // transcripts still get some label when the
+                            // diarization models aren't installed.
+                            //
+                            // This label flows to the UI as `TranscriptUpdate.source`,
+                            // which the frontend maps onto `Transcript.speaker`.
                             let chunk_source = match crate::diarization::online::assign_speaker(&chunk.data) {
                                 Some(idx) => format!("Speaker {}", idx + 1),
                                 None => match &chunk.device_type {

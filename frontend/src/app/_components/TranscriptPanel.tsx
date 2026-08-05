@@ -1,3 +1,16 @@
+/**
+ * Transcript panel for the LIVE recording screen (`app/page.tsx`).
+ *
+ * ⚠️ There are TWO components named `TranscriptPanel`. This is the live one.
+ * The meeting-details screen uses `components/MeetingDetails/TranscriptPanel.tsx`.
+ * Editing the wrong file is a common trap — the change compiles and appears to
+ * do nothing, because the screen you are looking at renders the other one.
+ *
+ * Transcripts arrive from `TranscriptContext`, which maps the Rust event's
+ * `source` field onto `speaker`. The converter below must keep `speaker` or
+ * live speaker labels silently disappear.
+ */
+
 import { VirtualizedTranscriptView } from '@/components/VirtualizedTranscriptView';
 import { PermissionWarning } from '@/components/PermissionWarning';
 import { Button } from '@/components/ui/button';
@@ -45,6 +58,7 @@ export function TranscriptPanel({
       endTime: t.audio_end_time,
       text: t.text,
       confidence: t.confidence,
+      speaker: t.speaker,
     })),
     [transcripts]
   );

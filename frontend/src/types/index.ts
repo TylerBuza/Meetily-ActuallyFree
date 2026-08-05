@@ -102,11 +102,26 @@ export interface PaginatedTranscriptsResponse {
 }
 
 // Transcript segment data for virtualized display
+/**
+ * A transcript line as rendered by `VirtualizedTranscriptView`.
+ *
+ * ⚠️ Three separate places convert `Transcript` → `TranscriptSegmentData`, and
+ * each must copy every field it wants displayed. Omitting `speaker` in any one
+ * of them silently hides speaker labels on that screen only:
+ *   - `app/_components/TranscriptPanel.tsx`             (live recording)
+ *   - `components/MeetingDetails/TranscriptPanel.tsx`   (details, non-paginated)
+ *   - `hooks/usePaginatedTranscripts.ts`                (details, paginated)
+ */
 export interface TranscriptSegmentData {
   id: string;
   timestamp: number; // audio_start_time in seconds
   endTime?: number; // audio_end_time in seconds
   text: string;
   confidence?: number;
-  speaker?: string; // "You"/"Guest" (capture source) or "Speaker N" (diarization)
+  /**
+   * Display label for who spoke. Either "Speaker N" from diarization (live via
+   * `diarization::online`, or persisted by the Speakers action), or the legacy
+   * capture-source fallback "You". Undefined renders no label.
+   */
+  speaker?: string;
 }

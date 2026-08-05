@@ -1,5 +1,20 @@
 'use client';
 
+/**
+ * ⚠️ DEAD CODE — nothing renders this component.
+ *
+ * Both live recording and meeting-details render `VirtualizedTranscriptView`
+ * instead (via their respective `TranscriptPanel`s). This file survives only
+ * because it is still imported in a couple of places that never mount it.
+ *
+ * It is a genuine trap: changes made here appear to do nothing at runtime.
+ * If you are trying to change how transcript lines look, edit
+ * `components/VirtualizedTranscriptView.tsx`.
+ *
+ * Kept rather than deleted only to avoid touching its stale importers; delete
+ * it once those are cleaned up.
+ */
+
 import { Transcript } from '@/types';
 import { useEffect, useRef, useState } from 'react';
 import { ConfidenceIndicator } from './ConfidenceIndicator';

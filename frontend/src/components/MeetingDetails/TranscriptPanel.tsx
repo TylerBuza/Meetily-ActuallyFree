@@ -1,5 +1,21 @@
 "use client";
 
+/**
+ * Transcript panel for the MEETING-DETAILS screen.
+ *
+ * ⚠️ There are TWO components named `TranscriptPanel`. This is the
+ * meeting-details one; the live recording screen uses
+ * `app/_components/TranscriptPanel.tsx`. Editing the wrong file is a common
+ * trap — it compiles and appears to do nothing.
+ *
+ * Two data paths feed the virtualized view, and BOTH must carry `speaker` or
+ * speaker labels vanish on this screen:
+ *   - paginated  → `segments` prop, built by `hooks/usePaginatedTranscripts.ts`
+ *   - otherwise  → converted inline from `transcripts` below
+ *
+ * The `TranscriptView` import below is vestigial — that component is dead code.
+ */
+
 import { Transcript, TranscriptSegmentData } from '@/types';
 import { TranscriptView } from '@/components/TranscriptView';
 import { VirtualizedTranscriptView } from '@/components/VirtualizedTranscriptView';

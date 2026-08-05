@@ -1,3 +1,36 @@
+//! The audio pipeline: turns two raw capture streams into (a) a recording and
+//! (b) speech segments for transcription.
+//!
+//! ```text
+//!   mic ──┐                             ┌─▶ recording_sender  (mixed audio → file)
+//!         ├─▶ ring buffer ─▶ mixer ─────┤
+//!   sys ──┘                             └─▶ VAD ─▶ transcription_sender
+//! ```
+//!
+//! ## Why mixing happens before transcription
+//! A meeting is a single conversation; transcribing mic and system audio
+//! separately produces two interleaved transcripts that are hard to reconcile.
+//! The mixer aligns both streams in fixed windows and blends them, so the
+//! transcriber sees one coherent conversation.
+//!
+//! ## ⚠️ The cost: source information is destroyed
+//! Once mixed, no single device owns the samples, so the `device_type` on
+//! chunks sent to transcription is a **placeholder** (`Microphone`). Code
+//! downstream must not infer who is speaking from it — an earlier attempt did
+//! and labelled every line "You", including other participants. Speaker
+//! identity comes from diarization (`crate::diarization`).
+//!
+//! ## Live level meters
+//! Because mixing erases the distinction, per-source RMS/peak levels are
+//! computed **before** mixing and emitted as `recording-audio-levels`
+//! (throttled to ~25/sec per source). This is the only surviving pre-mix
+//! signal, and it drives the mic/system meters in the recording UI. The webview
+//! cannot capture system audio itself, so these meters must be Rust-driven.
+//!
+//! ## VAD
+//! Only speech reaches the transcriber, which removes most of the silence a
+//! meeting contains and correspondingly reduces transcription cost.
+
 use std::sync::Arc;
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
@@ -886,12 +919,22 @@ impl AudioPipeline {
                                             info!("📤 Sending VAD segment: {:.1}ms, {} samples",
                                                   duration_ms, segment.samples.len());
 
+                                            // ⚠️ `device_type` here is a placeholder, NOT the real
+                                            // source. By this point mic and system audio have been
+                                            // mixed into a single stream, so no single device owns
+                                            // the samples; `Microphone` is simply a required field.
+                                            //
+                                            // Consequence: downstream code must NOT infer the
+                                            // speaker from `device_type` — every transcription
+                                            // chunk looks like microphone audio. Speaker identity
+                                            // comes from diarization instead (see
+                                            // `diarization::online` and `transcription::worker`).
                                             let transcription_chunk = AudioChunk {
                                                 data: segment.samples,
                                                 sample_rate: 16000,
                                                 timestamp: segment.start_timestamp_ms / 1000.0,
                                                 chunk_id: self.chunk_id_counter,
-                                                device_type: DeviceType::Microphone,  // Mixed audio
+                                                device_type: DeviceType::Microphone,  // placeholder — audio is mixed
                                             };
 
                                             if let Err(e) = self.transcription_sender.send(transcription_chunk) {

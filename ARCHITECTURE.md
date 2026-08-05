@@ -1,0 +1,231 @@
+# Architecture Notes
+
+Practical notes on how this app fits together, aimed at someone (or some model)
+opening the repo with no prior context. It deliberately focuses on the things
+that are **not** obvious from reading the code — the traps, the "why is it like
+this", and the places where a reasonable-looking change silently does nothing.
+
+For build commands see [`frontend/build-cuda-env.bat`](frontend/build-cuda-env.bat).
+
+---
+
+## 1. Shape of the app
+
+A Tauri 2 desktop app. Rust owns audio, transcription, storage and AI
+orchestration; a Next.js 14 frontend renders the UI inside the webview. There is
+no server — everything runs on the user's machine.
+
+```
+Next.js UI  ──invoke()──▶  Tauri commands (Rust)
+     ▲                            │
+     └──────── events ────────────┘      e.g. transcript-update,
+                                          recording-audio-levels
+```
+
+The `backend/` directory in the upstream project (Python/FastAPI) is **not used**
+and has been removed from this fork.
+
+---
+
+## 2. Audio pipeline
+
+Capture → mix → VAD → transcription, in `src-tauri/src/audio/`.
+
+```
+mic  ─┐
+      ├─▶ AudioPipeline ─┬─▶ recording file (mixed, saved to disk)
+sys  ─┘                  └─▶ VAD ─▶ speech segments ─▶ transcription worker
+```
+
+### The mixed-audio trap ⚠️
+
+By the time audio reaches transcription, mic and system audio have been **mixed
+into one stream**. The `AudioChunk.device_type` on those chunks is a hard-coded
+placeholder (`Microphone`) because no single device owns the samples.
+
+This means **you cannot tell who is speaking from `device_type`**. An earlier
+attempt at speaker labelling did exactly that and produced "You" for every
+single line, including the other participants. Speaker identity comes from
+diarization instead (§4).
+
+### Live audio levels
+
+`pipeline.rs` computes per-source RMS/peak *before* mixing and emits them as
+`recording-audio-levels` events (~25/sec per source), which drive the meters in
+`RecordingControls`. This is the only place the pre-mix mic/system distinction
+survives.
+
+Note: the webview **cannot** capture system audio itself, so browser-side
+`getUserMedia` visualizers can only ever show the microphone. That is why the
+levels come from Rust.
+
+---
+
+## 3. Where things are stored (portable design)
+
+This fork is **portable**: everything it manages lives under the install
+directory, not scattered across `%APPDATA%` / `~/Library`.
+
+`src-tauri/src/paths.rs` is the single source of truth:
+
+| What | Where |
+|---|---|
+| Database, templates, settings, models | `<exe dir>/data/…` |
+| Bundled diarization models | `<exe dir>/resources/diarization/` |
+| **Audio recordings** | `%USERPROFILE%\Music\meetily-recordings\<meeting>\audio.mp4` |
+
+Two gotchas:
+
+1. **Recordings are the exception.** They follow the user's configured
+   recordings folder (`audio/recording_preferences.rs`), *not* the data root,
+   and they are **`.mp4`, not `.wav`**. Code that looks for recordings must
+   handle both the location and the container — see `diarization::find_meeting_audio`.
+2. `paths.rs` falls back to the OS data dir if the install directory isn't
+   writable (e.g. installed under Program Files).
+
+A one-time migration (`paths::migrate_legacy_data`) copies data from the old
+`%APPDATA%` location on first run so upgrading users keep their history.
+
+---
+
+## 4. Speaker diarization ("who spoke when")
+
+Implemented from scratch on the ONNX Runtime already in the build (`ort`),
+deliberately **not** by linking sherpa-onnx — that would pull in a second
+onnxruntime and risk duplicate-symbol failures at link time.
+
+`src-tauri/src/diarization/`:
+
+| File | Role |
+|---|---|
+| `dsp.rs` | WAV reader + Kaldi-compatible 80-dim log-mel fbank (Povey window, pre-emphasis 0.97, HTK mel, per-utterance CMN) |
+| `models.rs` | pyannote `segmentation-3.0` (7-class powerset) + WeSpeaker ResNet34 embeddings + VBx LDA transform; includes a minimal `.npz`/`.npy` reader |
+| `clustering.rs` | Agglomerative clustering, cosine distance, average linkage |
+| `mod.rs` | Offline pipeline + Tauri commands |
+| `online.rs` | Streaming diarization for live transcription |
+| `download.rs` | Repair-path model download from the project's own GitHub release |
+
+### Offline pipeline
+
+1. Load audio, downmix, resample to 16 kHz.
+2. Slide a 10 s window; run segmentation; decode the powerset output into
+   per-frame activity for up to 3 *local* speakers.
+3. Embed each local speaker's audio in each window.
+4. Cluster embeddings globally → *global* speaker identities.
+5. Merge adjacent same-speaker regions.
+
+Two non-obvious refinements, both from real failure cases:
+
+- **Overlapped speech is excluded from embeddings.** Powerset segmentation
+  assigns simultaneous frames to *every* active speaker; including them blends
+  two voices into both embeddings.
+- **Only turns ≥1.5 s may define a cluster.** Short fragments (usually speech
+  clipped by a window edge) have noisy embeddings and used to spawn phantom
+  speakers. They are still labelled, by nearest centroid.
+
+### Calibration, and its limits
+
+`DEFAULT_THRESHOLD = 0.60`, chosen by measurement against recordings with known
+speaker counts, not by guess:
+
+| Recording | Truth | Auto |
+|---|---|---|
+| Solo presenter | 1 | 1 ✅ |
+| Team call | 5 | 5 ✅ |
+| Panel | 6 | 8 |
+| Interview | 3 | 2 |
+
+**A single threshold cannot fit every recording** — how far apart two voices
+land depends on mic, codec and room. The chosen value never invents speakers in
+single-speaker audio, which is the worst failure mode. When the count is known,
+passing `num_speakers` bypasses the threshold and resolved *every* test case
+exactly; this is what the "Speakers" dialog asks for.
+
+A silhouette-based automatic speaker-count search was tried and **removed** — it
+consistently preferred the maximum candidate count and did worse than a fixed
+threshold. Don't re-add it without evidence.
+
+### Headless evaluation
+
+Diarization can be evaluated without launching the GUI:
+
+```bat
+set DIARIZE_WAV=C:\path\to\audio.wav
+set DIARIZE_MODELS=frontend\src-tauri\resources\diarization
+build-cuda-env.bat test diarize_sample
+```
+
+Optional: `DIARIZE_SWEEP=0.55,0.60,0.65` (threshold sweep in one process),
+`DIARIZE_SPEAKERS=4` (force count), `DIARIZE_DIAG=1` (embedding-distance
+histogram — should be clearly bimodal if features are healthy).
+
+Roughly 80× realtime on CPU.
+
+---
+
+## 5. Transcript rendering (frontend)
+
+The most error-prone area in the codebase, because of duplicated components.
+
+```
+live screen        → app/_components/TranscriptPanel.tsx        ─┐
+meeting details    → components/MeetingDetails/TranscriptPanel  ─┼─▶ VirtualizedTranscriptView
+                                                                 │
+components/TranscriptView.tsx  ← DEAD CODE, nothing renders it ──┘
+```
+
+Three traps, all of which have bitten:
+
+1. **Two components named `TranscriptPanel`.** Editing the wrong one compiles
+   and does nothing visible.
+2. **`TranscriptView.tsx` is dead code.** Same symptom.
+3. **Three separate transcript→segment converters**, and every one must copy
+   `speaker` or labels silently vanish on that screen:
+   - `app/_components/TranscriptPanel.tsx` (live)
+   - `components/MeetingDetails/TranscriptPanel.tsx` (non-paginated)
+   - `hooks/usePaginatedTranscripts.ts` (paginated)
+
+The label also has to survive the Rust side: `MeetingTranscript` must include
+`speaker`, and every place constructing it must set it.
+
+---
+
+## 6. Model sources
+
+No dependency on any third party's hosting:
+
+| Model | Source |
+|---|---|
+| Whisper | HuggingFace (`ggerganov/whisper.cpp`) |
+| Parakeet v2 | HuggingFace (`istupakov/…-v2-onnx`) |
+| Parakeet v3 | This project's own GitHub release |
+| Qwen / Gemma | HuggingFace (`unsloth`, `bartowski`) |
+| Diarization | Bundled in the app (`resources/diarization/`) |
+
+Parakeet v3 originally pointed at the upstream project's server; it was mirrored
+so this fork doesn't consume someone else's bandwidth.
+
+---
+
+## 7. Building
+
+`frontend/build-cuda-env.bat` sets up MSVC + LLVM + the reassembled CUDA toolkit
+and has four modes:
+
+| Mode | Purpose |
+|---|---|
+| `check` | Type-check only, no link — **safe while the app is running** |
+| `lib` | Full build + stage bundled resources next to the exe |
+| `test <name>` | Run a Rust test with output shown |
+| `bundle` | Packaged installer |
+
+Gotchas:
+
+- A plain `cargo build` does **not** stage bundled resources the way Tauri's
+  packaging does, so `lib` copies `resources/diarization` and `templates` next
+  to the exe manually. Without this, `resource_dir()` finds nothing.
+- The frontend is embedded at compile time. After changing frontend code you
+  must rebuild the frontend *and* relink the exe.
+- The exe cannot be relinked while it is running (LNK1104). Kill it first.
+- Build with `--features cuda,custom-protocol`. Without `custom-protocol` the
+  binary tries to load a dev server on localhost instead of the embedded UI.
