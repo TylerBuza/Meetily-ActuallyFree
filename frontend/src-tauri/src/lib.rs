@@ -530,6 +530,34 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Minimizing the main window mid-recording switches to the compact
+            // bar automatically - minimizing means 'get out of my way', and the
+            // bar is how a recording stays visible while doing that.
+            if let tauri::WindowEvent::Resized(_) = event {
+                if window.label() == "main"
+                    && window.is_minimized().unwrap_or(false)
+                    && crate::audio::recording_commands::is_recording_active()
+                {
+                    let app = window.app_handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = crate::minibar::enter_compact_mode(app, None).await;
+                    });
+                }
+            }
+            // Minimizing the main window mid-recording shows the compact bar,
+            // so the recording never becomes invisible. (Minimize arrives as a
+            // Resized event; is_minimized() distinguishes it.)
+            if let tauri::WindowEvent::Resized(_) = event {
+                if window.label() == "main"
+                    && window.is_minimized().unwrap_or(false)
+                    && audio::recording_commands::is_recording_now()
+                {
+                    let app = window.app_handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = minibar::enter_compact_mode(app, None).await;
+                    });
+                }
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
                     api.prevent_close();

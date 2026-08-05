@@ -38,6 +38,17 @@ pub use super::transcription::TranscriptUpdate;
 // Simple recording state tracking
 static IS_RECORDING: AtomicBool = AtomicBool::new(false);
 
+/// Whether a recording session is currently active (for the auto compact bar).
+pub fn is_recording_active() -> bool {
+    IS_RECORDING.load(Ordering::SeqCst)
+}
+
+/// Synchronous recording check for Rust-side callers (e.g. the window-minimize
+/// handler that decides whether to show the compact bar).
+pub fn is_recording_now() -> bool {
+    IS_RECORDING.load(Ordering::SeqCst)
+}
+
 // Global recording manager and transcription task to keep them alive during recording
 static RECORDING_MANAGER: Mutex<Option<RecordingManager>> = Mutex::new(None);
 static TRANSCRIPTION_TASK: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
