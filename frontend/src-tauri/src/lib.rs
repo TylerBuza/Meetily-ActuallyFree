@@ -48,6 +48,7 @@ pub mod openai;
 pub mod anthropic;
 pub mod groq;
 pub mod openrouter;
+pub mod live_assistant;
 pub mod parakeet_engine;
 pub mod state;
 pub mod summary;
@@ -671,6 +672,11 @@ pub fn run() {
             summary::template_commands::api_list_templates,
             summary::template_commands::api_get_template_details,
             summary::template_commands::api_validate_template,
+            summary::template_commands::api_save_custom_template,
+            summary::template_commands::api_delete_custom_template,
+            summary::template_commands::api_is_custom_template,
+            live_assistant::ask_live_assistant,
+            live_assistant::ollama_embed,
             // Built-in AI commands
             summary::summary_engine::commands::builtin_ai_list_models,
             summary::summary_engine::commands::builtin_ai_get_model_info,

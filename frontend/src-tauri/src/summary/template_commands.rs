@@ -123,6 +123,47 @@ pub async fn api_validate_template<R: Runtime>(
     }
 }
 
+/// Saves (creates or overwrites) a custom user template.
+///
+/// Validates the JSON against the template schema, then writes it to the
+/// user's custom templates directory. Returns the sanitized template id.
+///
+/// # Arguments
+/// * `template_id` - Desired identifier/slug (sanitized to a safe filename)
+/// * `template_json` - Raw JSON string of the template
+#[tauri::command]
+pub async fn api_save_custom_template<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    template_id: String,
+    template_json: String,
+) -> Result<String, String> {
+    info!("api_save_custom_template called for id: {}", template_id);
+    let saved_id = templates::save_custom_template(&template_id, &template_json)?;
+    info!("Custom template saved with id '{}'", saved_id);
+    Ok(saved_id)
+}
+
+/// Deletes a custom user template by id.
+///
+/// Only user-defined templates can be deleted; built-in templates are untouched.
+#[tauri::command]
+pub async fn api_delete_custom_template<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    template_id: String,
+) -> Result<(), String> {
+    info!("api_delete_custom_template called for id: {}", template_id);
+    templates::delete_custom_template(&template_id)
+}
+
+/// Returns whether a template id is a user-defined custom template (editable/deletable).
+#[tauri::command]
+pub async fn api_is_custom_template<R: Runtime>(
+    _app: tauri::AppHandle<R>,
+    template_id: String,
+) -> Result<bool, String> {
+    Ok(templates::is_custom_template(&template_id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

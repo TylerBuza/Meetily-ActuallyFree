@@ -36,6 +36,7 @@ interface SummaryGeneratorButtonGroupProps {
   availableTemplates: Array<{ id: string, name: string, description: string }>;
   selectedTemplate: string;
   onTemplateSelect: (templateId: string, templateName: string) => void;
+  onManageTemplates?: () => void;
   hasTranscripts?: boolean;
   hasSummary?: boolean;
   isModelConfigLoading?: boolean;
@@ -53,6 +54,7 @@ export function SummaryGeneratorButtonGroup({
   availableTemplates,
   selectedTemplate,
   onTemplateSelect,
+  onManageTemplates,
   hasTranscripts = true,
   hasSummary = false,
   isModelConfigLoading = false,
@@ -352,6 +354,14 @@ export function SummaryGeneratorButtonGroup({
               </DropdownMenuItem>
             ))}
 
+            {onManageTemplates && (
+              <DropdownMenuItem
+                onClick={onManageTemplates}
+                className="mt-1 border-t border-gray-100 font-medium text-blue-600"
+              >
+                ＋ New / manage templates…
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       )}

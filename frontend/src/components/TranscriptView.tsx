@@ -305,6 +305,21 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isR
                 </TooltipContent>
               </Tooltip>
               <div className="flex-1">
+                {transcript.speaker && (
+                  <div
+                    className={`mb-0.5 text-xs font-semibold ${
+                      transcript.speaker === 'You' ? 'text-blue-600' : 'text-purple-600'
+                    }`}
+                  >
+                    {(() => {
+                      if (transcript.speaker === 'You') {
+                        const n = typeof window !== 'undefined' ? localStorage.getItem('meetily_user_name') : null;
+                        return n ? `You (${n})` : 'You';
+                      }
+                      return transcript.speaker;
+                    })()}
+                  </div>
+                )}
                 {isStreaming ? (
                   // Streaming transcript - show in bubble (full width)
                   <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">

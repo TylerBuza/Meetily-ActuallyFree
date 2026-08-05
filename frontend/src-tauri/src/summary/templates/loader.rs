@@ -197,6 +197,73 @@ pub fn list_template_ids() -> Vec<String> {
     ids
 }
 
+/// Sanitize a template id into a safe filename stem (prevents path traversal)
+fn sanitize_template_id(id: &str) -> String {
+    let cleaned: String = id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    cleaned.trim_matches('_').to_string()
+}
+
+/// Save (create or overwrite) a custom template in the user's templates directory.
+///
+/// Validates the JSON against the Template schema before writing.
+/// Returns the sanitized template id that was written.
+pub fn save_custom_template(template_id: &str, json_content: &str) -> Result<String, String> {
+    // Validate against the schema first so we never persist invalid templates
+    let _template = validate_and_parse_template(json_content)?;
+
+    let safe_id = sanitize_template_id(template_id);
+    if safe_id.is_empty() {
+        return Err("Template id must contain at least one alphanumeric character".to_string());
+    }
+
+    let dir = get_custom_templates_dir()
+        .ok_or_else(|| "Could not resolve custom templates directory".to_string())?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("Failed to create templates directory: {}", e))?;
+
+    let path = dir.join(format!("{}.json", safe_id));
+    std::fs::write(&path, json_content)
+        .map_err(|e| format!("Failed to write template file: {}", e))?;
+
+    info!("Saved custom template '{}' to {:?}", safe_id, path);
+    Ok(safe_id)
+}
+
+/// Delete a custom template from the user's templates directory.
+/// Built-in/bundled templates cannot be deleted (only user overrides).
+pub fn delete_custom_template(template_id: &str) -> Result<(), String> {
+    let safe_id = sanitize_template_id(template_id);
+    let dir = get_custom_templates_dir()
+        .ok_or_else(|| "Could not resolve custom templates directory".to_string())?;
+    let path = dir.join(format!("{}.json", safe_id));
+
+    if !path.exists() {
+        return Err(format!("Custom template '{}' not found", safe_id));
+    }
+
+    std::fs::remove_file(&path)
+        .map_err(|e| format!("Failed to delete template file: {}", e))?;
+    info!("Deleted custom template '{}'", safe_id);
+    Ok(())
+}
+
+/// Returns true if the given template id has a user-defined custom override on disk.
+pub fn is_custom_template(template_id: &str) -> bool {
+    let safe_id = sanitize_template_id(template_id);
+    get_custom_templates_dir()
+        .map(|d| d.join(format!("{}.json", safe_id)).exists())
+        .unwrap_or(false)
+}
+
 /// List all available templates with their metadata
 ///
 /// Returns a list of (id, name, description) tuples

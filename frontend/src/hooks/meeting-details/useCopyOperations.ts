@@ -4,6 +4,7 @@ import { BlockNoteSummaryViewRef } from '@/components/AISummary/BlockNoteSummary
 import { toast } from 'sonner';
 import Analytics from '@/lib/analytics';
 import { invoke as invokeTauri } from '@tauri-apps/api/core';
+import { exportSummaryAs, ExportFormat } from '@/lib/exportSummary';
 
 interface UseCopyOperationsProps {
   meeting: any;
@@ -189,8 +190,61 @@ export function useCopyOperations({
     }
   }, [aiSummary, meetingTitle, meeting, blockNoteSummaryRef]);
 
+  // Build the same summary markdown used for copying (header + metadata + content)
+  const getSummaryMarkdown = useCallback(async (): Promise<string | null> => {
+    let summaryMarkdown = '';
+    if (blockNoteSummaryRef.current?.getMarkdown) {
+      summaryMarkdown = await blockNoteSummaryRef.current.getMarkdown();
+    }
+    if (!summaryMarkdown && aiSummary && 'markdown' in aiSummary) {
+      summaryMarkdown = (aiSummary as any).markdown || '';
+    }
+    if (!summaryMarkdown && aiSummary) {
+      summaryMarkdown = Object.entries(aiSummary)
+        .filter(([key]) => key !== 'markdown' && key !== 'summary_json' && key !== '_section_order' && key !== 'MeetingName')
+        .map(([, section]: any) => {
+          if (section && typeof section === 'object' && 'title' in section && 'blocks' in section) {
+            const title = `## ${section.title}\n\n`;
+            const content = section.blocks.map((block: any) => `- ${block.content}`).join('\n');
+            return title + content;
+          }
+          return '';
+        })
+        .filter((s) => s.trim())
+        .join('\n\n');
+    }
+    if (!summaryMarkdown.trim()) return null;
+
+    const header = `# Meeting Summary: ${meetingTitle}\n\n`;
+    const metadata = `**Meeting ID:** ${meeting.id}\n**Date:** ${new Date(meeting.created_at).toLocaleDateString('en-US', {
+      year: 'numeric', month: 'long', day: 'numeric',
+    })}\n\n---\n\n`;
+    return header + metadata + summaryMarkdown;
+  }, [aiSummary, meetingTitle, meeting, blockNoteSummaryRef]);
+
+  // Export summary to a file (Markdown, PDF, or DOCX)
+  const handleExportSummary = useCallback(async (format: ExportFormat) => {
+    try {
+      const md = await getSummaryMarkdown();
+      if (!md) {
+        toast.error('No summary content available to export');
+        return;
+      }
+      const baseName = String(meetingTitle || meeting?.title || 'summary');
+      await exportSummaryAs(format, md, baseName);
+      toast.success(`Summary exported as ${format.toUpperCase()}`);
+      try {
+        await Analytics.trackFeatureUsed(`export_summary_${format}`);
+      } catch { /* analytics is best-effort */ }
+    } catch (error) {
+      console.error('❌ Failed to export summary:', error);
+      toast.error('Failed to export summary');
+    }
+  }, [getSummaryMarkdown, meetingTitle, meeting]);
+
   return {
     handleCopyTranscript,
     handleCopySummary,
+    handleExportSummary,
   };
 }

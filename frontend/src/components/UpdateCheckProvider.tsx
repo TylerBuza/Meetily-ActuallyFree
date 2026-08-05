@@ -22,11 +22,14 @@ export function UpdateCheckProvider({ children }: { children: React.ReactNode })
     setShowDialog(true);
   }, []);
 
+  // Fork: no automatic update checks against any server. (The upstream endpoint
+  // would offer the official Meetily release and overwrite this fork.) Manual
+  // "Check for Updates" still works and will target this fork's own releases once
+  // the endpoint in tauri.conf.json is pointed at your GitHub repo.
   const { updateInfo, isChecking, checkForUpdates } = useUpdateCheck({
-    checkOnMount: true,
-    showNotification: true,
+    checkOnMount: false,
+    showNotification: false,
     onUpdateAvailable: (info) => {
-      // Show notification, dialog will be shown when user clicks notification
       showUpdateNotification(info, handleShowDialog);
     },
   });

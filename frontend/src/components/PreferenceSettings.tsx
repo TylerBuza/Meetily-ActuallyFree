@@ -5,7 +5,6 @@ import { Switch } from "./ui/switch"
 import { FolderOpen } from "lucide-react"
 import { invoke } from "@tauri-apps/api/core"
 import Analytics from "@/lib/analytics"
-import AnalyticsConsentSwitch from "./AnalyticsConsentSwitch"
 import { useConfig, NotificationSettings } from "@/contexts/ConfigContext"
 
 export function PreferenceSettings() {
@@ -21,6 +20,35 @@ export function PreferenceSettings() {
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [previousNotificationsEnabled, setPreviousNotificationsEnabled] = useState<boolean | null>(null);
   const hasTrackedViewRef = useRef(false);
+
+  // "Your name" — used to label the user's mic transcripts as "You (Name)".
+  const [userName, setUserName] = useState<string>('');
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setUserName(localStorage.getItem('meetily_user_name') || '');
+    }
+  }, []);
+  const saveUserName = (v: string) => {
+    setUserName(v);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('meetily_user_name', v);
+    }
+  };
+
+  // Theme (default dark). Applies a `.dark` class on <html> for the navy skin.
+  const [isDark, setIsDark] = useState(true);
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setIsDark((localStorage.getItem('meetily_theme') || 'dark') !== 'light');
+    }
+  }, []);
+  const toggleTheme = (dark: boolean) => {
+    setIsDark(dark);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('meetily_theme', dark ? 'dark' : 'light');
+      document.documentElement.classList.toggle('dark', dark);
+    }
+  };
 
   // Lazy load preferences on mount (only loads if not already cached)
   useEffect(() => {
@@ -148,6 +176,34 @@ export function PreferenceSettings() {
 
   return (
     <div className="space-y-6">
+      {/* Appearance / Theme Section */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Dark mode</h3>
+            <p className="text-sm text-gray-600">Use the dark navy theme. Turn off for the classic light theme.</p>
+          </div>
+          <Switch checked={isDark} onCheckedChange={toggleTheme} />
+        </div>
+      </div>
+
+      {/* Your Name Section */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
+        <h3 className="text-lg font-semibold text-gray-900 mb-2">Your Name</h3>
+        <p className="text-sm text-gray-600 mb-3">
+          Labels your microphone in transcripts as <strong>You ({userName || 'Name'})</strong>. Your audio is
+          always tagged as you; other participants are labelled separately (&quot;Guest&quot;, and Speaker 1/2/3 once
+          voice diarization is enabled).
+        </p>
+        <input
+          type="text"
+          value={userName}
+          onChange={(e) => saveUserName(e.target.value)}
+          placeholder="e.g. Tyler"
+          className="w-full max-w-sm rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none"
+        />
+      </div>
+
       {/* Notifications Section */}
       <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
         <div className="flex items-center justify-between">
@@ -218,11 +274,6 @@ export function PreferenceSettings() {
             <strong>Note:</strong> Database and models are stored together in your application data directory for unified management.
           </p>
         </div>
-      </div>
-
-      {/* Analytics Section */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-        <AnalyticsConsentSwitch />
       </div>
     </div>
   )

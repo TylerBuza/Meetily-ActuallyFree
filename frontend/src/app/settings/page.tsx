@@ -18,8 +18,7 @@ const TABS = [
   { value: 'general', label: 'General', icon: Settings2 },
   { value: 'recording', label: 'Recordings', icon: Mic },
   { value: 'Transcriptionmodels', label: 'Transcription', icon: DatabaseIcon },
-  { value: 'summaryModels', label: 'Summary', icon: SparkleIcon },
-  { value: 'beta', label: 'Beta', icon: FlaskConical }
+  { value: 'summaryModels', label: 'Summary', icon: SparkleIcon }
 ] as const;
 
 export default function SettingsPage() {
@@ -114,6 +113,9 @@ export default function SettingsPage() {
             </TabsContent>
             <TabsContent value="recording">
               <RecordingSettings />
+              <div className="mt-6">
+                <BetaSettings />
+              </div>
             </TabsContent>
             <TabsContent value="Transcriptionmodels">
               <TranscriptSettings
@@ -123,9 +125,6 @@ export default function SettingsPage() {
             </TabsContent>
             <TabsContent value="summaryModels">
               <SummaryModelSettings />
-            </TabsContent>
-            <TabsContent value="beta" className="mt-6">
-              <BetaSettings />
             </TabsContent>
           </Tabs>
         </div>

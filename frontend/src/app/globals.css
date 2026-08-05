@@ -212,3 +212,79 @@
     overflow: visible !important;
   }
 }
+/* ============================================================
+   Dark theme — "Actually Free" deep-navy skin (Decred-style)
+   Remaps common Tailwind light utilities to a navy palette when
+   <html class="dark"> is present (default on). Toggle in Settings.
+   ============================================================ */
+:root {
+  --af-bg: #0e131a;       /* darker, grayish-blue slate */
+  --af-panel: #161c25;
+  --af-panel-2: #1b222d;
+  --af-hover: #273140;
+  --af-border: #2b3542;
+  --af-text: #cdd6e3;
+  --af-text-2: #90a0b5;
+  --af-text-3: #6a7789;
+}
+
+html.dark, html.dark body { background-color: var(--af-bg) !important; color: var(--af-text); }
+
+.dark .bg-white { background-color: var(--af-panel) !important; }
+.dark .bg-gray-50, .dark .bg-slate-50, .dark .bg-neutral-50 { background-color: var(--af-panel-2) !important; }
+.dark .bg-gray-100 { background-color: var(--af-panel-2) !important; }
+.dark .bg-gray-200 { background-color: var(--af-hover) !important; }
+
+.dark .text-black, .dark .text-gray-900, .dark .text-gray-800, .dark .text-gray-700 { color: var(--af-text) !important; }
+.dark .text-gray-600, .dark .text-gray-500 { color: var(--af-text-2) !important; }
+.dark .text-gray-400, .dark .text-gray-300 { color: var(--af-text-3) !important; }
+
+.dark .border, .dark .border-gray-100, .dark .border-gray-200, .dark .border-gray-300 { border-color: var(--af-border) !important; }
+
+.dark .hover\:bg-gray-50:hover, .dark .hover\:bg-gray-100:hover { background-color: var(--af-hover) !important; }
+.dark .hover\:bg-gray-200:hover { background-color: #2f4370 !important; }
+
+.dark input, .dark textarea, .dark select {
+  background-color: var(--af-panel) !important;
+  color: var(--af-text) !important;
+  border-color: var(--af-border) !important;
+}
+.dark input::placeholder, .dark textarea::placeholder { color: var(--af-text-3) !important; }
+
+.dark .bg-blue-50 { background-color: #14284d !important; }
+.dark .bg-blue-100 { background-color: var(--af-panel-2) !important; }
+.dark .bg-blue-200, .dark .hover\:bg-blue-200:hover { background-color: var(--af-hover) !important; }
+.dark .hover\:bg-blue-100:hover { background-color: var(--af-hover) !important; }
+.dark .bg-gray-300, .dark .hover\:bg-gray-300:hover { background-color: var(--af-hover) !important; }
+.dark .text-blue-800 { color: #7aa2ff !important; }
+.dark .prose { color: var(--af-text) !important; }
+.dark .prose strong, .dark .prose h1, .dark .prose h2, .dark .prose h3 { color: var(--af-text) !important; }
+
+.dark .shadow-sm, .dark .shadow, .dark .shadow-md, .dark .shadow-lg, .dark .shadow-xl, .dark .shadow-2xl {
+  box-shadow: 0 6px 24px rgba(0,0,0,0.45) !important;
+}
+
+/* Gradient "pill" buttons (Generate/Regenerate/Enhance/Stop) use light gradient
+   stops that stay bright in dark mode — flatten them to a readable dark button. */
+.dark [class*="from-blue-50"],
+.dark [class*="from-purple-50"],
+.dark [class*="from-red-50"],
+.dark [class*="from-orange-50"],
+.dark [class*="from-green-50"],
+.dark [class*="to-purple-50"],
+.dark [class*="to-orange-50"] {
+  background-image: none !important;
+  background-color: var(--af-panel-2) !important;
+  color: var(--af-text) !important;
+}
+.dark [class*="from-blue-50"]:hover,
+.dark [class*="from-red-50"]:hover,
+.dark [class*="from-purple-50"]:hover { background-color: var(--af-hover) !important; }
+.dark [class*="border-blue-200"],
+.dark [class*="border-red-200"],
+.dark [class*="border-purple-200"],
+.dark [class*="border-green-200"] { border-color: var(--af-border) !important; }
+
+/* Green "completed" banners readable on dark */
+.dark .bg-green-50 { background-color: #12251a !important; }
+.dark .text-green-800, .dark .text-green-700 { color: #7ee2a8 !important; }

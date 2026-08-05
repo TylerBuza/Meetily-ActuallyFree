@@ -143,6 +143,14 @@ pub fn start_transcription_task<R: Runtime>(
                             let chunk_timestamp = chunk.timestamp;
                             let chunk_duration = chunk.data.len() as f64 / chunk.sample_rate as f64;
 
+                            // Speaker source from audio origin: the microphone is always the
+                            // user of this app; system audio is always the other party/parties.
+                            // (Phase 1 of speaker labelling — reliable, no ML needed.)
+                            let chunk_source = match &chunk.device_type {
+                                crate::audio::recording_state::DeviceType::Microphone => "You".to_string(),
+                                crate::audio::recording_state::DeviceType::System => "Guest".to_string(),
+                            };
+
                             // Transcribe with provider-agnostic approach
                             match transcribe_chunk_with_provider(
                                 &engine_clone,
@@ -208,7 +216,7 @@ pub fn start_transcription_task<R: Runtime>(
                                         let update = TranscriptUpdate {
                                             text: transcript,
                                             timestamp: format_current_timestamp(), // Wall-clock for reference
-                                            source: "Audio".to_string(),
+                                            source: chunk_source.clone(),
                                             sequence_id,
                                             chunk_start_time: chunk_timestamp, // Legacy compatibility
                                             is_partial,

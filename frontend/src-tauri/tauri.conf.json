@@ -1,7 +1,7 @@
 {
     "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-    "productName": "meetily",
-    "version": "0.4.0",
+    "productName": "Meetily - Actually Free",
+    "version": "0.0.1",
     "identifier": "com.meetily.ai",
     "build": {
         "frontendDist": "../out",
@@ -12,12 +12,12 @@
     "app": {
         "windows": [
             {
-                "title": "meetily",
+                "title": "Meetily - Actually Free",
                 "width": 1100,
                 "height": 700,
                 "resizable": true,
                 "fullscreen": false,
-                "theme": "Light",
+                "theme": "Dark",
                 "decorations": true
             }
         ],
@@ -111,11 +111,11 @@
         }
     },
     "plugins": {
-        "updater": {
-            "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVDQTYzMUQ3ODc5N0M4MkEKUldRcXlKZUgxekdtN09DRkVWSHNpZlJseEVOUmpNd1dDSTNaLzZ3MXJGTnY3WW1pdnlOYjBpbkIK",
-            "endpoints": [
-                "https://github.com/Zackriya-Solutions/meeting-minutes/releases/latest/download/latest.json"
-            ]
+            "updater": {
+                "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVDQTYzMUQ3ODc5N0M4MkEKUldRcXlKZUgxekdtN09DRkVWSHNpZlJseEVOUmpNd1dDSTNaLzZ3MXJGTnY3WW1pdnlOYjBpbkIK",
+                "endpoints": [
+                    "https://github.com/REPLACE_WITH_YOUR_GITHUB_USER/meetily-actually-free/releases/latest/download/latest.json"
+                ]
         }
     }
 }

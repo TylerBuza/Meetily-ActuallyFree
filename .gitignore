@@ -77,3 +77,13 @@ experiments/
 target/
 
 frontend/src-tauri/binaries/
+# Local build artifacts / reassembled CUDA toolkit (Meetily - Actually Free fork)
+/.cuda_toolkit/
+/.cuda_extra_include/
+/cuda_extract/
+frontend/build_cuda.log
+frontend/build_cuda.pid
+frontend/.next/
+frontend/tsconfig.tsbuildinfo
+
+CLAUDE.md

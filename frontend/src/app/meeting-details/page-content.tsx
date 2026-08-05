@@ -8,6 +8,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import { TranscriptPanel } from '@/components/MeetingDetails/TranscriptPanel';
 import { SummaryPanel } from '@/components/MeetingDetails/SummaryPanel';
+import { TemplateEditorModal } from '@/components/MeetingDetails/TemplateEditorModal';
 import { ModelConfig } from '@/components/ModelSettingsModal';
 
 // Custom hooks
@@ -55,6 +56,7 @@ export default function PageContent({
 
   // State
   const [customPrompt, setCustomPrompt] = useState<string>('');
+  const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
   const [isRecording] = useState(false);
   const [summaryResponse] = useState<SummaryResponse | null>(null);
 
@@ -204,6 +206,7 @@ export default function PageContent({
           isSaving={meetingData.isSaving}
           onSaveAll={meetingData.saveAllChanges}
           onCopySummary={copyOperations.handleCopySummary}
+          onExportSummary={copyOperations.handleExportSummary}
           onOpenFolder={meetingOperations.handleOpenMeetingFolder}
           aiSummary={meetingData.aiSummary}
           summaryStatus={summaryGeneration.summaryStatus}
@@ -224,10 +227,19 @@ export default function PageContent({
           availableTemplates={templates.availableTemplates}
           selectedTemplate={templates.selectedTemplate}
           onTemplateSelect={templates.handleTemplateSelection}
+          onManageTemplates={() => setTemplateEditorOpen(true)}
           isModelConfigLoading={false}
           onOpenModelSettings={handleRegisterModalOpen}
         />
       </div>
+
+      <TemplateEditorModal
+        open={templateEditorOpen}
+        onClose={() => setTemplateEditorOpen(false)}
+        availableTemplates={templates.availableTemplates}
+        onSave={templates.saveCustomTemplate}
+        onDelete={templates.deleteCustomTemplate}
+      />
     </motion.div>
   );
 }

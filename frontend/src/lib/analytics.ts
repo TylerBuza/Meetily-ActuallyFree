@@ -42,16 +42,10 @@ export class Analytics {
   }
 
   private static async doInit(): Promise<void> {
-    try {
-      await invoke('init_analytics');
-      this.initialized = true;
-      console.log('Analytics initialized successfully');
-    } catch (error) {
-      console.error('Failed to initialize analytics:', error);
-      throw error;
-    } finally {
-      this.initializationPromise = null;
-    }
+    // Analytics/telemetry removed in this fork. Never initialize, so every
+    // reporting method below (which guards on `initialized`) becomes a no-op.
+    this.initialized = false;
+    this.initializationPromise = null;
   }
 
   static async disable(): Promise<void> {
@@ -75,17 +69,9 @@ export class Analytics {
     }
   }
 
-  static async track(eventName: string, properties?: AnalyticsProperties): Promise<void> {
-    if (!this.initialized) {
-      console.warn('Analytics not initialized');
-      return;
-    }
-
-    try {
-      await invoke('track_event', { eventName, properties });
-    } catch (error) {
-      console.error(`Failed to track event ${eventName}:`, error);
-    }
+  static async track(_eventName: string, _properties?: AnalyticsProperties): Promise<void> {
+    // Analytics/telemetry removed in this fork — no events are ever sent.
+    return;
   }
 
   static async identify(userId: string, properties?: AnalyticsProperties): Promise<void> {

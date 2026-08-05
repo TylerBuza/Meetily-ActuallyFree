@@ -54,7 +54,32 @@ export function useRecordingStart(
     try {
       await invoke('parakeet_init');
       const hasModels = await invoke<boolean>('parakeet_has_available_models');
-      return hasModels;
+      if (!hasModels) return false;
+
+      // Cold-start fix: eagerly LOAD the model into memory (and await it) before the
+      // first recording of a session. Previously the model loaded lazily on the first
+      // audio chunk, so the very first recording captured nothing until it finished
+      // loading; the second attempt worked because the model was already warm.
+      // Guarded so a failure here never blocks recording (falls back to old behavior).
+      try {
+        const alreadyLoaded = await invoke<boolean>('parakeet_is_model_loaded');
+        if (!alreadyLoaded) {
+          const models = await invoke<any[]>('parakeet_get_available_models');
+          const ready =
+            models.find((m: any) =>
+              m?.status === 'Available' ||
+              (typeof m?.status === 'object' && 'Available' in m.status),
+            ) || models[0];
+          if (ready?.name) {
+            console.log('Pre-loading transcription model into memory:', ready.name);
+            await invoke('parakeet_load_model', { modelName: ready.name });
+          }
+        }
+      } catch (warmErr) {
+        console.warn('Model pre-load skipped (will fall back to lazy load):', warmErr);
+      }
+
+      return true;
     } catch (error) {
       console.error('Failed to check Parakeet status:', error);
       return false;

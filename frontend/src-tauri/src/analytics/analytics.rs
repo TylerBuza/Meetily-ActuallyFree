@@ -84,7 +84,9 @@ pub struct AnalyticsClient {
 
 impl AnalyticsClient {
     pub async fn new(config: AnalyticsConfig) -> Self {
-        let client = if config.enabled && !config.api_key.is_empty() {
+        // Telemetry/analytics removed in this fork: never create a PostHog client,
+        // so no events are ever sent regardless of config.
+        let client = if false {
             Some(Arc::new(posthog_rs::client(config.api_key.as_str()).await))
         } else {
             None

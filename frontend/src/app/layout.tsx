@@ -3,6 +3,7 @@
 import './globals.css'
 import { Source_Sans_3 } from 'next/font/google'
 import Sidebar from '@/components/Sidebar'
+import { LiveAssistant } from '@/components/LiveAssistant/LiveAssistant'
 import { SidebarProvider } from '@/components/Sidebar/SidebarProvider'
 import MainContent from '@/components/MainContent'
 import AnalyticsProvider from '@/components/AnalyticsProvider'
@@ -75,6 +76,12 @@ export default function RootLayout({
   const [showDropOverlay, setShowDropOverlay] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [importFilePath, setImportFilePath] = useState<string | null>(null)
+
+  // Apply saved theme (default: dark). Toggle lives in Settings.
+  useEffect(() => {
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('meetily_theme') : null
+    document.documentElement.classList.toggle('dark', saved !== 'light')
+  }, [])
 
   useEffect(() => {
     // Check onboarding status first
@@ -231,7 +238,7 @@ export default function RootLayout({
   }
 
   return (
-    <html lang="en">
+    <html lang="en" className="dark">
       <body className={`${sourceSans3.variable} font-sans antialiased`}>
         <AnalyticsProvider>
           <RecordingStateProvider>
@@ -263,6 +270,8 @@ export default function RootLayout({
                                 handleImportDialogClose={handleImportDialogClose}
                                 importFilePath={importFilePath}
                               />
+                              {/* Live AI assistant (grounded in the current meeting transcript) */}
+                              {!showOnboarding && <LiveAssistant />}
                             </ImportDialogProvider>
                           </RecordingPostProcessingProvider>
                         </TooltipProvider>

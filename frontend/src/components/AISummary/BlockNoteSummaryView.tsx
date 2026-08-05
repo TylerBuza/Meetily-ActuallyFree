@@ -82,6 +82,16 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
   const isContentLoaded = useRef(false);
 
   // Create BlockNote editor for markdown parsing
+  // Follow the app's dark/light theme for the BlockNote editor (it themes itself, not via Tailwind)
+  const [bnDark, setBnDark] = useState(false);
+  useEffect(() => {
+    const apply = () => setBnDark(document.documentElement.classList.contains('dark'));
+    apply();
+    const obs = new MutationObserver(apply);
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => obs.disconnect();
+  }, []);
+
   const editor = useCreateBlockNote({
     initialContent: undefined
   });
@@ -266,7 +276,7 @@ export const BlockNoteSummaryView = forwardRef<BlockNoteSummaryViewRef, BlockNot
                 handleEditorChange(editor.document);
               }
             }}
-            theme="light"
+            theme={bnDark ? 'dark' : 'light'}
           />
         </div>
       </div>

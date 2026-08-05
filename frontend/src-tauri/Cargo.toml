@@ -1,10 +1,9 @@
 [package]
 name = "meetily"
-version = "0.4.0"
-description = "A Tauri App for meeting minutes"
-authors = ["Sujith S"]
-license = "MIT"
-repository = "https://github.com/Zackriya-Solutions/meeting-minutes"
+version = "0.0.1"
+description = "Meetily - Actually Free: privacy-first AI meeting assistant"
+authors = ["TylerBuza"]
+repository = "https://github.com/TylerBuza/Meetily-ActuallyFree"
 edition = "2021"
 rust-version = "1.77"
 
@@ -40,6 +39,11 @@ default = ["platform-default"]  # Automatically enables best backend per platfor
 
 # Platform-appropriate defaults - see target-specific dependencies below
 platform-default = []
+
+# Production build: serve the embedded frontend via the tauri:// custom protocol
+# instead of the dev server (localhost:3118). `tauri build` sets this automatically;
+# our from-source `cargo build` must enable it explicitly for a runnable app.
+custom-protocol = ["tauri/custom-protocol"]
 
 # Manual GPU acceleration options (for power users to override defaults)
 metal = ["whisper-rs/metal"]       # macOS: Apple Metal GPU (Auto-enabled on macOS)
