@@ -519,7 +519,7 @@ const Sidebar: React.FC = () => {
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">
-              <p>Meeting Notes</p>
+              <p>Meetings</p>
             </TooltipContent>
           </Tooltip>
 
@@ -735,7 +735,7 @@ const Sidebar: React.FC = () => {
           {/* Content area */}
           <div className="flex-1 flex flex-col min-h-0">
             {renderCollapsedIcons()}
-            {/* Meeting Notes folder header - fixed */}
+            {/* Meetings folder header - fixed */}
             {!isCollapsed && (
               <div className="flex-shrink-0">
                 {filteredSidebarItems.filter(item => item.type === 'folder').map(item => (
@@ -813,14 +813,20 @@ const Sidebar: React.FC = () => {
               </div>
             </div>
 
-            <button
-              onClick={() => router.push('/settings')}
-              className="w-full flex items-center justify-center px-3 py-1.5 mt-1 mb-1 text-sm font-medium text-gray-700 bg-gray-200 hover:bg-gray-300 rounded-lg transition-colors shadow-sm"
-            >
-              <Settings className="w-4 h-4 mr-2" />
-              <span>Settings</span>
-            </button>
-            <Info isCollapsed={isCollapsed} />
+            {/* Bottom utility row — Settings and About side by side, as in the
+                reference design, rather than stacked full-width buttons. */}
+            <div className="w-full flex items-center gap-1.5 mt-1 mb-1">
+              <button
+                onClick={() => router.push('/settings')}
+                className="flex-1 flex items-center justify-center px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-200 hover:bg-gray-300 rounded-lg transition-colors"
+              >
+                <Settings className="w-4 h-4 mr-2" />
+                <span>Settings</span>
+              </button>
+              <div className="flex-1">
+                <Info isCollapsed={isCollapsed} />
+              </div>
+            </div>
             <div className="w-full flex items-center justify-center px-3 py-1 text-xs text-gray-400">
               v0.0.1
             </div>
