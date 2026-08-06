@@ -396,7 +396,7 @@ export function InsightTabs({
           {generating ? (
             <div className="flex items-center gap-3 py-2 text-sm text-[var(--af-text-2)]">
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--af-accent)] border-t-transparent" />
-              Regenerating action items…
+              {hasSummary ? 'Regenerating action items…' : 'Generating action items…'}
             </div>
           ) : actions.length === 0 ? (
             <div className="py-6 text-center text-sm text-[var(--af-text-3)]">No action items were identified.</div>
@@ -454,7 +454,7 @@ export function InsightTabs({
           {generating ? (
             <div className="flex items-center gap-3 py-2 text-sm text-[var(--af-text-2)]">
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--af-accent)] border-t-transparent" />
-              Regenerating topics…
+              {hasSummary ? 'Regenerating topics…' : 'Generating topics…'}
             </div>
           ) : buckets.topics.length === 0 ? (
             <div className="py-2 text-sm text-[var(--af-text-3)]">No key topics were identified.</div>

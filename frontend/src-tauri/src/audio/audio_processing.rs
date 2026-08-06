@@ -188,7 +188,11 @@ impl LoudnessNormalizer {
             return Vec::new();
         }
 
-        const TARGET_LUFS: f64 = -23.0;
+        // Meeting speech (not broadcast dialog): a bit hotter so the local mic
+        // holds its own against hot WASAPI loopback when both are present in the
+        // recording mix. Transcription no longer depends on the mix, but the
+        // saved file and live meters still benefit.
+        const TARGET_LUFS: f64 = -18.0;
         const ANALYZE_CHUNK_SIZE: usize = 512;
 
         let mut normalized_samples = Vec::with_capacity(samples.len());

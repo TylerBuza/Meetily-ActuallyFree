@@ -188,8 +188,16 @@ impl AudioMixerRingBuffer {
 
 }
 
-/// Simple audio mixer without aggressive ducking
-/// Combines mic + system audio with basic clipping prevention
+/// Mixes mic + system for the *recording file only*.
+///
+/// Transcription no longer hears this mix — each source is VAD'd and sent to
+/// Whisper on its own path (see the dual-VAD loop below). That way simultaneous
+/// talk doesn't make the louder side crush the quieter one in STT.
+///
+/// For the recording we still want a single stereo-ish mono file, so:
+/// 1. Always give system some headroom (loopback is near full-scale; mic is quieter dialog).
+/// 2. Duck system further while the local mic is active.
+/// 3. If the sum would clip, shrink **system first** so the mic keeps its level.
 struct ProfessionalAudioMixer;
 
 impl ProfessionalAudioMixer {
@@ -198,34 +206,38 @@ impl ProfessionalAudioMixer {
     }
 
     fn mix_window(&mut self, mic_window: &[f32], sys_window: &[f32]) -> Vec<f32> {
-        // Handle different lengths (already padded by extract_window, but defensive)
         let max_len = mic_window.len().max(sys_window.len());
         let mut mixed = Vec::with_capacity(max_len);
 
-        // Professional mixing with soft scaling to prevent distortion
-        // Uses proportional scaling instead of hard clamping to avoid artifacts
+        let mic_rms = if mic_window.is_empty() {
+            0.0
+        } else {
+            (mic_window.iter().map(|&x| x * x).sum::<f32>() / mic_window.len() as f32).sqrt()
+        };
+        // Headroom always; extra duck while the user is speaking so remote audio
+        // doesn't bury them in the saved recording.
+        let sys_gain = if mic_rms > 0.012 { 0.50 } else { 0.65 };
+
         for i in 0..max_len {
-            let mic = mic_window.get(i).copied().unwrap_or(0.0);
-            let sys = sys_window.get(i).copied().unwrap_or(0.0);
+            let m = mic_window.get(i).copied().unwrap_or(0.0);
+            let mut s = sys_window.get(i).copied().unwrap_or(0.0) * sys_gain;
 
-            // Pre-scale system audio to 70% to leave headroom
-            // This prevents constant soft scaling which can cause pumping artifacts
-            // Mic is normalized to -23 LUFS (already optimal), system needs reduction
-            let sys_scaled = sys * 1.0;
-            let _mic_scaled = mic * 0.8;  // Reserved for future mic scaling
-
-            // Sum without ducking - mic stays at full volume, system slightly reduced
-            let sum = mic + sys_scaled;
-
-            // CRITICAL FIX: Soft scaling prevents distortion artifacts
-            // If the sum would exceed ±1.0, scale down PROPORTIONALLY
-            // This avoids hard clipping distortion that sounds like "radio breaks"
-            let sum_abs = sum.abs();
-            let mixed_sample = if sum_abs > 1.0 {
-                // Scale down to fit within ±1.0
-                sum / sum_abs
-            } else {
+            let sum = m + s;
+            let mixed_sample = if sum.abs() <= 1.0 {
                 sum
+            } else {
+                // Mic-priority limiting: carve system down to leave room for mic.
+                let room = (1.0 - m.abs()).max(0.0);
+                if s.abs() > room {
+                    s = s.signum() * room;
+                }
+                let sum2 = m + s;
+                if sum2.abs() > 1.0 {
+                    // Last resort (extreme mic peaks): soft-scale the residual.
+                    sum2 / sum2.abs()
+                } else {
+                    sum2
+                }
             };
 
             mixed.push(mixed_sample);
@@ -342,7 +354,7 @@ impl AudioCapture {
             // Initialize EBU R128 normalizer (professional loudness standard)
             let norm = match LoudnessNormalizer::new(1, TARGET_SAMPLE_RATE) {
                 Ok(normalizer) => {
-                    info!("✅ EBU R128 normalizer initialized for microphone '{}' (target: -23 LUFS)", device.name);
+                    info!("✅ EBU R128 normalizer initialized for microphone '{}' (target: -18 LUFS)", device.name);
                     Some(normalizer)
                 }
                 Err(e) => {
@@ -727,7 +739,11 @@ pub struct AudioPipeline {
     receiver: mpsc::UnboundedReceiver<AudioChunk>,
     transcription_sender: mpsc::UnboundedSender<AudioChunk>,
     state: Arc<RecordingState>,
-    vad_processor: ContinuousVadProcessor,
+    /// Separate VAD per capture source. Mic and system are transcribed on
+    /// independent paths (same wall-clock windows, different sample streams)
+    /// so simultaneous talk never soft-limits one source into the other for STT.
+    mic_vad: ContinuousVadProcessor,
+    system_vad: ContinuousVadProcessor,
     sample_rate: u32,
     chunk_id_counter: u64,
     // Performance optimization: reduce logging frequency
@@ -744,22 +760,7 @@ pub struct AudioPipeline {
     level_sender: Option<mpsc::UnboundedSender<AudioLevels>>,
     last_mic_level_emit: std::time::Instant,
     last_sys_level_emit: std::time::Instant,
-    /// Whether the microphone was active in the most recently mixed window. Used
-    /// as a hint on outgoing transcription chunks so diarization can work out
-    /// which speaker is the local user (see the send site for the reasoning).
-    last_window_mic_dominant: bool,
-    /// Running estimate of the microphone's noise floor, so mic activity is
-    /// judged against room silence rather than against system audio.
-    mic_noise_floor: f32,
-    /// Recent per-window mic-activity flags. VAD emits a segment after speech
-    /// ends, so the decision must look back over the audio the segment came
-    /// from rather than at the instant of emission.
-    mic_activity_history: VecDeque<bool>,
 }
-
-/// How many mixing windows of mic activity to remember. At ~600 ms per window
-/// this spans roughly the length of a typical spoken turn.
-const MIC_HISTORY_WINDOWS: usize = 8;
 
 impl AudioPipeline {
     pub fn new(
@@ -791,18 +792,21 @@ impl AudioPipeline {
 
         let redemption_time = if cfg!(target_os = "macos") { 400 } else { 400 };
 
-        let vad_processor = match ContinuousVadProcessor::new(sample_rate, redemption_time) {
+        // One VAD per capture source so simultaneous talk is segmented independently.
+        let make_vad = |label: &str| match ContinuousVadProcessor::new(sample_rate, redemption_time) {
             Ok(processor) => {
-                info!("VAD-driven pipeline: VAD segments will be sent directly to Whisper (no time-based accumulation)");
+                info!("VAD ready for {label}: segments go straight to Whisper (no shared mix)");
                 processor
             }
             Err(e) => {
-                error!("Failed to create VAD processor: {}", e);
-                panic!("VAD processor creation failed: {}", e);
+                error!("Failed to create {label} VAD processor: {e}");
+                panic!("VAD processor creation failed: {e}");
             }
         };
+        let mic_vad = make_vad("microphone");
+        let system_vad = make_vad("system");
 
-        // Initialize professional audio mixing components
+        // Initialize professional audio mixing components (recording file only)
         let ring_buffer = AudioMixerRingBuffer::new(sample_rate);
         let mixer = ProfessionalAudioMixer::new(sample_rate);
 
@@ -813,7 +817,8 @@ impl AudioPipeline {
             receiver,
             transcription_sender,
             state,
-            vad_processor,
+            mic_vad,
+            system_vad,
             sample_rate,
             chunk_id_counter: 0,
             // Performance optimization: reduce logging frequency
@@ -829,9 +834,59 @@ impl AudioPipeline {
             level_sender: None,
             last_mic_level_emit: std::time::Instant::now(),
             last_sys_level_emit: std::time::Instant::now(),
-            last_window_mic_dominant: false,
-            mic_noise_floor: 0.0,
-            mic_activity_history: VecDeque::new(),
+        }
+    }
+
+    /// Run VAD on one source and enqueue any finished speech segments for Whisper.
+    /// `device_type` is the true origin (mic vs system) — not a post-mix guess.
+    fn emit_source_speech(
+        vad: &mut ContinuousVadProcessor,
+        samples: &[f32],
+        device_type: DeviceType,
+        transcription_sender: &mpsc::UnboundedSender<AudioChunk>,
+        chunk_id_counter: &mut u64,
+    ) {
+        // Skip pure silence windows quickly (all-zero pad from the ring buffer).
+        let has_energy = samples.iter().any(|&s| s.abs() > 1e-5);
+        if !has_energy {
+            // Still feed VAD so its clock advances in lockstep with the other source.
+            let _ = vad.process_audio(samples);
+            return;
+        }
+
+        match vad.process_audio(samples) {
+            Ok(speech_segments) => {
+                for segment in speech_segments {
+                    let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
+                    if segment.samples.len() < 800 {
+                        debug!(
+                            "⏭️ Dropping short {:?} VAD segment: {:.1}ms ({} samples < 800)",
+                            device_type, duration_ms, segment.samples.len()
+                        );
+                        continue;
+                    }
+                    info!(
+                        "📤 Sending {:?} VAD segment: {:.1}ms, {} samples @ {:.2}s",
+                        device_type,
+                        duration_ms,
+                        segment.samples.len(),
+                        segment.start_timestamp_ms / 1000.0
+                    );
+                    let transcription_chunk = AudioChunk {
+                        data: segment.samples,
+                        sample_rate: 16000,
+                        timestamp: segment.start_timestamp_ms / 1000.0,
+                        chunk_id: *chunk_id_counter,
+                        device_type: device_type.clone(),
+                    };
+                    if let Err(e) = transcription_sender.send(transcription_chunk) {
+                        warn!("Failed to send {:?} VAD segment: {}", device_type, e);
+                    } else {
+                        *chunk_id_counter += 1;
+                    }
+                }
+            }
+            Err(e) => warn!("⚠️ {:?} VAD error: {}", device_type, e),
         }
     }
 
@@ -918,129 +973,36 @@ impl AudioPipeline {
                     // STEP 2: Mix audio in fixed windows when both streams have sufficient data
                     while self.ring_buffer.can_mix() {
                         if let Some((mic_window, sys_window)) = self.ring_buffer.extract_window() {
-                            // Which source dominated this window? Captured BEFORE
-                            // mixing, because mixing destroys the distinction.
-                            //
-                            // This is what lets diarization work out which
-                            // speaker cluster is the local user: their voice
-                            // arrives on the microphone, everyone else arrives
-                            // on system audio. The margin avoids flapping when
-                            // mic bleed picks up the remote participants.
-                            let rms = |w: &[f32]| -> f32 {
-                                if w.is_empty() {
-                                    0.0
-                                } else {
-                                    (w.iter().map(|&x| x * x).sum::<f32>() / w.len() as f32).sqrt()
-                                }
-                            };
-                            let mic_rms = rms(&mic_window);
-                            let _sys_rms = rms(&sys_window);
+                            // STEP 3: Transcribe each source independently.
+                            // Same wall-clock windows (aligned by the ring buffer),
+                            // separate sample streams + VAD state — so when both
+                            // sides talk at once neither is soft-limited into the
+                            // other before Whisper, and device_type is exact.
+                            Self::emit_source_speech(
+                                &mut self.mic_vad,
+                                &mic_window,
+                                DeviceType::Microphone,
+                                &self.transcription_sender,
+                                &mut self.chunk_id_counter,
+                            );
+                            Self::emit_source_speech(
+                                &mut self.system_vad,
+                                &sys_window,
+                                DeviceType::System,
+                                &self.transcription_sender,
+                                &mut self.chunk_id_counter,
+                            );
 
-                            // Track the microphone's own noise floor: fall to any
-                            // quieter level immediately, rise only very slowly.
-                            // After a few seconds this settles near room silence.
-                            if mic_rms < self.mic_noise_floor || self.mic_noise_floor == 0.0 {
-                                self.mic_noise_floor = mic_rms;
-                            } else {
-                                self.mic_noise_floor += (mic_rms - self.mic_noise_floor) * 0.001;
-                            }
-
-                            // "Is the local user talking?" is answered by the mic
-                            // rising clearly above its own floor — NOT by comparing
-                            // it to system audio. Comparing the two fails whenever
-                            // the remote side is loud (calls with music, games,
-                            // screen shares): the user's own speech never "wins",
-                            // so they were never identified as the user.
-                            let floor_gate = (self.mic_noise_floor * 4.0).max(0.004);
-                            let mic_active_now = mic_rms > floor_gate;
-
-                            // Keep a short history rather than only the current
-                            // window. VAD emits a segment *after* speech ends, by
-                            // which point the speaker has gone quiet — sampling
-                            // "right now" therefore reported mic-inactive for
-                            // every segment, and the user was never identified.
-                            self.mic_activity_history.push_back(mic_active_now);
-                            while self.mic_activity_history.len() > MIC_HISTORY_WINDOWS {
-                                self.mic_activity_history.pop_front();
-                            }
-
-                            // Treat the segment as the user's if the mic was live
-                            // for a meaningful share of the recent audio. A share
-                            // rather than "any" so brief bleed from the remote side
-                            // doesn't get attributed to the user.
-                            let active = self.mic_activity_history.iter().filter(|&&a| a).count();
-                            let total = self.mic_activity_history.len().max(1);
-                            self.last_window_mic_dominant =
-                                (active as f32 / total as f32) >= 0.35;
-
-                            // Simple mixing without aggressive ducking
-                            let mixed_clean = self.mixer.mix_window(&mic_window, &sys_window);
-
-                            // NO POST-GAIN NEEDED: Microphone already normalized by EBU R128 to -23 LUFS
-                            // This is broadcast-standard loudness (Netflix/YouTube/Spotify level)
-                            // System audio at natural levels
-                            // Previous 2x gain was causing excessive limiting/distortion
-                            let mixed_with_gain = mixed_clean;
-
-                            // STEP 3: Send mixed audio for transcription (VAD + Whisper)
-                            match self.vad_processor.process_audio(&mixed_with_gain) {
-                                Ok(speech_segments) => {
-                                    for segment in speech_segments {
-                                        let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
-
-                                        if segment.samples.len() >= 800 {  // Minimum 50ms at 16kHz - matches Parakeet capability
-                                            info!("📤 Sending VAD segment: {:.1}ms, {} samples",
-                                                  duration_ms, segment.samples.len());
-
-                                            // The samples themselves are mixed, so `device_type`
-                                            // cannot identify their origin exactly. It instead
-                                            // carries a *hint*: which source dominated the audio
-                                            // this segment came out of.
-                                            //
-                                            // `Microphone` therefore means "the local user was the
-                                            // loud one here", and `System` means "a remote
-                                            // participant was". Diarization aggregates these hints
-                                            // per speaker cluster to decide which cluster is the
-                                            // user (see `diarization::online`). It is a hint and
-                                            // not a guarantee — VAD buffers across windows, so a
-                                            // segment may span a source change — which is why it's
-                                            // used statistically rather than per-segment.
-                                            let transcription_chunk = AudioChunk {
-                                                data: segment.samples,
-                                                sample_rate: 16000,
-                                                timestamp: segment.start_timestamp_ms / 1000.0,
-                                                chunk_id: self.chunk_id_counter,
-                                                device_type: if self.last_window_mic_dominant {
-                                                    DeviceType::Microphone
-                                                } else {
-                                                    DeviceType::System
-                                                },
-                                            };
-
-                                            if let Err(e) = self.transcription_sender.send(transcription_chunk) {
-                                                warn!("Failed to send VAD segment: {}", e);
-                                            } else {
-                                                self.chunk_id_counter += 1;
-                                            }
-                                        } else {
-                                            debug!("⏭️ Dropping short VAD segment: {:.1}ms ({} samples < 800)",
-                                                   duration_ms, segment.samples.len());
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!("⚠️ VAD error: {}", e);
-                                }
-                            }
-
-                            // STEP 4: Send mixed audio for recording (WAV file)
+                            // STEP 4: Mix only for the recording file (playback).
+                            // Mic-priority headroom/ducking lives in the mixer.
+                            let mixed = self.mixer.mix_window(&mic_window, &sys_window);
                             if let Some(ref sender) = self.recording_sender_for_mixed {
                                 let recording_chunk = AudioChunk {
-                                    data: mixed_with_gain.clone(),
+                                    data: mixed,
                                     sample_rate: self.sample_rate,
                                     timestamp: chunk.timestamp,
                                     chunk_id: self.chunk_id_counter,
-                                    device_type: DeviceType::Microphone,  // Mixed audio
+                                    device_type: DeviceType::Microphone, // placeholder; file is mixed
                                 };
                                 let _ = sender.send(recording_chunk);
                             }
@@ -1068,38 +1030,43 @@ impl AudioPipeline {
     fn flush_remaining_audio(&mut self) -> Result<()> {
         info!("Flushing remaining audio from pipeline (processed {} chunks)", self.processed_chunks);
 
-        // Flush any remaining audio from VAD processor and send segments to transcription
-        match self.vad_processor.flush() {
-            Ok(final_segments) => {
-                for segment in final_segments {
-                    let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
+        let mic_final = self.mic_vad.flush();
+        let sys_final = self.system_vad.flush();
 
-                    // Send segments >= 50ms (800 samples at 16kHz) - matches main pipeline filter
-                    if segment.samples.len() >= 800 {
-                        info!("📤 Sending final VAD segment to Whisper: {:.1}ms duration, {} samples",
-                              duration_ms, segment.samples.len());
-
+        for (device_type, result) in [
+            (DeviceType::Microphone, mic_final),
+            (DeviceType::System, sys_final),
+        ] {
+            match result {
+                Ok(final_segments) => {
+                    for segment in final_segments {
+                        let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
+                        if segment.samples.len() < 800 {
+                            info!(
+                                "⏭️ Skipping short final {:?} segment: {:.1}ms ({} samples < 800)",
+                                device_type, duration_ms, segment.samples.len()
+                            );
+                            continue;
+                        }
+                        info!(
+                            "📤 Sending final {:?} VAD segment: {:.1}ms, {} samples",
+                            device_type, duration_ms, segment.samples.len()
+                        );
                         let transcription_chunk = AudioChunk {
                             data: segment.samples,
                             sample_rate: 16000,
                             timestamp: segment.start_timestamp_ms / 1000.0,
                             chunk_id: self.chunk_id_counter,
-                            device_type: DeviceType::Microphone,
+                            device_type: device_type.clone(),
                         };
-
                         if let Err(e) = self.transcription_sender.send(transcription_chunk) {
-                            warn!("Failed to send final VAD segment: {}", e);
+                            warn!("Failed to send final {:?} VAD segment: {}", device_type, e);
                         } else {
                             self.chunk_id_counter += 1;
                         }
-                    } else {
-                        info!("⏭️ Skipping short final segment: {:.1}ms ({} samples < 800)",
-                              duration_ms, segment.samples.len());
                     }
                 }
-            }
-            Err(e) => {
-                warn!("Failed to flush VAD processor: {}", e);
+                Err(e) => warn!("Failed to flush {:?} VAD: {}", device_type, e),
             }
         }
 
