@@ -679,11 +679,34 @@ pub async fn diarize_meeting(
     }
 
     // Assign each segment the speaker with the greatest temporal overlap.
+    //
+    // Live dual-path STT already labels mic as "You" and system as Guest/
+    // Speaker N. Offline clustering runs on the *mixed* file and used to
+    // overwrite those good live labels — which is why the post-call transcript
+    // lost what the live chat already showed. Preserve existing live labels
+    // (especially "You"); only fill gaps / refine unlabeled rows.
     let mut assignments: Vec<(String, String)> = Vec::new();
-    for (id, start, end, _) in rows {
+    let mut preserved = 0u32;
+    for (id, start, end, existing) in rows {
+        if let Some(ref live) = existing {
+            let live_trim = live.trim();
+            if !live_trim.is_empty() {
+                // Keep live identity. Offline may still refine pure "Guest" into
+                // Speaker N when multi-speaker clustering is confident.
+                let is_you = live_trim.eq_ignore_ascii_case("you");
+                let is_named = !live_trim.eq_ignore_ascii_case("guest")
+                    && !live_trim.to_ascii_lowercase().starts_with("speaker ");
+                if is_you || is_named {
+                    preserved += 1;
+                    assignments.push((id, live_trim.to_string()));
+                    continue;
+                }
+            }
+        }
+
         let (s, e) = match (start, end) {
             (Some(s), Some(e)) if e > s => (s as f32, e as f32),
-            _ => continue, // no timing info â€” can't map reliably
+            _ => continue, // no timing info — can't map reliably
         };
 
         let mut best_overlap = 0f32;
@@ -711,6 +734,12 @@ pub async fn diarize_meeting(
                 .map_err(|e| format!("Failed to save speaker label: {}", e))?;
             assignments.push((id, label));
         }
+    }
+    if preserved > 0 {
+        log::info!(
+            "🧑‍🤝‍🧑 Preserved {} live speaker label(s); offline only filled gaps",
+            preserved
+        );
     }
 
     log::info!(

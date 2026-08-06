@@ -340,15 +340,22 @@ export function useRecordingStop(
           // Mark meeting as saved in IndexedDB (for recovery system)
           await markMeetingAsSaved();
 
-          // Refine speaker labels in the background.
-          //
-          // Live transcription already labels segments via streaming
-          // diarization, but that runs blind to the future and can't revise
-          // earlier guesses. Now that the whole recording exists on disk we can
-          // run the full offline pass, which clusters every voice globally and
-          // produces better labels. Fire-and-forget: the user is navigating to
-          // the meeting straight away and shouldn't wait for this.
-          void autoDiarizeMeeting(meetingId);
+          // Offline diarize only to fill gaps. Live dual-path already labels
+          // mic as You and system as Guest/Speaker N — running offline on the
+          // mixed file used to wipe those labels. If most lines already have a
+          // speaker, skip auto offline; the user can still hit "Identify
+          // speakers" manually.
+          const labeled = freshTranscripts.filter((t) => !!t.speaker?.trim()).length;
+          const labelRatio =
+            freshTranscripts.length > 0 ? labeled / freshTranscripts.length : 0;
+          console.log(
+            `🏷️ Live speaker labels on save: ${labeled}/${freshTranscripts.length} (${Math.round(labelRatio * 100)}%)`
+          );
+          if (labelRatio < 0.5) {
+            void autoDiarizeMeeting(meetingId);
+          } else {
+            console.log('[auto-diarize] skipped — live labels already present');
+          }
 
           // Clean up session storage
           sessionStorage.removeItem('last_recording_folder_path');

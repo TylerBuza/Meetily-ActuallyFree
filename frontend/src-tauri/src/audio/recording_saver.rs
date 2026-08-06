@@ -22,6 +22,11 @@ pub struct TranscriptSegment {
     pub display_time: String,   // Formatted time for display like "[02:15]"
     pub confidence: f32,
     pub sequence_id: u64,
+    /// Live speaker label ("You" / "Guest" / "Speaker N"). Must ride along from
+    /// the transcript-update event into transcripts.json — the post-call UI and
+    /// offline diarize both depend on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
 }
 
 /// Meeting metadata structure
@@ -129,6 +134,7 @@ impl RecordingSaver {
             display_time: "[00:00]".to_string(),
             confidence: 1.0,
             sequence_id: 0,
+            speaker: None,
         };
         self.add_transcript_segment(segment);
     }

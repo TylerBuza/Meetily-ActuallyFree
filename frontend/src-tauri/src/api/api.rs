@@ -973,12 +973,19 @@ pub async fn api_save_transcript<R: Runtime>(
 
     // Log parsed segments count and first segment details
     if let Some(first_seg) = transcripts_to_save.first() {
-        log_debug!("First parsed segment: text='{}', audio_start_time={:?}, audio_end_time={:?}, duration={:?}",
+        log_debug!("First parsed segment: text='{}', audio_start_time={:?}, audio_end_time={:?}, duration={:?}, speaker={:?}",
                    first_seg.text.chars().take(50).collect::<String>(),
                    first_seg.audio_start_time,
                    first_seg.audio_end_time,
-                   first_seg.duration);
+                   first_seg.duration,
+                   first_seg.speaker);
     }
+    let with_speaker = transcripts_to_save.iter().filter(|s| s.speaker.as_ref().map(|x| !x.is_empty()).unwrap_or(false)).count();
+    log_info!(
+        "Saving {} transcripts ({} with live speaker labels)",
+        transcripts_to_save.len(),
+        with_speaker
+    );
 
     let pool = state.db_manager.pool();
 

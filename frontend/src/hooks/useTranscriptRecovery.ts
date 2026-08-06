@@ -173,6 +173,8 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
         audio_start_time: (t as any).audio_start_time,
         audio_end_time: (t as any).audio_end_time,
         duration: (t as any).duration,
+        // IndexedDB stores the live event shape (`source`); map it to speaker.
+        speaker: (t as any).speaker ?? (t as any).source ?? undefined,
       }));
 
       // 6. Save to backend database using existing save utilities

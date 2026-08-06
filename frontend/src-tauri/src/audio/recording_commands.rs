@@ -315,6 +315,13 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
                     display_time: update.timestamp.clone(), // Use wall-clock timestamp for display
                     confidence: update.confidence,
                     sequence_id: update.sequence_id,
+                    // Live chat already decided the speaker (You / Guest / Speaker N).
+                    // Dropping this here is why post-call transcripts looked unlabeled.
+                    speaker: if update.source.trim().is_empty() {
+                        None
+                    } else {
+                        Some(update.source.clone())
+                    },
                 };
 
                 // Save to recording manager
@@ -327,7 +334,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         });
         let mut global_listener = TRANSCRIPT_LISTENER_ID.lock().unwrap();
         *global_listener = Some(listener_id);
-        info!("âœ… Transcript-update event listener registered for history persistence");
+        info!("✅ Transcript-update event listener registered for history persistence");
     }
 
     // Emit success event
@@ -496,6 +503,11 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
                     display_time: update.timestamp.clone(), // Use wall-clock timestamp for display
                     confidence: update.confidence,
                     sequence_id: update.sequence_id,
+                    speaker: if update.source.trim().is_empty() {
+                        None
+                    } else {
+                        Some(update.source.clone())
+                    },
                 };
 
                 // Save to recording manager
@@ -508,7 +520,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
         });
         let mut global_listener = TRANSCRIPT_LISTENER_ID.lock().unwrap();
         *global_listener = Some(listener_id);
-        info!("âœ… Transcript-update event listener registered for history persistence");
+        info!("✅ Transcript-update event listener registered for history persistence");
     }
 
     // Emit success event
