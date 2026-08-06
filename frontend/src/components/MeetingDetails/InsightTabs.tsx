@@ -25,8 +25,9 @@ import {
   Circle,
   CheckCircle2,
   Send,
-  ListTodo,
   User,
+  Calendar,
+  Clock,
 } from 'lucide-react';
 import { Summary, Transcript } from '@/types';
 
@@ -142,7 +143,8 @@ const MONTHS = '(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*';
 
 interface ParsedAction {
   owner: string | null;
-  date: string | null;
+  due: string | null;
+  timestamp: string | null;
   text: string;
 }
 
@@ -168,7 +170,85 @@ function parseAction(raw: string): ParsedAction {
     text = text.replace(d[0], '').replace(/\b(by|due|on|before)\s*$/i, '').replace(/[\(\[]\s*[\)\]]?\s*$/, '').replace(/[,\-–—]\s*$/, '').trim();
   }
 
-  return { owner, date, text: text.replace(/\s{2,}/g, ' ').trim() };
+  return { owner, due: date, timestamp: null, text: text.replace(/\s{2,}/g, ' ').trim() };
+}
+
+// ---- Markdown-table action items -------------------------------------------
+// Models often emit action items as a GFM table (| Owner | Task | Due | … |).
+// Splitting that by line turns the header row and the `| --- |` separator into
+// bogus "action items" and crams every column into one line. These helpers
+// parse the table into structured items instead, dropping header/separator.
+
+function splitTableRow(row: string): string[] {
+  let s = row.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  return s.split('|').map((c) => c.trim());
+}
+
+function isSeparatorRow(cells: string[]): boolean {
+  return cells.every((c) => c === '' || /^:?-{2,}:?$/.test(c.replace(/\s/g, '')));
+}
+
+function stripCell(s: string): string {
+  return s
+    .replace(/\*\*/g, '')
+    .replace(/^["'“”\s]+|["'“”\s]+$/g, '')
+    .trim();
+}
+
+function parseActionTable(rows: string[]): ParsedAction[] {
+  const grid = rows.map(splitTableRow);
+  let h = 0;
+  while (h < grid.length && isSeparatorRow(grid[h])) h++;
+  const header = (grid[h] ?? []).map((c) => stripCell(c).toLowerCase());
+  const col = (re: RegExp) => header.findIndex((c) => re.test(c));
+  const ownerIdx = col(/owner|assignee|assigned|who|responsible/);
+  const taskIdx = col(/task|action|item|descr|to-?do|deliverable|next/);
+  const dueIdx = col(/due|date|when|deadline|timeline/);
+  const timeIdx = col(/time.?stamp|timestamp/);
+
+  const items: ParsedAction[] = [];
+  for (let i = h + 1; i < grid.length; i++) {
+    const cells = grid[i];
+    if (isSeparatorRow(cells) || cells.every((c) => c === '')) continue;
+    const owner = ownerIdx >= 0 ? stripCell(cells[ownerIdx] ?? '') : '';
+    const due = dueIdx >= 0 ? stripCell(cells[dueIdx] ?? '') : '';
+    const time = timeIdx >= 0 ? stripCell(cells[timeIdx] ?? '') : '';
+    let task = taskIdx >= 0 ? stripCell(cells[taskIdx] ?? '') : '';
+    if (!task) {
+      // No recognizable task column: fall back to the longest remaining cell.
+      task =
+        cells
+          .map(stripCell)
+          .filter((c, idx) => c && idx !== ownerIdx && idx !== dueIdx && idx !== timeIdx)
+          .sort((a, b) => b.length - a.length)[0] ?? '';
+    }
+    if (!task) continue;
+    items.push({
+      owner: owner || null,
+      due: due || null,
+      timestamp: time ? time.replace(/^[[(]+|[\])]+$/g, '').trim() : null,
+      text: task,
+    });
+  }
+  return items;
+}
+
+/** Turn the raw action bucket (a markdown table and/or plain list) into
+ *  structured items. Table header/separator rows are dropped, not shown. */
+function parseActionItems(lines: string[]): ParsedAction[] {
+  const table = lines.filter((l) => l.trim().startsWith('|'));
+  const plain = lines.filter((l) => !l.trim().startsWith('|'));
+  const items: ParsedAction[] = [];
+  if (table.length >= 2) items.push(...parseActionTable(table));
+  for (const line of plain) {
+    const t = line.trim();
+    if (!t) continue;
+    const a = parseAction(t);
+    if (a.text) items.push(a);
+  }
+  return items;
 }
 
 function topicLabel(raw: string): string {
@@ -207,7 +287,7 @@ export function InsightTabs({
   const [done, setDone] = useState<Set<string>>(new Set());
 
   const buckets = useMemo(() => normalize(aiSummary), [aiSummary]);
-  const actions = useMemo(() => buckets.actions.map(parseAction), [buckets.actions]);
+  const actions = useMemo(() => parseActionItems(buckets.actions), [buckets.actions]);
   const summaryText = useMemo(() => buckets.summary.join('\n\n'), [buckets.summary]);
   const hasSummary = !!aiSummary;
 
@@ -308,12 +388,17 @@ export function InsightTabs({
           <div className="mb-1 flex items-center gap-2">
             <Sparkles size={18} className="text-cyan-400" />
             <h3 className="text-base font-semibold text-[var(--af-text)]">Action Items</h3>
-            {actions.length > 0 && <span className="text-sm font-medium text-[var(--af-text-3)]">{actions.length}</span>}
+            {!generating && actions.length > 0 && <span className="text-sm font-medium text-[var(--af-text-3)]">{actions.length}</span>}
             <div className="ml-auto">
               <ToolbarButton icon={<Plus size={14} />} onClick={() => toast.info('Adding action items is coming soon')}>Add action item</ToolbarButton>
             </div>
           </div>
-          {actions.length === 0 ? (
+          {generating ? (
+            <div className="flex items-center gap-3 py-2 text-sm text-[var(--af-text-2)]">
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--af-accent)] border-t-transparent" />
+              Regenerating action items…
+            </div>
+          ) : actions.length === 0 ? (
             <div className="py-6 text-center text-sm text-[var(--af-text-3)]">No action items were identified.</div>
           ) : (
             <div>
@@ -321,24 +406,41 @@ export function InsightTabs({
                 const key = `a-${i}`;
                 const isDone = done.has(key);
                 return (
-                  <div key={i} className="flex items-center gap-3 border-b border-[var(--af-border)] py-3 last:border-0">
+                  <div key={i} className="flex items-start gap-3 border-b border-[var(--af-border)] py-3 last:border-0">
                     <button
                       onClick={() => toggleDone(key)}
-                      className="shrink-0 text-[var(--af-text-3)] transition-colors hover:text-[var(--af-accent)]"
+                      className="mt-0.5 shrink-0 text-[var(--af-text-3)] transition-colors hover:text-[var(--af-accent)]"
                       title={isDone ? 'Mark as not done' : 'Mark as done'}
                     >
                       {isDone ? <CheckCircle2 size={18} className="text-[var(--af-accent)]" /> : <Circle size={18} />}
                     </button>
-                    <span className={`min-w-0 flex-1 text-sm ${isDone ? 'text-[var(--af-text-3)] line-through' : 'text-[var(--af-text)]'}`}>
-                      {a.text}
-                    </span>
-                    {a.owner && (
-                      <span className={`inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ${ownerChip(a.owner)}`}>
-                        <User size={12} />
-                        {a.owner}
-                      </span>
-                    )}
-                    <span className="w-16 shrink-0 text-right text-sm text-[var(--af-text-3)]">{a.date ?? ''}</span>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-sm leading-relaxed ${isDone ? 'text-[var(--af-text-3)] line-through' : 'text-[var(--af-text)]'}`}>
+                        {a.text}
+                      </p>
+                      {(a.owner || a.due || a.timestamp) && (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          {a.owner && (
+                            <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${ownerChip(a.owner)}`}>
+                              <User size={11} />
+                              {a.owner}
+                            </span>
+                          )}
+                          {a.due && (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-[var(--af-panel-2)] px-2 py-0.5 text-xs text-[var(--af-text-2)]">
+                              <Calendar size={11} />
+                              {a.due}
+                            </span>
+                          )}
+                          {a.timestamp && (
+                            <span className="inline-flex items-center gap-1 rounded-md border border-[var(--af-border)] px-2 py-0.5 font-mono text-[11px] text-[var(--af-text-3)]">
+                              <Clock size={11} />
+                              {a.timestamp}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -349,7 +451,12 @@ export function InsightTabs({
         {/* Key Topics */}
         <section>
           <h3 className="mb-3 text-base font-semibold text-[var(--af-text)]">Key Topics</h3>
-          {buckets.topics.length === 0 ? (
+          {generating ? (
+            <div className="flex items-center gap-3 py-2 text-sm text-[var(--af-text-2)]">
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--af-accent)] border-t-transparent" />
+              Regenerating topics…
+            </div>
+          ) : buckets.topics.length === 0 ? (
             <div className="py-2 text-sm text-[var(--af-text-3)]">No key topics were identified.</div>
           ) : (
             <div className="flex flex-wrap gap-2">
