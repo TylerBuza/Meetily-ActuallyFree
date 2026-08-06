@@ -14,7 +14,7 @@ const Logo = React.forwardRef<HTMLButtonElement, LogoProps>(({ isCollapsed }, re
       {isCollapsed ? (
         <DialogTrigger asChild>
           <button ref={ref} className="flex items-center justify-start mb-2 cursor-pointer bg-transparent border-none p-0 hover:opacity-80 transition-opacity">
-            <Image src="/logo-collapsed.png" alt="Logo" width={40} height={32} />
+            <Image src="/logo-collapsed.png" alt="Logo" width={36} height={36} />
           </button>
         </DialogTrigger>
       ) : (

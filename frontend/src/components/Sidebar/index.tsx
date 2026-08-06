@@ -45,7 +45,6 @@ import { VisuallyHidden } from "@/components/ui/visually-hidden"
 
 import { MessageToast } from '../MessageToast';
 import Logo from '../Logo';
-import Info from '../Info';
 import { ComplianceNotification } from '../ComplianceNotification';
 import { Input } from '../ui/input';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '../ui/input-group';
@@ -577,78 +576,84 @@ const Sidebar: React.FC = () => {
 
     return (
       <TooltipProvider>
-        <div className="flex flex-col items-center space-y-4 mt-4">
-          <Logo isCollapsed={isCollapsed} />
+        <div className="flex h-full flex-col items-center">
+          <div className="flex flex-col items-center space-y-4 mt-4">
+            <Logo isCollapsed={isCollapsed} />
 
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={handleRecordingToggle}
-                disabled={isRecording}
-                className={`p-2 ${isRecording ? 'bg-red-500 cursor-not-allowed' : 'bg-red-500 hover:bg-red-600'} rounded-full transition-colors duration-150 shadow-sm`}
-              >
-                {isRecording ? (
-                  <Square className="w-5 h-5 text-white" />
-                ) : (
-                  <Mic className="w-5 h-5 text-white" />
-                )}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              <p>{isRecording ? "Recording in progress..." : "Start Recording"}</p>
-            </TooltipContent>
-          </Tooltip>
-
-          {betaFeatures.importAndRetranscribe && (
+            {/* New Recording */}
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  onClick={() => openImportDialog()}
-                  className="p-2 rounded-lg transition-colors duration-150 hover:bg-blue-100 bg-blue-50"
+                  onClick={handleRecordingToggle}
+                  disabled={isRecording}
+                  className={`p-2 ${isRecording ? 'bg-red-500 cursor-not-allowed' : 'bg-red-500 hover:bg-red-600'} rounded-full transition-colors duration-150 shadow-sm`}
                 >
-                  <Upload className="w-5 h-5 text-blue-600" />
+                  {isRecording ? (
+                    <Square className="w-5 h-5 text-white" />
+                  ) : (
+                    <Mic className="w-5 h-5 text-white" />
+                  )}
                 </button>
               </TooltipTrigger>
               <TooltipContent side="right">
-                <p>Import Audio</p>
+                <p>{isRecording ? "Recording in progress..." : "Start Recording"}</p>
               </TooltipContent>
             </Tooltip>
-          )}
 
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => {
-                  if (isCollapsed) toggleCollapse();
-                  toggleFolder('meetings');
-                }}
-                className={`p-2 rounded-lg transition-colors duration-150 ${isMeetingPage ? 'bg-gray-100' : 'hover:bg-gray-100'
-                  }`}
-              >
-                <NotebookPen className="w-5 h-5 text-gray-600" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              <p>Meetings</p>
-            </TooltipContent>
-          </Tooltip>
+            {/* Meetings */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => {
+                    if (isCollapsed) toggleCollapse();
+                    toggleFolder('meetings');
+                  }}
+                  className={`p-2 rounded-lg transition-colors duration-150 ${isMeetingPage ? 'bg-gray-100' : 'hover:bg-gray-100'
+                    }`}
+                >
+                  <NotebookPen className="w-5 h-5 text-gray-600" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                <p>Meetings</p>
+              </TooltipContent>
+            </Tooltip>
 
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => router.push('/settings')}
-                className={`p-2 rounded-lg transition-colors duration-150 ${isSettingsPage ? 'bg-gray-100' : 'hover:bg-gray-100'
-                  }`}
-              >
-                <Settings className="w-5 h-5 text-gray-600" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              <p>Settings</p>
-            </TooltipContent>
-          </Tooltip>
+            {/* Import Audio (below Meetings) */}
+            {betaFeatures.importAndRetranscribe && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => openImportDialog()}
+                    className="p-2 rounded-lg transition-colors duration-150 hover:bg-blue-100 bg-blue-50"
+                  >
+                    <Upload className="w-5 h-5 text-blue-600" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right">
+                  <p>Import Audio</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
 
-          <Info isCollapsed={isCollapsed} />
+          {/* Settings pinned to the bottom */}
+          <div className="mt-auto mb-4">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => router.push('/settings')}
+                  className={`p-2 rounded-lg transition-colors duration-150 ${isSettingsPage ? 'bg-gray-100' : 'hover:bg-gray-100'
+                    }`}
+                >
+                  <Settings className="w-5 h-5 text-gray-600" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                <p>Settings</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
         </div>
       </TooltipProvider>
     );
