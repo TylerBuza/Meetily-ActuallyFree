@@ -338,7 +338,7 @@ export default function RootLayout({
           </RecordingStateProvider>
         </AnalyticsProvider>
 
-        <Toaster position="bottom-center" richColors closeButton />
+        <Toaster position="bottom-center" theme="dark" richColors closeButton />
       </body>
     </html>
   )
