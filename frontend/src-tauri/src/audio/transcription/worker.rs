@@ -164,37 +164,36 @@ pub fn start_transcription_task<R: Runtime>(
 
                             // Speaker label for this segment.
                             //
-                            // Prefer live diarization: it embeds the segment and
-                            // matches it against voices heard so far, so it can
-                            // distinguish individual people ("Speaker 1/2/3").
-                            //
-                            // The capture-source fallback below is a historical
-                            // path that can only ever say "You": the audio
-                            // reaching transcription is the *mixed* mic+system
-                            // stream, whose `device_type` is a hard-coded
-                            // placeholder (see AudioPipeline). It is kept only so
-                            // transcripts still get some label when the
-                            // diarization models aren't installed.
-                            //
-                            // This label flows to the UI as `TranscriptUpdate.source`,
-                            // which the frontend maps onto `Transcript.speaker`.
-                            let mic_dominant = matches!(
-                                chunk.device_type,
-                                crate::audio::recording_state::DeviceType::Microphone
-                            );
-                            let chunk_source =
-                                match crate::diarization::online::assign_speaker(&chunk.data, mic_dominant) {
-                                    // The speaker arriving consistently on the microphone is the
-                                    // local user. Emit the bare marker "You" — the frontend
-                                    // substitutes the display name from settings, since the name
-                                    // lives there and can change without a restart.
-                                    Some(s) if s.is_user => "You".to_string(),
-                                    Some(s) => format!("Speaker {}", s.index + 1),
-                                    None => match &chunk.device_type {
-                                        crate::audio::recording_state::DeviceType::Microphone => "You".to_string(),
-                                        crate::audio::recording_state::DeviceType::System => "Guest".to_string(),
-                                    },
-                                };
+                            // Dual-path STT (AudioPipeline) sends mic and system as
+                            // separate chunks with a real `device_type`. Mic audio is
+                            // always the local user → "You" (UI substitutes their
+                            // display name). System audio is remote parties →
+                            // diarize into Speaker N when models are available.
+                            crate::audio::common::mark_stt_activity();
+                            let chunk_source = match &chunk.device_type {
+                                crate::audio::recording_state::DeviceType::Microphone => {
+                                    // Still feed the online diarizer so it learns the
+                                    // user's voice embedding for later offline refine.
+                                    let _ = crate::diarization::online::assign_speaker(
+                                        &chunk.data,
+                                        true,
+                                    );
+                                    "You".to_string()
+                                }
+                                crate::audio::recording_state::DeviceType::System => {
+                                    match crate::diarization::online::assign_speaker(
+                                        &chunk.data,
+                                        false,
+                                    ) {
+                                        Some(s) if s.is_user => {
+                                            // System path shouldn't be the user; keep a speaker id.
+                                            format!("Speaker {}", s.index + 1)
+                                        }
+                                        Some(s) => format!("Speaker {}", s.index + 1),
+                                        None => "Guest".to_string(),
+                                    }
+                                }
+                            };
 
                             // Transcribe with provider-agnostic approach
                             match transcribe_chunk_with_provider(

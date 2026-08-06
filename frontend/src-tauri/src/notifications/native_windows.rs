@@ -89,7 +89,60 @@ pub fn ensure_app_identity() {
         } else {
             log::info!("native toast: bound process to AUMID '{APP_USER_MODEL_ID}'");
         }
+
+        // Start Menu shortcut with the same AUMID — some Windows builds only
+        // show a proper app name/icon on toasts when a shortcut is registered.
+        if let Err(e) = ensure_start_menu_shortcut(&icon) {
+            log::warn!("native toast: Start Menu shortcut: {e}");
+        }
     });
+}
+
+/// Create/update `%AppData%\Microsoft\Windows\Start Menu\Programs\Meetily - Actually Free.lnk`
+/// pointing at this exe with our AppUserModelID (via a silent PowerShell COM call).
+fn ensure_start_menu_shortcut(icon: &Path) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe_s = exe.to_string_lossy().replace('\'', "''");
+    let work = exe
+        .parent()
+        .map(|p| p.to_string_lossy().replace('\'', "''"))
+        .unwrap_or_default();
+    let icon_s = icon.to_string_lossy().replace('\'', "''");
+    let programs = dirs::data_dir()
+        .ok_or_else(|| "no AppData".to_string())?
+        .join("Microsoft")
+        .join("Windows")
+        .join("Start Menu")
+        .join("Programs");
+    let _ = std::fs::create_dir_all(&programs);
+    let lnk = programs.join("Meetily - Actually Free.lnk");
+    let lnk_s = lnk.to_string_lossy().replace('\'', "''");
+
+    // PowerShell + WScript.Shell cannot set AppUserModelID; we still create the
+    // shortcut for Discoverability. AUMID is on the process + registry above.
+    let script = format!(
+        "$ws = New-Object -ComObject WScript.Shell; \
+         $s = $ws.CreateShortcut('{lnk}'); \
+         $s.TargetPath = '{exe}'; \
+         $s.WorkingDirectory = '{work}'; \
+         $s.IconLocation = '{icon}'; \
+         $s.Description = 'Meetily - Actually Free'; \
+         $s.Save()",
+        lnk = lnk_s,
+        exe = exe_s,
+        work = work,
+        icon = icon_s,
+    );
+
+    let status = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("powershell exit {status}"))
+    }
 }
 
 /// Write `HKCU\Software\Classes\AppUserModelId\<AUMID>` with DisplayName + IconUri.

@@ -94,6 +94,7 @@ pub async fn parakeet_load_model<R: Runtime>(
 
         // Emit model loading completed/failed event
         if result.is_ok() {
+            crate::audio::common::mark_stt_activity();
             if let Err(e) = app_handle.emit(
                 "parakeet-model-loading-completed",
                 serde_json::json!({

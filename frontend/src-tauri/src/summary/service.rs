@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use once_cell::sync::Lazy;
@@ -292,7 +292,7 @@ impl SummaryService {
     /// * `custom_prompt` - Optional user-provided context
     /// * `template_id` - Template identifier (e.g., "daily_standup", "standard_meeting")
     pub async fn process_transcript_background<R: tauri::Runtime>(
-        _app: AppHandle<R>,
+        app: AppHandle<R>,
         pool: SqlitePool,
         meeting_id: String,
         text: String,
@@ -307,6 +307,20 @@ impl SummaryService {
             "Starting background processing for meeting_id: {}",
             meeting_id
         );
+
+        // Push progress to the UI immediately (frontend also polls as fallback).
+        let emit_progress = |stage: &str, message: &str, data: Option<serde_json::Value>| {
+            let _ = app.emit(
+                "summary-progress",
+                serde_json::json!({
+                    "meetingId": meeting_id,
+                    "stage": stage,
+                    "message": message,
+                    "data": data,
+                }),
+            );
+        };
+        emit_progress("preparing", "Preparing transcript…", None);
 
         // Register cancellation token for this meeting
         let cancellation_token = Self::register_cancellation_token(&meeting_id);
@@ -504,6 +518,12 @@ impl SummaryService {
             }),
         };
 
+        emit_progress(
+            "generating",
+            &format!("Generating summary with {model_provider}/{model_name}…"),
+            None,
+        );
+
         let client = reqwest::Client::new();
         let result = generate_meeting_summary(
             &client,
@@ -565,7 +585,7 @@ impl SummaryService {
                 if let Err(e) = SummaryProcessesRepository::update_process_completed(
                     &pool,
                     &meeting_id,
-                    result_json,
+                    result_json.clone(),
                     num_chunks,
                     duration,
                 )
@@ -575,11 +595,13 @@ impl SummaryService {
                         "Failed to save completed process for {}: {}",
                         meeting_id, e
                     );
+                    emit_progress("error", &format!("Failed to save summary: {e}"), None);
                 } else {
                     info!(
                         "Summary saved successfully for meeting_id: {}",
                         meeting_id
                     );
+                    emit_progress("completed", "Summary ready", Some(result_json));
                 }
             }
             Err(e) => {
@@ -589,8 +611,10 @@ impl SummaryService {
                     if let Err(db_err) = SummaryProcessesRepository::update_process_cancelled(&pool, &meeting_id).await {
                         error!("Failed to update DB status to cancelled for {}: {}", meeting_id, db_err);
                     }
+                    emit_progress("cancelled", "Summary generation cancelled", None);
                 } else {
                     Self::update_process_failed(&pool, &meeting_id, &e).await;
+                    emit_progress("error", &e, None);
                 }
             }
         }

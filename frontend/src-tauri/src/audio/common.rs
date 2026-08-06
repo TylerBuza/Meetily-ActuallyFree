@@ -3,15 +3,114 @@ use anyhow::Result;
 use log::{debug, info};
 use once_cell::sync::Lazy;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use uuid::Uuid;
 
 static ENGINE_LIFECYCLE_LOCK: Lazy<Arc<AsyncMutex<()>>> =
     Lazy::new(|| Arc::new(AsyncMutex::new(())));
 
+/// Last time STT was actively used (unix secs). Idle unload watches this.
+static STT_LAST_ACTIVITY_SECS: AtomicU64 = AtomicU64::new(0);
+
+/// How long STT may sit loaded with no work before we free VRAM/RAM.
+pub const STT_IDLE_UNLOAD_SECS: u64 = 120;
+
 pub(crate) async fn acquire_engine_lifecycle_lock() -> OwnedMutexGuard<()> {
     ENGINE_LIFECYCLE_LOCK.clone().lock_owned().await
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Call whenever STT does real work so the idle unloader doesn't yank the model mid-use.
+pub fn mark_stt_activity() {
+    STT_LAST_ACTIVITY_SECS.store(now_secs(), Ordering::Relaxed);
+}
+
+/// Unload Whisper + Parakeet if neither is needed (not recording, idle long enough).
+pub async fn unload_stt_if_idle() {
+    let last = STT_LAST_ACTIVITY_SECS.load(Ordering::Relaxed);
+    if last == 0 {
+        return;
+    }
+    let idle_for = now_secs().saturating_sub(last);
+    if idle_for < STT_IDLE_UNLOAD_SECS {
+        return;
+    }
+    if crate::audio::recording_commands::is_recording().await {
+        return;
+    }
+
+    let _guard = acquire_engine_lifecycle_lock().await;
+    // Re-check under lock
+    if crate::audio::recording_commands::is_recording().await {
+        return;
+    }
+    let last = STT_LAST_ACTIVITY_SECS.load(Ordering::Relaxed);
+    if now_secs().saturating_sub(last) < STT_IDLE_UNLOAD_SECS {
+        return;
+    }
+
+    info!("🧊 STT idle for {idle_for}s — unloading Whisper/Parakeet to free memory");
+    unload_both_stt_engines().await;
+    STT_LAST_ACTIVITY_SECS.store(0, Ordering::Relaxed);
+}
+
+async fn unload_both_stt_engines() {
+    {
+        use crate::parakeet_engine::commands::PARAKEET_ENGINE;
+        let engine = {
+            let guard = PARAKEET_ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+            guard.as_ref().cloned()
+        };
+        if let Some(e) = engine {
+            if e.is_model_loaded().await {
+                e.unload_model().await;
+                info!("Unloaded Parakeet model");
+            }
+        }
+    }
+    {
+        use crate::whisper_engine::commands::WHISPER_ENGINE;
+        let engine = {
+            let guard = WHISPER_ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+            guard.as_ref().cloned()
+        };
+        if let Some(e) = engine {
+            if e.is_model_loaded().await {
+                e.unload_model().await;
+                info!("Unloaded Whisper model");
+            }
+        }
+    }
+}
+
+/// Force-unload both STT engines (manual / settings). Safe no-op if recording.
+pub async fn force_unload_stt() -> Result<(), String> {
+    if crate::audio::recording_commands::is_recording().await {
+        return Err("Cannot unload while recording".into());
+    }
+    let _guard = acquire_engine_lifecycle_lock().await;
+    unload_both_stt_engines().await;
+    STT_LAST_ACTIVITY_SECS.store(0, Ordering::Relaxed);
+    Ok(())
+}
+
+/// Background loop: free STT VRAM a couple minutes after the last transcription work.
+pub fn start_stt_idle_unloader() {
+    tauri::async_runtime::spawn(async {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            unload_stt_if_idle().await;
+        }
+    });
 }
 
 /// Unload the transcription engine after a batch job (import or retranscription).
@@ -44,6 +143,7 @@ pub(crate) async fn unload_engine_after_batch(use_parakeet: bool) {
             e.unload_model().await;
         }
     }
+    STT_LAST_ACTIVITY_SECS.store(0, Ordering::Relaxed);
 }
 
 /// Create transcript segments from transcription results.

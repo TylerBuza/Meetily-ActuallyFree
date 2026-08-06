@@ -149,6 +149,7 @@ pub async fn whisper_load_model(
 
         // FIX 6: Emit model loading completed/failed event
         if result.is_ok() {
+            crate::audio::common::mark_stt_activity();
             if let Err(e) = app_handle.emit(
                 "model-loading-completed",
                 serde_json::json!({
@@ -201,6 +202,73 @@ pub async fn whisper_is_model_loaded() -> Result<bool, String> {
     } else {
         Err("Whisper engine not initialized".to_string())
     }
+}
+
+#[command]
+pub async fn whisper_unload_model() -> Result<bool, String> {
+    crate::audio::common::force_unload_stt()
+        .await
+        .map(|_| true)
+}
+
+/// Force-unload Whisper + Parakeet (settings / local stack panel).
+#[command]
+pub async fn force_unload_stt_models() -> Result<(), String> {
+    crate::audio::common::force_unload_stt().await
+}
+
+/// Snapshot of what is loaded locally for the Local Stack settings page.
+#[command]
+pub async fn get_local_stack_status() -> Result<serde_json::Value, String> {
+    let whisper_loaded = {
+        let engine = {
+            let guard = WHISPER_ENGINE.lock().unwrap();
+            guard.as_ref().cloned()
+        };
+        match engine {
+            Some(e) => e.is_model_loaded().await,
+            None => false,
+        }
+    };
+    let whisper_model = {
+        let engine = {
+            let guard = WHISPER_ENGINE.lock().unwrap();
+            guard.as_ref().cloned()
+        };
+        match engine {
+            Some(e) => e.get_current_model().await,
+            None => None,
+        }
+    };
+
+    let (parakeet_loaded, parakeet_model) = {
+        use crate::parakeet_engine::commands::PARAKEET_ENGINE;
+        let engine = {
+            let guard = PARAKEET_ENGINE.lock().unwrap_or_else(|e| e.into_inner());
+            guard.as_ref().cloned()
+        };
+        match engine {
+            Some(e) => (e.is_model_loaded().await, e.get_current_model().await),
+            None => (false, None),
+        }
+    };
+
+    let recording = crate::audio::recording_commands::is_recording().await;
+
+    Ok(serde_json::json!({
+        "recording": recording,
+        "whisper": {
+            "loaded": whisper_loaded,
+            "model": whisper_model,
+        },
+        "parakeet": {
+            "loaded": parakeet_loaded,
+            "model": parakeet_model,
+        },
+        "sttIdleUnloadSecs": crate::audio::common::STT_IDLE_UNLOAD_SECS,
+        "llmIdleUnloadSecs": crate::summary::summary_engine::DEFAULT_IDLE_TIMEOUT_SECS,
+        "cuda": cfg!(feature = "cuda"),
+    }))
 }
 
 #[command]

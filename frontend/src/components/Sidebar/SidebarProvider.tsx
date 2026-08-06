@@ -171,26 +171,31 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
     // The actual recording start/stop is handled in the Home component
   };
 
-  // Function to search through meeting transcripts
-  const searchTranscripts = async (query: string) => {
+  // Debounced transcript search — avoids hammering the DB on every keystroke.
+  const searchTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchTranscripts = React.useCallback(async (query: string): Promise<void> => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     if (!query.trim()) {
       setSearchResults([]);
+      setIsSearching(false);
       return;
     }
-
-    try {
-      setIsSearching(true);
-
-
-      const results = await invoke('api_search_transcripts', { query }) as TranscriptSearchResult[];
-      setSearchResults(results);
-    } catch (error) {
-      console.error('Error searching transcripts:', error);
-      setSearchResults([]);
-    } finally {
-      setIsSearching(false);
-    }
-  };
+    setIsSearching(true);
+    await new Promise<void>((resolve) => {
+      searchTimerRef.current = setTimeout(async () => {
+        try {
+          const results = await invoke('api_search_transcripts', { query }) as TranscriptSearchResult[];
+          setSearchResults(results);
+        } catch (error) {
+          console.error('Error searching transcripts:', error);
+          setSearchResults([]);
+        } finally {
+          setIsSearching(false);
+          resolve();
+        }
+      }, 280);
+    });
+  }, []);
 
   // Summary polling management
   const clearPoll = useCallback((meetingId: string) => {

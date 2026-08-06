@@ -322,7 +322,8 @@ pub fn format_prompt(
 pub const DEFAULT_MAX_TOKENS: i32 = 4096;
 
 /// Idle timeout for sidecar (seconds) - can be overridden via LLAMA_IDLE_TIMEOUT env var
-pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 300; // 5 minutes
+/// Aggressive default: free LLM VRAM two minutes after the last summary call.
+pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 120;
 
 /// Generation timeout (how long to wait for a response)
 pub const GENERATION_TIMEOUT_SECS: u64 = 900; // 15 minutes

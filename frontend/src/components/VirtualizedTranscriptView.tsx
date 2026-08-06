@@ -169,64 +169,68 @@ const TranscriptSegment = memo(function TranscriptSegment({
 }) {
     const displayText = cleanStopWords(text) || (text.trim() === '' ? '[Silence]' : text);
 
-    // Timeline layout: a colored dot per speaker on a vertical rail, with
-    // "timestamp  Speaker" on one line and the utterance beneath. The rail
-    // makes the conversation scan as a sequence of turns rather than a wall
-    // of undifferentiated rows.
+    // Split conversation: local user ("You" + their name) on the right in blue,
+    // everyone else on the left in purple/hashed colors. Timestamps stay shared
+    // so turns still line up chronologically.
+    const isYou = !!(speaker && /^you\b/i.test(speaker));
+    const label = speaker ? displaySpeaker(speaker, userName) : '';
+
     return (
-        <div id={`segment-${id}`} className="relative pl-6 pb-5">
-            {/* Rail segment — sits under the dot, connects to the next turn. */}
-            <span
-                aria-hidden
-                className="absolute left-[4px] top-[14px] -bottom-1 w-px bg-[var(--af-border-strong,#e5e7eb)]"
-            />
-            {/* Speaker dot */}
-            <span
-                aria-hidden
-                className={`absolute left-0 top-[5px] h-[9px] w-[9px] rounded-full ${speakerDot(speaker)}`}
-            />
+        <div
+            id={`segment-${id}`}
+            className={`relative flex pb-4 ${isYou ? 'justify-end pl-10' : 'justify-start pr-10'}`}
+        >
+            <div className={`max-w-[85%] min-w-0 flex flex-col gap-1 ${isYou ? 'items-end' : 'items-start'}`}>
+                <div className={`flex items-baseline gap-2 ${isYou ? 'flex-row-reverse' : 'flex-row'}`}>
+                    <span
+                        aria-hidden
+                        className={`h-2 w-2 rounded-full shrink-0 ${speakerDot(speaker)}`}
+                    />
+                    {speaker && (
+                        onRenameSpeaker ? (
+                            <button
+                                type="button"
+                                onClick={() => onRenameSpeaker(speaker)}
+                                title={`Rename "${speaker}" - click to say who this is`}
+                                className={`text-xs font-semibold ${speakerColor(speaker)} rounded hover:underline`}
+                            >
+                                {label}
+                            </button>
+                        ) : (
+                            <span className={`text-xs font-semibold ${speakerColor(speaker)}`}>
+                                {label}
+                            </span>
+                        )
+                    )}
+                    <Tooltip>
+                        <TooltipTrigger>
+                            <span className="text-[11px] text-[var(--af-text-3)] tabular-nums">
+                                {formatRecordingTime(timestamp)}
+                            </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                            {confidence !== undefined && showConfidence && (
+                                <ConfidenceIndicator confidence={confidence} showIndicator={showConfidence} />
+                            )}
+                        </TooltipContent>
+                    </Tooltip>
+                </div>
 
-            <div className="flex items-baseline gap-3">
-                <Tooltip>
-                    <TooltipTrigger>
-                        <span className="text-xs text-gray-400 tabular-nums flex-shrink-0 min-w-[52px] text-left">
-                            {formatRecordingTime(timestamp)}
-                        </span>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                        {confidence !== undefined && showConfidence && (
-                            <ConfidenceIndicator confidence={confidence} showIndicator={showConfidence} />
-                        )}
-                    </TooltipContent>
-                </Tooltip>
-
-                {speaker && (
-                    onRenameSpeaker ? (
-                        <button
-                            type="button"
-                            onClick={() => onRenameSpeaker(speaker)}
-                            title={`Rename "${speaker}" - click to say who this is`}
-                            className={`text-sm font-semibold ${speakerColor(speaker)} rounded px-0.5 -mx-0.5 hover:bg-white/10 hover:underline`}
-                        >
-                            {displaySpeaker(speaker, userName)}
-                        </button>
-                    ) : (
-                        <span className={`text-sm font-semibold ${speakerColor(speaker)}`}>
-                            {displaySpeaker(speaker, userName)}
-                        </span>
-                    )
-                )}
-            </div>
-
-            {/* Indented past the timestamp column so text aligns under the name. */}
-            <div className="mt-1 pl-[64px]">
-                {isStreaming ? (
-                    <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
-                        <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
-                    </div>
-                ) : (
-                    <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
-                )}
+                <div
+                    className={
+                        isYou
+                            ? 'rounded-2xl rounded-tr-sm bg-blue-500/15 border border-blue-500/25 px-3.5 py-2'
+                            : 'rounded-2xl rounded-tl-sm bg-[var(--af-panel-2)] border border-[var(--af-border)] px-3.5 py-2'
+                    }
+                >
+                    <p
+                        className={`text-sm leading-relaxed ${
+                            isYou ? 'text-[var(--af-text)]' : 'text-[var(--af-text-2)]'
+                        } ${isStreaming ? 'opacity-80' : ''}`}
+                    >
+                        {displayText}
+                    </p>
+                </div>
             </div>
         </div>
     );

@@ -470,6 +470,9 @@ pub fn run() {
             // if the user enabled it (default off).
             crate::meeting_detection::initialize(&_app.handle());
 
+            // Free Whisper/Parakeet VRAM a couple minutes after last STT use.
+            audio::common::start_stt_idle_unloader();
+
             // Set models directory (install-local, portable storage location)
             whisper_engine::commands::set_models_directory(&_app.handle());
 
@@ -613,6 +616,9 @@ pub fn run() {
             whisper_engine::commands::whisper_load_model,
             whisper_engine::commands::whisper_get_current_model,
             whisper_engine::commands::whisper_is_model_loaded,
+            whisper_engine::commands::whisper_unload_model,
+            whisper_engine::commands::force_unload_stt_models,
+            whisper_engine::commands::get_local_stack_status,
             whisper_engine::commands::whisper_has_available_models,
             whisper_engine::commands::whisper_validate_model_ready,
             whisper_engine::commands::whisper_transcribe_audio,

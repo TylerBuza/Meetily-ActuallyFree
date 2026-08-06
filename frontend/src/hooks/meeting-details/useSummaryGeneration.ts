@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Transcript, Summary } from '@/types';
 import { ModelConfig } from '@/components/ModelSettingsModal';
 import { CurrentMeeting, useSidebar } from '@/components/Sidebar/SidebarProvider';
@@ -77,6 +77,66 @@ export function useSummaryGeneration({
   const [summaryError, setSummaryError] = useState<string | null>(null);
 
   const { startSummaryPolling, stopSummaryPolling } = useSidebar();
+
+  // Push path: Rust emits `summary-progress` so the UI updates without waiting
+  // for the 5s poll. Polling remains as a fallback for missed events.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        unlisten = await listen<{
+          meetingId: string;
+          stage: string;
+          message?: string;
+          data?: any;
+        }>('summary-progress', (event) => {
+          const { meetingId, stage, message, data } = event.payload || ({} as any);
+          if (meetingId && meetingId !== meeting.id) return;
+
+          if (stage === 'preparing' || stage === 'generating') {
+            setSummaryStatus((prev) =>
+              prev === 'regenerating' ? 'regenerating' : stage === 'generating' ? 'summarizing' : 'processing'
+            );
+            return;
+          }
+          if (stage === 'completed' && data) {
+            if (data.markdown) {
+              setAiSummary({ markdown: data.markdown } as any);
+            } else if (data.summary_json) {
+              setAiSummary(data as any);
+            } else {
+              setAiSummary(data as any);
+            }
+            setSummaryStatus('completed');
+            setSummaryError(null);
+            stopSummaryPolling(meeting.id);
+            toast.success('Summary generated successfully!', {
+              description: message || 'Your meeting summary is ready',
+              duration: 4000,
+            });
+            void onMeetingUpdated?.();
+            return;
+          }
+          if (stage === 'cancelled') {
+            setSummaryStatus('idle');
+            stopSummaryPolling(meeting.id);
+            return;
+          }
+          if (stage === 'error') {
+            setSummaryStatus('error');
+            setSummaryError(message || 'Summary generation failed');
+            stopSummaryPolling(meeting.id);
+          }
+        });
+      } catch (e) {
+        console.warn('summary-progress listener unavailable:', e);
+      }
+    })();
+    return () => {
+      unlisten?.();
+    };
+  }, [meeting.id, setAiSummary, stopSummaryPolling, onMeetingUpdated]);
 
   // Helper to get status message
   const getSummaryStatusMessage = useCallback((status: SummaryStatus) => {

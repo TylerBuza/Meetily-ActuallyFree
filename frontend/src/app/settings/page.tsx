@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { ArrowLeft, Settings2, Mic, Database as DatabaseIcon, SparkleIcon, Radar, Info } from 'lucide-react';
+import { ArrowLeft, Settings2, Mic, Database as DatabaseIcon, SparkleIcon, Radar, Info, Cpu } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { invoke } from '@tauri-apps/api/core';
 import { motion } from 'framer-motion';
@@ -13,6 +13,7 @@ import { MeetingDetectionSettings } from '@/components/MeetingDetectionSettings'
 import { DiarizationSettings } from '@/components/DiarizationSettings';
 import { AboutSettings } from '@/components/AboutSettings';
 import { BetaSettings } from '@/components/BetaSettings';
+import { LocalStackStatus } from '@/components/LocalStackStatus';
 import { useConfig } from '@/contexts/ConfigContext';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
@@ -23,6 +24,7 @@ const TABS = [
   { value: 'Transcriptionmodels', label: 'Transcription', icon: DatabaseIcon },
   { value: 'summaryModels', label: 'Summary', icon: SparkleIcon },
   { value: 'meetingDetection', label: 'Detection', icon: Radar },
+  { value: 'localStack', label: 'Local stack', icon: Cpu },
   { value: 'about', label: 'About', icon: Info },
 ] as const;
 
@@ -136,6 +138,9 @@ export default function SettingsPage() {
             </TabsContent>
             <TabsContent value="meetingDetection">
               <MeetingDetectionSettings />
+            </TabsContent>
+            <TabsContent value="localStack">
+              <LocalStackStatus />
             </TabsContent>
             <TabsContent value="about">
               <AboutSettings />

@@ -136,6 +136,10 @@ struct MeetingDetectedPayload {
 
 /// Scan the process list once and, if a (non-ignored) meeting app is present,
 /// return `(friendly_name, process_name)`.
+///
+/// On Windows we prefer apps that are *actively* using the microphone or camera
+/// (CapabilityAccessManager "in use" markers). Process-only matches still work as
+/// a fallback when no capability signal is available.
 fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, String)> {
     use sysinfo::System;
 
@@ -149,6 +153,55 @@ fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, 
         .filter(|s| !s.trim().is_empty())
         .collect();
 
+    #[cfg(windows)]
+    let media_in_use = windows_media_in_use_exes();
+    #[cfg(not(windows))]
+    let media_in_use: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Prefer a meeting app that is currently holding mic or camera.
+    if !media_in_use.is_empty() {
+        for process in sys.processes().values() {
+            let name = process.name().to_string_lossy().to_lowercase();
+            if name.is_empty() {
+                continue;
+            }
+            if ignored.iter().any(|ig| name.contains(ig)) {
+                continue;
+            }
+            let stem = name.trim_end_matches(".exe");
+            if !media_in_use.iter().any(|m| m.contains(stem) || stem.contains(m.as_str())) {
+                continue;
+            }
+            for keyword in &settings.meeting_apps {
+                let kw = keyword.trim().to_lowercase();
+                if kw.is_empty() {
+                    continue;
+                }
+                if process_matches_keyword(&name, &kw) {
+                    return Some((friendly_name(&kw), name));
+                }
+            }
+        }
+        // Mic/cam in use by something that isn't a known meeting keyword —
+        // still surface a soft signal so the user can record.
+        if let Some(exe) = media_in_use.iter().next() {
+            let label = exe
+                .trim_end_matches(".exe")
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .find(|t| t.len() > 2)
+                .unwrap_or("Meeting app");
+            let pretty = {
+                let mut c = label.chars();
+                match c.next() {
+                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                    None => "Meeting app".into(),
+                }
+            };
+            return Some((pretty, exe.clone()));
+        }
+    }
+
+    // Fallback: process name only (macOS/Linux, or Windows when CAM has no signal).
     for process in sys.processes().values() {
         let name = process.name().to_string_lossy().to_lowercase();
         if name.is_empty() {
@@ -168,6 +221,56 @@ fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, 
         }
     }
     None
+}
+
+/// Windows: executables currently holding microphone or webcam via
+/// CapabilityAccessManager NonPackaged consent-store entries
+/// (LastUsedTimeStart > LastUsedTimeStop ⇒ in use).
+#[cfg(windows)]
+fn windows_media_in_use_exes() -> std::collections::HashSet<String> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    let mut out = std::collections::HashSet::new();
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    for cap in ["microphone", "webcam"] {
+        let path = format!(
+            "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\{cap}\\NonPackaged"
+        );
+        let Ok(root) = hkcu.open_subkey(&path) else {
+            continue;
+        };
+        let Ok(keys) = root.enum_keys().collect::<Result<Vec<_>, _>>() else {
+            continue;
+        };
+        for key_name in keys {
+            let Ok(sub) = root.open_subkey(&key_name) else {
+                continue;
+            };
+            // Values are FILETIME-like u64; Start > Stop means currently open.
+            let start: u64 = sub.get_value("LastUsedTimeStart").unwrap_or(0);
+            let stop: u64 = sub.get_value("LastUsedTimeStop").unwrap_or(0);
+            if start == 0 {
+                continue;
+            }
+            // 0xFFFFFFFFFFFFFFFF stop means "still in use" on some builds;
+            // otherwise start > stop.
+            let in_use = stop == u64::MAX || start > stop;
+            if !in_use {
+                continue;
+            }
+            // Key names look like C:#Program Files#...#Teams.exe
+            let exe = key_name
+                .rsplit('#')
+                .next()
+                .unwrap_or(&key_name)
+                .to_lowercase();
+            if exe.ends_with(".exe") {
+                out.insert(exe);
+            }
+        }
+    }
+    out
 }
 
 /// Does a process name match a meeting-app keyword?
