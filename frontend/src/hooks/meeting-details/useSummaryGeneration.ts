@@ -261,8 +261,10 @@ export function useSummaryGeneration({
           return;
         }
 
-        // Handle successful completion
-        if (pollingResult.status === 'completed' && pollingResult.data) {
+        // Handle successful completion (also accept idle+data — some paths leave
+        // the row as idle once the result is written).
+        const status = (pollingResult.status || '').toLowerCase();
+        if ((status === 'completed' || (status === 'idle' && pollingResult.data)) && pollingResult.data) {
           console.log('Summary generation completed:', pollingResult.data);
 
           // Update meeting title if available
@@ -461,6 +463,12 @@ export function useSummaryGeneration({
       return;
     }
 
+    // Flip the UI into "Generating…" immediately — before the (slow) transcript
+    // fetch / model checks — so auto-summary doesn't leave the empty-state
+    // "Generate summary" button up for the whole prep phase.
+    setSummaryStatus('processing');
+    setSummaryError(null);
+
     // CHANGE: Fetch ALL transcripts from database, not from pagination state
     console.log('📊 Fetching all transcripts for summary generation...');
     const allTranscripts = await fetchAllTranscripts(meeting.id);
@@ -468,6 +476,7 @@ export function useSummaryGeneration({
     if (!allTranscripts.length) {
       const error_msg = 'No transcripts available for summary';
       console.log(error_msg);
+      setSummaryStatus('idle');
       toast.error(error_msg);
       return;
     }
@@ -487,6 +496,7 @@ export function useSummaryGeneration({
         const models = await invokeTauri('get_ollama_models', { endpoint }) as any[];
 
         if (!models || models.length === 0) {
+          setSummaryStatus('idle');
           toast.error(
             'No Ollama models found. Please download gemma3:1b from Model Settings.',
             { duration: 5000 }
@@ -496,6 +506,7 @@ export function useSummaryGeneration({
       } catch (error) {
         console.error('Error checking Ollama models:', error);
         const errorMessage = error instanceof Error ? error.message : String(error);
+        setSummaryStatus('idle');
 
         if (isOllamaNotInstalledError(errorMessage)) {
           // Ollama is not installed - show specific message with download link
@@ -527,6 +538,7 @@ export function useSummaryGeneration({
         const selectedModel = modelConfig.model;
 
         if (!selectedModel) {
+          setSummaryStatus('idle');
           toast.error('No built-in AI model selected', {
             description: 'Please select a model in settings',
             duration: 5000,
@@ -553,6 +565,7 @@ export function useSummaryGeneration({
             const status = modelInfo.status;
 
             if (status.type === 'downloading') {
+              setSummaryStatus('idle');
               toast.info('Model download in progress', {
                 description: `${selectedModel} is downloading (${status.progress}%). Please wait until download completes.`,
                 duration: 5000,
@@ -561,6 +574,7 @@ export function useSummaryGeneration({
             }
 
             if (status.type === 'not_downloaded') {
+              setSummaryStatus('idle');
               toast.error('Built-in AI model not downloaded', {
                 description: `${selectedModel} needs to be downloaded. Please download it in model settings.`,
                 duration: 7000,
@@ -572,6 +586,7 @@ export function useSummaryGeneration({
             }
 
             if (status.type === 'corrupted' || status.type === 'error') {
+              setSummaryStatus('idle');
               const errorDesc = status.type === 'error'
                 ? status.Error || 'The model file has an error'
                 : 'The model file is corrupted';
@@ -587,6 +602,7 @@ export function useSummaryGeneration({
           }
 
           // Fallback if we couldn't get model info
+          setSummaryStatus('idle');
           toast.error('Built-in AI model not ready', {
             description: 'Please ensure the model is downloaded in settings',
             duration: 5000,
@@ -600,6 +616,7 @@ export function useSummaryGeneration({
         // Model is ready, continue to backend call
       } catch (error) {
         console.error('Error validating built-in AI model:', error);
+        setSummaryStatus('idle');
         toast.error('Failed to validate built-in AI model', {
           description: error instanceof Error ? error.message : String(error),
           duration: 5000,
@@ -618,10 +635,14 @@ export function useSummaryGeneration({
 
   // Public API: Regenerate summary from the current saved transcript
   const handleRegenerateSummary = useCallback(async () => {
+    setSummaryStatus('regenerating');
+    setSummaryError(null);
+
     const allTranscripts = await fetchAllTranscripts(meeting.id);
 
     if (!allTranscripts.length) {
       console.error('No transcripts available for regeneration');
+      setSummaryStatus('idle');
       toast.error('No transcripts available for summary regeneration');
       return;
     }

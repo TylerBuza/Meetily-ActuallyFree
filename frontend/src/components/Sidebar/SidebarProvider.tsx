@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Analytics from '@/lib/analytics';
 import { invoke } from '@tauri-apps/api/core';
@@ -76,6 +76,11 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const [isSearching, setIsSearching] = useState(false);
   const [serverAddress, setServerAddress] = useState('');
   const [transcriptServerAddress, setTranscriptServerAddress] = useState('');
+  // Interval handles live in a ref so start/stop stay identity-stable.
+  // Putting them in useState recreated the callbacks on every poll start, which
+  // re-ran page-level effect cleanups and immediately killed the brand-new poll
+  // — auto-summary finished on the backend but the UI never received it.
+  const activeSummaryPollsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
   const [activeSummaryPolls, setActiveSummaryPolls] = useState<Map<string, NodeJS.Timeout>>(new Map());
 
   // Use recording state from RecordingStateContext (single source of truth)
@@ -188,99 +193,95 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   };
 
   // Summary polling management
-  const startSummaryPolling = React.useCallback((
+  const clearPoll = useCallback((meetingId: string) => {
+    const existing = activeSummaryPollsRef.current.get(meetingId);
+    if (existing) {
+      clearInterval(existing);
+      activeSummaryPollsRef.current.delete(meetingId);
+      setActiveSummaryPolls(new Map(activeSummaryPollsRef.current));
+    }
+  }, []);
+
+  const startSummaryPolling = useCallback((
     meetingId: string,
     processId: string,
     onUpdate: (result: any) => void
   ) => {
     // Stop existing poll for this meeting if any
-    if (activeSummaryPolls.has(meetingId)) {
-      clearInterval(activeSummaryPolls.get(meetingId)!);
-    }
+    clearPoll(meetingId);
 
     console.log(`📊 Starting polling for meeting ${meetingId}, process ${processId}`);
 
     let pollCount = 0;
-    const MAX_POLLS = 200; // ~16.5 minutes at 5-second intervals (slightly longer than backend's 15-min timeout to avoid race conditions)
+    const MAX_POLLS = 200; // ~16.5 minutes at 5-second intervals
+    let stopped = false;
 
-    const pollInterval = setInterval(async () => {
+    const tick = async () => {
+      if (stopped) return;
       pollCount++;
 
-      // Timeout safety: Stop after 10 minutes
       if (pollCount >= MAX_POLLS) {
         console.warn(`⏱️ Polling timeout for ${meetingId} after ${MAX_POLLS} iterations`);
-        clearInterval(pollInterval);
-        setActiveSummaryPolls(prev => {
-          const next = new Map(prev);
-          next.delete(meetingId);
-          return next;
-        });
+        stopped = true;
+        clearPoll(meetingId);
         onUpdate({
           status: 'error',
           error: 'Summary generation timed out after 15 minutes. Please try again or check your model configuration.'
         });
         return;
       }
+
       try {
         const result = await invoke('api_get_summary', {
           meetingId: meetingId,
         }) as any;
 
+        if (stopped) return;
         console.log(`📊 Polling update for ${meetingId}:`, result.status);
 
-        // Call the update callback with result
         onUpdate(result);
 
-        // Stop polling if completed, error, failed, cancelled, or idle (after initial processing)
-        if (result.status === 'completed' || result.status === 'error' || result.status === 'failed' || result.status === 'cancelled') {
+        const status = (result.status || '').toLowerCase();
+        const terminal =
+          status === 'completed' ||
+          status === 'error' ||
+          status === 'failed' ||
+          status === 'cancelled' ||
+          // Backend may flip to idle once the row is gone; if data is present
+          // treat it as done so the UI still picks up the summary.
+          (status === 'idle' && !!result.data) ||
+          (status === 'idle' && pollCount > 3);
+
+        if (terminal) {
           console.log(`Polling completed for ${meetingId}, status: ${result.status}`);
-          clearInterval(pollInterval);
-          setActiveSummaryPolls(prev => {
-            const next = new Map(prev);
-            next.delete(meetingId);
-            return next;
-          });
-        } else if (result.status === 'idle' && pollCount > 1) {
-          // If we get 'idle' after polling started, process completed/disappeared
-          console.log(`Process completed or not found for ${meetingId}, stopping poll`);
-          clearInterval(pollInterval);
-          setActiveSummaryPolls(prev => {
-            const next = new Map(prev);
-            next.delete(meetingId);
-            return next;
-          });
+          stopped = true;
+          clearPoll(meetingId);
         }
       } catch (error) {
+        if (stopped) return;
         console.error(`Polling error for ${meetingId}:`, error);
-        // Report error to callback
         onUpdate({
           status: 'error',
           error: error instanceof Error ? error.message : 'Unknown error'
         });
-        clearInterval(pollInterval);
-        setActiveSummaryPolls(prev => {
-          const next = new Map(prev);
-          next.delete(meetingId);
-          return next;
-        });
+        stopped = true;
+        clearPoll(meetingId);
       }
-    }, 5000); // Poll every 5 seconds
+    };
 
-    setActiveSummaryPolls(prev => new Map(prev).set(meetingId, pollInterval));
-  }, [activeSummaryPolls]);
+    // Poll immediately so the UI doesn't sit idle for 5s, then every 5s.
+    void tick();
+    const pollInterval = setInterval(() => { void tick(); }, 5000);
+    activeSummaryPollsRef.current.set(meetingId, pollInterval);
+    setActiveSummaryPolls(new Map(activeSummaryPollsRef.current));
+  }, [clearPoll]);
 
-  const stopSummaryPolling = React.useCallback((meetingId: string) => {
-    const pollInterval = activeSummaryPolls.get(meetingId);
-    if (pollInterval) {
+  const stopSummaryPolling = useCallback((meetingId: string) => {
+    if (activeSummaryPollsRef.current.has(meetingId)) {
       console.log(`⏹️ Stopping polling for meeting ${meetingId}`);
-      clearInterval(pollInterval);
-      setActiveSummaryPolls(prev => {
-        const next = new Map(prev);
-        next.delete(meetingId);
-        return next;
-      });
+      clearPoll(meetingId);
     }
-  }, [activeSummaryPolls]);
+  }, [clearPoll]);
 
   // Cleanup all polling intervals on unmount
   useEffect(() => {

@@ -1,6 +1,6 @@
 "use client"
 import { useSidebar } from "@/components/Sidebar/SidebarProvider";
-import { useState, useEffect, useCallback, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { Transcript, Summary } from "@/types";
 import PageContent from "./page-content";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -171,15 +171,19 @@ function MeetingDetailsContent() {
     setShouldAutoGenerate(false);
   }, [meetingId]);
 
-  // Cleanup: Stop polling when navigating away from a meeting
+  // Cleanup: stop polling only when leaving this meeting / unmounting.
+  // Keep stopSummaryPolling behind a ref so its identity changes (from the
+  // poll map updating) don't re-run this effect and kill a just-started poll.
+  const stopSummaryPollingRef = useRef(stopSummaryPolling);
+  stopSummaryPollingRef.current = stopSummaryPolling;
   useEffect(() => {
     return () => {
       if (meetingId) {
         console.log('Cleaning up: Stopping summary polling for meeting:', meetingId);
-        stopSummaryPolling(meetingId);
+        stopSummaryPollingRef.current(meetingId);
       }
     };
-  }, [meetingId, stopSummaryPolling]);
+  }, [meetingId]);
 
   useEffect(() => {
     console.log('MeetingDetails useEffect triggered - meetingId:', meetingId);
@@ -351,8 +355,10 @@ function MeetingDetailsContent() {
     );
   }
 
-  // Show loading spinner while initial data loads
-  if ((isLoading || isLoadingTranscripts) || !meetingDetails) {
+  // Initial load only. Once meetingDetails exists, keep PageContent mounted —
+  // flipping isLoadingTranscripts used to unmount it and wipe in-flight summary
+  // state (status + just-generated aiSummary).
+  if (!meetingDetails) {
     return <div className="flex items-center justify-center h-screen">
       <LoaderIcon className="animate-spin size-6 " />
     </div>;
@@ -363,6 +369,7 @@ function MeetingDetailsContent() {
     summaryData={meetingSummary}
     shouldAutoGenerate={shouldAutoGenerate}
     onAutoGenerateComplete={() => setShouldAutoGenerate(false)}
+    onSummaryReady={(summary) => setMeetingSummary(summary)}
     onMeetingUpdated={async () => {
       // Refetch meeting details to get updated title from backend
       await fetchMeetingDetails();

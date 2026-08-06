@@ -29,11 +29,23 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
   // Sidebar context
   const { setCurrentMeeting, setMeetings, meetings: sidebarMeetings } = useSidebar();
 
-  // Sync aiSummary state when summaryData prop changes (fixes display of fetched summaries)
+  // Sync from the parent prop when it actually has a summary. Never clobber a
+  // locally-generated summary with `null` — that was wiping the just-finished
+  // auto-summary whenever the parent re-rendered with meetingSummary still null
+  // (the parent only loads summary once on meetingId change, not after generate).
   useEffect(() => {
-    console.log('[useMeetingData] Syncing summary data from prop:', summaryData ? 'present' : 'null');
+    if (summaryData) {
+      console.log('[useMeetingData] Syncing summary data from prop');
+      setAiSummary(summaryData);
+    }
+  }, [summaryData]);
+
+  // When the meeting changes, reset to whatever the parent loaded for it.
+  useEffect(() => {
     setAiSummary(summaryData);
-  }, [summaryData]); // Only trigger when parent prop changes, not when aiSummary changes
+    setMeetingTitle(meeting.title || '+ New Call');
+    setIsTitleDirty(false);
+  }, [meeting.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handlers
   const handleTitleChange = useCallback((newTitle: string) => {

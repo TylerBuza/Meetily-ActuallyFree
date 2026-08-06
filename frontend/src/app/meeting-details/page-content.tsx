@@ -1,5 +1,5 @@
 ﻿"use client";
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { DIARIZATION_UPDATED_EVENT } from '@/hooks/useRecordingStop';
 import { motion } from 'framer-motion';
 import { Summary, SummaryResponse } from '@/types';
@@ -25,6 +25,7 @@ export default function PageContent({
   summaryData,
   shouldAutoGenerate = false,
   onAutoGenerateComplete,
+  onSummaryReady,
   onMeetingUpdated,
   onRefetchTranscripts,
   // Pagination props for efficient transcript loading
@@ -39,6 +40,8 @@ export default function PageContent({
   summaryData: Summary | null;
   shouldAutoGenerate?: boolean;
   onAutoGenerateComplete?: () => void;
+  /** Lift a freshly generated summary up so parent state survives remounts. */
+  onSummaryReady?: (summary: Summary) => void;
   onMeetingUpdated?: () => Promise<void>;
   onRefetchTranscripts?: () => Promise<void>;
   // Pagination props
@@ -113,6 +116,16 @@ export default function PageContent({
     }
   };
 
+  // Wrap setAiSummary so the parent also learns about a finished summary.
+  // Without this, meetingSummary in page.tsx stays null and any remount of
+  // this component falls back to the empty "Generate summary" state.
+  const setAiSummary = useCallback((summary: Summary | null) => {
+    meetingData.setAiSummary(summary);
+    if (summary && onSummaryReady) {
+      onSummaryReady(summary);
+    }
+  }, [meetingData.setAiSummary, onSummaryReady]);
+
   const summaryGeneration = useSummaryGeneration({
     meeting,
     transcripts: meetingData.transcripts,
@@ -121,7 +134,7 @@ export default function PageContent({
     selectedTemplate: templates.selectedTemplate,
     onMeetingUpdated,
     updateMeetingTitle: meetingData.updateMeetingTitle,
-    setAiSummary: meetingData.setAiSummary,
+    setAiSummary,
     onOpenModelSettings: handleOpenModelSettings,
   });
 
