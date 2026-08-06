@@ -134,12 +134,19 @@ struct MeetingDetectedPayload {
     notify: bool,
 }
 
+/// True for our own process — never treat Meetily as a "meeting app".
+fn is_self_process(name: &str) -> bool {
+    let n = name.to_lowercase();
+    n.contains("meetily") || n.contains("meetily-actually")
+}
+
 /// Scan the process list once and, if a (non-ignored) meeting app is present,
 /// return `(friendly_name, process_name)`.
 ///
-/// On Windows we prefer apps that are *actively* using the microphone or camera
-/// (CapabilityAccessManager "in use" markers). Process-only matches still work as
-/// a fallback when no capability signal is available.
+/// On Windows, when CapabilityAccessManager reports mic/camera holders, we only
+/// alert if a *known* meeting app is among them. We never invent a name from a
+/// random exe (that produced the nonsense "Meetily meeting detected" toast when
+/// this app itself held the mic).
 fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, String)> {
     use sysinfo::System;
 
@@ -153,23 +160,36 @@ fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, 
         .filter(|s| !s.trim().is_empty())
         .collect();
 
+    let is_skipped = |name: &str| -> bool {
+        if name.is_empty() || is_self_process(name) {
+            return true;
+        }
+        ignored.iter().any(|ig| name.contains(ig))
+    };
+
     #[cfg(windows)]
-    let media_in_use = windows_media_in_use_exes();
+    let media_in_use: std::collections::HashSet<String> = windows_media_in_use_exes()
+        .into_iter()
+        .filter(|e| !is_self_process(e))
+        .collect();
     #[cfg(not(windows))]
     let media_in_use: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    // Prefer a meeting app that is currently holding mic or camera.
+    let matches_media = |name: &str| -> bool {
+        if media_in_use.is_empty() {
+            return true; // no CAM signal → don't require it
+        }
+        let stem = name.trim_end_matches(".exe");
+        media_in_use
+            .iter()
+            .any(|m| m == name || m.contains(stem) || stem.contains(m.trim_end_matches(".exe")))
+    };
+
+    // 1) Known meeting app that is actively using mic/camera (best signal).
     if !media_in_use.is_empty() {
         for process in sys.processes().values() {
             let name = process.name().to_string_lossy().to_lowercase();
-            if name.is_empty() {
-                continue;
-            }
-            if ignored.iter().any(|ig| name.contains(ig)) {
-                continue;
-            }
-            let stem = name.trim_end_matches(".exe");
-            if !media_in_use.iter().any(|m| m.contains(stem) || stem.contains(m.as_str())) {
+            if is_skipped(&name) || !matches_media(&name) {
                 continue;
             }
             for keyword in &settings.meeting_apps {
@@ -182,32 +202,16 @@ fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, 
                 }
             }
         }
-        // Mic/cam in use by something that isn't a known meeting keyword —
-        // still surface a soft signal so the user can record.
-        if let Some(exe) = media_in_use.iter().next() {
-            let label = exe
-                .trim_end_matches(".exe")
-                .split(|c: char| !c.is_ascii_alphanumeric())
-                .find(|t| t.len() > 2)
-                .unwrap_or("Meeting app");
-            let pretty = {
-                let mut c = label.chars();
-                match c.next() {
-                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-                    None => "Meeting app".into(),
-                }
-            };
-            return Some((pretty, exe.clone()));
-        }
+        // CAM has holders but none are known meeting apps (e.g. only Meetily or
+        // a browser). Do not fall through to process-only — that re-fires on idle
+        // Zoom/Teams sitting in the tray.
+        return None;
     }
 
-    // Fallback: process name only (macOS/Linux, or Windows when CAM has no signal).
+    // 2) No CAM signal: process-name match only (macOS/Linux / older Windows).
     for process in sys.processes().values() {
         let name = process.name().to_string_lossy().to_lowercase();
-        if name.is_empty() {
-            continue;
-        }
-        if ignored.iter().any(|ig| name.contains(ig)) {
+        if is_skipped(&name) {
             continue;
         }
         for keyword in &settings.meeting_apps {
@@ -291,7 +295,14 @@ fn process_matches_keyword(process_name: &str, keyword: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::process_matches_keyword;
+    use super::{is_self_process, process_matches_keyword};
+
+    #[test]
+    fn never_treats_meetily_as_a_meeting() {
+        assert!(is_self_process("meetily.exe"));
+        assert!(is_self_process("Meetily - Actually Free.exe"));
+        assert!(!is_self_process("ms-teams.exe"));
+    }
 
     #[test]
     fn matches_real_meeting_apps() {
