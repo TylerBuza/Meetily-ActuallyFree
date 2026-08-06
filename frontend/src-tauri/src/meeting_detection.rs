@@ -2,7 +2,7 @@
 //!
 //! A lightweight background monitor that watches the list of running processes
 //! and, when it sees a known meeting/conferencing app start (Zoom, Teams,
-//! Slack huddles, Webex, Discord, …), emits a `meeting-detected` event so the
+//! Slack huddles, Webex, …), emits a `meeting-detected` event so the
 //! UI can offer a one-click "Start recording". Fully local — no network, no
 //! telemetry; just process-name matching via `sysinfo`.
 //!
@@ -58,7 +58,6 @@ fn default_meeting_apps() -> Vec<String> {
         "msteams",
         "slack",
         "webex",
-        "discord",
         "gotomeeting",
         "bluejeans",
         "chime",
@@ -79,7 +78,6 @@ fn friendly_name(keyword: &str) -> String {
         "teams" | "msteams" => "Microsoft Teams",
         "slack" => "Slack",
         "webex" => "Webex",
-        "discord" => "Discord",
         "gotomeeting" => "GoToMeeting",
         "bluejeans" => "BlueJeans",
         "chime" => "Amazon Chime",
@@ -99,11 +97,21 @@ fn config_path() -> std::path::PathBuf {
 fn load_settings_from_disk() -> MeetingDetectionSettings {
     let path = config_path();
     if let Ok(bytes) = std::fs::read(&path) {
-        if let Ok(settings) = serde_json::from_slice::<MeetingDetectionSettings>(&bytes) {
+        if let Ok(mut settings) = serde_json::from_slice::<MeetingDetectionSettings>(&bytes) {
+            sanitize_settings(&mut settings);
             return settings;
         }
     }
     MeetingDetectionSettings::default()
+}
+
+/// Drop keywords we no longer detect from a loaded config. Discord was removed
+/// from the default list, but existing installs may still have it persisted in
+/// `meeting_detection.json`; strip it here so it isn't detected anymore.
+fn sanitize_settings(settings: &mut MeetingDetectionSettings) {
+    settings
+        .meeting_apps
+        .retain(|k| k.trim().to_lowercase() != "discord");
 }
 
 fn save_settings_to_disk(settings: &MeetingDetectionSettings) -> Result<(), String> {

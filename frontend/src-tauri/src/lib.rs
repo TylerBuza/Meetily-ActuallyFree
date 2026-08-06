@@ -423,6 +423,13 @@ pub fn run() {
         .setup(|_app| {
             log::info!("Application setup complete");
 
+            // Windows: register our AppUserModelID + icon and bind this process
+            // to it so system toasts are attributed to "Meetily - Actually Free"
+            // (with our logo) instead of "Windows PowerShell". See
+            // notifications::native_windows for the full rationale.
+            #[cfg(windows)]
+            notifications::native_windows::ensure_app_identity();
+
             // Initialize system tray
             if let Err(e) = tray::create_tray(_app.handle()) {
                 log::error!("Failed to create system tray: {}", e);

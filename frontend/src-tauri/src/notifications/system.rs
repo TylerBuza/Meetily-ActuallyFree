@@ -27,6 +27,27 @@ impl<R: Runtime> SystemNotificationHandler<R> {
             return Ok(());
         }
 
+        // Windows: raise a native toast that is attributed to Meetily (with our
+        // name + icon) rather than PowerShell. The Tauri plugin can't do this
+        // for a portable exe running from `target\release` (see native_windows).
+        // Best-effort: on any failure we fall through to the plugin below so we
+        // never end up showing no toast at all.
+        #[cfg(windows)]
+        {
+            match crate::notifications::native_windows::show_toast(
+                &notification.title,
+                &notification.body,
+            ) {
+                Ok(_) => {
+                    log_info!("Showed native Windows toast: {}", notification.title);
+                    return Ok(());
+                }
+                Err(e) => {
+                    log_error!("Native Windows toast failed ({e}); falling back to Tauri plugin");
+                }
+            }
+        }
+
         // Use Tauri notification for all platforms
         log_info!("Showing Tauri notification: {}", notification.title);
 

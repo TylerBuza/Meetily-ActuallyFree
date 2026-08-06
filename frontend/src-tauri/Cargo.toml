@@ -165,6 +165,13 @@ tauri-plugin-process = "2.3.0"
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "=2.3.7"
 
+# Windows-only: native toast notifications attributed to Meetily (not PowerShell).
+# tauri-winrt-notification is already used transitively by tauri-plugin-notification;
+# winreg registers our AppUserModelID so the toast shows our name + icon.
+[target.'cfg(windows)'.dependencies]
+tauri-winrt-notification = "0.7.2"
+winreg = "0.55"
+
 # macOS-specific dependencies with Metal GPU acceleration
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri = { version = "2.6.2", features = ["protocol-asset", "macos-private-api", "tray-icon"] }
