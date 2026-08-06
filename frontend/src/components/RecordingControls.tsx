@@ -1,9 +1,30 @@
 'use client';
 
+/**
+ * In-app recording widget shown on the main screen (app/page.tsx).
+ *
+ * Two visual states, both styled to mirror the floating compact bar (minibar):
+ *  - Idle: red mic button + "Start Recording/Ready", a Mic row (selected device
+ *    name) and a System row that shows green "Detected" / red "Not detected".
+ *    Detection comes from usePermissionCheck (5s poll) — NOT from the audio
+ *    stream, since the webview cannot see system audio (see CLAUDE.md).
+ *  - Recording: status dot + timer, stacked Mic/System level meters
+ *    (LiveAudioVisualizer with `fill`), and Pause / Stop / shrink controls.
+ *
+ * Wiring:
+ *  - Start/stop go through Tauri commands (invoke) and RecordingStateContext.
+ *  - Live audio meters are fed by the Rust `recording-audio-levels` event
+ *    (pre-mix, per-source) — the webview cannot capture system audio, so the
+ *    meters must be Rust-driven.
+ *  - The "shrink" control hands off to the minibar window; the minibar's Stop
+ *    is driven from Rust (minibar::stop_recording_from_minibar), because
+ *    cross-window emit/listen to the minibar webview is unreliable.
+ */
+
 import { invoke } from '@tauri-apps/api/core';
 
 import { useCallback, useEffect, useState, useRef } from 'react';
-import { Play, Pause, Square, Mic, Volume2, AlertCircle, X } from 'lucide-react';
+import { Play, Pause, Square, Mic, Volume2, AlertCircle, X, Minimize2 } from 'lucide-react';
 import { LiveAudioVisualizer } from './LiveAudioVisualizer';
 import { ProcessRequest, SummaryResponse } from '@/types/summary';
 import { listen } from '@tauri-apps/api/event';
@@ -11,6 +32,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import Analytics from '@/lib/analytics';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
+import { usePermissionCheck } from '@/hooks/usePermissionCheck';
 
 interface RecordingControlsProps {
   isRecording: boolean;
@@ -50,6 +72,18 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   // just being a dead button.
   const startupMessage = recordingState.statusMessage;
 
+  // For the idle bar: the selected mic name, and a live-ish system-audio check.
+  const { hasSystemAudio, checkPermissions } = usePermissionCheck();
+  const micName = selectedDevices?.micDevice?.trim() || 'Default microphone';
+  useEffect(() => {
+    if (isRecording) return;
+    const id = setInterval(() => { checkPermissions(); }, 5000);
+    return () => clearInterval(id);
+    // checkPermissions is stable enough for a polling interval; re-subscribing
+    // on every render would defeat the interval.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRecording]);
+
   const [showPlayback, setShowPlayback] = useState(false);
   const [recordingPath, setRecordingPath] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<string>('');
@@ -73,6 +107,15 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  // Elapsed timer for the in-app bar, mirroring the floating compact bar.
+  const elapsedSeconds = Math.max(0, Math.floor(recordingState.recordingDuration ?? 0));
+  const formatElapsed = (totalSeconds: number) => {
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = Math.floor(totalSeconds % 60);
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   };
 
   useEffect(() => {
@@ -275,6 +318,17 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
     }
   }, [isRecording, isPaused, isResuming]);
 
+  // Collapse the full window down to the floating compact bar. Mirrors the
+  // bar's expand button so the two are one control surface in two sizes; the
+  // current duration seeds the bar so its timer continues rather than resets.
+  const collapseToBar = useCallback(() => {
+    const elapsed = Math.max(0, Math.floor(recordingState.recordingDuration ?? 0));
+    Analytics.trackButtonClick('enter_compact_mode', 'recording_controls');
+    invoke('enter_compact_mode', { elapsedSeconds: elapsed }).catch((e) =>
+      console.error('Failed to enter compact mode:', e)
+    );
+  }, [recordingState.recordingDuration]);
+
   useEffect(() => {
     return () => {
       // Cleanup on unmount if needed
@@ -380,11 +434,11 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   return (
     <TooltipProvider>
       <div className="flex flex-col space-y-2">
-        <div className="flex items-center space-x-2 bg-white rounded-full shadow-lg px-4 py-2">
+        <div className={`flex items-center rounded-3xl border border-white/10 bg-[#0f1218]/90 text-white shadow-2xl backdrop-blur-xl ${isRecording ? 'w-[640px] max-w-full gap-3 px-5 py-4' : 'w-[540px] max-w-full gap-4 px-5 py-4'}`}>
           {isProcessing && !isParentProcessing ? (
             <div className="flex items-center space-x-2">
-              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-900"></div>
-              <span className="text-sm text-gray-600">Processing recording...</span>
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+              <span className="text-sm text-gray-300">Processing recording...</span>
             </div>
           ) : (
             <>
@@ -426,118 +480,152 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
               ) : (
                 <>
                   {!isRecording ? (
-                    // Start recording button
-                    <Tooltip>
-                      <TooltipTrigger asChild>
+                    // Idle bar — the "start" twin of the recording bar: red mic
+                    // button + a Start/Ready label where the timer sits, then the
+                    // idle Mic/System meters stretching to the right.
+                    <div className="flex w-full items-center gap-4">
+                      <div className="flex items-center gap-3 pl-0.5">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              onClick={() => {
+                                Analytics.trackButtonClick('start_recording', 'recording_controls');
+                                handleStartRecording();
+                              }}
+                              disabled={isStarting || isProcessing || isRecordingDisabled || isValidatingModel}
+                              className={`w-12 h-12 flex items-center justify-center shrink-0 ${isStarting || isProcessing || isValidatingModel ? 'bg-gray-400' : 'bg-red-500 hover:bg-red-600'
+                                } rounded-full text-white transition-colors relative`}
+                            >
+                              {isStarting || isValidatingModel ? (
+                                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                              ) : (
+                                <Mic size={20} />
+                              )}
+
+                              {(isStarting || isValidatingModel) && (
+                                <div className="absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-[var(--af-panel-2,#1f2937)] px-3 py-1 text-xs font-medium text-[var(--af-text,#e5e7eb)] shadow-lg">
+                                  {startupMessage || 'Starting…'}
+                                </div>
+                              )}
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Start recording</p>
+                          </TooltipContent>
+                        </Tooltip>
+
                         <button
                           onClick={() => {
+                            if (isStarting || isProcessing || isRecordingDisabled || isValidatingModel) return;
                             Analytics.trackButtonClick('start_recording', 'recording_controls');
                             handleStartRecording();
                           }}
-                          disabled={isStarting || isProcessing || isRecordingDisabled || isValidatingModel}
-                          className={`w-12 h-12 flex items-center justify-center ${isStarting || isProcessing || isValidatingModel ? 'bg-gray-400' : 'bg-red-500 hover:bg-red-600'
-                            } rounded-full text-white transition-colors relative`}
+                          className="text-left leading-tight"
                         >
-                          {isStarting || isValidatingModel ? (
-                            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                          ) : (
-                            <Mic size={20} />
-                          )}
-
-                          {/* Explain the wait. Readying the model can take
-                              several seconds on first record, and an unlabelled
-                              spinner just reads as "stuck". */}
-                          {(isStarting || isValidatingModel) && (
-                            <div className="absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-[var(--af-panel-2,#1f2937)] px-3 py-1 text-xs font-medium text-[var(--af-text,#e5e7eb)] shadow-lg">
-                              {startupMessage || 'Starting…'}
-                            </div>
-                          )}
+                          <div className="font-semibold tracking-tight text-white">
+                            {isStarting || isValidatingModel ? 'Starting…' : 'Start Recording'}
+                          </div>
+                          <div className="text-[11px] text-red-400">Ready</div>
                         </button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Start recording</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    // Recording controls (pause/resume + stop)
-                    <>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            onClick={() => {
-                              if (isPaused) {
-                                Analytics.trackButtonClick('resume_recording', 'recording_controls');
-                                handleResumeRecording();
-                              } else {
-                                Analytics.trackButtonClick('pause_recording', 'recording_controls');
-                                handlePauseRecording();
-                              }
-                            }}
-                            disabled={isPausing || isResuming || isStopping}
-                            className={`w-10 h-10 flex items-center justify-center ${isPausing || isResuming || isStopping
-                              ? 'bg-gray-200 border-2 border-gray-300 text-gray-400'
-                              : 'bg-white border-2 border-gray-300 text-gray-600 hover:border-gray-400 hover:bg-gray-50'
-                              } rounded-full transition-colors relative`}
-                          >
-                            {isPaused ? <Play size={16} /> : <Pause size={16} />}
-                            {(isPausing || isResuming) && (
-                              <div className="absolute -top-8 text-gray-600 font-medium text-xs">
-                                {isPausing ? 'Pausing...' : 'Resuming...'}
-                              </div>
-                            )}
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>{isPaused ? 'Resume recording' : 'Pause recording'}</p>
-                        </TooltipContent>
-                      </Tooltip>
+                      </div>
 
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            onClick={() => {
-                              Analytics.trackButtonClick('stop_recording', 'recording_controls');
-                              handleStopRecording();
-                            }}
-                            disabled={isStopping || isPausing || isResuming}
-                            className={`w-10 h-10 flex items-center justify-center ${isStopping || isPausing || isResuming ? 'bg-gray-400' : 'bg-red-500 hover:bg-red-600'
-                              } rounded-full text-white transition-colors relative`}
-                          >
-                            <Square size={16} />
-                            {isStopping && (
-                              <div className="absolute -top-8 text-gray-600 font-medium text-xs">
-                                Stopping...
-                              </div>
-                            )}
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Stop recording</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </>
+                      <div className="h-10 w-px bg-white/10" />
+
+                      <div className="flex min-w-0 flex-1 flex-col gap-1.5 text-[12px]">
+                        <div className="flex min-w-0 items-center gap-2" title={`Microphone: ${micName}`}>
+                          <Mic size={13} className="shrink-0 text-gray-400" />
+                          <span className="truncate text-gray-300">{micName}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Volume2 size={13} className="shrink-0 text-gray-400" />
+                          <span className="text-gray-400">System audio</span>
+                          <span
+                            className={`ml-0.5 h-2 w-2 rounded-full ${hasSystemAudio ? 'bg-emerald-500' : 'bg-red-500'}`}
+                          />
+                          <span className={hasSystemAudio ? 'text-emerald-400' : 'text-red-400'}>
+                            {hasSystemAudio ? 'Detected' : 'Not detected'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    // Recording bar — mirrors the floating compact bar.
+                    <div className="flex w-full items-center gap-4">
+                      {/* Status + timer */}
+                      <div className="flex items-center gap-3 pl-1">
+                        <span className="relative flex h-6 w-6 items-center justify-center">
+                          <span className={`absolute inset-0 rounded-full ${isPaused ? 'bg-orange-500/20' : 'bg-red-500/20 animate-pulse'}`} />
+                          <span className={`h-3 w-3 rounded-full ${isPaused ? 'bg-orange-400' : 'bg-red-500'}`} />
+                        </span>
+                        <div className="text-left leading-tight">
+                          <div className="font-semibold tabular-nums tracking-tight">{formatElapsed(elapsedSeconds)}</div>
+                          <div className={`text-[11px] ${isPaused ? 'text-orange-400' : 'text-red-400'}`}>
+                            {isStopping ? 'Stopping…' : isPaused ? 'Paused' : 'Recording'}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="h-10 w-px bg-white/10" />
+
+                      {/* Live input levels (Rust-driven, per source) — stretch to
+                          fill the space between the timer and the controls. */}
+                      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                        <div className="flex items-center gap-2">
+                          <Mic size={12} className="shrink-0 text-gray-400" />
+                          <span className="w-12 shrink-0 text-[11px] text-gray-400">Mic</span>
+                          <LiveAudioVisualizer active={isRecording && !isPaused} source="mic" fill bars={28} className="flex-1" />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Volume2 size={12} className="shrink-0 text-gray-400" />
+                          <span className="w-12 shrink-0 text-[11px] text-gray-400">System</span>
+                          <LiveAudioVisualizer active={isRecording && !isPaused} source="system" fill bars={28} className="flex-1" />
+                        </div>
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          onClick={() => {
+                            if (isPaused) {
+                              Analytics.trackButtonClick('resume_recording', 'recording_controls');
+                              handleResumeRecording();
+                            } else {
+                              Analytics.trackButtonClick('pause_recording', 'recording_controls');
+                              handlePauseRecording();
+                            }
+                          }}
+                          disabled={isPausing || isResuming || isStopping}
+                          title={isPaused ? 'Resume recording' : 'Pause recording'}
+                          className="flex h-12 w-14 flex-col items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-xs text-gray-300 transition-colors hover:bg-white/10 disabled:opacity-40"
+                        >
+                          {isPaused ? <Play size={15} /> : <Pause size={15} />}
+                          <span className="mt-0.5 text-[10px]">{isPaused ? 'Resume' : 'Pause'}</span>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            Analytics.trackButtonClick('stop_recording', 'recording_controls');
+                            handleStopRecording();
+                          }}
+                          disabled={isStopping || isPausing || isResuming}
+                          title="Stop recording"
+                          className="flex h-12 w-14 flex-col items-center justify-center rounded-2xl border border-red-500/30 bg-red-500/15 text-xs text-red-300 transition-colors hover:bg-red-500/25 disabled:opacity-40"
+                        >
+                          <Square size={13} fill="currentColor" />
+                          <span className="mt-0.5 text-[10px]">Stop</span>
+                        </button>
+
+                        <button
+                          onClick={collapseToBar}
+                          disabled={isStopping}
+                          title="Shrink to floating bar"
+                          className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-gray-300 transition-colors hover:bg-white/10 disabled:opacity-40"
+                        >
+                          <Minimize2 size={14} />
+                        </button>
+                      </div>
+                    </div>
                   )}
 
-                  {/* Live input meters, driven by real per-source audio levels
-                      from the Rust pipeline (mic vs. system audio). */}
-                  <div className="flex items-center gap-3 mx-4">
-                    <div className="flex items-center gap-1.5" title="Your microphone">
-                      <Mic size={12} className="text-blue-500 shrink-0" />
-                      <LiveAudioVisualizer
-                        active={isRecording && !isPaused}
-                        source="mic"
-                        bars={5}
-                      />
-                    </div>
-                    <div className="flex items-center gap-1.5" title="System audio (other participants)">
-                      <Volume2 size={12} className="text-purple-500 shrink-0" />
-                      <LiveAudioVisualizer
-                        active={isRecording && !isPaused}
-                        source="system"
-                        bars={5}
-                      />
-                    </div>
-                  </div>
                 </>
               )}
             </>

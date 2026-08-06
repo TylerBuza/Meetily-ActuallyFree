@@ -12,11 +12,13 @@ interface SidebarItem {
   title: string;
   type: 'folder' | 'file';
   children?: SidebarItem[];
+  createdAt?: string;
 }
 
 export interface CurrentMeeting {
   id: string;
   title: string;
+  created_at?: string;
 }
 
 // Search result type for transcript search
@@ -66,7 +68,7 @@ export const useSidebar = () => {
 
 export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const [currentMeeting, setCurrentMeeting] = useState<CurrentMeeting | null>({ id: 'intro-call', title: '+ New Call' });
-  const [isCollapsed, setIsCollapsed] = useState(true);
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const [meetings, setMeetings] = useState<CurrentMeeting[]>([]);
   const [sidebarItems, setSidebarItems] = useState<SidebarItem[]>([]);
   const [isMeetingActive, setIsMeetingActive] = useState(false);
@@ -89,7 +91,8 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
         const meetings = await invoke('api_get_meetings') as Array<{ id: string, title: string }>;
         const transformedMeetings = meetings.map((meeting: any) => ({
           id: meeting.id,
-          title: meeting.title
+          title: meeting.title,
+          created_at: meeting.created_at ?? meeting.createdAt ?? meeting.updated_at,
         }));
         setMeetings(transformedMeetings);
         Analytics.trackBackendConnection(true);
@@ -116,10 +119,10 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const baseItems: SidebarItem[] = [
     {
       id: 'meetings',
-      title: 'Meeting Notes',
+      title: 'Recent Meetings',
       type: 'folder' as const,
       children: [
-        ...meetings.map(meeting => ({ id: meeting.id, title: meeting.title, type: 'file' as const }))
+        ...meetings.map(meeting => ({ id: meeting.id, title: meeting.title, type: 'file' as const, createdAt: meeting.created_at }))
       ]
     },
   ];

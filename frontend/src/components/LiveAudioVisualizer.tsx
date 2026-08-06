@@ -1,5 +1,17 @@
 'use client';
 
+/**
+ * Live per-source audio level meter (mic OR system) rendered as animated bars.
+ *
+ * Levels are pushed from Rust via the `recording-audio-levels` event (pre-mix,
+ * per source) — the webview cannot read system audio, so these meters are
+ * intentionally Rust-driven rather than computed in JS.
+ *
+ * `fill` makes the bar row flex to fill its container (used by the stacked
+ * Mic/System meters in RecordingControls and the minibar); without it the
+ * component renders at its intrinsic width.
+ */
+
 import { useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 
@@ -21,6 +33,8 @@ interface LiveAudioVisualizerProps {
   source?: 'mic' | 'system';
   /** Number of history bars to render (acts like a small scrolling VU meter). */
   bars?: number;
+  /** Stretch the bars to fill the container width instead of a fixed 3px each. */
+  fill?: boolean;
   className?: string;
 }
 
@@ -46,6 +60,7 @@ export function LiveAudioVisualizer({
   active,
   source = 'mic',
   bars = 6,
+  fill = false,
   className = '',
 }: LiveAudioVisualizerProps) {
   const [levels, setLevels] = useState<number[]>(() => new Array(bars).fill(0));
@@ -97,14 +112,14 @@ export function LiveAudioVisualizer({
 
   return (
     <div
-      className={`flex items-end gap-[2px] h-4 ${className}`}
+      className={`flex items-end gap-[2px] h-4 ${fill ? 'w-full' : ''} ${className}`}
       role="img"
       aria-label={`${source === 'mic' ? 'Microphone' : 'System'} audio level`}
     >
       {levels.map((level, index) => (
         <div
           key={index}
-          className={`w-[3px] rounded-sm transition-[height,opacity] duration-100 ease-out ${
+          className={`${fill ? 'flex-1 min-w-[2px]' : 'w-[3px]'} rounded-sm transition-[height,opacity] duration-100 ease-out ${
             active ? barColor : 'bg-gray-500'
           }`}
           style={{

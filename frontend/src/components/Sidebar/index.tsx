@@ -1,7 +1,26 @@
 ﻿'use client';
 
+/**
+ * Primary left navigation sidebar.
+ *
+ * Layout (top → bottom): brand ("Meetily · Actually Free", see Logo.tsx),
+ * a "Search" field (⌘K), a teal "New Recording" action, a "RECENT MEETINGS"
+ * list (dot + title + date-subtitle from `created_at`, with a "View all
+ * library" toggle capped by RECENT_LIMIT), and a Settings-only footer.
+ *
+ * Supports shift/ctrl multi-select + bulk delete of meetings.
+ *
+ * State/wiring:
+ *  - Reads the meetings list + current meeting + recording status from
+ *    SidebarProvider (useSidebar) — the single source of truth kept in sync
+ *    with the Rust core via Tauri commands/events.
+ *  - Navigation uses next/navigation; selecting a meeting routes to
+ *    /meeting-details?id=...  (see app/meeting-details/page-content.tsx).
+ *  - Default state is expanded (isCollapsed=false in SidebarProvider).
+ */
+
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { ShieldCheck, ChevronDown, ChevronRight, File, Settings, ChevronLeftCircle, ChevronRightCircle, Calendar, StickyNote, Home, Trash2, Mic, Square, Plus, Search, Pencil, NotebookPen, SearchIcon, X, Upload } from 'lucide-react';
+import { ShieldCheck, ChevronDown, ChevronRight, File, FileText, AudioLines, ArrowRight, Settings, ChevronLeftCircle, ChevronRightCircle, Calendar, StickyNote, Home, LayoutDashboard, Trash2, Mic, Square, Plus, Search, Pencil, NotebookPen, SearchIcon, X, Upload } from 'lucide-react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useSidebar } from './SidebarProvider';
 import type { CurrentMeeting } from '@/components/Sidebar/SidebarProvider';
@@ -36,6 +55,32 @@ interface SidebarItem {
   title: string;
   type: 'folder' | 'file';
   children?: SidebarItem[];
+  createdAt?: string;
+}
+
+// "RECENT MEETINGS" rows show a date/time subtitle. Meetings created before the
+// timestamp was tracked fall back to parsing it out of the auto-generated title
+// (e.g. "Meeting 2026-08-05_21-59-55").
+function parseMeetingDate(item: { createdAt?: string; title?: string }): Date | null {
+  if (item.createdAt) {
+    const d = new Date(item.createdAt);
+    if (!isNaN(d.getTime())) return d;
+  }
+  const m = item.title?.match(/(\d{4})-(\d{2})-(\d{2})[_ T](\d{2})[-:](\d{2})(?:[-:](\d{2}))?/);
+  if (m) {
+    const [, y, mo, da, h, mi, s] = m;
+    const d = new Date(Number(y), Number(mo) - 1, Number(da), Number(h), Number(mi), Number(s || '0'));
+    if (!isNaN(d.getTime())) return d;
+  }
+  return null;
+}
+
+function formatMeetingDate(d: Date): string {
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function formatMeetingTime(d: Date): string {
+  return d.toLocaleString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
 const Sidebar: React.FC = () => {
@@ -103,6 +148,16 @@ const Sidebar: React.FC = () => {
 
 
   const [deleteModalState, setDeleteModalState] = useState<{ isOpen: boolean; itemId: string | null }>({ isOpen: false, itemId: null });
+
+  // Multi-select for the meeting list: shift-click selects a range, ctrl/cmd
+  // click toggles one, and the selection can be deleted in bulk.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+
+  // "RECENT MEETINGS" shows the newest few with a "View all library" toggle.
+  const RECENT_LIMIT = 8;
+  const [showAllMeetings, setShowAllMeetings] = useState(false);
 
   useEffect(() => {
     // Note: Don't set hardcoded defaults - let DB be the source of truth
@@ -360,6 +415,76 @@ const Sidebar: React.FC = () => {
     setDeleteModalState({ isOpen: false, itemId: null });
   };
 
+  // Flat, ordered list of meeting ids as currently displayed — needed so a
+  // shift-click can select the contiguous range between two clicks.
+  const orderedMeetingIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const folder of filteredSidebarItems) {
+      if (folder.type === 'folder' && folder.children) {
+        for (const child of folder.children) {
+          if (child.type === 'file' && child.id.includes('-') && !child.id.startsWith('intro-call')) {
+            ids.push(child.id);
+          }
+        }
+      }
+    }
+    return ids;
+  }, [filteredSidebarItems]);
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setLastSelectedId(null);
+  };
+
+  const handleMeetingSelect = (id: string, e: React.MouseEvent) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (e.shiftKey && lastSelectedId) {
+        const a = orderedMeetingIds.indexOf(lastSelectedId);
+        const b = orderedMeetingIds.indexOf(id);
+        if (a !== -1 && b !== -1) {
+          const [lo, hi] = a < b ? [a, b] : [b, a];
+          for (let i = lo; i <= hi; i++) next.add(orderedMeetingIds[i]);
+        } else {
+          next.has(id) ? next.delete(id) : next.add(id);
+        }
+      } else {
+        next.has(id) ? next.delete(id) : next.add(id);
+      }
+      return next;
+    });
+    setLastSelectedId(id);
+  };
+
+  const handleBulkDelete = async () => {
+    const ids = Array.from(selectedIds);
+    let ok = 0;
+    for (const id of ids) {
+      try {
+        await invoke('api_delete_meeting', { meetingId: id });
+        Analytics.trackMeetingDeleted(id);
+        ok++;
+      } catch (error) {
+        console.error('Failed to delete meeting', id, error);
+      }
+    }
+    setMeetings(meetings.filter((m: CurrentMeeting) => !selectedIds.has(m.id)));
+    if (currentMeeting && selectedIds.has(currentMeeting.id)) {
+      setCurrentMeeting({ id: 'intro-call', title: '+ New Call' });
+      router.push('/');
+    }
+    if (ok > 0) {
+      toast.success(`Deleted ${ok} meeting${ok === 1 ? '' : 's'}`, {
+        description: 'All associated data has been removed',
+      });
+    }
+    if (ok < ids.length) {
+      toast.error(`Failed to delete ${ids.length - ok} meeting${ids.length - ok === 1 ? '' : 's'}`);
+    }
+    clearSelection();
+    setBulkDeleteOpen(false);
+  };
+
   // Handle modal editing of meeting names
   const handleEditStart = (meetingId: string, currentTitle: string) => {
     setEditModalState({
@@ -458,21 +583,6 @@ const Sidebar: React.FC = () => {
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => router.push('/')}
-                className={`p-2 rounded-lg transition-colors duration-150 ${isHomePage ? 'bg-gray-100' : 'hover:bg-gray-100'
-                  }`}
-              >
-                <Home className="w-5 h-5 text-gray-600" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              <p>Home</p>
-            </TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
                 onClick={handleRecordingToggle}
                 disabled={isRecording}
                 className={`p-2 ${isRecording ? 'bg-red-500 cursor-not-allowed' : 'bg-red-500 hover:bg-red-600'} rounded-full transition-colors duration-150 shadow-sm`}
@@ -555,6 +665,7 @@ const Sidebar: React.FC = () => {
     const paddingLeft = `${depth * 12 + 12}px`;
     const isActive = item.type === 'file' && currentMeeting?.id === item.id;
     const isMeetingItem = item.id.includes('-') && !item.id.startsWith('intro-call');
+    const isSelected = selectedIds.has(item.id);
 
     // Check if this item has a matching transcript snippet
     const matchingResult = isMeetingItem ? findMatchingSnippet(item.id) : null;
@@ -565,22 +676,31 @@ const Sidebar: React.FC = () => {
     return (
       <div key={item.id}>
         <div
-          className={`flex items-center transition-all duration-150 group ${item.type === 'folder' && depth === 0
+          className={`flex items-center transition-all duration-150 group select-none ${item.type === 'folder' && depth === 0
             ? 'p-3 text-lg font-semibold h-10 mx-3 mt-3 rounded-lg'
-            : `px-3 py-2 my-0.5 rounded-md text-sm ${isActive ? 'bg-blue-100 text-blue-700 font-medium' :
-              hasTranscriptMatch ? 'bg-yellow-50' : 'hover:bg-gray-50'
+            : `px-2.5 py-2 my-0.5 rounded-lg text-sm ${isSelected ? 'bg-[var(--af-panel-2)] text-[var(--af-text)] ring-1 ring-[var(--af-accent)]/50' :
+              isActive ? 'bg-[var(--af-panel-2)] text-[var(--af-text)] font-medium' :
+                hasTranscriptMatch ? 'bg-yellow-50' : 'hover:bg-[var(--af-hover)]'
             } cursor-pointer`
             }`}
           style={item.type === 'folder' && depth === 0 ? {} : { paddingLeft }}
-          onClick={() => {
+          onClick={(e) => {
             if (item.type === 'folder') {
               toggleFolder(item.id);
-            } else {
-              setCurrentMeeting({ id: item.id, title: item.title });
-              const basePath = item.id.startsWith('intro-call') ? '/' :
-                item.id.includes('-') ? `/meeting-details?id=${item.id}` : `/notes/${item.id}`;
-              router.push(basePath);
+              return;
             }
+            // Shift / Ctrl / Cmd click manages a multi-selection instead of
+            // navigating, so several meetings can be deleted at once.
+            if (isMeetingItem && (e.shiftKey || e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              handleMeetingSelect(item.id, e);
+              return;
+            }
+            if (selectedIds.size > 0) clearSelection();
+            setCurrentMeeting({ id: item.id, title: item.title });
+            const basePath = item.id.startsWith('intro-call') ? '/' :
+              item.id.includes('-') ? `/meeting-details?id=${item.id}` : `/notes/${item.id}`;
+            router.push(basePath);
           }}
         >
           {item.type === 'folder' ? (
@@ -603,51 +723,66 @@ const Sidebar: React.FC = () => {
               )}
             </>
           ) : (
-            <div className="flex flex-col w-full">
-              <div className="flex items-center w-full">
-                {isMeetingItem ? (
-                  <div className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full mr-2 bg-gray-100">
-                    <File className="w-3.5 h-3.5 text-gray-600" />
-                  </div>
-                ) : (
-                  <div className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full mr-2 bg-blue-100">
-                    <Plus className="w-3.5 h-3.5 text-blue-600" />
-                  </div>
-                )}
-                <span className="flex-1 break-words">{item.title}</span>
-                {isMeetingItem && (
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEditStart(item.id, item.title);
-                      }}
-                      className="hover:text-blue-600 p-1 rounded-md hover:bg-blue-50 flex-shrink-0"
-                      aria-label="Edit meeting title"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDeleteModalState({ isOpen: true, itemId: item.id });
-                      }}
-                      className="hover:text-red-600 p-1 rounded-md hover:bg-red-50 flex-shrink-0"
-                      aria-label="Delete meeting"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                )}
-              </div>
+            (() => {
+              const meetingDate = isMeetingItem ? parseMeetingDate(item) : null;
+              return (
+                <div className="flex w-full items-center gap-2.5">
+                  {isMeetingItem ? (
+                    <span className={`flex-shrink-0 flex items-center justify-center w-7 h-7 ${isActive ? 'text-[var(--af-accent)]' : 'text-[var(--af-text-3)]'}`}>
+                      {isActive ? <AudioLines className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
+                    </span>
+                  ) : (
+                    <span className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-md bg-blue-100 text-blue-600">
+                      <Plus className="w-3.5 h-3.5" />
+                    </span>
+                  )}
 
-              {/* Show transcript match snippet if available */}
-              {hasTranscriptMatch && (
-                <div className="mt-1 ml-8 text-xs text-gray-500 bg-yellow-50 p-1.5 rounded border border-yellow-100 line-clamp-2">
-                  <span className="font-medium text-yellow-600">Match:</span> {matchingResult.matchContext}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate">{item.title}</span>
+                      {isMeetingItem && isActive && meetingDate && (
+                        <span className="ml-auto shrink-0 text-xs font-normal text-[var(--af-text-3)]">
+                          {formatMeetingTime(meetingDate)}
+                        </span>
+                      )}
+                    </div>
+                    {isMeetingItem && !isActive && meetingDate && (
+                      <div className="mt-0.5 text-xs text-[var(--af-text-3)]">{formatMeetingDate(meetingDate)}</div>
+                    )}
+                    {hasTranscriptMatch && (
+                      <div className="mt-1 text-xs text-gray-500 bg-yellow-50 p-1.5 rounded border border-yellow-100 line-clamp-2">
+                        <span className="font-medium text-yellow-600">Match:</span> {matchingResult.matchContext}
+                      </div>
+                    )}
+                  </div>
+
+                  {isMeetingItem && (
+                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEditStart(item.id, item.title);
+                        }}
+                        className="p-1 rounded-md text-[var(--af-text-3)] hover:text-[var(--af-accent)] hover:bg-[var(--af-hover)] flex-shrink-0"
+                        aria-label="Edit meeting title"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteModalState({ isOpen: true, itemId: item.id });
+                        }}
+                        className="p-1 rounded-md text-[var(--af-text-3)] hover:text-red-500 hover:bg-red-500/10 flex-shrink-0"
+                        aria-label="Delete meeting"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              );
+            })()
           )}
         </div>
         {item.type === 'folder' && isExpanded && item.children && (
@@ -678,60 +813,55 @@ const Sidebar: React.FC = () => {
         className={`h-screen bg-white border-r shadow-sm flex flex-col transition-all duration-300 ${isCollapsed ? 'w-16' : 'w-64'
           }`}
       >
-        {/*  Header with traffic light spacing */}
-        <div className="flex-shrink-0 h-22 flex items-center">
-
-          {/* Title container */}
-
-
-
-          <div className="flex-1">
-            {!isCollapsed && (
-              <div className="p-3">
-                {/* <span className="text-lg text-center border rounded-full bg-blue-50 border-white font-semibold text-gray-700 mb-2 block items-center">
-                  <span>Meetily</span>
-                </span> */}
+        {/* Header: brand, search, New Recording */}
+        <div className="flex-shrink-0">
+          {!isCollapsed && (
+            <div className="px-3 pt-5 pb-4 space-y-4">
+              <div className="pt-1 pb-1">
                 <Logo isCollapsed={isCollapsed} />
-
-                <div className="relative mb-1">
-                  <InputGroup >
-                    <InputGroupInput placeholder='Search meeting content...' value={searchQuery}
-                      onChange={(e) => handleSearchChange(e.target.value)}
-                    />
-                    <InputGroupAddon>
-                      <SearchIcon />
-                    </InputGroupAddon>
-                    {searchQuery &&
-                      <InputGroupAddon align={'inline-end'}>
-                        <InputGroupButton
-                          onClick={() => handleSearchChange('')}
-                        >
-                          <X />
-                        </InputGroupButton>
-                      </InputGroupAddon>
-                    }
-                  </InputGroup>
-                </div>
               </div>
-            )}
-          </div>
+
+              <div className="relative">
+                <InputGroup>
+                  <InputGroupInput placeholder='Search' value={searchQuery}
+                    onChange={(e) => handleSearchChange(e.target.value)}
+                  />
+                  <InputGroupAddon>
+                    <SearchIcon />
+                  </InputGroupAddon>
+                  {searchQuery && (
+                    <InputGroupAddon align={'inline-end'}>
+                      <InputGroupButton onClick={() => handleSearchChange('')}>
+                        <X />
+                      </InputGroupButton>
+                    </InputGroupAddon>
+                  )}
+                </InputGroup>
+              </div>
+
+              <button
+                onClick={handleRecordingToggle}
+                disabled={isRecording}
+                className={`w-full flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold text-white transition-[filter] bg-[var(--af-accent)] ${isRecording ? 'opacity-70 cursor-not-allowed' : 'hover:brightness-110'}`}
+              >
+                {isRecording ? (
+                  <>
+                    <Square className="w-4 h-4" />
+                    <span>Recording in progress…</span>
+                  </>
+                ) : (
+                  <>
+                    <AudioLines className="w-4 h-4" />
+                    <span>New Recording</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Main content - scrollable area */}
         <div className="flex-1 flex flex-col min-h-0">
-          {/* Fixed navigation items */}
-          <div className="flex-shrink-0">
-            {!isCollapsed && (
-              <div
-                onClick={() => router.push('/')}
-                className="p-3  text-lg font-semibold items-center hover:bg-gray-100 h-10   flex mx-3 mt-3 rounded-lg cursor-pointer"
-              >
-                <Home className="w-4 h-4 mr-2" />
-                <span>Home</span>
-              </div>
-            )}
-          </div>
-
           {/* Content area */}
           <div className="flex-1 flex flex-col min-h-0">
             {renderCollapsedIcons()}
@@ -739,31 +869,60 @@ const Sidebar: React.FC = () => {
             {!isCollapsed && (
               <div className="flex-shrink-0">
                 {filteredSidebarItems.filter(item => item.type === 'folder').map(item => (
-                  <div key={item.id}>
-                    <div
-                      className="flex items-center transition-all duration-150 p-3 text-lg font-semibold h-10 mx-3 mt-3 rounded-lg"
-                    >
-                      <NotebookPen className="w-4 h-4 mr-2 text-gray-600" />
-                      <span className="text-gray-700">{item.title}</span>
-                      {searchQuery && item.id === 'meetings' && isSearching && (
-                        <span className="ml-2 text-xs text-blue-500 animate-pulse">Searching...</span>
-                      )}
-                    </div>
+                  <div
+                    key={item.id}
+                    className="flex items-center px-4 pt-5 pb-2 text-xs font-semibold uppercase tracking-wider text-[var(--af-text-3)]"
+                  >
+                    <span>{item.title}</span>
+                    {searchQuery && item.id === 'meetings' && isSearching && (
+                      <span className="ml-2 normal-case tracking-normal text-blue-500 animate-pulse">Searching...</span>
+                    )}
                   </div>
                 ))}
               </div>
             )}
 
+            {/* Bulk-selection action bar */}
+            {!isCollapsed && selectedIds.size > 0 && (
+              <div className="mx-3 mb-1 flex items-center justify-between rounded-md bg-blue-50 px-3 py-2 text-sm">
+                <span className="font-medium text-blue-700">{selectedIds.size} selected</span>
+                <div className="flex items-center gap-2">
+                  <button onClick={clearSelection} className="text-gray-500 hover:text-gray-700">Clear</button>
+                  <button
+                    onClick={() => setBulkDeleteOpen(true)}
+                    className="inline-flex items-center gap-1 rounded-md bg-red-500 px-2 py-1 font-medium text-white hover:bg-red-600"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Delete
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Scrollable meeting items */}
             {!isCollapsed && (
-              <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0">
+              <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0 px-1">
                 {filteredSidebarItems
                   .filter(item => item.type === 'folder' && expandedFolders.has(item.id) && item.children)
-                  .map(item => (
-                    <div key={`${item.id}-children`} className="mx-3">
-                      {item.children!.map(child => renderItem(child, 1))}
-                    </div>
-                  ))}
+                  .map(item => {
+                    const children = item.children!;
+                    const showAll = showAllMeetings || searchQuery.trim().length > 0;
+                    const shown = showAll ? children : children.slice(0, RECENT_LIMIT);
+                    const hasMore = children.length > RECENT_LIMIT;
+                    return (
+                      <div key={`${item.id}-children`} className="mx-3">
+                        {shown.map(child => renderItem(child, 1))}
+                        {item.id === 'meetings' && hasMore && (
+                          <button
+                            onClick={() => setShowAllMeetings(v => !v)}
+                            className="mt-3 mb-2 flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--af-border-strong)] px-3 py-2 text-sm font-medium text-[var(--af-text-2)] transition-colors hover:bg-[var(--af-hover)] hover:text-[var(--af-text)]"
+                          >
+                            {showAllMeetings ? 'Show recent only' : 'View all library'}
+                            <ArrowRight className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
               </div>
             )}
           </div>
@@ -771,65 +930,23 @@ const Sidebar: React.FC = () => {
 
         {/* Footer */}
         {!isCollapsed && (
-
-          <div className="flex-shrink-0 p-2 border-t border-gray-100">
-            <button
-              onClick={handleRecordingToggle}
-              disabled={isRecording}
-              className={`w-full flex items-center justify-center px-3 py-2 text-sm font-medium text-white ${isRecording ? 'bg-red-300 cursor-not-allowed' : 'bg-red-500 hover:bg-red-600'} rounded-lg transition-colors shadow-sm`}
-            >
-              {isRecording ? (
-                <>
-                  <Square className="w-4 h-4 mr-2" />
-                  <span>Recording in progress...</span>
-                </>
-              ) : (
-                <>
-                  <Mic className="w-4 h-4 mr-2" />
-                  <span>Start Recording</span>
-                </>
-              )}
-            </button>
-
+          <div className="flex-shrink-0 p-2 border-t border-[var(--af-border)]">
             {betaFeatures.importAndRetranscribe && (
               <button
                 onClick={() => openImportDialog()}
-                className="w-full flex items-center justify-center px-3 py-2 mt-1 text-sm font-medium text-gray-700 bg-blue-100 hover:bg-blue-200 rounded-lg transition-colors shadow-sm"
+                className="w-full flex items-center gap-2.5 px-3 py-2 mb-1 text-sm font-medium text-[var(--af-text-2)] hover:bg-[var(--af-hover)] hover:text-[var(--af-text)] rounded-lg transition-colors"
               >
-                <Upload className="w-4 h-4 mr-2" />
+                <Upload className="w-4 h-4" />
                 <span>Import Audio</span>
               </button>
             )}
-
-            {/* Privacy statement — the app's core promise, kept visible. */}
-            <div className="w-full flex items-center gap-2.5 px-3 py-2 mt-2 mb-1 rounded-lg border border-[var(--af-border,#e5e7eb)] bg-[var(--af-panel-2,#f9fafb)]">
-              <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5 text-xs font-medium text-gray-700">
-                  Local Mode
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                </div>
-                <div className="text-[11px] text-gray-400">Nothing leaves this device</div>
-              </div>
-            </div>
-
-            {/* Bottom utility row — Settings and About side by side, as in the
-                reference design, rather than stacked full-width buttons. */}
-            <div className="w-full flex items-center gap-1.5 mt-1 mb-1">
-              <button
-                onClick={() => router.push('/settings')}
-                className="flex-1 flex items-center justify-center px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-200 hover:bg-gray-300 rounded-lg transition-colors"
-              >
-                <Settings className="w-4 h-4 mr-2" />
-                <span>Settings</span>
-              </button>
-              <div className="flex-1">
-                <Info isCollapsed={isCollapsed} />
-              </div>
-            </div>
-            <div className="w-full flex items-center justify-center px-3 py-1 text-xs text-gray-400">
-              v0.0.1
-            </div>
+            <button
+              onClick={() => router.push('/settings')}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium text-[var(--af-text-2)] hover:bg-[var(--af-hover)] hover:text-[var(--af-text)] rounded-lg transition-colors"
+            >
+              <Settings className="w-4 h-4" />
+              <span>Settings</span>
+            </button>
           </div>
         )}
       </div>
@@ -840,6 +957,14 @@ const Sidebar: React.FC = () => {
         text="Are you sure you want to delete this meeting? This action cannot be undone."
         onConfirm={handleDeleteConfirm}
         onCancel={() => setDeleteModalState({ isOpen: false, itemId: null })}
+      />
+
+      {/* Confirmation Modal for Bulk Delete */}
+      <ConfirmationModal
+        isOpen={bulkDeleteOpen}
+        text={`Delete ${selectedIds.size} selected meeting${selectedIds.size === 1 ? '' : 's'}? This action cannot be undone.`}
+        onConfirm={handleBulkDelete}
+        onCancel={() => setBulkDeleteOpen(false)}
       />
 
       {/* Edit Meeting Title Modal */}

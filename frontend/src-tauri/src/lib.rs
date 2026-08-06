@@ -692,6 +692,7 @@ pub fn run() {
             minibar::enter_compact_mode,
             minibar::exit_compact_mode,
             minibar::is_compact_mode,
+            minibar::stop_recording_from_minibar,
             api::api_get_profile,
             api::api_save_profile,
             api::api_update_profile,

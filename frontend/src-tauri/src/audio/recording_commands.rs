@@ -943,6 +943,20 @@ pub async fn stop_recording<R: Runtime>(
     // Update tray menu to reflect stopped state
     crate::tray::update_tray_menu(&app);
 
+    // Tear down the compact bar on every stop path. The bar is its own webview
+    // and closes itself by listening for `recording-stopped`, but cross-window
+    // event delivery to that dynamically-created window is unreliable, leaving a
+    // "zombie" bar still counting after the recording ended. Rust owns the
+    // windows, so close it here directly — this covers stops from the bar, the
+    // main window and the tray alike. Only acts when the bar is actually up, so
+    // a normal main-window stop doesn't steal focus.
+    {
+        use tauri::Manager;
+        if app.get_webview_window("minibar").is_some() {
+            let _ = crate::minibar::exit_compact_mode(app.clone()).await;
+        }
+    }
+
     info!("ðŸŽ‰ Recording stopped successfully with ZERO transcript chunks lost");
     Ok(())
 }

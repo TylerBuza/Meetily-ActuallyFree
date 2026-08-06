@@ -3,7 +3,6 @@
 import './globals.css'
 import { Source_Sans_3 } from 'next/font/google'
 import Sidebar from '@/components/Sidebar'
-import { LiveAssistant } from '@/components/LiveAssistant/LiveAssistant'
 import { SidebarProvider } from '@/components/Sidebar/SidebarProvider'
 import MainContent from '@/components/MainContent'
 import AnalyticsProvider from '@/components/AnalyticsProvider'
@@ -326,8 +325,6 @@ export default function RootLayout({
                                 handleImportDialogClose={handleImportDialogClose}
                                 importFilePath={importFilePath}
                               />
-                              {/* Live AI assistant (grounded in the current meeting transcript) */}
-                              {!showOnboarding && <LiveAssistant />}
                             </ImportDialogProvider>
                           </RecordingPostProcessingProvider>
                         </TooltipProvider>

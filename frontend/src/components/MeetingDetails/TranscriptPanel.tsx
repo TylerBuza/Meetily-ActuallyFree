@@ -1,28 +1,30 @@
 "use client";
 
 /**
- * Transcript panel for the MEETING-DETAILS screen.
+ * Transcript column for the MEETING-DETAILS screen — the wide middle column.
  *
  * ⚠️ There are TWO components named `TranscriptPanel`. This is the
  * meeting-details one; the live recording screen uses
  * `app/_components/TranscriptPanel.tsx`. Editing the wrong file is a common
  * trap — it compiles and appears to do nothing.
  *
- * Two data paths feed the virtualized view, and BOTH must carry `speaker` or
- * speaker labels vanish on this screen:
+ * Both data paths feeding the virtualized view must carry `speaker` or speaker
+ * labels vanish here:
  *   - paginated  → `segments` prop, built by `hooks/usePaginatedTranscripts.ts`
  *   - otherwise  → converted inline from `transcripts` below
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Transcript, TranscriptSegmentData } from '@/types';
+import { Calendar, Clock } from 'lucide-react';
 import { SpeakerRenameDialog } from './SpeakerRenameDialog';
 import { VirtualizedTranscriptView } from '@/components/VirtualizedTranscriptView';
 import { TranscriptButtonGroup } from './TranscriptButtonGroup';
-import { useMemo } from 'react';
 
 interface TranscriptPanelProps {
   transcripts: Transcript[];
+  title?: string;
+  createdAt?: string;
   customPrompt: string;
   onPromptChange: (value: string) => void;
   onCopyTranscript: () => void;
@@ -45,8 +47,17 @@ interface TranscriptPanelProps {
   onRefetchTranscripts?: () => Promise<void>;
 }
 
+function fmtDate(d: Date): string {
+  return d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+}
+function fmtTime(d: Date): string {
+  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
 export function TranscriptPanel({
   transcripts,
+  title,
+  createdAt,
   customPrompt,
   onPromptChange,
   onCopyTranscript,
@@ -64,15 +75,10 @@ export function TranscriptPanel({
   meetingFolderPath,
   onRefetchTranscripts,
 }: TranscriptPanelProps) {
-  // Which speaker label the rename dialog is currently editing, if any.
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
 
-  // Convert transcripts to segments if pagination is not used but we want virtualization
   const convertedSegments = useMemo(() => {
-    if (usePagination && segments) {
-      return segments;
-    }
-    // Convert transcripts to segments for virtualization
+    if (usePagination && segments) return segments;
     return transcripts.map(t => ({
       id: t.id,
       timestamp: t.audio_start_time ?? 0,
@@ -83,23 +89,63 @@ export function TranscriptPanel({
     }));
   }, [transcripts, usePagination, segments]);
 
+  // Date + time range for the header. Start comes from the meeting timestamp;
+  // the end is derived from the furthest transcript position we know about.
+  const { dateLabel, timeLabel } = useMemo(() => {
+    const start = createdAt ? new Date(createdAt) : null;
+    if (!start || isNaN(start.getTime())) return { dateLabel: '', timeLabel: '' };
+    const durationSec = convertedSegments.reduce(
+      (max, s) => Math.max(max, (s as any).endTime ?? s.timestamp ?? 0),
+      0,
+    );
+    const end = durationSec > 0 ? new Date(start.getTime() + durationSec * 1000) : null;
+    return {
+      dateLabel: fmtDate(start),
+      timeLabel: end ? `${fmtTime(start)} — ${fmtTime(end)}` : fmtTime(start),
+    };
+  }, [createdAt, convertedSegments]);
+
   return (
-    <div className="hidden md:flex md:w-1/4 lg:w-1/3 min-w-0 border-r border-gray-200 bg-white flex-col relative shrink-0">
-      {/* Title area */}
-      <div className="p-4 border-b border-gray-200">
-        <TranscriptButtonGroup
-          transcriptCount={usePagination ? (totalCount ?? convertedSegments.length) : (transcripts?.length || 0)}
-          onCopyTranscript={onCopyTranscript}
-          onOpenMeetingFolder={onOpenMeetingFolder}
-          meetingId={meetingId}
-          meetingFolderPath={meetingFolderPath}
-          onRefetchTranscripts={onRefetchTranscripts}
-        />
+    <div className="flex flex-1 min-w-0 flex-col bg-[var(--af-bg)]">
+      {/* Header: title + date/time */}
+      <div className="px-8 pt-6">
+        <h1 className="truncate text-2xl font-bold text-[var(--af-text)]">{title || 'Untitled meeting'}</h1>
+        {(dateLabel || timeLabel) && (
+          <div className="mt-2 flex items-center gap-5 text-sm text-[var(--af-text-2)]">
+            {dateLabel && (
+              <span className="inline-flex items-center gap-1.5">
+                <Calendar size={15} className="text-[var(--af-text-3)]" />
+                {dateLabel}
+              </span>
+            )}
+            {timeLabel && (
+              <span className="inline-flex items-center gap-1.5">
+                <Clock size={15} className="text-[var(--af-text-3)]" />
+                {timeLabel}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Rename a speaker across the whole meeting. Automatic identification is
-          a heuristic and can be wrong (and can't know who anyone is in meetings
-          recorded before it existed), so the user can state it directly. */}
+      {/* "Transcript" tab label + transcript actions */}
+      <div className="mt-5 flex items-center gap-3 border-b border-[var(--af-border)] px-8">
+        <span className="relative -mb-px py-2 text-sm font-medium text-[var(--af-accent)]">
+          Transcript
+          <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-[var(--af-accent)]" />
+        </span>
+        <div className="ml-auto scale-90 opacity-80">
+          <TranscriptButtonGroup
+            transcriptCount={usePagination ? (totalCount ?? convertedSegments.length) : (transcripts?.length || 0)}
+            onCopyTranscript={onCopyTranscript}
+            onOpenMeetingFolder={onOpenMeetingFolder}
+            meetingId={meetingId}
+            meetingFolderPath={meetingFolderPath}
+            onRefetchTranscripts={onRefetchTranscripts}
+          />
+        </div>
+      </div>
+
       <SpeakerRenameDialog
         open={renameTarget !== null}
         speaker={renameTarget}
@@ -108,8 +154,8 @@ export function TranscriptPanel({
         onRenamed={onRefetchTranscripts}
       />
 
-      {/* Transcript content - use virtualized view for better performance */}
-      <div className="flex-1 overflow-hidden pb-4">
+      {/* Transcript content */}
+      <div className="flex-1 overflow-hidden px-4 pb-4">
         <VirtualizedTranscriptView
           onRenameSpeaker={meetingId ? setRenameTarget : undefined}
           segments={convertedSegments}
@@ -127,18 +173,6 @@ export function TranscriptPanel({
           onLoadMore={onLoadMore}
         />
       </div>
-
-      {/* Custom prompt input at bottom of transcript section */}
-      {!isRecording && convertedSegments.length > 0 && (
-        <div className="p-1 border-t border-gray-200">
-          <textarea
-            placeholder="Add context for AI summary. For example people involved, meeting overview, objective etc..."
-            className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white shadow-sm min-h-[80px] resize-y"
-            value={customPrompt}
-            onChange={(e) => onPromptChange(e.target.value)}
-          />
-        </div>
-      )}
     </div>
   );
 }

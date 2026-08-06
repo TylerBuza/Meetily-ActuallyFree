@@ -27,6 +27,8 @@ export function AboutSettings() {
   };
 
   const REPO_URL = 'https://github.com/TylerBuza/Meetily-ActuallyFree';
+  const ORIGINAL_MEETILY_URL = 'https://github.com/Zackriya-Solutions/meeting-minutes';
+  const AUTHOR_URL = 'https://buza.dev';
 
   return (
     <div className="space-y-6">
@@ -88,9 +90,28 @@ export function AboutSettings() {
         </button>
       </div>
 
-      <p className="text-center text-xs text-gray-400">
-        Built on the open-source Meetily project · MIT licensed
-      </p>
+      <div className="text-center text-xs text-gray-400 space-y-1">
+        <p>
+          Built on the{" "}
+          <button
+            type="button"
+            onClick={() => openUrl(ORIGINAL_MEETILY_URL)}
+            className="text-blue-500 hover:underline"
+          >
+            open-source Meetily project
+          </button>{" "}
+          · MIT licensed
+        </p>
+        <p>
+          <button
+            type="button"
+            onClick={() => openUrl(AUTHOR_URL)}
+            className="text-blue-500 hover:underline"
+          >
+            Meetily - Actually Free fork by Tyler Buza
+          </button>
+        </p>
+      </div>
     </div>
   );
 }

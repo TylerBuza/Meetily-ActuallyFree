@@ -91,3 +91,37 @@ pub async fn exit_compact_mode<R: Runtime>(app: AppHandle<R>) -> Result<(), Stri
 pub async fn is_compact_mode<R: Runtime>(app: AppHandle<R>) -> Result<bool, String> {
     Ok(app.get_webview_window(MINIBAR_LABEL).is_some())
 }
+
+/// Stop the recording from the compact bar.
+///
+/// The bar is a separate webview, and cross-window frontend events to/from it
+/// have proven unreliable (a stop emitted at the main window, or a
+/// `recording-stopped` broadcast back to the bar, can be silently dropped —
+/// leaving a "zombie" bar still counting after the recording ended). So the bar
+/// does not signal the main window; it drives the stop through Rust directly,
+/// mirroring the tray's proven path: stop the recording (which also tears down
+/// this bar) and emit `recording-stop-complete` so the main window runs its
+/// post-processing (save + navigate) exactly as it does for a tray stop.
+#[tauri::command]
+pub async fn stop_recording_from_minibar<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    use tauri::Emitter;
+
+    let save_path = crate::paths::install_data_root()
+        .join(format!(
+            "recording-{}.wav",
+            chrono::Local::now().format("%Y-%m-%dT%H-%M-%S")
+        ))
+        .to_string_lossy()
+        .to_string();
+
+    crate::audio::recording_commands::stop_recording(
+        app.clone(),
+        crate::audio::recording_commands::RecordingArgs { save_path },
+    )
+    .await?;
+
+    // Drive the main window's save/navigate flow (RecordingPostProcessingProvider
+    // listens for this), the same signal the tray uses.
+    let _ = app.emit("recording-stop-complete", true);
+    Ok(())
+}

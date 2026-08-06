@@ -1,13 +1,31 @@
 <div align="center">
     <h1>Meetily — Actually Free</h1>
-    <p><b>A privacy-first AI meeting assistant that's genuinely free.</b><br/>
-    Every feature unlocked. No paywall. No license keys. No telemetry. Runs on your machine.</p>
+    <p><i>An MIT-licensed fork of the open-source <a href="https://github.com/Zackriya-Solutions/meeting-minutes">Meetily</a> project by Zackriya Solutions.</i></p>
+    <p><b>A privacy-first AI meeting assistant that is genuinely, completely free.</b><br/>
+    <b>Every feature unlocked. No paywall. No "Pro" tier. No license keys. No trial. No telemetry.</b><br/>
+    Records, transcribes, and summarizes your meetings entirely on your own machine.</p>
     <img src="https://img.shields.io/badge/Price-%240%20forever-brightgreen" alt="Free forever">
+    <img src="https://img.shields.io/badge/Paywall-none-brightgreen" alt="No paywall">
+    <img src="https://img.shields.io/badge/Every%20feature-unlocked-brightgreen" alt="Every feature unlocked">
     <img src="https://img.shields.io/badge/Telemetry-none-blue" alt="No telemetry">
     <img src="https://img.shields.io/badge/Runs-100%25%20local-8a2be2" alt="Local">
     <img src="https://img.shields.io/badge/GPU-NVIDIA%20CUDA-76b900" alt="CUDA">
     <img src="https://img.shields.io/badge/OS-Windows-white" alt="Windows">
 </div>
+
+---
+
+> ## 💚 Actually Free — every feature, no paywall
+>
+> This isn't "free with an asterisk." **Every single feature is unlocked, forever.**
+> There is no Pro tier, no subscription, no locked buttons, no "upgrade to continue,"
+> no trial timer, and no account to create. If a feature exists in this app, **it's
+> yours** — at no cost, with nothing held back.
+>
+> - ✅ **$0 forever** — no paid tiers, no "Pro" upsell, no locked features
+> - ✅ **No paywall, ever** — nothing behind a subscription or a license key
+> - ✅ **No account, no sign-in, no trial timer**
+> - ✅ **No telemetry** — nothing about you or your meetings ever leaves your machine
 
 ---
 
@@ -86,6 +104,24 @@ This is a **consensual** assistant: it records and transcribes on **your** machi
 **your** notes. It does **not** hide from other participants and is **not** a stealth or
 "undetectable" tool. Record responsibly and let people know when a meeting is being
 recorded, per the laws and norms where you are.
+
+---
+
+## 🙏 Homage & thanks
+
+**Meetily — Actually Free is a fork of the original, open-source [Meetily](https://github.com/Zackriya-Solutions/meeting-minutes)
+project by [Zackriya Solutions](https://github.com/Zackriya-Solutions/meeting-minutes), used and
+redistributed under its MIT License.** This fork exists because they did the hard, generous work of
+building a genuinely local, privacy-first meeting assistant and releasing it under a permissive
+license — that foundation is what made an *actually free*, no-paywall version possible. All original
+copyright and MIT license terms are retained (see [`LICENSE.md`](LICENSE.md)).
+
+- 💙 **Original project:** [Zackriya-Solutions/meeting-minutes](https://github.com/Zackriya-Solutions/meeting-minutes) — thank you for building Meetily and sharing it with the world.
+- 🔧 **This fork:** [TylerBuza/Meetily-ActuallyFree](https://github.com/TylerBuza/Meetily-ActuallyFree) — maintained by [Tyler Buza](https://buza.dev).
+
+Huge thanks as well to the open-source projects this app is built on — **whisper.cpp**,
+**llama.cpp**, **Parakeet/ONNX**, **pyannote**, **ffmpeg**, **Tauri**, and **Next.js**.
+None of this is possible without the people who give their work away freely. 🙌
 
 ---
 

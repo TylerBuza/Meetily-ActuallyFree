@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { emit } from '@tauri-apps/api/event';
+import { listen } from '@tauri-apps/api/event';
 import { Mic, Monitor, Pause, Play, Square, Maximize2 } from 'lucide-react';
 import { LiveAudioVisualizer } from '@/components/LiveAudioVisualizer';
 
@@ -28,6 +28,9 @@ function formatElapsed(totalSeconds: number): string {
 export default function MiniBarPage() {
   const [elapsed, setElapsed] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  // Once stopping begins the timer must freeze immediately, even though the
+  // bar stays up until the recording is actually finalised (see below).
+  const [isStopping, setIsStopping] = useState(false);
 
   // The window is transparent; the page must not paint a background over it.
   useEffect(() => {
@@ -50,10 +53,29 @@ export default function MiniBarPage() {
   }, []);
 
   useEffect(() => {
-    if (isPaused) return;
+    if (isPaused || isStopping) return;
     const id = setInterval(() => setElapsed((v) => v + 1), 1000);
     return () => clearInterval(id);
-  }, [isPaused]);
+  }, [isPaused, isStopping]);
+
+  // The bar does not own the stop sequence, so it can't know when the meeting
+  // has finished saving. It listens for the Rust stop events (broadcast to
+  // every window) and only then tears itself down. This is what actually stops
+  // the timer and closes the bar — regardless of whether the stop was triggered
+  // here, from the tray, or by the main window. `recording-stopped` fires from
+  // the stop command itself; `recording-stop-complete` is the tray's follow-up.
+  useEffect(() => {
+    const close = () => {
+      setIsStopping(true);
+      invoke('exit_compact_mode').catch((e) => console.error(e));
+    };
+    const unlistenStopped = listen('recording-stopped', close);
+    const unlistenComplete = listen('recording-stop-complete', close);
+    return () => {
+      unlistenStopped.then((fn) => fn());
+      unlistenComplete.then((fn) => fn());
+    };
+  }, []);
 
   const togglePause = useCallback(async () => {
     try {
@@ -69,33 +91,53 @@ export default function MiniBarPage() {
   }, []);
 
   const stop = useCallback(async () => {
-    // Hand the stop sequence to the main window, then restore it so the user
-    // sees the meeting being finalised.
+    // Drive the stop through Rust rather than emitting to the main window:
+    // cross-window frontend events to/from this separate bar webview are
+    // unreliable and used to leave the bar counting after the recording ended.
+    // `stop_recording_from_minibar` stops the recording (which tears down this
+    // bar) and signals the main window to save + navigate, mirroring the tray.
+    setIsStopping(true);
     try {
-      await emit('minibar-stop-requested');
+      await invoke('stop_recording_from_minibar');
     } catch (e) {
-      console.error('Compact bar: could not signal stop', e);
+      console.error('Compact bar: stop failed', e);
+      setIsStopping(false);
+      return;
     }
-    invoke('exit_compact_mode').catch((e) => console.error(e));
+    // Safety net: if Rust didn't already close the bar (e.g. recording was
+    // already stopped elsewhere), don't leave it stuck on "Finishing…".
+    setTimeout(() => {
+      invoke('exit_compact_mode').catch((e) => console.error(e));
+    }, 6000);
   }, []);
 
   return (
     <div
       data-tauri-drag-region
-      className="flex h-screen w-screen items-center gap-4 border border-white/10 bg-[#0f1218]/85 px-4 text-white shadow-2xl backdrop-blur-xl select-none"
+      className="flex h-screen w-screen items-center gap-4 rounded-full border border-white/10 bg-[#0f1218]/60 px-6 text-white shadow-2xl backdrop-blur-xl select-none"
     >
       {/* Status + timer */}
       <div data-tauri-drag-region className="flex items-center gap-3 pl-1">
         <span className="relative flex h-6 w-6 items-center justify-center">
           <span
-            className={`absolute inset-0 rounded-full ${isPaused ? 'bg-orange-500/20' : 'bg-red-500/20 animate-pulse'}`}
+            className={`absolute inset-0 rounded-full ${
+              isStopping ? 'bg-gray-500/20' : isPaused ? 'bg-orange-500/20' : 'bg-red-500/20 animate-pulse'
+            }`}
           />
-          <span className={`h-3 w-3 rounded-full ${isPaused ? 'bg-orange-400' : 'bg-red-500'}`} />
+          <span
+            className={`h-3 w-3 rounded-full ${
+              isStopping ? 'bg-gray-400' : isPaused ? 'bg-orange-400' : 'bg-red-500'
+            }`}
+          />
         </span>
         <div className="leading-tight">
           <div className="font-semibold tabular-nums tracking-tight">{formatElapsed(elapsed)}</div>
-          <div className={`text-[11px] ${isPaused ? 'text-orange-400' : 'text-red-400'}`}>
-            {isPaused ? 'Paused' : 'Recording'}
+          <div
+            className={`text-[11px] ${
+              isStopping ? 'text-gray-400' : isPaused ? 'text-orange-400' : 'text-red-400'
+            }`}
+          >
+            {isStopping ? 'Finishing…' : isPaused ? 'Paused' : 'Recording'}
           </div>
         </div>
       </div>
@@ -119,8 +161,9 @@ export default function MiniBarPage() {
       <div className="ml-auto flex items-center gap-2">
         <button
           onClick={togglePause}
+          disabled={isStopping}
           title={isPaused ? 'Resume recording' : 'Pause recording'}
-          className="flex h-10 w-14 flex-col items-center justify-center rounded-lg border border-white/10 bg-white/5 text-xs text-gray-300 transition-colors hover:bg-white/10"
+          className="flex h-10 w-14 flex-col items-center justify-center rounded-full border border-white/10 bg-white/5 text-xs text-gray-300 transition-colors hover:bg-white/10 disabled:opacity-40"
         >
           {isPaused ? <Play size={15} /> : <Pause size={15} />}
           <span className="mt-0.5 text-[10px]">{isPaused ? 'Resume' : 'Pause'}</span>
@@ -128,8 +171,9 @@ export default function MiniBarPage() {
 
         <button
           onClick={stop}
+          disabled={isStopping}
           title="Stop recording"
-          className="flex h-10 w-14 flex-col items-center justify-center rounded-lg border border-red-500/30 bg-red-500/15 text-xs text-red-300 transition-colors hover:bg-red-500/25"
+          className="flex h-10 w-14 flex-col items-center justify-center rounded-full border border-red-500/30 bg-red-500/15 text-xs text-red-300 transition-colors hover:bg-red-500/25 disabled:opacity-40"
         >
           <Square size={13} fill="currentColor" />
           <span className="mt-0.5 text-[10px]">Stop</span>
@@ -137,8 +181,9 @@ export default function MiniBarPage() {
 
         <button
           onClick={expand}
+          disabled={isStopping}
           title="Back to the full window"
-          className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-gray-300 transition-colors hover:bg-white/10"
+          className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-gray-300 transition-colors hover:bg-white/10 disabled:opacity-40"
         >
           <Maximize2 size={14} />
         </button>

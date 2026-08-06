@@ -270,6 +270,15 @@ html.dark, html.dark body { background-color: var(--af-bg) !important; color: va
 }
 .dark input::placeholder, .dark textarea::placeholder { color: var(--af-text-3) !important; }
 
+/* Inputs that live inside their own styled container (e.g. the Ask-AI bar)
+   must not paint the app-wide input background over that container. The extra
+   class raises specificity above the blanket `.dark textarea` rule above. */
+.dark input.af-bare, .dark textarea.af-bare {
+  background-color: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
 /* InputGroup (icon + field as one control) draws its own surface, and its inner
    input is deliberately transparent. The blanket rule above would repaint that
    inner input, so the wrapper and the field ended up painting two different
@@ -396,6 +405,11 @@ html.dark {
 }
 .dark ::-webkit-scrollbar-thumb:hover { background-color: #2f3a4b; }
 .dark ::-webkit-scrollbar-corner { background: transparent; }
+
+/* Scrollable-but-chromeless: used by the Settings tab strip so it can scroll
+   horizontally on narrow windows without showing a scrollbar. */
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
 
 /* The compact recording bar is a transparent, frameless window. The page must
    not paint a background of its own or the rounded corners square off — hence
