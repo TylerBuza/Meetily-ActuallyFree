@@ -158,16 +158,55 @@ fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, 
             continue;
         }
         for keyword in &settings.meeting_apps {
-            let kw = keyword.to_lowercase();
-            if kw.trim().is_empty() {
+            let kw = keyword.trim().to_lowercase();
+            if kw.is_empty() {
                 continue;
             }
-            if name.contains(&kw) {
+            if process_matches_keyword(&name, &kw) {
                 return Some((friendly_name(&kw), name));
             }
         }
     }
     None
+}
+
+/// Does a process name match a meeting-app keyword?
+///
+/// We deliberately do NOT use a raw substring test. Naive `contains("teams")`
+/// famously matches `steamservice.exe` (Steam) — `s[teams]ervice` — and reports
+/// a phantom "Microsoft Teams meeting." Instead we split the process name into
+/// alphanumeric tokens (so `.exe`, `-`, `_`, spaces, and digits are boundaries)
+/// and require a *token* to start with the keyword. This keeps forgiving
+/// matches that should work — `ms-teams.exe` -> ["ms","teams"], `webexmta.exe`
+/// -> ["webexmta"] — while rejecting keywords buried mid-word like the Steam
+/// service.
+fn process_matches_keyword(process_name: &str, keyword: &str) -> bool {
+    process_name
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|token| !token.is_empty() && token.starts_with(keyword))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::process_matches_keyword;
+
+    #[test]
+    fn matches_real_meeting_apps() {
+        assert!(process_matches_keyword("teams.exe", "teams"));
+        assert!(process_matches_keyword("ms-teams.exe", "teams"));
+        assert!(process_matches_keyword("msteams.exe", "msteams"));
+        assert!(process_matches_keyword("zoom.exe", "zoom"));
+        assert!(process_matches_keyword("webexmta.exe", "webex"));
+        assert!(process_matches_keyword("slack.exe", "slack"));
+    }
+
+    #[test]
+    fn rejects_mid_word_false_positives() {
+        // The reported bug: Steam's service is not a Teams meeting.
+        assert!(!process_matches_keyword("steamservice.exe", "teams"));
+        assert!(!process_matches_keyword("steam.exe", "teams"));
+        assert!(!process_matches_keyword("steamwebhelper.exe", "teams"));
+    }
 }
 
 /// Start (or restart) the background monitor with the given settings.
