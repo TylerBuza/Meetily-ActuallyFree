@@ -37,6 +37,14 @@ export function useRecordingStart(
   const { selectedDevices, transcriptModelConfig } = useConfig();
   const { setStatus } = useRecordingState();
 
+  const markRecordingStarted = useCallback(() => {
+    try {
+      sessionStorage.setItem('recording_started_at', String(Date.now()));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   // Generate meeting title with timestamp
   const generateMeetingTitle = useCallback(() => {
     const now = new Date();
@@ -171,6 +179,7 @@ export function useRecordingStart(
       setIsRecording(true); // This will also update the sidebar via the useEffect
       clearTranscripts(); // Clear previous transcripts when starting new recording
       setIsMeetingActive(true);
+      markRecordingStarted();
       Analytics.trackButtonClick('start_recording', 'home_page');
 
       // Offer compact mode. During a meeting the user is usually working in
@@ -259,6 +268,7 @@ export function useRecordingStart(
             setIsRecording(true);
             clearTranscripts();
             setIsMeetingActive(true);
+            markRecordingStarted();
             Analytics.trackButtonClick('start_recording', 'sidebar_auto');
 
             // Show recording notification if enabled
@@ -345,6 +355,7 @@ export function useRecordingStart(
         setIsRecording(true);
         clearTranscripts();
         setIsMeetingActive(true);
+        markRecordingStarted();
         Analytics.trackButtonClick('start_recording', 'sidebar_direct');
 
         // Show recording notification if enabled

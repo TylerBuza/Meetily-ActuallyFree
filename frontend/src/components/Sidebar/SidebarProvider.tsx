@@ -150,25 +150,23 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
     setSidebarItems(baseItems);
   }, [meetings]);
 
-  // Function to handle recording toggle from sidebar
+  // "New Recording" only opens the home/ready screen. The user must still tap
+  // the red mic button to actually start capture — auto-start was surprising.
+  // (Meeting-detection toasts still fire start-recording-from-sidebar separately.)
   const handleRecordingToggle = () => {
-    if (!isRecording) {
-      // Check if already on home page
-      if (pathname === '/') {
-        // Already on home - trigger recording directly via custom event
-        console.log('Triggering recording from sidebar (already on home page)');
-        window.dispatchEvent(new CustomEvent('start-recording-from-sidebar'));
-      } else {
-        // Not on home - navigate and use auto-start mechanism
-        console.log('Navigating to home page with auto-start flag');
-        sessionStorage.setItem('autoStartRecording', 'true');
-        router.push('/');
-      }
+    if (isRecording) return;
 
-      // Track recording initiation from sidebar
-      Analytics.trackButtonClick('start_recording', 'sidebar');
+    // Clear any leftover auto-start flag from older builds / detection paths.
+    try {
+      sessionStorage.removeItem('autoStartRecording');
+    } catch {
+      /* ignore */
     }
-    // The actual recording start/stop is handled in the Home component
+
+    if (pathname !== '/') {
+      router.push('/');
+    }
+    Analytics.trackButtonClick('new_recording_ready', 'sidebar');
   };
 
   // Debounced transcript search — avoids hammering the DB on every keystroke.

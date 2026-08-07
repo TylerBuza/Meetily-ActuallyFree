@@ -173,6 +173,52 @@ export function useRecordingStop(
     }
     stopInProgressRef.current = true;
 
+    // Accidental taps: under 10s → discard, no meeting note.
+    const MIN_MEETING_SECS = 10;
+    let elapsedSecs = recordingState.recordingDuration ?? 0;
+    try {
+      const startedAt = Number(sessionStorage.getItem('recording_started_at') || '0');
+      if (startedAt > 0) {
+        elapsedSecs = Math.max(elapsedSecs, (Date.now() - startedAt) / 1000);
+      }
+      sessionStorage.removeItem('recording_started_at');
+    } catch {
+      /* ignore */
+    }
+
+    if (elapsedSecs > 0 && elapsedSecs < MIN_MEETING_SECS) {
+      console.log(`Recording too short (${elapsedSecs.toFixed(1)}s) — discarding`);
+      setStatus(RecordingStatus.IDLE);
+      setIsRecording(false);
+      setIsRecordingDisabled(false);
+      setIsMeetingActive(false);
+      clearTranscripts();
+      try {
+        // stop_recording may still be publishing folder_path — brief wait.
+        let folderPath = sessionStorage.getItem('last_recording_folder_path');
+        if (!folderPath) {
+          await new Promise((r) => setTimeout(r, 400));
+          folderPath = sessionStorage.getItem('last_recording_folder_path');
+        }
+        sessionStorage.removeItem('last_recording_folder_path');
+        sessionStorage.removeItem('last_recording_meeting_name');
+        if (folderPath) {
+          await invoke('discard_recording_folder', { folderPath }).catch((e) =>
+            console.warn('Failed to discard short recording folder:', e),
+          );
+        }
+      } catch {
+        /* ignore cleanup errors */
+      }
+      toast.message('Recording cancelled', {
+        description: `That take was under ${MIN_MEETING_SECS} seconds, so nothing was saved.`,
+        duration: 5000,
+      });
+      Analytics.trackButtonClick('recording_discarded_too_short', 'home_page');
+      stopInProgressRef.current = false;
+      return;
+    }
+
     // Set status to STOPPING immediately
     setStatus(RecordingStatus.STOPPING);
     setIsRecording(false);
@@ -496,6 +542,7 @@ export function useRecordingStop(
     meetings,
     setIsMeetingActive,
     router,
+    recordingState.recordingDuration,
   ]);
 
   // Expose handleRecordingStop function to window for Rust callbacks

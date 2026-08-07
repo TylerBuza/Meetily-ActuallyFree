@@ -273,7 +273,7 @@ export function SummaryPanel({
   );
 
   return (
-    <div className="w-[62%] max-w-[960px] min-w-[520px] shrink-0 flex flex-col bg-[var(--af-bg)] overflow-hidden border-l border-[var(--af-border)]">
+    <div className="flex min-h-0 min-w-0 w-full flex-[1.15] flex-col overflow-hidden border-l border-[var(--af-border)] bg-[var(--af-bg)] sm:min-w-[280px] lg:max-w-[960px]">
       {/* Title area (replaced by the in-card toolbar in InsightTabs) */}
       <div className="hidden">
         {/* <EditableTitle

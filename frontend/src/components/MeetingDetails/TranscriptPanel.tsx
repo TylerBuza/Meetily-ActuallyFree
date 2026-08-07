@@ -106,35 +106,38 @@ export function TranscriptPanel({
   }, [createdAt, convertedSegments]);
 
   return (
-    <div className="flex flex-1 min-w-0 flex-col bg-[var(--af-bg)]">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--af-bg)]">
       {/* Header: title + date/time */}
-      <div className="px-8 pt-6">
-        <h1 className="truncate text-2xl font-bold text-[var(--af-text)]">{title || 'Untitled meeting'}</h1>
+      <div className="min-w-0 px-4 pt-5 sm:px-6 sm:pt-6 lg:px-8">
+        <h1 className="truncate text-xl font-bold text-[var(--af-text)] sm:text-2xl">
+          {title || 'Untitled meeting'}
+        </h1>
         {(dateLabel || timeLabel) && (
-          <div className="mt-2 flex items-center gap-5 text-sm text-[var(--af-text-2)]">
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm text-[var(--af-text-2)]">
             {dateLabel && (
-              <span className="inline-flex items-center gap-1.5">
-                <Calendar size={15} className="text-[var(--af-text-3)]" />
-                {dateLabel}
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <Calendar size={15} className="shrink-0 text-[var(--af-text-3)]" />
+                <span className="truncate">{dateLabel}</span>
               </span>
             )}
             {timeLabel && (
-              <span className="inline-flex items-center gap-1.5">
-                <Clock size={15} className="text-[var(--af-text-3)]" />
-                {timeLabel}
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <Clock size={15} className="shrink-0 text-[var(--af-text-3)]" />
+                <span className="truncate">{timeLabel}</span>
               </span>
             )}
           </div>
         )}
       </div>
 
-      {/* "Transcript" tab label + transcript actions */}
-      <div className="mt-5 flex items-center gap-3 border-b border-[var(--af-border)] px-8">
-        <span className="relative -mb-px py-2 text-sm font-medium text-[var(--af-accent)]">
+      {/* "Transcript" tab + actions — wrap/scroll on narrow columns so buttons
+          never spill into the AI Summary panel. */}
+      <div className="mt-4 flex min-w-0 flex-wrap items-center gap-2 border-b border-[var(--af-border)] px-4 sm:mt-5 sm:gap-3 sm:px-6 lg:px-8">
+        <span className="relative -mb-px shrink-0 py-2 text-sm font-medium text-[var(--af-accent)]">
           Transcript
           <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-[var(--af-accent)]" />
         </span>
-        <div className="ml-auto scale-90 opacity-80">
+        <div className="ml-auto min-w-0 max-w-full overflow-x-auto pb-1 no-scrollbar">
           <TranscriptButtonGroup
             transcriptCount={usePagination ? (totalCount ?? convertedSegments.length) : (transcripts?.length || 0)}
             onCopyTranscript={onCopyTranscript}

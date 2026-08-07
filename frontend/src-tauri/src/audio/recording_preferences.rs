@@ -252,6 +252,40 @@ pub async fn get_default_recordings_folder_path() -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+/// Delete a just-written meeting folder (used when a take is discarded as too short).
+/// Only removes paths under the configured recordings root for safety.
+#[tauri::command]
+pub async fn discard_recording_folder(folder_path: String) -> Result<(), String> {
+    let path = PathBuf::from(&folder_path);
+    if folder_path.trim().is_empty() {
+        return Ok(());
+    }
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let root = get_default_recordings_folder();
+    let root_canon = root.canonicalize().unwrap_or(root);
+    let path_canon = path.canonicalize().map_err(|e| e.to_string())?;
+
+    if !path_canon.starts_with(&root_canon) {
+        // Also allow install-local data root (legacy portable saves).
+        let data = crate::paths::install_data_root();
+        let data_canon = data.canonicalize().unwrap_or(data);
+        if !path_canon.starts_with(&data_canon) {
+            return Err("Refusing to delete path outside recordings folders".into());
+        }
+    }
+
+    if path_canon.is_dir() {
+        std::fs::remove_dir_all(&path_canon).map_err(|e| format!("Failed to discard folder: {e}"))?;
+        info!("Discarded short recording folder: {}", path_canon.display());
+    } else if path_canon.is_file() {
+        std::fs::remove_file(&path_canon).map_err(|e| format!("Failed to discard file: {e}"))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn open_recordings_folder<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     let preferences = load_recording_preferences(&app)

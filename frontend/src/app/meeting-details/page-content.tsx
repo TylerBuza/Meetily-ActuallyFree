@@ -200,7 +200,7 @@ export default function PageContent({
       transition={{ duration: 0.3, ease: 'easeOut' }}
       className="flex flex-col h-screen bg-[var(--af-bg)]"
     >
-      <div className="flex flex-1 overflow-hidden bg-[var(--af-bg)]">
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-[var(--af-bg)]">
         <TranscriptPanel
           transcripts={meetingData.transcripts}
           title={meetingData.meetingTitle}
