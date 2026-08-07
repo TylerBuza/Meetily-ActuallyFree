@@ -1,22 +1,13 @@
 ; Meetily - Actually Free — NSIS installer dependency hooks
-; Installed by Tauri via bundle.windows.nsis.installerHooks
-;
-; Ensures:
-;   1) WebView2 is handled by Tauri (webviewInstallMode)
-;   2) Visual C++ 2015–2022 x64 redistributable is present
-;   3) CUDA / DirectML runtime DLLs sit next to meetily.exe
+; Tauri copies bundle.resources flat under $INSTDIR (e.g. $INSTDIR\runtime-deps\).
+; The NSIS stub is 32-bit: use Sysnative / disable WOW64 redirection for 64-bit tools.
 
 !include "LogicLib.nsh"
 !include "x64.nsh"
 
-; ---------------------------------------------------------------------------
-; Helpers
-; ---------------------------------------------------------------------------
-
-; Returns 1 in $R9 if VC++ x64 runtime looks installed
 !macro Meetily_CheckVcredist
   StrCpy $R9 0
-  ; VS 2015–2022 universal runtime (most common)
+  SetRegView 64
   ReadRegDword $0 HKLM "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" "Installed"
   ${If} $0 == 1
     StrCpy $R9 1
@@ -26,94 +17,136 @@
       StrCpy $R9 1
     ${EndIf}
   ${EndIf}
-  ; Also accept newer "VCRedist" keys used by some VS 2022 builds
   ${If} $R9 == 0
     ReadRegDword $0 HKLM "SOFTWARE\Microsoft\VisualStudio\2022\VC\Runtimes\x64" "Installed"
     ${If} $0 == 1
       StrCpy $R9 1
     ${EndIf}
   ${EndIf}
+  SetRegView lastused
 !macroend
 
 !macro Meetily_InstallVcredist
-  ; Bundled bootstrapper (staged under resources/runtime-deps by the build)
-  StrCpy $R0 "$INSTDIR\resources\runtime-deps\vc_redist.x64.exe"
+  ; Bundled next to other runtime-deps (NOT under resources\)
+  StrCpy $R0 "$INSTDIR\runtime-deps\vc_redist.x64.exe"
   ${If} ${FileExists} "$R0"
-    DetailPrint "Installing Microsoft Visual C++ Redistributable (x64)..."
-    ; Quiet install, no restart; ignore non-zero if already present
+    DetailPrint "      Running VC++ redistributable setup…"
     nsExec::ExecToLog '"$R0" /install /quiet /norestart'
     Pop $0
-    DetailPrint "VC++ redist installer exit code: $0"
+    DetailPrint "      VC++ installer exit code: $0"
   ${Else}
-    DetailPrint "VC++ redist package not found in installer resources — skipping"
+    DetailPrint "      VC++ package missing from bundle — skipped"
   ${EndIf}
 !macroend
 
 !macro Meetily_InstallCudaRuntime
-  ; Copy GPU runtime DLLs next to the app binary so the CUDA build loads without
-  ; a full system CUDA Toolkit install.
-  StrCpy $R1 "$INSTDIR\resources\runtime-deps"
+  ; Tauri resource path: $INSTDIR\runtime-deps\*.dll
+  StrCpy $R1 "$INSTDIR\runtime-deps"
   ${If} ${FileExists} "$R1\cudart64_13.dll"
-    DetailPrint "Installing CUDA / DirectML runtime libraries..."
+    DetailPrint "      Copying CUDA / DirectML libraries next to Meetily…"
+    CopyFiles /SILENT "$R1\cudart64_13.dll" "$INSTDIR\"
+    ${If} ${FileExists} "$R1\cublas64_13.dll"
+      CopyFiles /SILENT "$R1\cublas64_13.dll" "$INSTDIR\"
+    ${EndIf}
+    ${If} ${FileExists} "$R1\cublasLt64_13.dll"
+      CopyFiles /SILENT "$R1\cublasLt64_13.dll" "$INSTDIR\"
+    ${EndIf}
+    ${If} ${FileExists} "$R1\DirectML.dll"
+      CopyFiles /SILENT "$R1\DirectML.dll" "$INSTDIR\"
+    ${EndIf}
+    DetailPrint "      GPU runtime libraries installed."
+  ${ElseIf} ${FileExists} "$INSTDIR\resources\runtime-deps\cudart64_13.dll"
+    ; Fallback if resource layout ever nests under resources\
+    StrCpy $R1 "$INSTDIR\resources\runtime-deps"
+    DetailPrint "      Copying CUDA / DirectML libraries (nested resources path)…"
     CopyFiles /SILENT "$R1\cudart64_13.dll" "$INSTDIR\"
     CopyFiles /SILENT "$R1\cublas64_13.dll" "$INSTDIR\"
     CopyFiles /SILENT "$R1\cublasLt64_13.dll" "$INSTDIR\"
     ${If} ${FileExists} "$R1\DirectML.dll"
       CopyFiles /SILENT "$R1\DirectML.dll" "$INSTDIR\"
     ${EndIf}
-    DetailPrint "GPU runtime libraries installed next to Meetily."
+    DetailPrint "      GPU runtime libraries installed."
   ${Else}
-    DetailPrint "No bundled CUDA runtime found — GPU features may require a system CUDA install."
+    DetailPrint "      WARNING: cudart64_13.dll not in bundle — GPU build may fail to start."
   ${EndIf}
 !macroend
 
-; ---------------------------------------------------------------------------
-; Tauri hooks
-; ---------------------------------------------------------------------------
+; Sets $R8=1 if an NVIDIA driver / nvidia-smi is present (WOW64-safe)
+!macro Meetily_CheckNvidia
+  StrCpy $R8 0
+  ${DisableX64FSRedirection}
+  ${If} ${FileExists} "$WINDIR\System32\nvidia-smi.exe"
+    StrCpy $R8 1
+  ${ElseIf} ${FileExists} "$WINDIR\Sysnative\nvidia-smi.exe"
+    StrCpy $R8 1
+  ${ElseIf} ${FileExists} "$PROGRAMFILES64\NVIDIA Corporation\NVSMI\nvidia-smi.exe"
+    StrCpy $R8 1
+  ${ElseIf} ${FileExists} "$PROGRAMFILES\NVIDIA Corporation\NVSMI\nvidia-smi.exe"
+    StrCpy $R8 1
+  ${EndIf}
+  ${EnableX64FSRedirection}
+  ; Registry fallback (driver package)
+  ${If} $R8 == 0
+    SetRegView 64
+    EnumRegKey $0 HKLM "SOFTWARE\NVIDIA Corporation\GPU" 0
+    ${If} $0 != ""
+      StrCpy $R8 1
+    ${EndIf}
+    ReadRegStr $0 HKLM "SOFTWARE\NVIDIA Corporation\Global\NVTweak" "NvCplDaemon"
+    ${If} $0 != ""
+      StrCpy $R8 1
+    ${EndIf}
+    SetRegView lastused
+  ${EndIf}
+!macroend
 
 !macro NSIS_HOOK_PREINSTALL
-  DetailPrint "Meetily: checking system dependencies..."
-  ; Nothing blocking here — WebView2 is installed by Tauri's own NSIS section
-  ; using webviewInstallMode. We only log intent.
-  DetailPrint "WebView2 runtime will be ensured by the installer."
+  SetDetailsPrint both
+  DetailPrint "────────────────────────────────────────"
+  DetailPrint " Meetily - Actually Free"
+  DetailPrint " Installing app files…"
+  DetailPrint "────────────────────────────────────────"
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
-  DetailPrint "Meetily: installing runtime dependencies..."
+  SetDetailsPrint both
+  DetailPrint ""
+  DetailPrint "────────────────────────────────────────"
+  DetailPrint " Runtime setup"
+  DetailPrint "────────────────────────────────────────"
 
-  ; --- Visual C++ Redistributable ---
+  DetailPrint "[1/3] Visual C++ 2015–2022 (x64)…"
   !insertmacro Meetily_CheckVcredist
   ${If} $R9 == 0
-    DetailPrint "Visual C++ runtime not detected — installing..."
+    DetailPrint "      Not found — installing quietly…"
     !insertmacro Meetily_InstallVcredist
   ${Else}
-    DetailPrint "Visual C++ runtime already present."
+    DetailPrint "      Already installed — skipped."
   ${EndIf}
 
-  ; --- CUDA / DirectML DLLs beside the exe ---
+  DetailPrint "[2/3] CUDA / DirectML GPU libraries…"
   !insertmacro Meetily_InstallCudaRuntime
 
-  ; --- NVIDIA GPU advisory (non-blocking) ---
-  nsExec::ExecToStack 'cmd /c where nvidia-smi >nul 2>&1'
-  Pop $0
-  Pop $1
-  ${If} $0 != 0
-    DetailPrint "Note: nvidia-smi not found. CUDA acceleration needs an NVIDIA GPU + driver."
-    DetailPrint "The app still runs on CPU; GPU features will be limited."
+  DetailPrint "[3/3] NVIDIA driver…"
+  !insertmacro Meetily_CheckNvidia
+  ${If} $R8 == 1
+    DetailPrint "      NVIDIA driver detected — CUDA acceleration ready."
   ${Else}
-    DetailPrint "NVIDIA driver tools detected — CUDA acceleration available when supported."
+    DetailPrint "      No NVIDIA driver detected."
+    DetailPrint "      App still runs on CPU; install an NVIDIA driver for GPU speed."
   ${EndIf}
 
-  DetailPrint "Meetily dependency setup complete."
+  DetailPrint ""
+  DetailPrint "Runtime setup finished."
+  DetailPrint "────────────────────────────────────────"
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  ; Stop the app if still running so files can be removed
+  DetailPrint "Stopping Meetily if it is still running…"
   nsExec::ExecToLog 'taskkill /IM meetily.exe /F'
   Pop $0
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
-  ; Runtime DLLs we copied next to the exe are removed with $INSTDIR by Tauri.
-  DetailPrint "Meetily uninstall finished."
+  DetailPrint "Meetily was removed from this user profile."
 !macroend

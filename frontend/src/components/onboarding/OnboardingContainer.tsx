@@ -66,10 +66,11 @@ export function OnboardingContainer({
 
                 <button
                   onClick={handleNext}
-                  disabled={!canGoNext || step === totalSteps}
+                  disabled={!canGoNext}
+                  aria-label={step === totalSteps ? 'Finish' : 'Next'}
                   className={cn(
                     'pointer-events-auto w-8 h-8 rounded-full bg-white border border-gray-200 shadow-sm flex items-center justify-center transition-all duration-200',
-                    canGoNext && step !== totalSteps
+                    canGoNext
                       ? 'hover:bg-gray-50 hover:shadow-md hover:scale-110 text-gray-700'
                       : 'opacity-0 cursor-not-allowed'
                   )}
