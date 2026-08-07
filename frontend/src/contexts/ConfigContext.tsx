@@ -136,13 +136,19 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     systemDevice: null
   });
 
-  // Language preference state
+  // Language preference: saved choice wins; otherwise English if the OS is
+  // English, auto-detect for any other system language.
   const [selectedLanguage, setSelectedLanguage] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('primaryLanguage');
-      return saved || 'auto';
+    if (typeof window === 'undefined') return 'en';
+    const saved = localStorage.getItem('primaryLanguage');
+    if (saved) return saved;
+    try {
+      const locale = (navigator.language || (navigator as any).userLanguage || 'en').toLowerCase();
+      const primary = locale.split(/[-_]/)[0] || 'en';
+      return primary === 'en' ? 'en' : 'auto';
+    } catch {
+      return 'en';
     }
-    return 'auto';
   });
 
   // UI preferences state
