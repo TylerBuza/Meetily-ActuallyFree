@@ -33,8 +33,9 @@ export default function SettingsPage() {
 
   const [activeTab, setActiveTab] = useState('general');
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const tabsListRef = useRef<HTMLDivElement | null>(null);
+  const tabsScrollRef = useRef<HTMLDivElement | null>(null);
   const [underlineStyle, setUnderlineStyle] = useState({ left: 0, width: 0 });
+  const [tabsOverflow, setTabsOverflow] = useState(false);
 
   useEffect(() => {
     const loadTranscriptConfig = async () => {
@@ -65,6 +66,25 @@ export default function SettingsPage() {
     activeTabElement.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
   }, [activeTab]);
 
+  // Only show the right-edge fade when the tab strip actually overflows.
+  useLayoutEffect(() => {
+    const el = tabsScrollRef.current;
+    if (!el) return;
+
+    const measure = () => {
+      setTabsOverflow(el.scrollWidth > el.clientWidth + 2);
+    };
+    measure();
+
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    window.addEventListener('resize', measure);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, []);
+
   return (
     <div className="flex h-full min-h-0 min-w-0 max-w-full flex-col overflow-hidden bg-gray-50">
       {/* Header */}
@@ -87,11 +107,11 @@ export default function SettingsPage() {
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
         <div className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 sm:py-6 lg:px-8">
           <Tabs value={activeTab} onValueChange={setActiveTab} className="min-w-0 max-w-full">
-            {/* Horizontal scroll for tabs on narrow windows — fade hints overflow */}
+            {/* Horizontal scroll for tabs on narrow windows */}
             <div className="relative min-w-0 max-w-full">
               <div
-                ref={tabsListRef}
-                className="min-w-0 max-w-full overflow-x-auto overscroll-x-contain"
+                ref={tabsScrollRef}
+                className="min-w-0 max-w-full overflow-x-auto overscroll-x-contain no-scrollbar"
                 style={{ WebkitOverflowScrolling: 'touch' }}
               >
                 <TabsList className="relative flex h-auto w-max min-w-full flex-nowrap justify-start gap-0 rounded-none border-b border-gray-200 bg-transparent p-0">
@@ -117,11 +137,13 @@ export default function SettingsPage() {
                   />
                 </TabsList>
               </div>
-              {/* Right-edge fade so it's obvious more tabs exist */}
-              <div
-                aria-hidden
-                className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-gray-50 to-transparent sm:w-10"
-              />
+              {/* Fade only when tabs overflow — uses theme bg so it isn't a white blob in dark mode */}
+              {tabsOverflow && (
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-[var(--af-bg,#0a0c10)] to-transparent"
+                />
+              )}
             </div>
 
             <div className="mt-4 min-w-0 max-w-full break-words sm:mt-6">
