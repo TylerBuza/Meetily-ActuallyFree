@@ -163,17 +163,17 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h3 className="text-lg font-semibold mb-4">Recording Settings</h3>
-        <p className="text-sm text-gray-600 mb-6">
+    <div className="min-w-0 max-w-full space-y-6">
+      <div className="min-w-0">
+        <h3 className="mb-4 text-lg font-semibold">Recording Settings</h3>
+        <p className="mb-6 text-sm text-gray-600">
           Configure how your audio recordings are saved during meetings.
         </p>
       </div>
 
       {/* Auto Save Toggle */}
-      <div className="flex items-center justify-between p-4 border rounded-lg">
-        <div className="flex-1">
+      <div className="flex min-w-0 items-start justify-between gap-3 rounded-lg border p-4 sm:items-center">
+        <div className="min-w-0 flex-1">
           <div className="font-medium">Save Audio Recordings</div>
           <div className="text-sm text-gray-600">
             Automatically save audio files when recording stops
@@ -183,19 +183,20 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
           checked={preferences.auto_save}
           onCheckedChange={handleAutoSaveToggle}
           disabled={saving}
+          className="shrink-0"
         />
       </div>
 
       {/* Mic gain — boost local voice after loudness normalize */}
-      <div className="p-4 border rounded-lg space-y-3">
-        <div className="flex items-center justify-between gap-4">
-          <div>
+      <div className="min-w-0 space-y-3 rounded-lg border p-4">
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
             <div className="font-medium">Microphone gain</div>
-            <div className="text-sm text-gray-600">
+            <div className="text-sm text-gray-600 break-words">
               Boost your voice if it sounds quiet next to system audio (0.5×–3×)
             </div>
           </div>
-          <span className="text-sm font-semibold tabular-nums text-[var(--af-text)] shrink-0">
+          <span className="shrink-0 text-sm font-semibold tabular-nums text-[var(--af-text)]">
             {(preferences.mic_gain ?? 1).toFixed(1)}×
           </span>
         </div>
@@ -213,9 +214,9 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
           onMouseUp={(e) => void handleMicGainChange(parseFloat((e.target as HTMLInputElement).value))}
           onTouchEnd={(e) => void handleMicGainChange(parseFloat((e.target as HTMLInputElement).value))}
           onBlur={(e) => void handleMicGainChange(parseFloat(e.target.value))}
-          className="w-full accent-[var(--af-accent,#4a8bff)]"
+          className="w-full min-w-0 max-w-full accent-[var(--af-accent,#4a8bff)]"
         />
-        <div className="flex justify-between text-xs text-gray-500">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500">
           <span>Quieter</span>
           <button
             type="button"
@@ -231,10 +232,10 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
 
       {/* Folder Location - Only shown when auto_save is enabled */}
       {preferences.auto_save && (
-        <div className="space-y-4">
-          <div className="p-4 border rounded-lg bg-gray-50">
-            <div className="font-medium mb-2">Save Location</div>
-            <div className="text-sm text-gray-600 mb-3 break-all">
+        <div className="min-w-0 space-y-4">
+          <div className="min-w-0 rounded-lg border bg-gray-50 p-4">
+            <div className="mb-2 font-medium">Save Location</div>
+            <div className="mb-3 break-all text-sm text-gray-600">
               {preferences.save_folder || 'Default folder'}
             </div>
             <button
