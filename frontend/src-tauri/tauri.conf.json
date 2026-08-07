@@ -1,13 +1,13 @@
 {
     "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
     "productName": "Meetily - Actually Free",
-    "version": "0.0.1",
+    "version": "0.1.0",
     "identifier": "com.meetily.ai",
     "build": {
         "frontendDist": "../out",
         "devUrl": "http://localhost:3118",
         "beforeDevCommand": "pnpm dev",
-        "beforeBuildCommand": "pnpm build"
+        "beforeBuildCommand": "node node_modules/next/dist/bin/next build"
     },
     "app": {
         "windows": [
@@ -82,14 +82,9 @@
     "bundle": {
         "active": true,
         "targets": [
-            "deb",
-            "appimage",
-            "msi",
-            "nsis",
-            "app",
-            "dmg"
+            "nsis"
         ],
-        "createUpdaterArtifacts": true,
+        "createUpdaterArtifacts": false,
         "icon": [
             "icons/icon.png",
             "icons/app_icon.icns",
@@ -97,7 +92,8 @@
         ],
         "resources": [
             "templates/*.json",
-            "resources/diarization/*"
+            "resources/diarization/*",
+            "runtime-deps/*"
         ],
         "externalBin": [
             "binaries/llama-helper",
@@ -109,15 +105,25 @@
             "hardenedRuntime": true
         },
         "windows": {
-            "signCommand": "powershell -ExecutionPolicy Bypass -File scripts/sign-windows.ps1 -FilePath %1"
+            "signCommand": "powershell -ExecutionPolicy Bypass -File scripts/sign-windows.ps1 -FilePath %1",
+            "webviewInstallMode": {
+                "type": "embedBootstrapper",
+                "silent": true
+            },
+            "nsis": {
+                "installMode": "currentUser",
+                "displayLanguageSelector": false,
+                "installerHooks": "./windows/installer-hooks.nsh",
+                "installerIcon": "./icons/app_icon.ico"
+            }
         }
     },
     "plugins": {
-            "updater": {
-                "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVDQTYzMUQ3ODc5N0M4MkEKUldRcXlKZUgxekdtN09DRkVWSHNpZlJseEVOUmpNd1dDSTNaLzZ3MXJGTnY3WW1pdnlOYjBpbkIK",
-                "endpoints": [
-                    "https://github.com/REPLACE_WITH_YOUR_GITHUB_USER/meetily-actually-free/releases/latest/download/latest.json"
-                ]
+        "updater": {
+            "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVDQTYzMUQ3ODc5N0M4MkEKUldRcXlKZUgxekdtN09DRkVWSHNpZlJseEVOUmpNd1dDSTNaLzZ3MXJGTnY3WW1pdnlOYjBpbkIK",
+            "endpoints": [
+                "https://github.com/TylerBuza/Meetily-ActuallyFree/releases/latest/download/latest.json"
+            ]
         }
     }
 }
