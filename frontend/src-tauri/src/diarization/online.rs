@@ -23,13 +23,18 @@ const MIN_SEGMENT_SAMPLES: usize = 16_000; // 1.0 s at 16 kHz
 
 /// Cosine distance beyond which a segment is considered a new speaker.
 ///
-/// Deliberately stricter than the offline default: a wrong *merge* is invisible
-/// to the user, whereas a wrong *split* spawns a bogus "Speaker 4" mid-meeting
-/// that never goes away. Erring toward merging keeps the live view stable.
-const ONLINE_THRESHOLD: f32 = 0.55;
+/// Lower = easier to split voices (better distinction between remote people).
+/// Higher = more merging (fewer false "Speaker N"s). Dual-path STT already
+/// pins the local mic as "You", so we can afford a lower threshold on the
+/// system/remote path without mislabeling the user.
+const ONLINE_THRESHOLD_SYSTEM: f32 = 0.38;
+/// Mic path still feeds the embedder (so offline refine can learn the user
+/// voice) but labels are forced to "You" — keep a slightly looser merge so
+/// mic bleed doesn't spawn extra speakers.
+const ONLINE_THRESHOLD_MIC: f32 = 0.50;
 
 /// Upper bound on live speakers, so pathological audio can't spawn dozens.
-const MAX_LIVE_SPEAKERS: usize = 10;
+const MAX_LIVE_SPEAKERS: usize = 12;
 
 /// How much more often a speaker must arrive on the microphone than not before
 /// we call them the local user. Mic bleed means remote participants sometimes
@@ -51,8 +56,13 @@ struct OnlineDiarizer {
     counts: Vec<f32>,
     /// Of those, how many arrived while the microphone was dominant.
     mic_counts: Vec<f32>,
-    /// Last speaker assigned, reused for segments too short to embed.
+    /// Last speaker assigned on any path (legacy fallback).
     last_speaker: usize,
+    /// Last speaker heard on the system/remote path only — short remote
+    /// fragments should not inherit the local user's cluster.
+    last_system_speaker: Option<usize>,
+    /// Last speaker heard on the mic path.
+    last_mic_speaker: Option<usize>,
 }
 
 impl OnlineDiarizer {
@@ -104,6 +114,8 @@ pub fn start() -> Result<()> {
         counts: Vec::new(),
         mic_counts: Vec::new(),
         last_speaker: 0,
+        last_system_speaker: None,
+        last_mic_speaker: None,
     });
     log::info!("🧑‍🤝‍🧑 Live speaker identification started");
     Ok(())
@@ -141,41 +153,78 @@ pub fn assign_speaker(samples: &[f32], mic_dominant: bool) -> Option<LiveSpeaker
     let mut guard = ONLINE.lock().ok()?;
     let d = guard.as_mut()?;
 
-    // Too short to characterise a voice — attribute it to whoever was last
-    // speaking rather than guessing or dropping the label.
+    // Too short to characterise a voice — stick with the last speaker on the
+    // *same* source path so a brief remote clip doesn't inherit "You".
     if samples.len() < MIN_SEGMENT_SAMPLES {
-        let index = d.last_speaker;
-        let is_user = d.user_speaker() == Some(index);
-        return Some(LiveSpeaker { index, is_user });
+        let index = if mic_dominant {
+            d.last_mic_speaker.unwrap_or(d.last_speaker)
+        } else {
+            d.last_system_speaker.unwrap_or(d.last_speaker)
+        };
+        let is_user = mic_dominant || d.user_speaker() == Some(index);
+        return Some(LiveSpeaker {
+            index,
+            is_user: mic_dominant || is_user,
+        });
     }
 
     let embedding = match d.models.embed(samples) {
         Ok(e) => e,
         Err(e) => {
             log::debug!("Live diarization: embedding failed ({})", e);
-            let index = d.last_speaker;
-            let is_user = d.user_speaker() == Some(index);
-            return Some(LiveSpeaker { index, is_user });
+            let index = if mic_dominant {
+                d.last_mic_speaker.unwrap_or(d.last_speaker)
+            } else {
+                d.last_system_speaker.unwrap_or(d.last_speaker)
+            };
+            return Some(LiveSpeaker {
+                index,
+                is_user: mic_dominant,
+            });
         }
     };
 
     // Closest known speaker by cosine similarity (embeddings are unit-length).
+    // Prefer matching remote segments to non-user centroids first so the local
+    // voice cluster doesn't absorb everyone else.
+    let user_idx = d.user_speaker();
     let mut best = 0usize;
     let mut best_sim = f32::NEG_INFINITY;
     for (i, c) in d.centroids.iter().enumerate() {
+        // On the system path, de-prioritize the known "You" cluster so remote
+        // voices don't get folded into the user.
+        if !mic_dominant && user_idx == Some(i) {
+            continue;
+        }
         let sim: f32 = embedding.iter().zip(c).map(|(a, b)| a * b).sum();
         if sim > best_sim {
             best_sim = sim;
             best = i;
         }
     }
+    // If we skipped everyone (only user centroid exists), fall back to full search.
+    if best_sim == f32::NEG_INFINITY {
+        for (i, c) in d.centroids.iter().enumerate() {
+            let sim: f32 = embedding.iter().zip(c).map(|(a, b)| a * b).sum();
+            if sim > best_sim {
+                best_sim = sim;
+                best = i;
+            }
+        }
+    }
+
+    let threshold = if mic_dominant {
+        ONLINE_THRESHOLD_MIC
+    } else {
+        ONLINE_THRESHOLD_SYSTEM
+    };
 
     let speaker = if d.centroids.is_empty() {
         d.centroids.push(embedding);
         d.counts.push(1.0);
         d.mic_counts.push(0.0);
         0
-    } else if (1.0 - best_sim) <= ONLINE_THRESHOLD || d.centroids.len() >= MAX_LIVE_SPEAKERS {
+    } else if (1.0 - best_sim) <= threshold || d.centroids.len() >= MAX_LIVE_SPEAKERS {
         // Fold into the matched speaker as an incremental mean, then restore
         // unit length so later cosine comparisons stay valid.
         d.counts[best] += 1.0;
@@ -195,8 +244,9 @@ pub fn assign_speaker(samples: &[f32], mic_dominant: bool) -> Option<LiveSpeaker
         d.counts.push(1.0);
         d.mic_counts.push(0.0);
         log::info!(
-            "🧑‍🤝‍🧑 Live diarization: new speaker {} detected",
-            d.centroids.len()
+            "🧑‍🤝‍🧑 Live diarization: new speaker {} detected (path={})",
+            d.centroids.len(),
+            if mic_dominant { "mic" } else { "system" }
         );
         d.centroids.len() - 1
     };
@@ -204,11 +254,15 @@ pub fn assign_speaker(samples: &[f32], mic_dominant: bool) -> Option<LiveSpeaker
     // Record which source this speaker arrived on, so the user can be identified.
     if mic_dominant {
         d.mic_counts[speaker] += 1.0;
+        d.last_mic_speaker = Some(speaker);
+    } else {
+        d.last_system_speaker = Some(speaker);
     }
 
     d.last_speaker = speaker;
     let user = d.user_speaker();
-    let is_user = user == Some(speaker);
+    // Mic path is always the local user for dual-path STT; system path never is.
+    let is_user = mic_dominant || user == Some(speaker);
 
     // Log the evidence: if the wrong person (or nobody) ends up labelled "You",
     // these ratios are what's needed to tell whether the mic-activity signal or

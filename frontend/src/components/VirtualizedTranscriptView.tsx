@@ -30,8 +30,7 @@ import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { useTranscriptStreaming } from "@/hooks/useTranscriptStreaming";
 import { ConfidenceIndicator } from "./ConfidenceIndicator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
-import { RecordingStatusBar } from "./RecordingStatusBar";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { TranscriptSegmentData } from "@/types";
 
 export interface VirtualizedTranscriptViewProps {
@@ -408,18 +407,13 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     const useVirtualization = displaySegments.length >= VIRTUALIZATION_THRESHOLD;
 
     return (
-        <div ref={scrollRef} className="flex flex-col h-full overflow-y-auto px-4 py-2">
-            {/* Recording Status Bar - Sticky at top, always visible when recording */}
-            <AnimatePresence>
-                {isRecording && (
-                    <div className="sticky top-0 z-10 bg-white pb-2">
-                        <RecordingStatusBar isPaused={isPaused} />
-                    </div>
-                )}
-            </AnimatePresence>
-
-            {/* Content - add padding when recording to prevent overlap */}
-            <div className={isRecording ? 'pt-2' : ''}>
+        <div
+            ref={scrollRef}
+            className="flex flex-col h-full overflow-y-auto px-4 py-2"
+            style={isRecording ? { scrollPaddingBottom: '10rem' } : undefined}
+        >
+            {/* Content */}
+            <div className={isRecording ? 'pt-2 pb-4' : ''}>
             {displaySegments.length === 0 ? (
                 // Empty state
                 <motion.div
@@ -507,17 +501,20 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                         </div>
                     )}
 
-                    {/* Listening indicator when recording */}
-                    {!isStopping && isRecording && !isPaused && !isProcessing && displaySegments.length > 0 && (
-                        <motion.div
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            exit={{ opacity: 0 }}
-                            className="flex items-center gap-2 mt-4 text-gray-500"
-                        >
-                            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                            <span className="text-sm">Listening...</span>
-                        </motion.div>
+                    {/* Status line — always reserve space while recording so pause
+                        doesn't collapse layout and shove bubbles under the bar. */}
+                    {!isStopping && isRecording && !isProcessing && displaySegments.length > 0 && (
+                        <div className="flex items-center gap-2 mt-4 mb-2 min-h-[1.25rem] text-gray-500">
+                            {!isPaused && (
+                                <>
+                                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+                                    <span className="text-sm">Listening…</span>
+                                </>
+                            )}
+                            {isPaused && (
+                                <span className="text-sm text-orange-400/80">Paused</span>
+                            )}
+                        </div>
                     )}
                 </>
             ) : (
@@ -566,17 +563,18 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                         </div>
                     )}
 
-                    {/* Listening indicator when recording */}
-                    {!isStopping && isRecording && !isPaused && !isProcessing && displaySegments.length > 0 && (
-                        <motion.div
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            exit={{ opacity: 0 }}
-                            className="flex items-center gap-2 mt-4 text-gray-500"
-                        >
-                            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                            <span className="text-sm">Listening...</span>
-                        </motion.div>
+                    {!isStopping && isRecording && !isProcessing && displaySegments.length > 0 && (
+                        <div className="flex items-center gap-2 mt-4 mb-2 min-h-[1.25rem] text-gray-500">
+                            {!isPaused && (
+                                <>
+                                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+                                    <span className="text-sm">Listening…</span>
+                                </>
+                            )}
+                            {isPaused && (
+                                <span className="text-sm text-orange-400/80">Paused</span>
+                            )}
+                        </div>
                     )}
                 </>
             )}

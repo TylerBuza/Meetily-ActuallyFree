@@ -223,14 +223,14 @@ export default function Home() {
         {(hasMicrophone || isRecording) &&
           status !== RecordingStatus.PROCESSING_TRANSCRIPTS &&
           status !== RecordingStatus.SAVING && (
-            <div className="fixed bottom-12 left-0 right-0 z-10">
+            <div className="fixed bottom-12 left-0 right-0 z-30 pointer-events-none">
               <div
-                className="flex justify-center pl-8 transition-[margin] duration-300"
+                className="flex justify-center pl-8 transition-[margin] duration-300 pointer-events-none"
                 style={{
                   marginLeft: sidebarCollapsed ? '4rem' : '16rem'
                 }}
               >
-                <div className="w-2/3 max-w-[750px] flex justify-center">
+                <div className="w-2/3 max-w-[750px] flex justify-center pointer-events-auto">
                   <div className="flex items-center">
                     <RecordingControls
                       isRecording={recordingState.isRecording}

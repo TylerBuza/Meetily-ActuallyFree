@@ -115,8 +115,14 @@ export function TranscriptPanel({
         </div>
       )}
 
-      {/* Transcript content */}
-      <div className="pb-20">
+      {/* Transcript content.
+          Extra bottom padding while recording (incl. paused) so the last bubble
+          sits above the fixed floating control bar — without it, pause freezes
+          auto-scroll and the latest line ends up under the bar. */}
+      <div
+        className={isRecording ? 'pb-40' : 'pb-20'}
+        style={isRecording ? { scrollPaddingBottom: '10rem' } : undefined}
+      >
         <div className="flex justify-center">
           <div className="w-2/3 max-w-[750px]">
             <VirtualizedTranscriptView
@@ -125,7 +131,7 @@ export function TranscriptPanel({
               isPaused={isPaused}
               isProcessing={isProcessingStop}
               isStopping={isStopping}
-              enableStreaming={isRecording}
+              enableStreaming={isRecording && !isPaused}
               showConfidence={true}
             />
           </div>
