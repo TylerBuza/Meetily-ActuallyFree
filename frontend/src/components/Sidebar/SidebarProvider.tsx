@@ -13,12 +13,15 @@ interface SidebarItem {
   type: 'folder' | 'file';
   children?: SidebarItem[];
   createdAt?: string;
+  durationSeconds?: number;
 }
 
 export interface CurrentMeeting {
   id: string;
   title: string;
   created_at?: string;
+  /** Approx length in seconds (from transcript timings). */
+  duration_seconds?: number;
 }
 
 // Search result type for transcript search
@@ -93,11 +96,17 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const fetchMeetings = React.useCallback(async () => {
     if (serverAddress) {
       try {
-        const meetings = await invoke('api_get_meetings') as Array<{ id: string, title: string }>;
-        const transformedMeetings = meetings.map((meeting: any) => ({
+        const meetings = await invoke('api_get_meetings') as Array<{
+          id: string;
+          title: string;
+          created_at?: string;
+          duration_seconds?: number;
+        }>;
+        const transformedMeetings = meetings.map((meeting) => ({
           id: meeting.id,
           title: meeting.title,
-          created_at: meeting.created_at ?? meeting.createdAt ?? meeting.updated_at,
+          created_at: meeting.created_at ?? (meeting as any).createdAt ?? (meeting as any).updated_at,
+          duration_seconds: meeting.duration_seconds,
         }));
         setMeetings(transformedMeetings);
         Analytics.trackBackendConnection(true);
@@ -127,7 +136,13 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
       title: 'Recent Meetings',
       type: 'folder' as const,
       children: [
-        ...meetings.map(meeting => ({ id: meeting.id, title: meeting.title, type: 'file' as const, createdAt: meeting.created_at }))
+        ...meetings.map(meeting => ({
+          id: meeting.id,
+          title: meeting.title,
+          type: 'file' as const,
+          createdAt: meeting.created_at,
+          durationSeconds: meeting.duration_seconds,
+        }))
       ]
     },
   ];

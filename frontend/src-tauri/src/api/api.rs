@@ -30,6 +30,11 @@ pub struct ApiResponse<T> {
 pub struct Meeting {
     pub id: String,
     pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    /// Approx length of the meeting in seconds (from last transcript end time).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_seconds: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -345,13 +350,25 @@ pub async fn api_get_meetings<R: Runtime>(
         Ok(meeting_models) => {
             log_info!("Successfully got {} meetings", meeting_models.len());
 
-            let result: Vec<Meeting> = meeting_models
-                .into_iter()
-                .map(|m| Meeting {
+            // Duration = furthest audio_end_time on any transcript for that meeting.
+            let mut result: Vec<Meeting> = Vec::with_capacity(meeting_models.len());
+            for m in meeting_models {
+                let duration_seconds: Option<f64> = sqlx::query_scalar(
+                    "SELECT MAX(COALESCE(audio_end_time, audio_start_time + COALESCE(duration, 0))) FROM transcripts WHERE meeting_id = ?",
+                )
+                .bind(&m.id)
+                .fetch_one(pool)
+                .await
+                .ok()
+                .flatten();
+
+                result.push(Meeting {
                     id: m.id,
                     title: m.title,
-                })
-                .collect();
+                    created_at: Some(m.created_at.0.to_rfc3339()),
+                    duration_seconds,
+                });
+            }
             Ok(result)
         }
         Err(e) => {

@@ -55,6 +55,18 @@ interface SidebarItem {
   type: 'folder' | 'file';
   children?: SidebarItem[];
   createdAt?: string;
+  durationSeconds?: number;
+}
+
+function formatDurationShort(secs?: number): string {
+  if (secs == null || !Number.isFinite(secs) || secs <= 0) return '';
+  const total = Math.round(secs);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s.toString().padStart(2, '0')}s`;
+  return `${s}s`;
 }
 
 // "RECENT MEETINGS" rows show a date/time subtitle. Meetings created before the
@@ -667,7 +679,8 @@ const Sidebar: React.FC = () => {
 
   const renderItem = (item: SidebarItem, depth = 0) => {
     const isExpanded = expandedFolders.has(item.id);
-    const paddingLeft = `${depth * 12 + 12}px`;
+    // Keep meeting rows tight to the left so more of the title is visible.
+    const paddingLeft = item.type === 'file' ? `${depth * 8 + 8}px` : `${depth * 12 + 12}px`;
     const isActive = item.type === 'file' && currentMeeting?.id === item.id;
     const isMeetingItem = item.id.includes('-') && !item.id.startsWith('intro-call');
     const isSelected = selectedIds.has(item.id);
@@ -730,58 +743,61 @@ const Sidebar: React.FC = () => {
           ) : (
             (() => {
               const meetingDate = isMeetingItem ? parseMeetingDate(item) : null;
+              const durationLabel = isMeetingItem ? formatDurationShort(item.durationSeconds) : '';
               return (
-                <div className="flex w-full items-center gap-2.5">
+                <div className="flex w-full min-w-0 items-start gap-2">
                   {isMeetingItem ? (
-                    <span className={`flex-shrink-0 flex items-center justify-center w-7 h-7 ${isActive ? 'text-[var(--af-accent)]' : 'text-[var(--af-text-3)]'}`}>
-                      {isActive ? <AudioLines className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
+                    <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center ${isActive ? 'text-[var(--af-accent)]' : 'text-[var(--af-text-3)]'}`}>
+                      {isActive ? <AudioLines className="h-3.5 w-3.5" /> : <FileText className="h-3.5 w-3.5" />}
                     </span>
                   ) : (
-                    <span className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-md bg-blue-100 text-blue-600">
-                      <Plus className="w-3.5 h-3.5" />
+                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded bg-blue-100 text-blue-600">
+                      <Plus className="h-3 w-3" />
                     </span>
                   )}
 
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate">{item.title}</span>
-                      {isMeetingItem && isActive && meetingDate && (
-                        <span className="ml-auto shrink-0 text-xs font-normal text-[var(--af-text-3)]">
-                          {formatMeetingTime(meetingDate)}
-                        </span>
-                      )}
+                  <div className="min-w-0 flex-1 pr-0.5">
+                    <div
+                      className="truncate text-[13px] leading-snug"
+                      title={item.title}
+                    >
+                      {item.title}
                     </div>
-                    {isMeetingItem && !isActive && meetingDate && (
-                      <div className="mt-0.5 text-xs text-[var(--af-text-3)]">{formatMeetingDate(meetingDate)}</div>
+                    {isMeetingItem && (
+                      <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 text-[11px] leading-tight text-[var(--af-text-3)]">
+                        {meetingDate && <span className="truncate">{formatMeetingDate(meetingDate)}</span>}
+                        {meetingDate && durationLabel && <span aria-hidden>·</span>}
+                        {durationLabel && <span className="shrink-0 tabular-nums">{durationLabel}</span>}
+                      </div>
                     )}
                     {hasTranscriptMatch && (
-                      <div className="mt-1 text-xs text-gray-500 bg-yellow-50 p-1.5 rounded border border-yellow-100 line-clamp-2">
+                      <div className="mt-1 line-clamp-2 rounded border border-yellow-100 bg-yellow-50 p-1.5 text-xs text-gray-500">
                         <span className="font-medium text-yellow-600">Match:</span> {matchingResult.matchContext}
                       </div>
                     )}
                   </div>
 
                   {isMeetingItem && (
-                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                    <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           handleEditStart(item.id, item.title);
                         }}
-                        className="p-1 rounded-md text-[var(--af-text-3)] hover:text-[var(--af-accent)] hover:bg-[var(--af-hover)] flex-shrink-0"
+                        className="rounded-md p-1 text-[var(--af-text-3)] hover:bg-[var(--af-hover)] hover:text-[var(--af-accent)]"
                         aria-label="Edit meeting title"
                       >
-                        <Pencil className="w-3.5 h-3.5" />
+                        <Pencil className="h-3.5 w-3.5" />
                       </button>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           setDeleteModalState({ isOpen: true, itemId: item.id });
                         }}
-                        className="p-1 rounded-md text-[var(--af-text-3)] hover:text-red-500 hover:bg-red-500/10 flex-shrink-0"
+                        className="rounded-md p-1 text-[var(--af-text-3)] hover:bg-red-500/10 hover:text-red-500"
                         aria-label="Delete meeting"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </div>
                   )}

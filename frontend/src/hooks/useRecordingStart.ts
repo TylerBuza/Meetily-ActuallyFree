@@ -182,25 +182,8 @@ export function useRecordingStart(
       markRecordingStarted();
       Analytics.trackButtonClick('start_recording', 'home_page');
 
-      // Offer compact mode. During a meeting the user is usually working in
-      // other apps, so the full window is in the way — but switching is offered
-      // rather than forced, since some people do want the live transcript up.
-      toast('You’re recording', {
-        description:
-          'Tuck Meetily into a compact floating bar so it stays out of your way — expand it again anytime.',
-        duration: 10000,
-        // Top of the screen so it doesn't sit on top of the recording bar,
-        // which lives at bottom-center (the Toaster's default position).
-        position: 'top-center',
-        action: {
-          label: 'Shrink to bar',
-          onClick: () => {
-            invoke('enter_compact_mode', { elapsedSeconds: 0 }).catch((e) =>
-              console.error('Failed to enter compact mode:', e)
-            );
-          },
-        },
-      });
+      // Coach-mark above the minimize button on the recording bar (not a global toast).
+      window.dispatchEvent(new CustomEvent('show-compact-mode-tip'));
 
       // Show recording notification if enabled
       await showRecordingNotification();
