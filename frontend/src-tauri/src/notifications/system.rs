@@ -35,6 +35,7 @@ impl<R: Runtime> SystemNotificationHandler<R> {
         #[cfg(windows)]
         {
             match crate::notifications::native_windows::show_toast(
+                &self.app_handle,
                 &notification.title,
                 &notification.body,
             ) {

@@ -12,6 +12,8 @@ export interface RecordingPreferences {
   file_format: string;
   preferred_mic_device: string | null;
   preferred_system_device: string | null;
+  /** Extra mic loudness after normalize (0.5–3.0). */
+  mic_gain?: number;
 }
 
 interface RecordingSettingsProps {
@@ -24,7 +26,8 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
     auto_save: true,
     file_format: 'mp4',
     preferred_mic_device: null,
-    preferred_system_device: null
+    preferred_system_device: null,
+    mic_gain: 1.0,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -77,6 +80,13 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
     await Analytics.track('auto_save_recording_toggled', {
       enabled: enabled.toString()
     });
+  };
+
+  const handleMicGainChange = async (value: number) => {
+    const mic_gain = Math.min(3, Math.max(0.5, value));
+    const newPreferences = { ...preferences, mic_gain };
+    setPreferences(newPreferences);
+    await savePreferences(newPreferences);
   };
 
   const handleDeviceChange = async (devices: SelectedDevices) => {
@@ -174,6 +184,49 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
           onCheckedChange={handleAutoSaveToggle}
           disabled={saving}
         />
+      </div>
+
+      {/* Mic gain — boost local voice after loudness normalize */}
+      <div className="p-4 border rounded-lg space-y-3">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="font-medium">Microphone gain</div>
+            <div className="text-sm text-gray-600">
+              Boost your voice if it sounds quiet next to system audio (0.5×–3×)
+            </div>
+          </div>
+          <span className="text-sm font-semibold tabular-nums text-[var(--af-text)] shrink-0">
+            {(preferences.mic_gain ?? 1).toFixed(1)}×
+          </span>
+        </div>
+        <input
+          type="range"
+          min={0.5}
+          max={3}
+          step={0.1}
+          value={preferences.mic_gain ?? 1}
+          disabled={saving}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            setPreferences((p) => ({ ...p, mic_gain: v }));
+          }}
+          onMouseUp={(e) => void handleMicGainChange(parseFloat((e.target as HTMLInputElement).value))}
+          onTouchEnd={(e) => void handleMicGainChange(parseFloat((e.target as HTMLInputElement).value))}
+          onBlur={(e) => void handleMicGainChange(parseFloat(e.target.value))}
+          className="w-full accent-[var(--af-accent,#4a8bff)]"
+        />
+        <div className="flex justify-between text-xs text-gray-500">
+          <span>Quieter</span>
+          <button
+            type="button"
+            className="underline hover:text-gray-800"
+            disabled={saving}
+            onClick={() => void handleMicGainChange(1)}
+          >
+            Reset 1.0×
+          </button>
+          <span>Louder</span>
+        </div>
       </div>
 
       {/* Folder Location - Only shown when auto_save is enabled */}

@@ -34,7 +34,7 @@ export function useRecordingStart(
 
   const { clearTranscripts, setMeetingTitle } = useTranscripts();
   const { setIsMeetingActive } = useSidebar();
-  const { selectedDevices } = useConfig();
+  const { selectedDevices, transcriptModelConfig } = useConfig();
   const { setStatus } = useRecordingState();
 
   // Generate meeting title with timestamp
@@ -49,42 +49,53 @@ export function useRecordingStart(
     return `Meeting ${day}_${month}_${year}_${hours}_${minutes}_${seconds}`;
   }, []);
 
-  // Check if Parakeet transcription model is ready
-  const checkParakeetReady = useCallback(async (): Promise<boolean> => {
-    try {
-      await invoke('parakeet_init');
-      const hasModels = await invoke<boolean>('parakeet_has_available_models');
-      if (!hasModels) return false;
+  // Prefer Parakeet for live (fast). Whisper is for post-call enhance/retranscribe.
+  // Prefetch the configured provider so Start Recording feels snappy after idle unload.
+  const prefetchSttModel = useCallback(async (): Promise<boolean> => {
+    const provider = (transcriptModelConfig?.provider || 'parakeet').toLowerCase();
+    const preferParakeet = provider === 'parakeet' || provider.includes('parakeet');
 
-      // Cold-start fix: eagerly LOAD the model into memory (and await it) before the
-      // first recording of a session. Previously the model loaded lazily on the first
-      // audio chunk, so the very first recording captured nothing until it finished
-      // loading; the second attempt worked because the model was already warm.
-      // Guarded so a failure here never blocks recording (falls back to old behavior).
-      try {
+    try {
+      if (preferParakeet) {
+        await invoke('parakeet_init');
+        const hasModels = await invoke<boolean>('parakeet_has_available_models');
+        if (!hasModels) return false;
         const alreadyLoaded = await invoke<boolean>('parakeet_is_model_loaded');
         if (!alreadyLoaded) {
           const models = await invoke<any[]>('parakeet_get_available_models');
+          const configured = transcriptModelConfig?.model;
           const ready =
-            models.find((m: any) =>
-              m?.status === 'Available' ||
-              (typeof m?.status === 'object' && 'Available' in m.status),
-            ) || models[0];
+            (configured && models.find((m: any) => m?.name === configured)) ||
+            models.find(
+              (m: any) =>
+                m?.status === 'Available' ||
+                (typeof m?.status === 'object' && m.status && 'Available' in m.status),
+            ) ||
+            models[0];
           if (ready?.name) {
-            console.log('Pre-loading transcription model into memory:', ready.name);
+            console.log('Pre-loading Parakeet (live STT):', ready.name);
             await invoke('parakeet_load_model', { modelName: ready.name });
           }
         }
-      } catch (warmErr) {
-        console.warn('Model pre-load skipped (will fall back to lazy load):', warmErr);
+        return true;
       }
 
+      // Whisper path (only if user explicitly chose localWhisper)
+      await invoke('whisper_init');
+      const hasModels = await invoke<boolean>('whisper_has_available_models');
+      if (!hasModels) return false;
+      const alreadyLoaded = await invoke<boolean>('whisper_is_model_loaded');
+      if (!alreadyLoaded) {
+        const modelName = transcriptModelConfig?.model || 'large-v3';
+        console.log('Pre-loading Whisper:', modelName);
+        await invoke('whisper_load_model', { modelName });
+      }
       return true;
     } catch (error) {
-      console.error('Failed to check Parakeet status:', error);
+      console.error('Failed to prefetch STT model:', error);
       return false;
     }
-  }, []);
+  }, [transcriptModelConfig]);
 
   // Check if any model is currently downloading
   const checkIfModelDownloading = useCallback(async (): Promise<boolean> => {
@@ -100,14 +111,14 @@ export function useRecordingStart(
       return isDownloading;
     } catch (error) {
       console.error('Failed to check model download status:', error);
-      return false; // Default to not downloading (will show error + modal)
+      return false;
     }
   }, []);
 
   // Handle manual recording start (from button click)
   const handleRecordingStart = useCallback(async () => {
     try {
-      console.log('handleRecordingStart called - checking Parakeet model status');
+      console.log('handleRecordingStart called - prefetching STT model');
 
       // Report progress from the very first step. Readying the model can take
       // several seconds (it loads a multi-hundred-MB model into memory), and
@@ -115,9 +126,9 @@ export function useRecordingStart(
       // period — the single longest part of starting a recording.
       setStatus(RecordingStatus.STARTING, 'Preparing transcription model…');
 
-      // Check if Parakeet transcription model is ready before starting
-      const parakeetReady = await checkParakeetReady();
-      if (!parakeetReady) {
+      // Prefetch STT (Parakeet by default for live). Unloads LLM first via Rust.
+      const sttReady = await prefetchSttModel();
+      if (!sttReady) {
         const isDownloading = await checkIfModelDownloading();
         if (isDownloading) {
           toast.info('Model download in progress', {
@@ -127,7 +138,7 @@ export function useRecordingStart(
           Analytics.trackButtonClick('start_recording_blocked_downloading', 'home_page');
         } else {
           toast.error('Transcription model not ready', {
-            description: 'Please download a transcription model before recording.',
+            description: 'Please download a transcription model (Parakeet recommended for live) before recording.',
             duration: 5000,
           });
           showModal?.('modelSelector', 'Transcription model setup required');
@@ -192,7 +203,7 @@ export function useRecordingStart(
       // Re-throw so RecordingControls can handle device-specific errors
       throw error;
     }
-  }, [generateMeetingTitle, setMeetingTitle, setIsRecording, clearTranscripts, setIsMeetingActive, checkParakeetReady, checkIfModelDownloading, selectedDevices, showModal, setStatus]);
+  }, [generateMeetingTitle, setMeetingTitle, setIsRecording, clearTranscripts, setIsMeetingActive, prefetchSttModel, checkIfModelDownloading, selectedDevices, showModal, setStatus]);
 
   // Check for autoStartRecording flag and start recording automatically
   useEffect(() => {
@@ -204,9 +215,8 @@ export function useRecordingStart(
           setIsAutoStarting(true);
           sessionStorage.removeItem('autoStartRecording'); // Clear the flag
 
-          // Check if Parakeet transcription model is ready before starting
-          const parakeetReady = await checkParakeetReady();
-          if (!parakeetReady) {
+          const sttReady = await prefetchSttModel();
+          if (!sttReady) {
             const isDownloading = await checkIfModelDownloading();
             if (isDownloading) {
               toast.info('Model download in progress', {
@@ -275,7 +285,7 @@ export function useRecordingStart(
     setIsRecording,
     clearTranscripts,
     setIsMeetingActive,
-    checkParakeetReady,
+    prefetchSttModel,
     checkIfModelDownloading,
     showModal,
     setStatus,
@@ -289,12 +299,11 @@ export function useRecordingStart(
         return;
       }
 
-      console.log('Direct start from sidebar - checking Parakeet model status');
+      console.log('Direct start from sidebar - prefetching STT model');
       setIsAutoStarting(true);
 
-      // Check if Parakeet transcription model is ready before starting
-      const parakeetReady = await checkParakeetReady();
-      if (!parakeetReady) {
+      const sttReady = await prefetchSttModel();
+      if (!sttReady) {
         const isDownloading = await checkIfModelDownloading();
         if (isDownloading) {
           toast.info('Model download in progress', {
@@ -364,7 +373,7 @@ export function useRecordingStart(
     setIsRecording,
     clearTranscripts,
     setIsMeetingActive,
-    checkParakeetReady,
+    prefetchSttModel,
     checkIfModelDownloading,
     showModal,
     setStatus,

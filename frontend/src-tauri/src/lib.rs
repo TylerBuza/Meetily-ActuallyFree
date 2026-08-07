@@ -393,6 +393,33 @@ pub fn get_language_preference_internal() -> Option<String> {
 pub fn run() {
     log::set_max_level(log::LevelFilter::Info);
 
+    // Crash reports stay on-disk only (no telemetry). Written under the portable
+    // data root so users can attach them to bug reports if they choose.
+    {
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let msg = format!(
+                "[{}] panic: {}\n",
+                chrono::Local::now().to_rfc3339(),
+                info
+            );
+            let path = crate::paths::install_data_root().join("crash.log");
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                use std::io::Write;
+                let _ = writeln!(f, "{msg}");
+                if let Some(loc) = info.location() {
+                    let _ = writeln!(f, "  at {}:{}:{}", loc.file(), loc.line(), loc.column());
+                }
+            }
+            log::error!("PANIC (also written to {}): {info}", path.display());
+            prev(info);
+        }));
+    }
+
     let mut builder = tauri::Builder::default();
 
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
@@ -472,6 +499,12 @@ pub fn run() {
 
             // Free Whisper/Parakeet VRAM a couple minutes after last STT use.
             audio::common::start_stt_idle_unloader();
+
+            // Hydrate mic gain (and other recording prefs) into runtime atomics.
+            let app_for_prefs = _app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = audio::recording_preferences::load_recording_preferences(&app_for_prefs).await;
+            });
 
             // Set models directory (install-local, portable storage location)
             whisper_engine::commands::set_models_directory(&_app.handle());
@@ -618,6 +651,7 @@ pub fn run() {
             whisper_engine::commands::whisper_is_model_loaded,
             whisper_engine::commands::whisper_unload_model,
             whisper_engine::commands::force_unload_stt_models,
+            whisper_engine::commands::force_unload_all_models,
             whisper_engine::commands::get_local_stack_status,
             whisper_engine::commands::whisper_has_available_models,
             whisper_engine::commands::whisper_validate_model_ready,

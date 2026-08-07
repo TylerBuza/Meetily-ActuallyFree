@@ -168,6 +168,10 @@ pub async fn generate_with_builtin(
         global_manager.clone().unwrap()
     };
 
+    // Mutual exclusion: free Whisper/Parakeet VRAM before loading the LLM
+    // (skipped automatically if a recording is in progress).
+    crate::audio::common::prepare_for_llm().await;
+
     // Ensure sidecar is running with this model
     manager.ensure_running(model_path.clone()).await?;
 

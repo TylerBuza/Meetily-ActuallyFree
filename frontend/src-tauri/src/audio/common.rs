@@ -14,9 +14,23 @@ static ENGINE_LIFECYCLE_LOCK: Lazy<Arc<AsyncMutex<()>>> =
 
 /// Last time STT was actively used (unix secs). Idle unload watches this.
 static STT_LAST_ACTIVITY_SECS: AtomicU64 = AtomicU64::new(0);
+/// Unix secs of last STT unload (0 = never). Exposed on Local stack page.
+static STT_LAST_UNLOAD_SECS: AtomicU64 = AtomicU64::new(0);
+/// Unix secs of last LLM sidecar shutdown.
+static LLM_LAST_UNLOAD_SECS: AtomicU64 = AtomicU64::new(0);
 
 /// How long STT may sit loaded with no work before we free VRAM/RAM.
 pub const STT_IDLE_UNLOAD_SECS: u64 = 120;
+
+pub fn stt_last_unload_secs() -> u64 {
+    STT_LAST_UNLOAD_SECS.load(Ordering::Relaxed)
+}
+pub fn llm_last_unload_secs() -> u64 {
+    LLM_LAST_UNLOAD_SECS.load(Ordering::Relaxed)
+}
+pub fn mark_llm_unloaded() {
+    LLM_LAST_UNLOAD_SECS.store(now_secs(), Ordering::Relaxed);
+}
 
 pub(crate) async fn acquire_engine_lifecycle_lock() -> OwnedMutexGuard<()> {
     ENGINE_LIFECYCLE_LOCK.clone().lock_owned().await
@@ -61,6 +75,7 @@ pub async fn unload_stt_if_idle() {
     info!("🧊 STT idle for {idle_for}s — unloading Whisper/Parakeet to free memory");
     unload_both_stt_engines().await;
     STT_LAST_ACTIVITY_SECS.store(0, Ordering::Relaxed);
+    STT_LAST_UNLOAD_SECS.store(now_secs(), Ordering::Relaxed);
 }
 
 async fn unload_both_stt_engines() {
@@ -92,6 +107,23 @@ async fn unload_both_stt_engines() {
     }
 }
 
+/// Before loading STT: free the builtin LLM so VRAM isn't shared with a big model.
+pub async fn prepare_for_stt() {
+    info!("🔄 Preparing for STT — shutting down builtin LLM if running");
+    let _ = crate::summary::summary_engine::force_shutdown_sidecar().await;
+    mark_llm_unloaded();
+}
+
+/// Before starting the LLM sidecar: unload Whisper/Parakeet (unless recording).
+pub async fn prepare_for_llm() {
+    if crate::audio::recording_commands::is_recording().await {
+        info!("🔄 Preparing for LLM — STT kept (recording in progress)");
+        return;
+    }
+    info!("🔄 Preparing for LLM — unloading STT models");
+    let _ = force_unload_stt().await;
+}
+
 /// Force-unload both STT engines (manual / settings). Safe no-op if recording.
 pub async fn force_unload_stt() -> Result<(), String> {
     if crate::audio::recording_commands::is_recording().await {
@@ -100,7 +132,41 @@ pub async fn force_unload_stt() -> Result<(), String> {
     let _guard = acquire_engine_lifecycle_lock().await;
     unload_both_stt_engines().await;
     STT_LAST_ACTIVITY_SECS.store(0, Ordering::Relaxed);
+    STT_LAST_UNLOAD_SECS.store(now_secs(), Ordering::Relaxed);
     Ok(())
+}
+
+/// Free STT + builtin LLM memory (settings “Free all memory”).
+pub async fn force_unload_all() -> Result<(), String> {
+    if crate::audio::recording_commands::is_recording().await {
+        return Err("Cannot free memory while recording".into());
+    }
+    force_unload_stt().await?;
+    let _ = crate::summary::summary_engine::force_shutdown_sidecar().await;
+    mark_llm_unloaded();
+    Ok(())
+}
+
+/// Sum bytes under a directory tree (best-effort).
+pub fn dir_size_bytes(path: &Path) -> u64 {
+    fn walk(p: &Path, acc: &mut u64) {
+        let Ok(rd) = std::fs::read_dir(p) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                walk(&path, acc);
+            } else if let Ok(m) = e.metadata() {
+                *acc = acc.saturating_add(m.len());
+            }
+        }
+    }
+    let mut n = 0u64;
+    if path.exists() {
+        walk(path, &mut n);
+    }
+    n
 }
 
 /// Background loop: free STT VRAM a couple minutes after the last transcription work.

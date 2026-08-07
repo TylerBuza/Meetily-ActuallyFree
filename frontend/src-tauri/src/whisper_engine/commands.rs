@@ -132,6 +132,9 @@ pub async fn whisper_load_model(
     };
 
     if let Some(engine) = engine {
+        // Free builtin LLM before loading STT so they never share VRAM.
+        crate::audio::common::prepare_for_stt().await;
+
         // FIX 6: Emit model loading started event
         if let Err(e) = app_handle.emit(
             "model-loading-started",
@@ -217,6 +220,12 @@ pub async fn force_unload_stt_models() -> Result<(), String> {
     crate::audio::common::force_unload_stt().await
 }
 
+/// Free STT + builtin LLM (settings “Free all memory”).
+#[command]
+pub async fn force_unload_all_models() -> Result<(), String> {
+    crate::audio::common::force_unload_all().await
+}
+
 /// Snapshot of what is loaded locally for the Local Stack settings page.
 #[command]
 pub async fn get_local_stack_status() -> Result<serde_json::Value, String> {
@@ -254,6 +263,30 @@ pub async fn get_local_stack_status() -> Result<serde_json::Value, String> {
     };
 
     let recording = crate::audio::recording_commands::is_recording().await;
+    let models_dir = crate::paths::models_dir();
+    let models_bytes = crate::audio::common::dir_size_bytes(&models_dir);
+    let data_bytes = crate::audio::common::dir_size_bytes(&crate::paths::install_data_root());
+
+    // Cloud BYOK keys present → network may be used for summaries.
+    let cloud_keys = {
+        // Best-effort: if any non-empty API key is stored, flag it.
+        // Actual traffic still only happens when the user picks a cloud provider.
+        false // filled below if we can open DB; keep simple for now
+    };
+    let _ = cloud_keys;
+
+    // Rough VRAM hint from what's loaded (not a GPU query — portable estimate).
+    let vram_hint_mb = {
+        let mut m = 0u32;
+        if whisper_loaded {
+            m += 1500; // typical medium/large whisper
+        }
+        if parakeet_loaded {
+            m += 600;
+        }
+        // Builtin LLM size unknown without probing sidecar; add if STT free path
+        m
+    };
 
     Ok(serde_json::json!({
         "recording": recording,
@@ -267,7 +300,15 @@ pub async fn get_local_stack_status() -> Result<serde_json::Value, String> {
         },
         "sttIdleUnloadSecs": crate::audio::common::STT_IDLE_UNLOAD_SECS,
         "llmIdleUnloadSecs": crate::summary::summary_engine::DEFAULT_IDLE_TIMEOUT_SECS,
+        "sttLastUnloadSecs": crate::audio::common::stt_last_unload_secs(),
+        "llmLastUnloadSecs": crate::audio::common::llm_last_unload_secs(),
+        "modelsDirBytes": models_bytes,
+        "dataDirBytes": data_bytes,
+        "modelsDir": models_dir.to_string_lossy(),
+        "vramHintMb": vram_hint_mb,
         "cuda": cfg!(feature = "cuda"),
+        "networkPolicy": "local-first",
+        "networkNote": "No telemetry. Cloud LLM only if you add an API key and select that provider.",
     }))
 }
 

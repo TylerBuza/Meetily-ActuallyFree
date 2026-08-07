@@ -20,12 +20,27 @@
 //!      nothing. See `diarization::find_meeting_audio` for the correct lookup.
 
 use log::{info, warn};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_store::StoreExt;
 
 use anyhow::Result;
+
+/// Hot mic gain for the live capture path (f32 bits). Updated whenever prefs save.
+static MIC_GAIN_BITS: Lazy<AtomicU32> =
+    Lazy::new(|| AtomicU32::new(1.0f32.to_bits()));
+
+/// Current mic gain multiplier (0.5–3.0). Applied after mic loudness normalize.
+pub fn mic_gain() -> f32 {
+    f32::from_bits(MIC_GAIN_BITS.load(Ordering::Relaxed)).clamp(0.5, 3.0)
+}
+
+fn set_mic_gain_runtime(gain: f32) {
+    MIC_GAIN_BITS.store(gain.clamp(0.5, 3.0).to_bits(), Ordering::Relaxed);
+}
 #[cfg(target_os = "macos")]
 use log::error;
 
@@ -41,9 +56,16 @@ pub struct RecordingPreferences {
     pub preferred_mic_device: Option<String>,
     #[serde(default)]
     pub preferred_system_device: Option<String>,
+    /// Extra gain on the local mic after loudness normalize (0.5–3.0, default 1.0).
+    #[serde(default = "default_mic_gain")]
+    pub mic_gain: f32,
     #[cfg(target_os = "macos")]
     #[serde(default)]
     pub system_audio_backend: Option<String>,
+}
+
+fn default_mic_gain() -> f32 {
+    1.0
 }
 
 impl Default for RecordingPreferences {
@@ -54,6 +76,7 @@ impl Default for RecordingPreferences {
             file_format: "mp4".to_string(),
             preferred_mic_device: None,
             preferred_system_device: None,
+            mic_gain: 1.0,
             #[cfg(target_os = "macos")]
             system_audio_backend: Some("coreaudio".to_string()),
         }
@@ -149,9 +172,10 @@ pub async fn load_recording_preferences<R: Runtime>(
         RecordingPreferences::default()
     };
 
-    info!("Loaded recording preferences: save_folder={:?}, auto_save={}, format={}, mic={:?}, system={:?}",
+    set_mic_gain_runtime(prefs.mic_gain);
+    info!("Loaded recording preferences: save_folder={:?}, auto_save={}, format={}, mic={:?}, system={:?}, mic_gain={:.2}",
           prefs.save_folder, prefs.auto_save, prefs.file_format,
-          prefs.preferred_mic_device, prefs.preferred_system_device);
+          prefs.preferred_mic_device, prefs.preferred_system_device, prefs.mic_gain);
     Ok(prefs)
 }
 
@@ -160,9 +184,13 @@ pub async fn save_recording_preferences<R: Runtime>(
     app: &AppHandle<R>,
     preferences: &RecordingPreferences,
 ) -> Result<()> {
-    info!("Saving recording preferences: save_folder={:?}, auto_save={}, format={}, mic={:?}, system={:?}",
+    let mut preferences = preferences.clone();
+    preferences.mic_gain = preferences.mic_gain.clamp(0.5, 3.0);
+    set_mic_gain_runtime(preferences.mic_gain);
+
+    info!("Saving recording preferences: save_folder={:?}, auto_save={}, format={}, mic={:?}, system={:?}, mic_gain={:.2}",
           preferences.save_folder, preferences.auto_save, preferences.file_format,
-          preferences.preferred_mic_device, preferences.preferred_system_device);
+          preferences.preferred_mic_device, preferences.preferred_system_device, preferences.mic_gain);
 
     // Get or create store
     let store = app
@@ -170,7 +198,7 @@ pub async fn save_recording_preferences<R: Runtime>(
         .map_err(|e| anyhow::anyhow!("Failed to access store: {}", e))?;
 
     // Serialize preferences to JSON value
-    let prefs_value = serde_json::to_value(preferences)
+    let prefs_value = serde_json::to_value(&preferences)
         .map_err(|e| anyhow::anyhow!("Failed to serialize preferences: {}", e))?;
 
     // Save to store

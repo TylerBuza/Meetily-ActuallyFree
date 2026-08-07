@@ -77,6 +77,9 @@ pub async fn parakeet_load_model<R: Runtime>(
     };
 
     if let Some(engine) = engine {
+        // Free builtin LLM before loading STT so they never share VRAM.
+        crate::audio::common::prepare_for_stt().await;
+
         // Emit model loading started event
         if let Err(e) = app_handle.emit(
             "parakeet-model-loading-started",

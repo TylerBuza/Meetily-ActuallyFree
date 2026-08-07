@@ -417,9 +417,9 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
     let currentStep = savedStatus.current_step;
     let completed = savedStatus.completed;
 
-    // Clamp step to new max (4)
-    if (currentStep > 4) {
-      currentStep = 3; // Go to download progress step
+    // Clamp step to max (5: welcome → setup → download → name → audio test)
+    if (currentStep > 5) {
+      currentStep = 3;
     }
 
     // Trust the completed status - don't revert based on model downloads
@@ -582,14 +582,13 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const goToStep = useCallback((step: number) => {
-    setCurrentStep(Math.max(1, Math.min(step, 4)));
+    setCurrentStep(Math.max(1, Math.min(step, 5)));
   }, []);
 
   const goNext = useCallback(() => {
     setCurrentStep((prev: number) => {
       const next = prev + 1;
-      // Don't go past step 4
-      return Math.min(next, 4);
+      return Math.min(next, 5);
     });
   }, []);
 

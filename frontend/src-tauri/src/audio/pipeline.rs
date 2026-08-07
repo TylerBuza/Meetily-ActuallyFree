@@ -627,6 +627,15 @@ impl AudioCapture {
                     }
                 }
             }
+
+            // STEP 4: User mic gain (Settings → Recording). Applied after normalize
+            // so "make me louder" is predictable and doesn't fight EBU R128.
+            let gain = super::recording_preferences::mic_gain();
+            if (gain - 1.0).abs() > 0.01 {
+                for s in &mut mono_data {
+                    *s = (*s * gain).clamp(-1.0, 1.0);
+                }
+            }
         }
 
         // Create audio chunk with stream-specific timestamp (get ID first for logging)

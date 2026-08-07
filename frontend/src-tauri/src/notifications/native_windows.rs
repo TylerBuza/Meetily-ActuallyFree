@@ -158,17 +158,42 @@ fn register_aumid(icon: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Show a native toast attributed to Meetily. Returns `Err` if the platform
-/// toast could not be raised, so the caller can fall back to the Tauri plugin.
-pub fn show_toast(title: &str, body: &str) -> Result<(), String> {
+/// Show a native toast attributed to Meetily, with a **Start recording** action.
+/// Button (and body click) emit `start-recording-from-notification` so the UI
+/// can start capture the same way as the sidebar / in-app toast.
+pub fn show_toast<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    title: &str,
+    body: &str,
+) -> Result<(), String> {
     ensure_app_identity();
 
+    use tauri::{Emitter, Manager};
     use tauri_winrt_notification::{Duration, Toast};
 
+    let app_click = app.clone();
     Toast::new(APP_USER_MODEL_ID)
         .title(title)
         .text1(body)
-        .duration(Duration::Short)
+        .text2("Tap Start recording to begin in Meetily.")
+        .duration(Duration::Long)
+        .add_button("Start recording", "start_recording")
+        .on_activated(move |action| {
+            let do_start = match action.as_deref() {
+                Some("start_recording") | None => true,
+                Some(_) => false,
+            };
+            if do_start {
+                // Bring the app forward, then ask the frontend to start.
+                if let Some(win) = app_click.get_webview_window("main") {
+                    let _ = win.unminimize();
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
+                let _ = app_click.emit("start-recording-from-notification", ());
+            }
+            Ok(())
+        })
         .show()
         .map_err(|e| format!("winrt toast failed: {e}"))
 }

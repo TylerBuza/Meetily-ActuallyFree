@@ -141,36 +141,50 @@ export default function RootLayout({
         const { app, notify } = event.payload;
         console.log('[Layout] meeting-detected:', event.payload);
 
-        // Optional native OS notification (best-effort).
+        const startRecording = () => {
+          if (showOnboarding) {
+            toast.error('Please complete setup first', {
+              description: 'Finish onboarding before you can start recording.',
+            });
+            return;
+          }
+          window.dispatchEvent(new CustomEvent('start-recording-from-sidebar'));
+        };
+
+        // OS toast with a Start recording button (Windows native path).
         if (notify) {
           invoke('show_simple_notification', {
             title: `${app} meeting detected`,
-            body: 'Open Meetily to start recording this meeting.',
+            body: 'Start recording this meeting now?',
           }).catch(() => {});
         }
 
         // In-app prompt with a one-click start action.
         toast(`${app} meeting detected`, {
-          description: 'Start recording this meeting in Meetily?',
-          duration: 15000,
+          description: 'Capture mic + system audio in Meetily.',
+          duration: 20000,
           action: {
             label: 'Start recording',
-            onClick: () => {
-              if (showOnboarding) {
-                toast.error('Please complete setup first', {
-                  description: 'Finish onboarding before you can start recording.',
-                });
-              } else {
-                window.dispatchEvent(new CustomEvent('start-recording-from-sidebar'));
-              }
-            },
+            onClick: startRecording,
           },
         });
       }
     );
 
+    // OS notification button → same start path as sidebar / in-app toast.
+    const unlistenStart = listen('start-recording-from-notification', () => {
+      if (showOnboarding) {
+        toast.error('Please complete setup first', {
+          description: 'Finish onboarding before you can start recording.',
+        });
+        return;
+      }
+      window.dispatchEvent(new CustomEvent('start-recording-from-sidebar'));
+    });
+
     return () => {
       unlisten.then((fn) => fn());
+      unlistenStart.then((fn) => fn());
     };
   }, [showOnboarding]);
 

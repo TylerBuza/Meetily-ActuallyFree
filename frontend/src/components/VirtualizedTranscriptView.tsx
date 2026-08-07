@@ -24,7 +24,7 @@
  * Dropping it in any one of them silently hides speakers on that screen.
  */
 
-import { useCallback, useRef, useReducer, startTransition, useEffect, useState, memo } from "react";
+import { useCallback, useRef, useReducer, startTransition, useEffect, useState, useMemo, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { useTranscriptStreaming } from "@/hooks/useTranscriptStreaming";
@@ -108,6 +108,46 @@ function displaySpeaker(speaker: string, userName: string): string {
         return userName ? `${userName} (You)` : 'You';
     }
     return speaker;
+}
+
+/** Normalize speaker keys so "You" / "you" / empty compare cleanly. */
+function speakerKey(speaker?: string): string {
+    return (speaker ?? '').trim().toLowerCase() || '__unknown__';
+}
+
+/**
+ * Collapse back-to-back lines from the same speaker into one bubble when the
+ * gap is small. Live VAD often emits many short fragments for one turn.
+ */
+function mergeAdjacentSameSpeaker(
+    segments: TranscriptSegmentData[],
+    maxGapSecs = 2.5,
+): TranscriptSegmentData[] {
+    if (segments.length <= 1) return segments;
+    const out: TranscriptSegmentData[] = [];
+    for (const seg of segments) {
+        const last = out[out.length - 1];
+        const lastEnd = last?.endTime ?? last?.timestamp ?? 0;
+        const gap = seg.timestamp - lastEnd;
+        if (
+            last &&
+            speakerKey(last.speaker) === speakerKey(seg.speaker) &&
+            gap >= 0 &&
+            gap <= maxGapSecs
+        ) {
+            const joined = `${last.text.trim()} ${seg.text.trim()}`.replace(/\s+/g, ' ').trim();
+            last.text = joined;
+            last.endTime = seg.endTime ?? seg.timestamp;
+            if (seg.confidence != null && last.confidence != null) {
+                last.confidence = Math.min(last.confidence, seg.confidence);
+            } else if (seg.confidence != null) {
+                last.confidence = seg.confidence;
+            }
+        } else {
+            out.push({ ...seg });
+        }
+    }
+    return out;
 }
 
 /** Dot colour on the timeline rail — same mapping as the text colour. */
@@ -263,6 +303,12 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
         }
     }, []);
 
+    // One bubble per speaking turn instead of dozens of VAD fragments.
+    const displaySegments = useMemo(
+        () => mergeAdjacentSameSpeaker(segments),
+        [segments],
+    );
+
     // Create scroll ref first - shared between virtualizer and auto-scroll hook
     const scrollRef = useRef<HTMLDivElement>(null);
     // Ref for infinite scroll trigger element
@@ -273,7 +319,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
 
     // Setup virtualizer for efficient rendering of large lists
     const virtualizer = useVirtualizer({
-        count: segments.length,
+        count: displaySegments.length,
         getScrollElement: () => scrollRef.current,
         estimateSize: () => 60, // Estimated height per segment
         overscan: 10, // Render extra items above/below viewport
@@ -287,7 +333,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     // Custom hook for auto-scrolling (supports both virtualized and non-virtualized)
     useAutoScroll({
         scrollRef,
-        segments,
+        segments: displaySegments,
         isRecording,
         isPaused,
         virtualizer,
@@ -297,14 +343,14 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
 
     // Streaming text effect hook (typewriter animation for new transcripts)
     const { streamingSegmentId, getDisplayText } = useTranscriptStreaming(
-        segments,
+        displaySegments,
         isRecording,
         enableStreaming
     );
 
     // Infinite scroll: IntersectionObserver to trigger loading more
     useEffect(() => {
-        if (!onLoadMore || !hasMore || isLoadingMore || isRecording || segments.length === 0) {
+        if (!onLoadMore || !hasMore || isLoadingMore || isRecording || displaySegments.length === 0) {
             return;
         }
 
@@ -327,7 +373,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
         observer.observe(triggerElement);
 
         return () => observer.disconnect();
-    }, [hasMore, isLoadingMore, onLoadMore, isRecording, segments.length]);
+    }, [hasMore, isLoadingMore, onLoadMore, isRecording, displaySegments.length]);
 
     // Scroll-based fallback for fast scrolling
     useEffect(() => {
@@ -359,7 +405,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     }, [onLoadMore, hasMore, isLoadingMore, isRecording]);
 
     // Use simple rendering for small lists, virtualization for large lists
-    const useVirtualization = segments.length >= VIRTUALIZATION_THRESHOLD;
+    const useVirtualization = displaySegments.length >= VIRTUALIZATION_THRESHOLD;
 
     return (
         <div ref={scrollRef} className="flex flex-col h-full overflow-y-auto px-4 py-2">
@@ -374,7 +420,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
 
             {/* Content - add padding when recording to prevent overlap */}
             <div className={isRecording ? 'pt-2' : ''}>
-            {segments.length === 0 ? (
+            {displaySegments.length === 0 ? (
                 // Empty state
                 <motion.div
                     initial={{ opacity: 0 }}
@@ -413,7 +459,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                         }}
                     >
                         {virtualizer.getVirtualItems().map((virtualRow) => {
-                            const segment = segments[virtualRow.index];
+                            const segment = displaySegments[virtualRow.index];
                             const isStreaming = streamingSegmentId === segment.id;
 
                             return (
@@ -446,7 +492,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                     </div>
 
                     {/* Infinite scroll trigger and loading indicator */}
-                    {(hasMore || isLoadingMore) && !isRecording && segments.length > 0 && (
+                    {(hasMore || isLoadingMore) && !isRecording && displaySegments.length > 0 && (
                         <div ref={loadMoreTriggerRef} className="flex justify-center items-center py-4 mt-2">
                             {isLoadingMore ? (
                                 <div className="flex items-center gap-2 text-gray-500">
@@ -462,7 +508,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                     )}
 
                     {/* Listening indicator when recording */}
-                    {!isStopping && isRecording && !isPaused && !isProcessing && segments.length > 0 && (
+                    {!isStopping && isRecording && !isPaused && !isProcessing && displaySegments.length > 0 && (
                         <motion.div
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
@@ -478,7 +524,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                 // Simple rendering for small lists (better animations)
                 <>
                     <div className="space-y-1">
-                        {segments.map((segment) => {
+                        {displaySegments.map((segment) => {
                             const isStreaming = streamingSegmentId === segment.id;
 
                             return (
@@ -505,7 +551,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                     </div>
 
                     {/* Infinite scroll trigger (for small lists that grow) */}
-                    {(hasMore || isLoadingMore) && !isRecording && segments.length > 0 && (
+                    {(hasMore || isLoadingMore) && !isRecording && displaySegments.length > 0 && (
                         <div ref={loadMoreTriggerRef} className="flex justify-center items-center py-4 mt-2">
                             {isLoadingMore ? (
                                 <div className="flex items-center gap-2 text-gray-500">
@@ -521,7 +567,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                     )}
 
                     {/* Listening indicator when recording */}
-                    {!isStopping && isRecording && !isPaused && !isProcessing && segments.length > 0 && (
+                    {!isStopping && isRecording && !isPaused && !isProcessing && displaySegments.length > 0 && (
                         <motion.div
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
