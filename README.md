@@ -1,5 +1,9 @@
 # Meetily - Actually Free
 
+<p align="center">
+  <img src="frontend/src-tauri/icon-source.png" alt="Meetily - Actually Free logo" width="280" />
+</p>
+
 An entirely free, fully unlocked fork of [Meetily](https://github.com/Zackriya-Solutions/meetily). Every feature is available without an account, subscription, license key, trial, or paid tier.
 
 [Download the latest Windows release](https://github.com/TylerBuza/Meetily-ActuallyFree/releases/latest)

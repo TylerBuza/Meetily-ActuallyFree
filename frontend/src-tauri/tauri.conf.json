@@ -87,8 +87,8 @@
         "createUpdaterArtifacts": false,
         "icon": [
             "icons/icon.png",
-            "icons/app_icon.icns",
-            "icons/app_icon.ico"
+            "icons/icon.icns",
+            "icons/icon.ico"
         ],
         "resources": [
             "templates/*.json",
@@ -115,10 +115,8 @@
                 "installMode": "currentUser",
                 "displayLanguageSelector": false,
                 "template": "./windows/installer.nsi",
-                "sidebarImage": "./windows/sidebar.bmp",
-                "headerImage": "./windows/header.bmp",
                 "installerHooks": "./windows/installer-hooks.nsh",
-                "installerIcon": "./icons/app_icon.ico",
+                "installerIcon": "./icons/icon.ico",
                 "languages": ["English"],
                 "customLanguageFiles": {
                     "English": "./windows/English.nsh"

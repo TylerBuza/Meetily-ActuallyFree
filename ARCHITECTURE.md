@@ -242,3 +242,121 @@ Gotchas:
 - The exe cannot be relinked while it is running (LNK1104). Kill it first.
 - Build with `--features cuda,custom-protocol`. Without `custom-protocol` the
   binary tries to load a dev server on localhost instead of the embedded UI.
+
+---
+
+## 8. Windows installer, onboarding, and updates
+
+There are deliberately **two Windows installer executables** in each release.
+They contain the same application, but they have different callers and must not
+be substituted for one another:
+
+| Release asset | Caller | Purpose |
+|---|---|---|
+| `*-universal-setup.exe` | A person downloading from GitHub | Native frameless Win32 bootstrapper with the branded first-install UI |
+| `*-universal-updater.exe` + `.sig` | Tauri's updater plugin | Unmodified NSIS engine and the Tauri signature over those exact bytes |
+
+`latest.json` always points at `*-universal-updater.exe`, never the bootstrapper.
+The updater plugin expects an NSIS-compatible executable and verifies the exact
+download against the adjacent signature. Embedding the NSIS engine in the
+bootstrapper does not transfer that signature to the outer executable.
+
+### Manual setup path
+
+```text
+build-universal-windows.ps1
+  -> Tauri builds the universal NSIS engine
+  -> build-installer-bootstrapper.ps1 embeds that engine as RCDATA
+  -> user runs the frameless bootstrapper
+  -> bootstrapper extracts + SHA-256 verifies the engine in %TEMP%
+  -> engine runs silently and performs the real installation
+  -> bootstrapper shows completion and launches meetily.exe
+```
+
+Relevant files:
+
+| File | Responsibility |
+|---|---|
+| `frontend/src-tauri/installer-bootstrapper/bootstrapper.cpp` | Frameless `WS_POPUP` shell, custom close/minimize controls, folder selection, extraction, hash verification, process supervision, completion UI |
+| `frontend/scripts/build-installer-bootstrapper.ps1` | Compiles the bootstrapper with MSVC `/MT`, embeds the finalized NSIS payload and its generated SHA-256 |
+| `frontend/src-tauri/windows/installer.nsi` | Tauri NSIS template used as the actual install/update engine |
+| `frontend/src-tauri/windows/installer-hooks.nsh` | Hardware backend detection, dependency checks, runtime staging, and selected-backend persistence |
+| `frontend/scripts/build-universal-windows.ps1` | Builds CPU/Vulkan/CUDA variants, packages NSIS, builds the outer setup, signs updater bytes, and writes `latest.json`/checksums |
+
+The bootstrapper shows byte-accurate determinate progress while extracting its
+payload. During installation it reads the hidden NSIS progress control and
+combines that with explicit phase-completion milestones under the temporary
+`HKCU\Software\meetily\InstallerProgress\<token>` key. This gives a real percent
+while still identifying runtime phases where NSIS itself is waiting on a child
+installer. The key is unique per run and removed when the engine exits. Closing
+is blocked once installation starts because externally terminating NSIS can
+leave a partial installation. The wrapper also restores the previously
+registered install path from `HKCU\Software\meetily\Meetily - Actually Free`
+before offering the default.
+
+Backend selection still belongs to `installer-hooks.nsh`; do not reimplement it
+in the bootstrapper. The universal package stages three app executables and the
+hook chooses CUDA, Vulkan, or CPU, then installs the chosen variant as the
+canonical `meetily.exe`. In-app updates continue through the raw NSIS engine so
+they retain Tauri's `/P /R /UPDATE /ARGS` behavior.
+
+### Update-consent path
+
+Update consent is an application preference, not an installer option:
+
+```text
+WelcomeStep.tsx
+  -> invoke("set_check_updates_on_launch")
+  -> src-tauri/src/lib.rs writes data/check-updates-on-launch.txt
+  -> UpdateCheckProvider.tsx reads get_check_updates_on_launch on app startup
+  -> updateService.ts / Tauri updater checks latest.json when enabled
+```
+
+The first app process has already started before the user answers onboarding,
+so the preference takes effect on the next launch. A manual check remains
+available from About. Setup must not write this preference or add the question
+back to NSIS.
+
+Onboarding itself is rendered by
+`frontend/src/components/onboarding/OnboardingFlow.tsx`. The update choice is in
+`steps/WelcomeStep.tsx`; the fork issue link is in `steps/SetupOverviewStep.tsx`
+and uses the `open_external_url` Tauri command because browser-style
+`target="_blank"` links are unreliable inside a desktop webview.
+
+### Release rules
+
+- Tauri updater signing and Windows Authenticode are separate. This fork's
+  updater signature is required. Published builds are currently unsigned and
+  must pass the explicit `-AllowUnsigned` build switch; Authenticode support
+  remains available when `DIGICERT_KEYPAIR_ALIAS` is configured.
+- Never modify `*-universal-updater.exe` after Tauri generates its `.sig`.
+- The outer `setup.exe` has no Tauri `.sig`; `SHA256SUMS.txt` covers it for
+  manual verification.
+- Keep the updater private key and password under the ignored
+  `.build-tools/updater/` directory. Losing them prevents compatible updates.
+- `-PackageOnly` reuses staged CPU/Vulkan/CUDA binaries but still rebuilds NSIS,
+  the bootstrapper, updater metadata, and checksums.
+- `setup.exe --verify-payload` extracts and verifies the embedded engine without
+  installing it; use this as a release smoke test.
+
+### Branding assets
+
+`frontend/src-tauri/icon-source.png` is the canonical high-resolution logo.
+Tauri's icon generator produces the platform family under `src-tauri/icons/`.
+Those generated files feed every native surface through these connections:
+
+```text
+icon-source.png
+  -> icons/icon.ico  -> Windows app/taskbar + NSIS + bootstrapper executable
+  -> icons/icon.png  -> native Windows notifications
+  -> default app icon -> system tray (tray.rs)
+  -> icons/icon.icns -> macOS bundle
+  -> public/logo-collapsed.png + public/icon_*.png -> in-app/web assets
+  -> src/app/favicon.ico -> Next.js favicon
+```
+
+`tauri.conf.json` and `build-installer-bootstrapper.ps1` both reference the
+generated `icon.*` family. Do not introduce a second `app_icon.*` family: that
+previous duplication allowed the tray/app and installer to silently use
+different brands. The README intentionally renders `icon-source.png` from the
+repository so GitHub uses the same canonical art.

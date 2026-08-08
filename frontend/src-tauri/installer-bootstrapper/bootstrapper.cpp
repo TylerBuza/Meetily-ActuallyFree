@@ -2,6 +2,7 @@
 #include <windowsx.h>
 #include <dwmapi.h>
 #include <bcrypt.h>
+#include <commctrl.h>
 #include <shlobj.h>
 #include <shobjidl.h>
 
@@ -35,9 +36,11 @@ enum class Page { Welcome, Extracting, Installing, Complete, Failed };
 HWND g_window = nullptr;
 std::atomic<Page> g_page{Page::Welcome};
 std::atomic<int> g_progress{0};
+std::atomic<int> g_milestone{-1};
 std::wstring g_install_dir;
 std::wstring g_error;
 std::wstring g_payload_path;
+std::wstring g_progress_token;
 HFONT g_title_font = nullptr;
 HFONT g_heading_font = nullptr;
 HFONT g_body_font = nullptr;
@@ -99,9 +102,9 @@ void Text(HDC dc, const std::wstring& value, RECT rect, HFONT font, unsigned col
 
 void DrawChrome(HDC dc) {
   RECT client{0, 0, kWindowWidth, kWindowHeight};
-  Fill(dc, client, 0x111722);
+  Fill(dc, client, 0x0d1117);
 
-  HBRUSH logo_brush = CreateSolidBrush(Color(0x27c7b8));
+  HBRUSH logo_brush = CreateSolidBrush(Color(0x4b88f7));
   HGDIOBJ old_brush = SelectObject(dc, logo_brush);
   HGDIOBJ old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
   Ellipse(dc, 24, 15, 48, 39);
@@ -109,10 +112,10 @@ void DrawChrome(HDC dc) {
   SelectObject(dc, old_brush);
   DeleteObject(logo_brush);
 
-  Text(dc, L"Meetily", {58, 8, 160, 46}, g_heading_font, 0xeaf0f8);
-  Text(dc, L"ACTUALLY FREE", {132, 9, 270, 46}, g_small_font, 0x718096);
+  Text(dc, L"Meetily", {58, 8, 160, 46}, g_heading_font, 0xf0f5fc);
+  Text(dc, L"ACTUALLY FREE", {132, 9, 270, 46}, g_small_font, 0x7890b2);
 
-  HPEN chrome_pen = CreatePen(PS_SOLID, 1, Color(0x8e9aae));
+  HPEN chrome_pen = CreatePen(PS_SOLID, 1, Color(0x91a2ba));
   HGDIOBJ previous_pen = SelectObject(dc, chrome_pen);
   RECT min_rect = MinimizeRect();
   MoveToEx(dc, min_rect.left + 20, 25, nullptr);
@@ -126,55 +129,87 @@ void DrawChrome(HDC dc) {
   DeleteObject(chrome_pen);
 }
 
-void DrawFeature(HDC dc, int y, const wchar_t* title, const wchar_t* detail) {
-  RoundedFill(dc, {72, y, 688, y + 58}, 12, 0x171f2c);
-  Border(dc, {72, y, 688, y + 58}, 12, 0x263143);
-  RoundedFill(dc, {88, y + 17, 112, y + 41}, 12, 0x183c3b);
-  Text(dc, L"+", {88, y + 15, 112, y + 41}, g_heading_font, 0x35d1c1,
+void DrawCapability(HDC dc, int left, const wchar_t* label, const wchar_t* title,
+                    const wchar_t* detail) {
+  Text(dc, label, {left, 175, left + 176, 197}, g_small_font, 0x6da2f8,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-  Text(dc, title, {128, y + 7, 450, y + 31}, g_body_font, 0xeaf0f8);
-  Text(dc, detail, {128, y + 28, 660, y + 50}, g_small_font, 0x8e9aae);
+  Text(dc, title, {left, 199, left + 176, 224}, g_heading_font, 0xeaf1fb,
+       DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+  Text(dc, detail, {left + 8, 229, left + 168, 263}, g_small_font, 0x8fa4c0,
+       DT_CENTER | DT_WORDBREAK | DT_VCENTER);
 }
 
 void DrawWelcome(HDC dc) {
-  Text(dc, L"Meetings stay yours.", {72, 68, 688, 116}, g_title_font, 0xf4f7fb,
+  Text(dc, L"Meetings stay yours.", {72, 68, 688, 116}, g_title_font, 0xf2f6fc,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
   Text(dc, L"Private recording, transcription, speaker labels, and summaries on your PC.",
-       {72, 112, 688, 142}, g_body_font, 0x9eabbd, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+       {72, 112, 688, 142}, g_body_font, 0xa9bed9, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
-  DrawFeature(dc, 160, L"One installer", L"Automatically selects CUDA, Vulkan, or CPU.");
-  DrawFeature(dc, 226, L"No account or subscription", L"Every feature is available. No analytics.");
+  RoundedFill(dc, {72, 158, 688, 272}, 14, 0x121925);
+  Border(dc, {72, 158, 688, 272}, 14, 0x202c3e);
+  Fill(dc, {277, 178, 278, 252}, 0x253247);
+  Fill(dc, {482, 178, 483, 252}, 0x253247);
+  DrawCapability(dc, 82, L"LOCAL FIRST", L"Private by default",
+                 L"Recording and AI stay on this PC.");
+  DrawCapability(dc, 287, L"HARDWARE AWARE", L"Built for your PC",
+                 L"Selects CUDA, Vulkan, or CPU.");
+  DrawCapability(dc, 492, L"NO PAYWALL", L"Actually free",
+                 L"No account, subscription, or analytics.");
 
-  Text(dc, L"INSTALL LOCATION", {72, 286, 300, 312}, g_small_font, 0x64d9cd);
-  RoundedFill(dc, {72, 317, 558, 357}, 10, 0x0c1119);
-  Border(dc, {72, 317, 558, 357}, 10, 0x2a374a);
+  Text(dc, L"INSTALL LOCATION", {72, 286, 300, 312}, g_small_font, 0x6da2f8);
+  RoundedFill(dc, {72, 317, 558, 357}, 10, 0x090e15);
+  Border(dc, {72, 317, 558, 357}, 10, 0x27354a);
   std::wstring shown = g_install_dir;
   if (shown.size() > 56) shown = L"..." + shown.substr(shown.size() - 53);
-  Text(dc, shown, {88, 317, 542, 357}, g_small_font, 0xcbd5e1);
-  RoundedFill(dc, BrowseRect(), 10, 0x202a39);
-  Text(dc, L"Browse", BrowseRect(), g_body_font, 0xdce4ee,
+  Text(dc, shown, {88, 317, 542, 357}, g_small_font, 0xcbd8e9);
+  RoundedFill(dc, BrowseRect(), 10, 0x1b2636);
+  Text(dc, L"Browse", BrowseRect(), g_body_font, 0xdce7f5,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
-  RoundedFill(dc, InstallRect(), 12, 0x27b9ad);
-  Text(dc, L"Install Meetily", InstallRect(), g_heading_font, 0x071211,
+  RoundedFill(dc, InstallRect(), 12, 0x4b88f7);
+  Text(dc, L"Install Meetily", InstallRect(), g_heading_font, 0xffffff,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-  Text(dc, L"About 810 MB. Setup detects compatible hardware automatically.",
-       {72, 454, 688, 482}, g_small_font, 0x718096, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+  Text(dc, L"Includes CPU, Vulkan, CUDA, and local speaker-labeling resources.",
+       {72, 454, 688, 482}, g_small_font, 0x7890b2, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 }
 
 void DrawProgress(HDC dc) {
   const bool extracting = g_page == Page::Extracting;
-  Text(dc, extracting ? L"Preparing Meetily" : L"Installing Meetily",
-       {72, 100, 688, 148}, g_title_font, 0xf4f7fb, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-  Text(dc,
-       extracting ? L"Extracting and verifying the installation package..."
-                  : L"Copying files and configuring the best local AI backend...",
-       {72, 149, 688, 180}, g_body_font, 0x9eabbd, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-
-  RoundedFill(dc, {110, 226, 650, 238}, 8, 0x222c3b);
+  const int progress = g_progress.load();
+  const int milestone = g_milestone.load();
+  std::wstring status;
   if (extracting) {
-    const int width = std::max(8, (540 * g_progress.load()) / 100);
-    RoundedFill(dc, {110, 226, 110 + width, 238}, 8, 0x31cabc);
+    status = L"Unpacking the bundled installer - no internet is used";
+  } else if (milestone < 1) {
+    status = L"Starting the local installation engine";
+  } else if (milestone < 10) {
+    status = L"Checking Microsoft WebView2 and installing it only if missing";
+  } else if (milestone < 72) {
+    status = L"Unpacking bundled application and model files";
+  } else if (milestone < 78) {
+    status = L"Registering Meetily for this Windows user";
+  } else if (milestone < 80) {
+    status = L"Creating app shortcuts";
+  } else if (milestone < 85) {
+    status = L"Checking the bundled Microsoft Visual C++ runtime";
+  } else if (milestone < 90) {
+    status = L"Installing bundled common local AI runtime files";
+  } else if (milestone < 94) {
+    status = L"Selecting the best local AI backend for this PC";
+  } else if (milestone < 98) {
+    status = L"Installing bundled backend runtime files";
+  } else {
+    status = L"Finishing setup";
+  }
+  Text(dc, extracting ? L"Preparing Meetily" : L"Installing Meetily",
+       {72, 100, 688, 148}, g_title_font, 0xf2f6fc, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+  Text(dc, status,
+       {72, 149, 688, 180}, g_body_font, 0xa9bed9, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+
+  RoundedFill(dc, {110, 226, 650, 238}, 8, 0x202b3c);
+  if (extracting || progress >= 0) {
+    const int width = std::max(8, (540 * std::max(0, progress)) / 100);
+    RoundedFill(dc, {110, 226, 110 + width, 238}, 8, 0x4b88f7);
   } else {
     const int segment = 120;
     const int travel = 540 + segment;
@@ -182,41 +217,47 @@ void DrawProgress(HDC dc) {
     int right = left + segment;
     HRGN region = CreateRectRgn(110, 226, 650, 238);
     SelectClipRgn(dc, region);
-    RoundedFill(dc, {left, 226, right, 238}, 8, 0x31cabc);
+    RoundedFill(dc, {left, 226, right, 238}, 8, 0x4b88f7);
     SelectClipRgn(dc, nullptr);
     DeleteObject(region);
   }
 
-  Text(dc, extracting ? std::to_wstring(g_progress.load()) + L"%" : L"This can take a few minutes",
-       {110, 248, 650, 278}, g_small_font, 0x7f8ca0, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-  RoundedFill(dc, {154, 316, 606, 380}, 14, 0x171f2c);
-  Border(dc, {154, 316, 606, 380}, 14, 0x263143);
-  Text(dc, L"Please keep this window open", {178, 322, 582, 348}, g_body_font, 0xdce4ee,
+  Text(dc, (extracting || progress >= 0) ? std::to_wstring(std::max(0, progress)) + L"%"
+                                         : L"Calculating progress...",
+       {110, 248, 650, 278}, g_small_font, 0x7890b2, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+  RoundedFill(dc, {110, 306, 650, 403}, 14, 0x121925);
+  Border(dc, {110, 306, 650, 403}, 14, 0x202c3e);
+  Text(dc, L"Installing to", {134, 314, 626, 338}, g_small_font, 0x6da2f8,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-  Text(dc, L"Navigation is hidden while setup is working.", {178, 348, 582, 372}, g_small_font,
-       0x8794a8, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+  std::wstring shown_path = g_install_dir;
+  if (shown_path.size() > 62) shown_path = L"..." + shown_path.substr(shown_path.size() - 59);
+  Text(dc, shown_path, {134, 338, 626, 362}, g_body_font, 0xdce7f5,
+       DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+  Text(dc, L"Everything is bundled except Microsoft WebView2, which Windows downloads only if missing.",
+       {134, 368, 626, 396}, g_small_font, 0x8fa4c0,
+       DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 }
 
 void DrawComplete(HDC dc) {
-  RoundedFill(dc, {342, 102, 418, 178}, 38, 0x173d38);
-  Text(dc, L"OK", {342, 102, 418, 178}, g_heading_font, 0x42d7c5,
+  RoundedFill(dc, {342, 102, 418, 178}, 38, 0x152f58);
+  Text(dc, L"OK", {342, 102, 418, 178}, g_heading_font, 0x76a7fb,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-  Text(dc, L"Meetily is ready.", {72, 198, 688, 248}, g_title_font, 0xf4f7fb,
+  Text(dc, L"Meetily is ready.", {72, 198, 688, 248}, g_title_font, 0xf2f6fc,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
   Text(dc, L"Launch it to finish the in-app welcome and audio check.", {72, 248, 688, 286},
-       g_body_font, 0x9eabbd, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-  RoundedFill(dc, LaunchRect(), 12, 0x27b9ad);
-  Text(dc, L"Launch Meetily", LaunchRect(), g_heading_font, 0x071211,
+       g_body_font, 0xa9bed9, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+  RoundedFill(dc, LaunchRect(), 12, 0x4b88f7);
+  Text(dc, L"Launch Meetily", LaunchRect(), g_heading_font, 0xffffff,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 }
 
 void DrawFailed(HDC dc) {
-  Text(dc, L"Setup could not finish", {72, 122, 688, 176}, g_title_font, 0xf4f7fb,
+  Text(dc, L"Setup could not finish", {72, 122, 688, 176}, g_title_font, 0xf2f6fc,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
   Text(dc, g_error, {110, 190, 650, 300}, g_body_font, 0xe8a2a2,
        DT_CENTER | DT_WORDBREAK | DT_VCENTER);
-  RoundedFill(dc, LaunchRect(), 12, 0x202a39);
-  Text(dc, L"Close", LaunchRect(), g_heading_font, 0xdce4ee,
+  RoundedFill(dc, LaunchRect(), 12, 0x1b2636);
+  Text(dc, L"Close", LaunchRect(), g_heading_font, 0xdce7f5,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 }
 
@@ -334,6 +375,7 @@ bool ExtractPayload(std::wstring& error) {
   CoCreateGuid(&guid);
   wchar_t guid_text[64];
   StringFromGUID2(guid, guid_text, 64);
+  g_progress_token = guid_text;
   std::filesystem::path directory = std::filesystem::path(temp_path) /
       (std::wstring(L"MeetilySetup-") + guid_text);
   std::error_code fs_error;
@@ -387,6 +429,62 @@ void CleanupPayload() {
   std::filesystem::remove(path.parent_path(), ignored);
 }
 
+void CleanupProgressRegistry() {
+  if (g_progress_token.empty()) return;
+  const std::wstring key = L"Software\\meetily\\InstallerProgress\\" + g_progress_token;
+  RegDeleteTreeW(HKEY_CURRENT_USER, key.c_str());
+}
+
+struct ProgressSearch {
+  DWORD process_id;
+  HWND control;
+};
+
+BOOL CALLBACK FindProgressChild(HWND window, LPARAM parameter) {
+  auto* search = reinterpret_cast<ProgressSearch*>(parameter);
+  wchar_t class_name[64];
+  if (GetClassNameW(window, class_name, static_cast<int>(std::size(class_name))) > 0 &&
+      _wcsicmp(class_name, PROGRESS_CLASSW) == 0) {
+    search->control = window;
+    return FALSE;
+  }
+  return TRUE;
+}
+
+BOOL CALLBACK FindInstallerWindow(HWND window, LPARAM parameter) {
+  auto* search = reinterpret_cast<ProgressSearch*>(parameter);
+  DWORD process_id = 0;
+  GetWindowThreadProcessId(window, &process_id);
+  if (process_id != search->process_id) return TRUE;
+  EnumChildWindows(window, FindProgressChild, parameter);
+  return search->control == nullptr;
+}
+
+int ReadInstallerProgress(DWORD process_id) {
+  ProgressSearch search{process_id, nullptr};
+  EnumWindows(FindInstallerWindow, reinterpret_cast<LPARAM>(&search));
+  if (!search.control) return -1;
+
+  const LRESULT low = SendMessageW(search.control, PBM_GETRANGE, TRUE, 0);
+  const LRESULT high = SendMessageW(search.control, PBM_GETRANGE, FALSE, 0);
+  const LRESULT position = SendMessageW(search.control, PBM_GETPOS, 0, 0);
+  if (high <= low || position < low) return -1;
+  return std::clamp(
+      static_cast<int>(((position - low) * 100) / (high - low)), 0, 100);
+}
+
+int ReadInstallerMilestone() {
+  if (g_progress_token.empty()) return -1;
+  const std::wstring key = L"Software\\meetily\\InstallerProgress\\" + g_progress_token;
+  DWORD percent = 0;
+  DWORD size = sizeof(percent);
+  if (RegGetValueW(HKEY_CURRENT_USER, key.c_str(), L"Percent", RRF_RT_REG_DWORD,
+                   nullptr, &percent, &size) != ERROR_SUCCESS) {
+    return -1;
+  }
+  return std::clamp(static_cast<int>(percent), 0, 100);
+}
+
 void InstallWorker() {
   CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   std::wstring error;
@@ -399,8 +497,10 @@ void InstallWorker() {
   }
 
   g_page = Page::Installing;
+  g_progress.store(-1);
   PostMessageW(g_window, kWorkUpdate, 0, 0);
-  std::wstring command = L"\"" + g_payload_path + L"\" /S /D=" + g_install_dir;
+  std::wstring command = L"\"" + g_payload_path + L"\" /S /PROGRESSTOKEN=" +
+      g_progress_token + L" /D=" + g_install_dir;
   std::vector<wchar_t> command_buffer(command.begin(), command.end());
   command_buffer.push_back(L'\0');
   STARTUPINFOW startup{};
@@ -414,11 +514,21 @@ void InstallWorker() {
     CoUninitialize();
     return;
   }
-  WaitForSingleObject(process.hProcess, INFINITE);
+  while (WaitForSingleObject(process.hProcess, 100) == WAIT_TIMEOUT) {
+    const int native_progress = ReadInstallerProgress(process.dwProcessId);
+    const int milestone = ReadInstallerMilestone();
+    if (milestone >= 0) g_milestone.store(milestone);
+    const int progress = std::max(native_progress, milestone);
+    if (progress >= 0 && progress != g_progress.load()) {
+      g_progress.store(progress);
+      PostMessageW(g_window, kWorkUpdate, 0, 0);
+    }
+  }
   DWORD exit_code = 1;
   GetExitCodeProcess(process.hProcess, &exit_code);
   CloseHandle(process.hThread);
   CloseHandle(process.hProcess);
+  CleanupProgressRegistry();
   CleanupPayload();
 
   if (exit_code == 0) {

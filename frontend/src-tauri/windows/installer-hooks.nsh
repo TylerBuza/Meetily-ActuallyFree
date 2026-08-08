@@ -280,6 +280,7 @@ Var MeetilyBackend
   DetailPrint "────────────────────────────────────────"
 
   DetailPrint "[1/4] Visual C++ 2015–2022 (x64)…"
+  !insertmacro MeetilyReportProgress 80
   !insertmacro Meetily_CheckVcredist
   ${If} $R9 == 0
     DetailPrint "      Not found — installing quietly…"
@@ -289,12 +290,15 @@ Var MeetilyBackend
   ${EndIf}
 
   DetailPrint "[2/4] Common local AI runtime…"
+  !insertmacro MeetilyReportProgress 85
   !insertmacro Meetily_InstallCommonRuntime
 
   DetailPrint "[3/4] Selecting CUDA, Vulkan, or CPU…"
+  !insertmacro MeetilyReportProgress 90
   !insertmacro Meetily_SelectBackend
 
   DetailPrint "[4/4] Backend runtime…"
+  !insertmacro MeetilyReportProgress 94
   ${If} $MeetilyBackend == "cuda"
     !insertmacro Meetily_InstallCudaRuntime
     DetailPrint "      NVIDIA CUDA enabled."
@@ -310,6 +314,7 @@ Var MeetilyBackend
 
   DetailPrint ""
   DetailPrint "Runtime setup finished."
+  !insertmacro MeetilyReportProgress 98
   DetailPrint "────────────────────────────────────────"
 !macroend
 

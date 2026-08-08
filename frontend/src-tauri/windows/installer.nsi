@@ -31,6 +31,16 @@ ManifestDPIAwareness PerMonitorV2
 ${StrCase}
 ${StrLoc}
 
+; The frameless bootstrapper passes a unique token and polls this per-user key.
+; The native NSIS progress control supplies continuous progress when available;
+; these milestones keep status truthful even while a runtime installer owns the
+; foreground work and the NSIS bar is temporarily stationary.
+!macro MeetilyReportProgress Percent
+  ${If} $MeetilyProgressToken != ""
+    WriteRegDWORD HKCU "Software\meetily\InstallerProgress\$MeetilyProgressToken" "Percent" ${Percent}
+  ${EndIf}
+!macroend
+
 {{#if installer_hooks}}
 !include "{{installer_hooks}}"
 {{/if}}
@@ -75,6 +85,7 @@ Var UpdateMode
 Var NoShortcutMode
 Var WixMode
 Var OldMainBinaryName
+Var MeetilyProgressToken
 
 Name "${PRODUCTNAME}"
 BrandingText "Meetily - Actually Free"
@@ -852,6 +863,8 @@ FunctionEnd
 {{/each}}
 
 Function .onInit
+  StrCpy $MeetilyProgressToken ""
+  ${GetOptions} $CMDLINE "/PROGRESSTOKEN=" $MeetilyProgressToken
   ${GetOptions} $CMDLINE "/P" $PassiveMode
   ${IfNot} ${Errors}
     StrCpy $PassiveMode 1
@@ -908,6 +921,7 @@ FunctionEnd
 
 
 Section EarlyChecks
+  !insertmacro MeetilyReportProgress 1
   ; Abort silent installer if downgrades is disabled
   !if "${ALLOWDOWNGRADES}" == "false"
   ${If} ${Silent}
@@ -927,6 +941,7 @@ Section EarlyChecks
 SectionEnd
 
 Section WebView2
+  !insertmacro MeetilyReportProgress 3
   ; Check if Webview2 is already installed and skip this section
   ${If} ${RunningX64}
     ReadRegStr $4 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
@@ -1016,9 +1031,11 @@ Section WebView2
       ${EndIf}
     !endif
   ${EndIf}
+  !insertmacro MeetilyReportProgress 10
 SectionEnd
 
 Section Install
+  !insertmacro MeetilyReportProgress 12
   SetOutPath $INSTDIR
 
   !ifmacrodef NSIS_HOOK_PREINSTALL
@@ -1042,6 +1059,7 @@ Section Install
   {{#each binaries}}
     File /a "/oname={{this}}" "{{no-escape @key}}"
   {{/each}}
+  !insertmacro MeetilyReportProgress 72
 
   ; Create file associations
   {{#each file_associations as |association| ~}}
@@ -1112,6 +1130,7 @@ Section Install
   ${OrIf} ${Silent}
     Call CreateOrUpdateDesktopShortcut
   ${EndIf}
+  !insertmacro MeetilyReportProgress 78
 
   !ifmacrodef NSIS_HOOK_POSTINSTALL
     !insertmacro NSIS_HOOK_POSTINSTALL
@@ -1124,6 +1143,7 @@ Section Install
     GetDlgItem $R1 $HWNDPARENT 1
     ShowWindow $R1 ${SW_SHOW}
   ${EndIf}
+  !insertmacro MeetilyReportProgress 100
 
   ; Auto close this page for passive mode
   ${If} $PassiveMode = 1
