@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { OnboardingContainer } from '../OnboardingContainer';
@@ -41,6 +42,12 @@ export function SetupOverviewStep() {
 
   const handleContinue = () => {
     goNext();
+  };
+
+  const openIssues = () => {
+    invoke('open_external_url', {
+      url: 'https://github.com/TylerBuza/Meetily-ActuallyFree/issues',
+    }).catch((error) => console.error('Failed to open GitHub issues:', error));
   };
 
   return (
@@ -97,14 +104,13 @@ export function SetupOverviewStep() {
             Let's Go
           </Button>
           <div className="text-center">
-            <a
-              href="https://github.com/Zackriya-Solutions/meeting-minutes"
-              target="_blank"
-              rel="noopener noreferrer"
+            <button
+              type="button"
+              onClick={openIssues}
               className="text-xs text-gray-600 hover:underline"
             >
               Report issues on GitHub
-            </a>
+            </button>
           </div>
         </div>
       </div>

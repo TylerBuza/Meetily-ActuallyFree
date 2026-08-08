@@ -202,10 +202,6 @@ Var MeetilyDirBrowse
 Var MeetilyDirHint
 Var MeetilyFontTitle
 Var MeetilyFontBody
-Var MeetilyUpdateDlg
-Var MeetilyUpdateYes
-Var MeetilyUpdateNo
-Var MeetilyCheckUpdatesOnLaunch
 Var MeetilyFinishLaunch
 Var MeetilyFinishDesktop
 
@@ -419,6 +415,15 @@ Function MeetilyDarkenInstFiles
   IntCmp $R1 0 +2 0 0
     ShowWindow $R1 ${SW_HIDE}
 
+  ; There is nowhere to navigate while files are being installed. Keep only
+  ; Cancel visible, then reveal Next once .onInstSuccess runs.
+  GetDlgItem $R1 $HWNDPARENT 1
+  IntCmp $R1 0 +2 0 0
+    ShowWindow $R1 ${SW_HIDE}
+  GetDlgItem $R1 $HWNDPARENT 3
+  IntCmp $R1 0 +2 0 0
+    ShowWindow $R1 ${SW_HIDE}
+
   Pop $R1
   Pop $R0
 FunctionEnd
@@ -487,54 +492,6 @@ Function MeetilyDirPageLeave
   ${IfNot} ${FileExists} "$INSTDIR"
     MessageBox MB_ICONEXCLAMATION "Could not create:$\r$\n$INSTDIR"
     Abort
-  ${EndIf}
-FunctionEnd
-
-Function MeetilyUpdatePageShow
-  ${If} $PassiveMode = 1
-  ${OrIf} $UpdateMode = 1
-    Abort
-  ${EndIf}
-
-  !insertmacro MUI_HEADER_TEXT "Update checks" "Choose whether Meetily checks GitHub when it starts."
-  nsDialogs::Create 1018
-  Pop $MeetilyUpdateDlg
-  ${If} $MeetilyUpdateDlg == error
-    Abort
-  ${EndIf}
-
-  SetCtlColors $MeetilyUpdateDlg E6EBF5 0A0C10
-  ${NSD_CreateLabel} 0 4u 100% 30u "Check this fork's GitHub releases for updates when Meetily starts?"
-  Pop $R0
-  SetCtlColors $R0 E6EBF5 0A0C10
-  SendMessage $R0 ${WM_SETFONT} $MeetilyFontTitle 1
-
-  ${NSD_CreateRadioButton} 8u 45u -8u 12u "Yes, check for updates on launch"
-  Pop $MeetilyUpdateYes
-  SetCtlColors $MeetilyUpdateYes E6EBF5 0A0C10
-
-  ${NSD_CreateRadioButton} 8u 66u -8u 12u "No, only check when I ask"
-  Pop $MeetilyUpdateNo
-  SetCtlColors $MeetilyUpdateNo E6EBF5 0A0C10
-
-  ${NSD_CreateLabel} 8u 94u -8u 48u "A launch check makes one request to this fork's GitHub release endpoint. Meetily collects no analytics and makes no other background internet requests. Model downloads and cloud providers only connect when you choose to use them. You can always check manually in About."
-  Pop $R0
-  SetCtlColors $R0 A8B3C7 0A0C10
-
-  ${If} $MeetilyCheckUpdatesOnLaunch == "yes"
-    ${NSD_Check} $MeetilyUpdateYes
-  ${Else}
-    ${NSD_Check} $MeetilyUpdateNo
-  ${EndIf}
-  nsDialogs::Show
-FunctionEnd
-
-Function MeetilyUpdatePageLeave
-  ${NSD_GetState} $MeetilyUpdateYes $R0
-  ${If} $R0 == ${BST_CHECKED}
-    StrCpy $MeetilyCheckUpdatesOnLaunch "yes"
-  ${Else}
-    StrCpy $MeetilyCheckUpdatesOnLaunch "no"
   ${EndIf}
 FunctionEnd
 
@@ -819,10 +776,7 @@ FunctionEnd
 ; 5. Custom install-location page (no stock Wizard97 directory chrome)
 Page custom MeetilyDirPageShow MeetilyDirPageLeave
 
-; 6. Optional launch update checks
-Page custom MeetilyUpdatePageShow MeetilyUpdatePageLeave
-
-; 7. Start menu shortcut page - skipped; shortcuts still created on finish
+; 6. Start menu shortcut page - skipped; shortcuts still created on finish
 Var AppStartMenuFolder
 !define MUI_PAGE_CUSTOMFUNCTION_PRE Skip
 !if "${STARTMENUFOLDER}" != ""
@@ -830,13 +784,13 @@ Var AppStartMenuFolder
 !endif
 !insertmacro MUI_PAGE_STARTMENU Application $AppStartMenuFolder
 
-; 8. Installation page (details + teal progress)
+; 7. Installation page (details + teal progress)
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW MeetilyDarkenInstFiles
 !define MUI_PAGE_HEADER_TEXT "Installing Meetily"
 !define MUI_PAGE_HEADER_SUBTEXT "Copying files and setting up local runtimes…"
 !insertmacro MUI_PAGE_INSTFILES
 
-; 9. Custom completion page
+; 8. Custom completion page
 Page custom MeetilyFinishPageShow MeetilyFinishPageLeave
 
 Function RunMainBinary
@@ -898,7 +852,6 @@ FunctionEnd
 {{/each}}
 
 Function .onInit
-  StrCpy $MeetilyCheckUpdatesOnLaunch ""
   ${GetOptions} $CMDLINE "/P" $PassiveMode
   ${IfNot} ${Errors}
     StrCpy $PassiveMode 1
@@ -1163,6 +1116,14 @@ Section Install
   !ifmacrodef NSIS_HOOK_POSTINSTALL
     !insertmacro NSIS_HOOK_POSTINSTALL
   !endif
+
+  ; The direct NSIS engine has no usable navigation while files are copying.
+  ; Reveal Next only after every install and runtime step has completed.
+  ${If} $PassiveMode != 1
+  ${AndIfNot} ${Silent}
+    GetDlgItem $R1 $HWNDPARENT 1
+    ShowWindow $R1 ${SW_SHOW}
+  ${EndIf}
 
   ; Auto close this page for passive mode
   ${If} $PassiveMode = 1

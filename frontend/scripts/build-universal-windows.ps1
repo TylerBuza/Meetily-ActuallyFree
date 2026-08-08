@@ -12,6 +12,7 @@ $frontend = Split-Path $PSScriptRoot -Parent
 $repo = Split-Path $frontend -Parent
 $tauri = Join-Path $frontend "src-tauri"
 $variants = Join-Path $tauri "installer-variants"
+$sign = Join-Path $tauri "scripts\sign-windows.ps1"
 $appVersion = (Get-Content (Join-Path $tauri "tauri.conf.json") -Raw | ConvertFrom-Json).version
 $vcvars = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
 
@@ -131,7 +132,6 @@ Copy-Item $cudaBinary (Join-Path $variants "meetily-cuda.exe") -Force
   (Join-Path $cudaTarget "release")
 )
 
-$sign = Join-Path $tauri "scripts\sign-windows.ps1"
 foreach ($binary in Get-ChildItem $variants -Filter "*.exe") {
   & $sign -FilePath $binary.FullName
 }
@@ -160,15 +160,27 @@ $installer = Join-Path $cpuTarget "release\bundle\nsis\Meetily - Actually Free_$
 if (-not (Test-Path $installer)) { throw "Universal installer missing: $installer" }
 $dist = Join-Path $repo "dist"
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
+$engineOutput = Join-Path $dist "Meetily-ActuallyFree-${appVersion}-x64-universal-updater.exe"
 $output = Join-Path $dist "Meetily-ActuallyFree-${appVersion}-x64-universal-setup.exe"
-Copy-Item $installer $output -Force
+Remove-Item "$output.sig" -Force -ErrorAction SilentlyContinue
+Copy-Item $installer $engineOutput -Force
 
 $updaterSignatureSource = "$installer.sig"
 if (-not (Test-Path $updaterSignatureSource)) { throw "Tauri updater signature was not generated" }
 
-$installerName = Split-Path $output -Leaf
-$updaterSignatureOutput = "$output.sig"
+$installerName = Split-Path $engineOutput -Leaf
+$updaterSignatureOutput = "$engineOutput.sig"
 Copy-Item $updaterSignatureSource $updaterSignatureOutput -Force
+
+& (Join-Path $PSScriptRoot "build-installer-bootstrapper.ps1") `
+  -Payload $installer `
+  -Output $output `
+  -Version $appVersion
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $output)) {
+  throw "Frameless installer bootstrapper build failed"
+}
+& $sign -FilePath $output
+if ($LASTEXITCODE -ne 0) { throw "Frameless installer signing failed" }
 
 $signature = (Get-Content $updaterSignatureOutput -Raw).Trim()
 $latest = [ordered]@{
@@ -190,6 +202,7 @@ $latest = [ordered]@{
 
 $checksums = @(
   "{0}  {1}" -f (Get-FileHash $output -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path $output -Leaf)
+  "{0}  {1}" -f (Get-FileHash $engineOutput -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path $engineOutput -Leaf)
   "{0}  {1}" -f (Get-FileHash $updaterSignatureOutput -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path $updaterSignatureOutput -Leaf)
   "{0}  latest.json" -f (Get-FileHash (Join-Path $dist "latest.json") -Algorithm SHA256).Hash.ToLowerInvariant()
 ) -join "`n"
@@ -202,5 +215,5 @@ $checksums = @(
 Write-Host ""
 Write-Host "Universal installer ready: $output"
 Get-Item $output | Select-Object FullName, Length, LastWriteTime
-Get-Item $updaterSignatureOutput, (Join-Path $dist "latest.json"), (Join-Path $dist "SHA256SUMS.txt") |
+Get-Item $engineOutput, $updaterSignatureOutput, (Join-Path $dist "latest.json"), (Join-Path $dist "SHA256SUMS.txt") |
   Select-Object FullName, Length, LastWriteTime

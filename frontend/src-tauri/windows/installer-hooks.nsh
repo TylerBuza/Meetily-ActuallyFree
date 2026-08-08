@@ -261,12 +261,6 @@ Var MeetilyBackend
   FileWrite $R4 "$MeetilyBackend$\r$\n"
   FileClose $R4
 
-  ${If} $MeetilyCheckUpdatesOnLaunch != ""
-    FileOpen $R4 "$INSTDIR\data\check-updates-on-launch.txt" w
-    FileWrite $R4 "$MeetilyCheckUpdatesOnLaunch$\r$\n"
-    FileClose $R4
-  ${EndIf}
-
   RMDir /r "$INSTDIR\installer-variants"
 !macroend
 

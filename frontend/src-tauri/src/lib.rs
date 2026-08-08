@@ -79,6 +79,18 @@ fn get_check_updates_on_launch() -> bool {
         .unwrap_or(false)
 }
 
+#[tauri::command]
+fn set_check_updates_on_launch(enabled: bool) -> Result<(), String> {
+    let data_root = paths::install_data_root();
+    std::fs::create_dir_all(&data_root)
+        .map_err(|error| format!("Failed to create app data directory: {error}"))?;
+    std::fs::write(
+        data_root.join("check-updates-on-launch.txt"),
+        if enabled { "yes\n" } else { "no\n" },
+    )
+    .map_err(|error| format!("Failed to save update preference: {error}"))
+}
+
 #[derive(Debug, Deserialize)]
 struct RecordingArgs {
     save_path: String,
@@ -697,6 +709,7 @@ pub fn run() {
             whisper_engine::parallel_commands::test_parallel_processing_setup,
             get_audio_devices,
             get_check_updates_on_launch,
+            set_check_updates_on_launch,
             trigger_microphone_permission,
             start_recording_with_devices,
             start_recording_with_devices_and_meeting,
