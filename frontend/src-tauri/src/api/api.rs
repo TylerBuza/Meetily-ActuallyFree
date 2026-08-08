@@ -1181,20 +1181,47 @@ pub async fn debug_backend_connection<R: Runtime>(app: AppHandle<R>) -> Result<S
 
 #[tauri::command]
 pub async fn open_external_url(url: String) -> Result<(), String> {
-    use std::process::Command;
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err("Only HTTP and HTTPS links can be opened".to_string());
+    }
 
-    let result = if cfg!(target_os = "windows") {
-        Command::new("cmd").args(&["/C", "start", &url]).output()
-    } else if cfg!(target_os = "macos") {
-        Command::new("open").arg(&url).output()
-    } else {
-        // Linux and other Unix-like systems
-        Command::new("xdg-open").arg(&url).output()
-    };
+    #[cfg(target_os = "windows")]
+    {
+        use std::{ffi::OsStr, os::windows::ffi::OsStrExt, ptr};
+        use windows_sys::Win32::UI::{
+            Shell::ShellExecuteW,
+            WindowsAndMessaging::SW_SHOWNORMAL,
+        };
 
-    match result {
-        Ok(_) => Ok(()),
-        Err(e) => Err(format!("Failed to open URL: {}", e)),
+        let operation: Vec<u16> = OsStr::new("open").encode_wide().chain(Some(0)).collect();
+        let target: Vec<u16> = OsStr::new(&url).encode_wide().chain(Some(0)).collect();
+        let result = unsafe {
+            ShellExecuteW(
+                ptr::null_mut(),
+                operation.as_ptr(),
+                target.as_ptr(),
+                ptr::null(),
+                ptr::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        if result as isize <= 32 {
+            return Err(format!("Windows could not open the link (error {})", result as isize));
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        use std::process::Command;
+        let result = if cfg!(target_os = "macos") {
+            Command::new("open").arg(&url).spawn()
+        } else {
+            Command::new("xdg-open").arg(&url).spawn()
+        };
+        result
+            .map(|_| ())
+            .map_err(|error| format!("Failed to open URL: {error}"))
     }
 }
 

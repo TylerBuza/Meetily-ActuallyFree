@@ -10,6 +10,7 @@
 #include <atomic>
 #include <filesystem>
 #include <iomanip>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -41,6 +42,8 @@ std::wstring g_install_dir;
 std::wstring g_error;
 std::wstring g_payload_path;
 std::wstring g_progress_token;
+std::mutex g_detail_mutex;
+std::wstring g_install_detail;
 HFONT g_title_font = nullptr;
 HFONT g_heading_font = nullptr;
 HFONT g_body_font = nullptr;
@@ -205,36 +208,50 @@ void DrawProgress(HDC dc) {
        {72, 100, 688, 148}, g_title_font, 0xf2f6fc, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
   Text(dc, status,
        {72, 149, 688, 180}, g_body_font, 0xa9bed9, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+  std::wstring detail;
+  if (extracting) {
+    detail = progress >= 88 ? L"Verifying the embedded package with SHA-256"
+                            : L"Writing the bundled NSIS engine to a temporary folder";
+  } else {
+    std::lock_guard<std::mutex> lock(g_detail_mutex);
+    detail = g_install_detail;
+  }
+  if (detail.size() > 82) detail = detail.substr(0, 79) + L"...";
+  Text(dc, detail, {72, 180, 688, 210}, g_small_font, 0x7890b2,
+       DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
-  RoundedFill(dc, {110, 226, 650, 238}, 8, 0x202b3c);
+  RoundedFill(dc, {110, 230, 650, 242}, 8, 0x202b3c);
   if (extracting || progress >= 0) {
     const int width = std::max(8, (540 * std::max(0, progress)) / 100);
-    RoundedFill(dc, {110, 226, 110 + width, 238}, 8, 0x4b88f7);
+    RoundedFill(dc, {110, 230, 110 + width, 242}, 8, 0x4b88f7);
   } else {
     const int segment = 120;
     const int travel = 540 + segment;
     int left = 110 + ((g_spinner * 8) % travel) - segment;
     int right = left + segment;
-    HRGN region = CreateRectRgn(110, 226, 650, 238);
+    HRGN region = CreateRectRgn(110, 230, 650, 242);
     SelectClipRgn(dc, region);
-    RoundedFill(dc, {left, 226, right, 238}, 8, 0x4b88f7);
+    RoundedFill(dc, {left, 230, right, 242}, 8, 0x4b88f7);
     SelectClipRgn(dc, nullptr);
     DeleteObject(region);
   }
 
   Text(dc, (extracting || progress >= 0) ? std::to_wstring(std::max(0, progress)) + L"%"
                                          : L"Calculating progress...",
-       {110, 248, 650, 278}, g_small_font, 0x7890b2, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-  RoundedFill(dc, {110, 306, 650, 403}, 14, 0x121925);
-  Border(dc, {110, 306, 650, 403}, 14, 0x202c3e);
+       {110, 252, 650, 282}, g_small_font, 0x7890b2, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+  RoundedFill(dc, {110, 306, 650, 420}, 14, 0x121925);
+  Border(dc, {110, 306, 650, 420}, 14, 0x202c3e);
   Text(dc, L"Installing to", {134, 314, 626, 338}, g_small_font, 0x6da2f8,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
   std::wstring shown_path = g_install_dir;
   if (shown_path.size() > 62) shown_path = L"..." + shown_path.substr(shown_path.size() - 59);
   Text(dc, shown_path, {134, 338, 626, 362}, g_body_font, 0xdce7f5,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-  Text(dc, L"Everything is bundled except Microsoft WebView2, which Windows downloads only if missing.",
-       {134, 368, 626, 396}, g_small_font, 0x8fa4c0,
+  Text(dc, L"Setup uses bundled files and stays offline unless WebView2 is missing.",
+       {134, 366, 626, 388}, g_small_font, 0x8fa4c0,
+       DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+  Text(dc, L"If needed, Windows downloads WebView2 directly from Microsoft.",
+       {134, 388, 626, 410}, g_small_font, 0x8fa4c0,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 }
 
@@ -275,9 +292,9 @@ std::wstring DefaultInstallDirectory() {
   if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local_app_data))) {
     std::filesystem::path path(local_app_data);
     CoTaskMemFree(local_app_data);
-    return (path / L"Meetily - Actually Free").wstring();
+    return (path / L"Meetily-ActuallyFree").wstring();
   }
-  return L"C:\\Meetily - Actually Free";
+  return L"C:\\Meetily-ActuallyFree";
 }
 
 std::wstring ChooseDirectory(HWND owner) {
@@ -438,6 +455,7 @@ void CleanupProgressRegistry() {
 struct ProgressSearch {
   DWORD process_id;
   HWND control;
+  HWND status;
 };
 
 BOOL CALLBACK FindProgressChild(HWND window, LPARAM parameter) {
@@ -446,7 +464,10 @@ BOOL CALLBACK FindProgressChild(HWND window, LPARAM parameter) {
   if (GetClassNameW(window, class_name, static_cast<int>(std::size(class_name))) > 0 &&
       _wcsicmp(class_name, PROGRESS_CLASSW) == 0) {
     search->control = window;
-    return FALSE;
+  }
+  const int control_id = GetDlgCtrlID(window);
+  if ((control_id == 1006 || control_id == 1008) && !search->status) {
+    search->status = window;
   }
   return TRUE;
 }
@@ -456,21 +477,49 @@ BOOL CALLBACK FindInstallerWindow(HWND window, LPARAM parameter) {
   DWORD process_id = 0;
   GetWindowThreadProcessId(window, &process_id);
   if (process_id != search->process_id) return TRUE;
+  HWND previous_control = search->control;
   EnumChildWindows(window, FindProgressChild, parameter);
-  return search->control == nullptr;
+  // Hide only the stock NSIS progress window. A modal error/retry dialog has
+  // no progress control and must remain visible so installation cannot deadlock.
+  if (search->control && search->control != previous_control) {
+    ShowWindowAsync(window, SW_HIDE);
+  }
+  return search->control == nullptr || search->status == nullptr;
 }
 
 int ReadInstallerProgress(DWORD process_id) {
-  ProgressSearch search{process_id, nullptr};
+  ProgressSearch search{process_id, nullptr, nullptr};
   EnumWindows(FindInstallerWindow, reinterpret_cast<LPARAM>(&search));
   if (!search.control) return -1;
 
-  const LRESULT low = SendMessageW(search.control, PBM_GETRANGE, TRUE, 0);
-  const LRESULT high = SendMessageW(search.control, PBM_GETRANGE, FALSE, 0);
-  const LRESULT position = SendMessageW(search.control, PBM_GETPOS, 0, 0);
+  DWORD_PTR low = 0;
+  DWORD_PTR high = 0;
+  DWORD_PTR position = 0;
+  if (!SendMessageTimeoutW(search.control, PBM_GETRANGE, TRUE, 0,
+                           SMTO_ABORTIFHUNG, 50, &low) ||
+      !SendMessageTimeoutW(search.control, PBM_GETRANGE, FALSE, 0,
+                           SMTO_ABORTIFHUNG, 50, &high) ||
+      !SendMessageTimeoutW(search.control, PBM_GETPOS, 0, 0,
+                           SMTO_ABORTIFHUNG, 50, &position)) {
+    return -1;
+  }
   if (high <= low || position < low) return -1;
   return std::clamp(
       static_cast<int>(((position - low) * 100) / (high - low)), 0, 100);
+}
+
+std::wstring ReadInstallerDetail(DWORD process_id) {
+  ProgressSearch search{process_id, nullptr, nullptr};
+  EnumWindows(FindInstallerWindow, reinterpret_cast<LPARAM>(&search));
+  if (!search.status) return {};
+  wchar_t text[256]{};
+  DWORD_PTR result = 0;
+  if (!SendMessageTimeoutW(search.status, WM_GETTEXT, std::size(text),
+                           reinterpret_cast<LPARAM>(text), SMTO_ABORTIFHUNG,
+                           50, &result)) {
+    return {};
+  }
+  return text;
 }
 
 int ReadInstallerMilestone() {
@@ -499,12 +548,14 @@ void InstallWorker() {
   g_page = Page::Installing;
   g_progress.store(-1);
   PostMessageW(g_window, kWorkUpdate, 0, 0);
-  std::wstring command = L"\"" + g_payload_path + L"\" /S /PROGRESSTOKEN=" +
+  std::wstring command = L"\"" + g_payload_path + L"\" /P /PROGRESSTOKEN=" +
       g_progress_token + L" /D=" + g_install_dir;
   std::vector<wchar_t> command_buffer(command.begin(), command.end());
   command_buffer.push_back(L'\0');
   STARTUPINFOW startup{};
   startup.cb = sizeof(startup);
+  startup.dwFlags = STARTF_USESHOWWINDOW;
+  startup.wShowWindow = SW_HIDE;
   PROCESS_INFORMATION process{};
   if (!CreateProcessW(g_payload_path.c_str(), command_buffer.data(), nullptr, nullptr, FALSE,
                       CREATE_UNICODE_ENVIRONMENT, nullptr, nullptr, &startup, &process)) {
@@ -519,6 +570,11 @@ void InstallWorker() {
     const int milestone = ReadInstallerMilestone();
     if (milestone >= 0) g_milestone.store(milestone);
     const int progress = std::max(native_progress, milestone);
+    std::wstring detail = ReadInstallerDetail(process.dwProcessId);
+    if (!detail.empty()) {
+      std::lock_guard<std::mutex> lock(g_detail_mutex);
+      g_install_detail = std::move(detail);
+    }
     if (progress >= 0 && progress != g_progress.load()) {
       g_progress.store(progress);
       PostMessageW(g_window, kWorkUpdate, 0, 0);

@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
-import { X, Download, Check, Loader2, ArrowBigDownDash } from 'lucide-react';
+import { X, Check, ArrowBigDownDash } from 'lucide-react';
 import { getDownloadTotalMb } from '@/lib/onboarding-summary-model';
 
 interface DownloadProgress {
@@ -50,10 +50,8 @@ function categorizeError(error: string): string {
 // Custom toast component for download progress
 function DownloadToastContent({
   download,
-  onDismiss,
 }: {
   download: DownloadProgress;
-  onDismiss?: () => void;
 }) {
   const isComplete = download.status === 'completed';
   const hasError = download.status === 'error';
@@ -62,7 +60,6 @@ function DownloadToastContent({
 
   return (
     <div className="flex items-center gap-3 w-full max-w-sm bg-white rounded-lg shadow-lg border border-gray-200 p-3 relative">
-
       {/* Icon */}
       <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${isComplete ? 'bg-green-100' : hasError ? 'bg-red-100' : isCancelled ? 'bg-gray-100' : 'bg-gray-100'
         }`}>
@@ -125,7 +122,6 @@ function DownloadToastContent({
 // Hook to manage download progress toasts
 export function useDownloadProgressToast() {
   const [downloads, setDownloads] = useState<Map<string, DownloadProgress>>(new Map());
-  const [dismissedModels, setDismissedModels] = useState<Set<string>>(new Set());
 
   const updateDownload = useCallback((modelName: string, data: Partial<DownloadProgress>) => {
     setDownloads((prev) => {
@@ -145,10 +141,12 @@ export function useDownloadProgressToast() {
     });
   }, []);
 
-  const cleanupDownload = useCallback((modelName: string, delay: number = 4000) => {
-    // Remove download from map after delay (allows toast to show and auto-dismiss)
+  const cleanupDownload = useCallback((modelName: string, expectedStatus: DownloadProgress['status'], delay: number = 4000) => {
+    // A retry can begin before an old terminal toast expires. Delete only the
+    // terminal state that scheduled this timer, never a newer active transfer.
     setTimeout(() => {
       setDownloads((prev) => {
+        if (prev.get(modelName)?.status !== expectedStatus) return prev;
         const updated = new Map(prev);
         updated.delete(modelName);
         return updated;
@@ -169,55 +167,30 @@ export function useDownloadProgressToast() {
       }
     };
 
-    // Dismiss handler
-    const dismissToast = () => {
-      toast.dismiss(toastId);
-      setDismissedModels(prev => {
-        const next = new Set(prev);
-        next.add(download.modelName);
-        return next;
-      });
-    };
-
     toast.custom(
-      (t) => (
+      () => (
         <DownloadToastContent
           download={download}
-          onDismiss={dismissToast}
         />
       ),
       {
-        position: 'top-right',
+        position: 'bottom-right',
         id: toastId,
         duration: getDuration(),
       }
     );
   }, []);
 
-  // Effect to handle toast visibility based on dismissed state
+  // Show terminal notifications; active transfers use the persistent stack.
   useEffect(() => {
     downloads.forEach((download) => {
-      // If model was dismissed and is still downloading, don't show it
-      if (dismissedModels.has(download.modelName) && download.status === 'downloading') {
-        return;
-      }
-
-      // If status changed to completed or error, we might want to show it even if dismissed previously
-      // (Optional: remove from dismissed set if you want to force show completion)
-      if (download.status === 'completed' || download.status === 'error') {
-        if (dismissedModels.has(download.modelName)) {
-          // Remove from dismissed so we can show the completion/error toast
-          setDismissedModels(prev => {
-            const next = new Set(prev);
-            next.delete(download.modelName);
-            return next;
-          });
-        }
-      }
+      // Active transfers use the dedicated stacked top-right status below.
+      // Sonner is reserved for terminal completion/error notifications.
+      if (download.status === 'downloading') return;
 
       showDownloadToast(download);
     });
-  }, [downloads, dismissedModels, showDownloadToast]);
+  }, [downloads, showDownloadToast]);
 
   // Listen to Parakeet download events
   useEffect(() => {
@@ -249,7 +222,7 @@ export function useDownloadProgressToast() {
 
       // Clean up cancelled downloads after delay to auto-dismiss toast
       if (downloadData.status === 'cancelled') {
-        cleanupDownload(modelName, 6000); // 5s toast + 1s buffer
+        cleanupDownload(modelName, 'cancelled', 6000); // 5s toast + 1s buffer
       }
       // Removed direct showDownloadToast call here, handled by effect
     });
@@ -269,7 +242,7 @@ export function useDownloadProgressToast() {
         };
         updateDownload(modelName, downloadData);
         // Clean up after 4 seconds (completion toast duration is 3s + 1s buffer)
-        cleanupDownload(modelName, 4000);
+        cleanupDownload(modelName, 'completed', 4000);
       }
     );
 
@@ -289,7 +262,7 @@ export function useDownloadProgressToast() {
         };
         updateDownload(modelName, downloadData);
         // Clean up after 11 seconds (error toast duration is 10s + 1s buffer)
-        cleanupDownload(modelName, 11000);
+        cleanupDownload(modelName, 'error', 11000);
       }
     );
 
@@ -335,11 +308,11 @@ export function useDownloadProgressToast() {
 
       // Clean up finished downloads after delay to prevent endless toasts
       if (downloadData.status === 'completed') {
-        cleanupDownload(model, 4000);  // 3s toast + 1s buffer
+        cleanupDownload(model, 'completed', 4000);  // 3s toast + 1s buffer
       } else if (downloadData.status === 'error') {
-        cleanupDownload(model, 11000); // 10s toast + 1s buffer
+        cleanupDownload(model, 'error', 11000); // 10s toast + 1s buffer
       } else if (downloadData.status === 'cancelled') {
-        cleanupDownload(model, 6000);  // 5s toast + 1s buffer
+        cleanupDownload(model, 'cancelled', 6000);  // 5s toast + 1s buffer
       }
     });
 
@@ -353,6 +326,22 @@ export function useDownloadProgressToast() {
 
 // Component to initialize download toast listeners at app level
 export function DownloadProgressToastProvider() {
-  useDownloadProgressToast();
-  return null;
+  const { downloads } = useDownloadProgressToast();
+  const activeDownloads = Array.from(downloads.values()).filter(
+    (download) => download.status === 'downloading',
+  );
+
+  if (activeDownloads.length === 0) return null;
+
+  return (
+    <div className="pointer-events-none fixed right-5 top-28 z-[70] flex w-[min(22rem,calc(100vw-2.5rem))] flex-col gap-2">
+      {activeDownloads.map((download) => (
+        <div key={download.modelName} className="pointer-events-auto">
+          <DownloadToastContent
+            download={download}
+          />
+        </div>
+      ))}
+    </div>
+  );
 }

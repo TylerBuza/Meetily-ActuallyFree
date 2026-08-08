@@ -60,6 +60,13 @@ export function YourNameStep() {
         <p className="text-center text-xs text-[var(--af-text-3)]">
           Example: lines you speak show as <strong className="text-blue-400">{name.trim() || 'You'} (You)</strong>
         </p>
+        <button
+          type="button"
+          onClick={saveAndNext}
+          className="mt-6 h-11 w-full rounded-xl bg-[var(--af-accent)] text-sm font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.99]"
+        >
+          Continue
+        </button>
       </div>
     </OnboardingContainer>
   );

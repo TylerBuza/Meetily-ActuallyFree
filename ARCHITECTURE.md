@@ -269,7 +269,7 @@ build-universal-windows.ps1
   -> build-installer-bootstrapper.ps1 embeds that engine as RCDATA
   -> user runs the frameless bootstrapper
   -> bootstrapper extracts + SHA-256 verifies the engine in %TEMP%
-  -> engine runs silently and performs the real installation
+  -> engine runs in passive mode with its stock window forced hidden
   -> bootstrapper shows completion and launches meetily.exe
 ```
 
@@ -284,15 +284,19 @@ Relevant files:
 | `frontend/scripts/build-universal-windows.ps1` | Builds CPU/Vulkan/CUDA variants, packages NSIS, builds the outer setup, signs updater bytes, and writes `latest.json`/checksums |
 
 The bootstrapper shows byte-accurate determinate progress while extracting its
-payload. During installation it reads the hidden NSIS progress control and
-combines that with explicit phase-completion milestones under the temporary
+payload. During installation it launches NSIS with `/P` rather than `/S`, hides
+the stock window before display, and reads its real progress control/current
+operation text. It combines that with explicit phase-completion milestones
+under the temporary
 `HKCU\Software\meetily\InstallerProgress\<token>` key. This gives a real percent
 while still identifying runtime phases where NSIS itself is waiting on a child
 installer. The key is unique per run and removed when the engine exits. Closing
 is blocked once installation starts because externally terminating NSIS can
 leave a partial installation. The wrapper also restores the previously
 registered install path from `HKCU\Software\meetily\Meetily - Actually Free`
-before offering the default.
+before offering the default. Fresh installs default to
+`%LOCALAPPDATA%\Meetily-ActuallyFree` (no spaces); do not derive the folder from
+the display product name, which intentionally contains spaces.
 
 Backend selection still belongs to `installer-hooks.nsh`; do not reimplement it
 in the bootstrapper. The universal package stages three app executables and the
@@ -321,7 +325,14 @@ Onboarding itself is rendered by
 `frontend/src/components/onboarding/OnboardingFlow.tsx`. The update choice is in
 `steps/WelcomeStep.tsx`; the fork issue link is in `steps/SetupOverviewStep.tsx`
 and uses the `open_external_url` Tauri command because browser-style
-`target="_blank"` links are unreliable inside a desktop webview.
+`target="_blank"` links are unreliable inside a desktop webview. On Windows that
+command calls `ShellExecuteW` directly; do not regress it to `cmd /C start`,
+which flashes a console and mishandles some URLs.
+
+Model transfers continue when onboarding advances. Their persistent UI is
+`components/shared/DownloadProgressToast.tsx`: active downloads render in one
+stacked top-right region (not independent overlapping Sonner toasts), while
+completion and errors use short bottom-right Sonner notifications.
 
 ### Release rules
 
