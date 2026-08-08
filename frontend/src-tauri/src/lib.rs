@@ -72,6 +72,13 @@ static RECORDING_FLAG: AtomicBool = AtomicBool::new(false);
 static LANGUAGE_PREFERENCE: std::sync::LazyLock<StdMutex<String>> =
     std::sync::LazyLock::new(|| StdMutex::new("en".to_string()));
 
+#[tauri::command]
+fn get_check_updates_on_launch() -> bool {
+    std::fs::read_to_string(paths::install_data_root().join("check-updates-on-launch.txt"))
+        .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "yes" | "true" | "1"))
+        .unwrap_or(false)
+}
+
 #[derive(Debug, Deserialize)]
 struct RecordingArgs {
     save_path: String,
@@ -689,6 +696,7 @@ pub fn run() {
             whisper_engine::parallel_commands::prepare_audio_chunks,
             whisper_engine::parallel_commands::test_parallel_processing_setup,
             get_audio_devices,
+            get_check_updates_on_launch,
             trigger_microphone_permission,
             start_recording_with_devices,
             start_recording_with_devices_and_meeting,

@@ -12,6 +12,8 @@ use super::buffer_pool::AudioBufferPool;
 pub enum DeviceType {
     Microphone,
     System,
+    /// Pre-mixed mic+system for the playback file (`audio.mp4`).
+    Mixed,
 }
 
 /// Audio chunk with metadata for processing
@@ -124,6 +126,9 @@ pub struct RecordingState {
     // Pause time tracking
     pause_start: Mutex<Option<Instant>>,
     total_pause_duration: Mutex<std::time::Duration>,
+    capture_setup_complete: AtomicBool,
+    microphone_capture_active: AtomicBool,
+    system_capture_active: AtomicBool,
 }
 
 impl RecordingState {
@@ -145,6 +150,9 @@ impl RecordingState {
             recording_start: Mutex::new(None),
             pause_start: Mutex::new(None),
             total_pause_duration: Mutex::new(std::time::Duration::ZERO),
+            capture_setup_complete: AtomicBool::new(false),
+            microphone_capture_active: AtomicBool::new(false),
+            system_capture_active: AtomicBool::new(false),
         })
     }
 
@@ -155,12 +163,39 @@ impl RecordingState {
         self.error_count.store(0, Ordering::SeqCst);
         self.recoverable_error_count.store(0, Ordering::SeqCst);
         *self.last_error.lock().unwrap() = None;
+        self.capture_setup_complete.store(false, Ordering::SeqCst);
+        self.microphone_capture_active.store(false, Ordering::SeqCst);
+        self.system_capture_active.store(false, Ordering::SeqCst);
         Ok(())
+    }
+
+    pub fn set_capture_active(&self, device_type: DeviceType, active: bool) {
+        match device_type {
+            DeviceType::Microphone => self.microphone_capture_active.store(active, Ordering::SeqCst),
+            DeviceType::System => self.system_capture_active.store(active, Ordering::SeqCst),
+            DeviceType::Mixed => {}
+        }
+    }
+
+    pub fn finish_capture_setup(&self) {
+        self.capture_setup_complete.store(true, Ordering::SeqCst);
+    }
+
+    pub fn active_capture_sources(&self) -> Option<(bool, bool)> {
+        self.capture_setup_complete.load(Ordering::SeqCst).then(|| {
+            (
+                self.microphone_capture_active.load(Ordering::SeqCst),
+                self.system_capture_active.load(Ordering::SeqCst),
+            )
+        })
     }
 
     pub fn stop_recording(&self) {
         self.is_recording.store(false, Ordering::SeqCst);
         self.is_paused.store(false, Ordering::SeqCst);
+        self.capture_setup_complete.store(false, Ordering::SeqCst);
+        self.microphone_capture_active.store(false, Ordering::SeqCst);
+        self.system_capture_active.store(false, Ordering::SeqCst);
         // Clear pause tracking when stopping
         *self.pause_start.lock().unwrap() = None;
         // CRITICAL: Clear audio sender to close the pipeline channel
@@ -433,6 +468,9 @@ impl Default for RecordingState {
             recording_start: Mutex::new(None),
             pause_start: Mutex::new(None),
             total_pause_duration: Mutex::new(std::time::Duration::ZERO),
+            capture_setup_complete: AtomicBool::new(false),
+            microphone_capture_active: AtomicBool::new(false),
+            system_capture_active: AtomicBool::new(false),
         }
     }
 }

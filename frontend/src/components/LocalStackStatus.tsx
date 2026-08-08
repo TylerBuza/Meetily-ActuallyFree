@@ -23,6 +23,8 @@ type StackStatus = {
   modelsDir?: string;
   vramHintMb?: number;
   cuda: boolean;
+  vulkan?: boolean;
+  sttBackend?: string;
   networkPolicy?: string;
   networkNote?: string;
 };
@@ -165,7 +167,10 @@ export function LocalStackStatus() {
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--af-text)]">
             <Cpu size={16} className="text-purple-400" /> Memory / GPU
           </div>
-          <Pill ok={!!status?.cuda} label={status?.cuda ? 'CUDA build' : 'CPU / other'} />
+          <Pill
+            ok={status?.sttBackend !== 'CPU'}
+            label={`${status?.sttBackend || (status?.cuda ? 'CUDA' : status?.vulkan ? 'Vulkan' : 'CPU')} build`}
+          />
           <p className="mt-1 text-xs text-[var(--af-text-2)]">
             Rough STT VRAM in use: ~{status?.vramHintMb ?? 0} MB
           </p>

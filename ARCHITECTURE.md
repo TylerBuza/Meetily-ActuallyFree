@@ -72,14 +72,16 @@ directory, not scattered across `%APPDATA%` / `~/Library`.
 |---|---|
 | Database, templates, settings, models | `<exe dir>/data/…` |
 | Bundled diarization models | `<exe dir>/resources/diarization/` |
-| **Audio recordings** | `%USERPROFILE%\Music\meetily-recordings\<meeting>\audio.mp4` |
+| **Audio recordings** | `%USERPROFILE%\Music\meetily-recordings\<meeting>\audio.mp4` (mixed), plus `mic.mp4` / `system.mp4` source tracks |
 
 Two gotchas:
 
 1. **Recordings are the exception.** They follow the user's configured
    recordings folder (`audio/recording_preferences.rs`), *not* the data root,
-   and they are **`.mp4`, not `.wav`**. Code that looks for recordings must
-   handle both the location and the container — see `diarization::find_meeting_audio`.
+   and they are **`.mp4`, not `.wav`**. New recordings retain aligned
+   `audio.mp4` (mixed playback), `mic.mp4` (local user), and `system.mp4`
+   (remote/computer audio). Code that looks for playback must prefer
+   `audio.mp4` — see `diarization::find_meeting_audio`.
 2. `paths.rs` falls back to the OS data dir if the install directory isn't
    writable (e.g. installed under Program Files).
 
@@ -107,12 +109,21 @@ onnxruntime and risk duplicate-symbol failures at link time.
 
 ### Offline pipeline
 
-1. Load audio, downmix, resample to 16 kHz.
+1. New recordings load `mic.mp4` and `system.mp4` independently. The mic track
+   is deterministically the local user; only system audio is clustered into
+   remote speakers. Older meetings fall back to mixed `audio.mp4` plus the
+   enrolled user voiceprint. Decode/downmix/resample inputs to 16 kHz.
 2. Slide a 10 s window; run segmentation; decode the powerset output into
    per-frame activity for up to 3 *local* speakers.
 3. Embed each local speaker's audio in each window.
 4. Cluster embeddings globally → *global* speaker identities.
 5. Merge adjacent same-speaker regions.
+
+The mic track updates `<data>/voiceprint/user_voiceprint.json`; live
+diarization seeds the user centroid from that profile on later calls.
+Overlapped speech remains excluded from embeddings, but overlap timing is
+retained. Transcript rows can carry combined labels such as
+`You + Speaker 1` rather than being forced to one voice.
 
 Two non-obvious refinements, both from real failure cases:
 

@@ -1,7 +1,7 @@
 {
     "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
     "productName": "Meetily - Actually Free",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "identifier": "com.meetily.ai",
     "build": {
         "frontendDist": "../out",
@@ -93,7 +93,8 @@
         "resources": [
             "templates/*.json",
             "resources/diarization/*",
-            "runtime-deps/*"
+            "runtime-deps/*",
+            "installer-variants/*"
         ],
         "externalBin": [
             "binaries/llama-helper",
@@ -127,7 +128,7 @@
     },
     "plugins": {
         "updater": {
-            "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVDQTYzMUQ3ODc5N0M4MkEKUldRcXlKZUgxekdtN09DRkVWSHNpZlJseEVOUmpNd1dDSTNaLzZ3MXJGTnY3WW1pdnlOYjBpbkIK",
+            "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc1MjA0M0FCMkRCNzM2QUIKUldTck5yY3RxME1nZFZmNTlaSFpLYVYxelh1RFp6cE9lOFZ2VkE0VlFXdThWUzRUK091c2ZQQ3AK",
             "endpoints": [
                 "https://github.com/TylerBuza/Meetily-ActuallyFree/releases/latest/download/latest.json"
             ]

@@ -108,16 +108,26 @@ pub fn start() -> Result<()> {
     let mut guard = ONLINE
         .lock()
         .map_err(|_| anyhow!("online diarizer lock poisoned"))?;
+    // Seed speaker 0 with the enrolled local-user voiceprint when one exists.
+    // The mic path remains authoritative, but enrollment makes the identity
+    // stable from the first utterance instead of relearning it every meeting.
+    let enrolled = super::voiceprint::load()
+        .map(|v| v.embedding)
+        .filter(|e| !e.is_empty());
+    let has_enrolled = enrolled.is_some();
     *guard = Some(OnlineDiarizer {
         models,
-        centroids: Vec::new(),
-        counts: Vec::new(),
-        mic_counts: Vec::new(),
+        centroids: enrolled.into_iter().collect(),
+        counts: if has_enrolled { vec![4.0] } else { Vec::new() },
+        mic_counts: if has_enrolled { vec![4.0] } else { Vec::new() },
         last_speaker: 0,
         last_system_speaker: None,
-        last_mic_speaker: None,
+        last_mic_speaker: has_enrolled.then_some(0),
     });
-    log::info!("🧑‍🤝‍🧑 Live speaker identification started");
+    log::info!(
+        "🧑‍🤝‍🧑 Live speaker identification started (voiceprint={})",
+        has_enrolled
+    );
     Ok(())
 }
 
@@ -202,8 +212,10 @@ pub fn assign_speaker(samples: &[f32], mic_dominant: bool) -> Option<LiveSpeaker
             best = i;
         }
     }
-    // If we skipped everyone (only user centroid exists), fall back to full search.
-    if best_sim == f32::NEG_INFINITY {
+    // Mic may match the enrolled user. If system audio skipped the only user
+    // centroid, deliberately create a remote cluster instead of contaminating
+    // the user voiceprint centroid.
+    if best_sim == f32::NEG_INFINITY && mic_dominant {
         for (i, c) in d.centroids.iter().enumerate() {
             let sim: f32 = embedding.iter().zip(c).map(|(a, b)| a * b).sum();
             if sim > best_sim {

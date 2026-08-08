@@ -40,6 +40,12 @@ pub struct MeetingMetadata {
     pub duration_seconds: Option<f64>,
     pub devices: DeviceInfo,
     pub audio_file: String,
+    /// Dedicated local-user track for reliable offline identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mic_audio_file: Option<String>,
+    /// Dedicated system/remote track for remote-speaker clustering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_audio_file: Option<String>,
     pub transcript_file: String,
     pub sample_rate: u32,
     pub status: String,  // "recording", "completed", "error"
@@ -51,27 +57,37 @@ pub struct DeviceInfo {
     pub system_audio: Option<String>,
 }
 
-/// New recording saver using incremental saving strategy
+/// New recording saver using incremental saving strategy.
+/// Writes three tracks when auto-save is on:
+///   - `audio.mp4`  mixed playback
+///   - `mic.mp4`    local user (You)
+///   - `system.mp4` remote / computer audio
 pub struct RecordingSaver {
-    incremental_saver: Option<Arc<AsyncMutex<IncrementalAudioSaver>>>,
+    mixed_saver: Option<Arc<AsyncMutex<IncrementalAudioSaver>>>,
+    mic_saver: Option<Arc<AsyncMutex<IncrementalAudioSaver>>>,
+    system_saver: Option<Arc<AsyncMutex<IncrementalAudioSaver>>>,
     meeting_folder: Option<PathBuf>,
     meeting_name: Option<String>,
     metadata: Option<MeetingMetadata>,
     transcript_segments: Arc<Mutex<Vec<TranscriptSegment>>>,
     chunk_receiver: Option<mpsc::UnboundedReceiver<AudioChunk>>,
     is_saving: Arc<Mutex<bool>>,
+    accumulation_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl RecordingSaver {
     pub fn new() -> Self {
         Self {
-            incremental_saver: None,
+            mixed_saver: None,
+            mic_saver: None,
+            system_saver: None,
             meeting_folder: None,
             meeting_name: None,
             metadata: None,
             transcript_segments: Arc::new(Mutex::new(Vec::new())),
             chunk_receiver: None,
             is_saving: Arc::new(Mutex::new(false)),
+            accumulation_handle: None,
         }
     }
 
@@ -179,45 +195,37 @@ impl RecordingSaver {
         }
 
         // Start accumulation task
-        let is_saving_clone = self.is_saving.clone();
-        let incremental_saver_arc = self.incremental_saver.clone();
+        let mixed_saver = self.mixed_saver.clone();
+        let mic_saver = self.mic_saver.clone();
+        let system_saver = self.system_saver.clone();
         let save_audio = auto_save;
 
         if let Some(mut receiver) = self.chunk_receiver.take() {
-            tokio::spawn(async move {
+            self.accumulation_handle = Some(tokio::spawn(async move {
+                use super::recording_state::DeviceType;
                 info!("Recording saver accumulation task started (save_audio: {})", save_audio);
 
                 while let Some(chunk) = receiver.recv().await {
-                    // Check if we should continue
-                    let should_continue = if let Ok(is_saving) = is_saving_clone.lock() {
-                        *is_saving
-                    } else {
-                        false
-                    };
-
-                    if !should_continue {
-                        break;
+                    if !save_audio {
+                        continue;
                     }
 
-                    // Only process audio chunks if auto_save is enabled
-                    if save_audio {
-                        // Add chunk to incremental saver
-                        if let Some(saver_arc) = &incremental_saver_arc {
-                            let mut saver_guard = saver_arc.lock().await;
-                            if let Err(e) = saver_guard.add_chunk(chunk) {
-                                error!("Failed to add chunk to incremental saver: {}", e);
-                            }
-                        } else {
-                            error!("Incremental saver not available while accumulating");
+                    let target = match chunk.device_type {
+                        DeviceType::Mixed => mixed_saver.as_ref(),
+                        DeviceType::Microphone => mic_saver.as_ref(),
+                        DeviceType::System => system_saver.as_ref(),
+                    };
+
+                    if let Some(saver_arc) = target {
+                        let mut saver_guard = saver_arc.lock().await;
+                        if let Err(e) = saver_guard.add_chunk(chunk) {
+                            error!("Failed to add chunk to track saver: {}", e);
                         }
-                    } else {
-                        // auto_save is false: discard audio chunk (no-op)
-                        // Transcription already happened in the pipeline before this point
                     }
                 }
 
                 info!("Recording saver accumulation task ended");
-            });
+            }));
         }
 
         // Set saving flag
@@ -240,11 +248,18 @@ impl RecordingSaver {
         // Create meeting folder structure (with or without .checkpoints/ subdirectory)
         let meeting_folder = create_meeting_folder(&base_folder, meeting_name, create_checkpoints)?;
 
-        // Only initialize incremental saver if checkpoints are needed (auto_save is true)
+        // Three tracks: mixed playback + separate mic/system for offline diarization
         if create_checkpoints {
-            let incremental_saver = IncrementalAudioSaver::new(meeting_folder.clone(), 48000)?;
-            self.incremental_saver = Some(Arc::new(AsyncMutex::new(incremental_saver)));
-            info!("✅ Incremental audio saver initialized for meeting: {}", meeting_name);
+            let mixed = IncrementalAudioSaver::new_track(meeting_folder.clone(), 48000, "audio")?;
+            let mic = IncrementalAudioSaver::new_track(meeting_folder.clone(), 48000, "mic")?;
+            let system = IncrementalAudioSaver::new_track(meeting_folder.clone(), 48000, "system")?;
+            self.mixed_saver = Some(Arc::new(AsyncMutex::new(mixed)));
+            self.mic_saver = Some(Arc::new(AsyncMutex::new(mic)));
+            self.system_saver = Some(Arc::new(AsyncMutex::new(system)));
+            info!(
+                "✅ Dual-track audio savers initialized (audio/mic/system) for: {}",
+                meeting_name
+            );
         } else {
             info!("⚠️  Skipped incremental audio saver (auto-save disabled)");
         }
@@ -262,6 +277,8 @@ impl RecordingSaver {
                 system_audio: None,
             },
             audio_file: if create_checkpoints { "audio.mp4".to_string() } else { "".to_string() },
+            mic_audio_file: create_checkpoints.then(|| "mic.mp4".to_string()),
+            system_audio_file: create_checkpoints.then(|| "system.mp4".to_string()),
             transcript_file: "transcripts.json".to_string(),
             sample_rate: 48000,
             status: "recording".to_string(),
@@ -343,9 +360,8 @@ impl RecordingSaver {
         Ok(())
     }
 
-    // in frontend/src-tauri/src/audio/recording_saver.rs
     pub fn get_stats(&self) -> (usize, u32) {
-        if let Some(ref saver) = self.incremental_saver {
+        if let Some(ref saver) = self.mixed_saver {
             if let Ok(guard) = saver.try_lock() {
                 (guard.get_checkpoint_count() as usize, 48000)
             } else {
@@ -368,16 +384,17 @@ impl RecordingSaver {
     ) -> Result<Option<String>, String> {
         info!("Stopping recording saver");
 
-        // Stop accumulation
+        // The pipeline has already stopped and dropped its sender. Drain every
+        // queued track chunk before taking the saver locks for finalization.
         if let Ok(mut is_saving) = self.is_saving.lock() {
             *is_saving = false;
         }
-
-        // Give time for final chunks
-        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        if let Some(handle) = self.accumulation_handle.take() {
+            handle.await.map_err(|e| format!("Recording saver task failed: {e}"))?;
+        }
 
         // Check if incremental saver exists (indicates auto_save was enabled)
-        let should_save_audio = self.incremental_saver.is_some();
+        let should_save_audio = self.mixed_saver.is_some();
 
         if !should_save_audio {
             info!("⚠️  No audio saver initialized (auto-save was disabled) - skipping audio finalization");
@@ -385,23 +402,43 @@ impl RecordingSaver {
             return Ok(None);
         }
 
-        // Finalize incremental saver (merge checkpoints into final audio.mp4)
-        let final_audio_path = if let Some(saver_arc) = &self.incremental_saver {
-            let mut saver = saver_arc.lock().await;
-            match saver.finalize().await {
+        // Finalize all tracks. Mixed is required; mic/system are best-effort
+        // (one side may be silent the whole meeting).
+        async fn finalize_track(
+            saver: &Option<Arc<AsyncMutex<IncrementalAudioSaver>>>,
+            label: &str,
+            required: bool,
+        ) -> Result<Option<PathBuf>, String> {
+            let Some(saver_arc) = saver else {
+                return if required {
+                    Err(format!("No {label} saver initialized"))
+                } else {
+                    Ok(None)
+                };
+            };
+            let mut guard = saver_arc.lock().await;
+            match guard.finalize().await {
                 Ok(path) => {
-                    info!("✅ Successfully finalized audio: {}", path.display());
-                    path
+                    info!("✅ Finalized {label}: {}", path.display());
+                    Ok(Some(path))
                 }
                 Err(e) => {
-                    error!("❌ Failed to finalize incremental saver: {}", e);
-                    return Err(format!("Failed to finalize audio: {}", e));
+                    if required {
+                        error!("❌ Failed to finalize {label}: {e}");
+                        Err(format!("Failed to finalize {label}: {e}"))
+                    } else {
+                        warn!("⚠️ Optional track {label} not finalized: {e}");
+                        Ok(None)
+                    }
                 }
             }
-        } else {
-            error!("No incremental saver initialized - cannot save recording");
-            return Err("No incremental saver initialized".to_string());
-        };
+        }
+
+        let final_audio_path = finalize_track(&self.mixed_saver, "audio (mixed)", true)
+            .await?
+            .ok_or_else(|| "Mixed audio path missing".to_string())?;
+        let mic_audio_path = finalize_track(&self.mic_saver, "mic", false).await?;
+        let system_audio_path = finalize_track(&self.system_saver, "system", false).await?;
 
         // Save final transcripts.json with validation
         if let Some(folder) = &self.meeting_folder {
@@ -423,6 +460,12 @@ impl RecordingSaver {
         if let (Some(folder), Some(mut metadata)) = (&self.meeting_folder, self.metadata.clone()) {
             metadata.status = "completed".to_string();
             metadata.completed_at = Some(chrono::Utc::now().to_rfc3339());
+            metadata.mic_audio_file = mic_audio_path
+                .as_ref()
+                .map(|path| path.file_name().unwrap_or_default().to_string_lossy().into_owned());
+            metadata.system_audio_file = system_audio_path
+                .as_ref()
+                .map(|path| path.file_name().unwrap_or_default().to_string_lossy().into_owned());
 
             // Use actual recording duration from RecordingState (more accurate than transcript segments)
             // Falls back to last transcript segment if duration not provided

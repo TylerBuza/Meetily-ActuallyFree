@@ -193,6 +193,11 @@ pub fn start_transcription_task<R: Runtime>(
                                         None => "Guest".to_string(),
                                     }
                                 }
+                                // Mixed is for disk only — never STT'd.
+                                crate::audio::recording_state::DeviceType::Mixed => {
+                                    chunks_completed_clone.fetch_add(1, Ordering::SeqCst);
+                                    continue;
+                                }
                             };
 
                             // Transcribe with provider-agnostic approach

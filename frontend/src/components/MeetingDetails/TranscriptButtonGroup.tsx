@@ -47,11 +47,30 @@ export function TranscriptButtonGroup({
   }, []);
 
   const handleRetranscribeComplete = useCallback(async () => {
-    // Refetch transcripts to show the updated data
+    // Retranscription replaces transcript rows and therefore clears speaker
+    // labels. Immediately re-run the improved offline pass (dual tracks when
+    // available; enrolled voiceprint fallback for older mixed recordings).
+    if (meetingId && diarizeAvailable) {
+      const toastId = toast.loading('Refreshing speaker labels…', {
+        description: 'Running improved diarization on the enhanced transcript.',
+      });
+      try {
+        const knownCount = parseInt(expectedSpeakers, 10);
+        await invoke('diarize_meeting', {
+          meetingId,
+          numSpeakers: Number.isFinite(knownCount) && knownCount > 0 ? knownCount : null,
+        });
+        toast.success('Speaker labels refreshed', { id: toastId });
+      } catch (error) {
+        console.warn('Post-retranscription diarization skipped:', error);
+        toast.warning('Transcript enhanced; speaker refresh unavailable', { id: toastId });
+      }
+    }
+
     if (onRefetchTranscripts) {
       await onRefetchTranscripts();
     }
-  }, [onRefetchTranscripts]);
+  }, [meetingId, diarizeAvailable, expectedSpeakers, onRefetchTranscripts]);
 
   const handleIdentifySpeakers = useCallback(async (expected?: number) => {
     if (!meetingId || isDiarizing) return;
@@ -166,8 +185,9 @@ export function TranscriptButtonGroup({
           </DialogTitle>
           <div className="mt-2 space-y-3">
             <p className="text-sm text-gray-500">
-              How many people spoke in this meeting? Telling us is far more accurate than letting
-              the app guess — leave it blank to auto-detect.
+              How many distinct voices were in this meeting, <span className="text-[var(--af-text,#374151)] font-medium">including you</span>?
+              For example, you plus one other person is <span className="text-[var(--af-text,#374151)] font-medium">2</span>.
+              Entering the count is much more accurate than auto-detect — leave blank to guess.
             </p>
             <input
               type="number"

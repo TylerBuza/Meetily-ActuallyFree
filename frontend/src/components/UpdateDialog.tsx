@@ -25,6 +25,7 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
   const [progress, setProgress] = useState<UpdateProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [update, setUpdate] = useState<Update | null>(null);
+  const [phase, setPhase] = useState<'idle' | 'preparing' | 'downloading' | 'installing'>('idle');
 
   useEffect(() => {
     if (open && updateInfo?.available) {
@@ -32,6 +33,7 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
       setIsDownloading(false);
       setProgress(null);
       setError(null);
+      setPhase('idle');
 
       // Get the update object when dialog opens
       check().then((updateResult) => {
@@ -50,6 +52,7 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
       setProgress(null);
       setError(null);
       setUpdate(null);
+      setPhase('idle');
     }
   }, [open, updateInfo]);
 
@@ -78,6 +81,7 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
     }
 
     setIsDownloading(true);
+    setPhase('preparing');
     setError(null);
     setProgress({ downloaded: 0, total: 0, percentage: 0 });
 
@@ -89,6 +93,7 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
       await updateToUse.downloadAndInstall((event) => {
         switch (event.event) {
           case 'Started':
+            setPhase('downloading');
             contentLength = event.data.contentLength || 0;
             console.log(`[UpdateDialog] Started downloading ${contentLength} bytes`);
             setProgress({
@@ -112,6 +117,7 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
             break;
 
           case 'Finished':
+            setPhase('installing');
             console.log('[UpdateDialog] Download finished');
             setProgress({
               downloaded: contentLength,
@@ -127,6 +133,7 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
 
       // Mark download as complete before closing
       setIsDownloading(false);
+      setPhase('idle');
 
       // Close dialog before relaunch
       handleOpenChange(false);
@@ -137,6 +144,7 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
       console.error('Update failed:', err);
       setError(err.message || 'Failed to download or install update');
       setIsDownloading(false);
+      setPhase('idle');
       toast.error('Update failed: ' + (err.message || 'Unknown error'));
     }
   };
@@ -181,61 +189,73 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="sm:max-w-[500px]"
+        className="overflow-hidden border-slate-700/80 bg-[#0b1220] p-0 text-slate-100 shadow-2xl shadow-black/50 sm:max-w-[520px]"
         onEscapeKeyDown={handleEscapeKeyDown}
         onInteractOutside={handleInteractOutside}
       >
+        <div className="border-b border-slate-800 bg-gradient-to-br from-slate-900 via-[#0d1728] to-[#0a1c25] px-6 py-5">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="flex items-center gap-3 text-lg text-slate-100">
             {isDownloading ? (
               <>
-                <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
-                Downloading Update
+                <span className="flex h-9 w-9 items-center justify-center rounded-full border border-cyan-400/25 bg-cyan-400/10">
+                  <Loader2 className="h-5 w-5 animate-spin text-cyan-300" />
+                </span>
+                {phase === 'installing' ? 'Installing Update' : 'Downloading Update'}
               </>
             ) : error ? (
               <>
-                <AlertCircle className="h-5 w-5 text-red-600" />
+                <span className="flex h-9 w-9 items-center justify-center rounded-full border border-red-400/25 bg-red-400/10">
+                  <AlertCircle className="h-5 w-5 text-red-300" />
+                </span>
                 Update Error
               </>
             ) : (
               <>
-                <Download className="h-5 w-5 text-blue-600" />
+                <span className="flex h-9 w-9 items-center justify-center rounded-full border border-cyan-400/25 bg-cyan-400/10">
+                  <Download className="h-5 w-5 text-cyan-300" />
+                </span>
                 Update Available
               </>
             )}
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="pl-12 text-slate-400">
             {isDownloading
-              ? 'Downloading the latest version...'
+              ? phase === 'installing'
+                ? 'Download complete. Verifying and installing the update.'
+                : phase === 'preparing'
+                  ? 'Preparing the secure download...'
+                  : 'Downloading the signed update package from GitHub.'
               : error
               ? 'An error occurred while updating'
               : `A new version (${updateInfo.version}) is available`}
           </DialogDescription>
         </DialogHeader>
+        </div>
 
-        <div className="space-y-4 py-4">
+        <div className="space-y-5 px-6 py-5">
           {!isDownloading && !error && (
             <>
-              <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Current Version:</span>
-                  <span className="font-medium">{updateInfo.currentVersion}</span>
+                  <span className="text-slate-500">Installed</span>
+                  <span className="font-mono font-medium text-slate-300">v{updateInfo.currentVersion}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">New Version:</span>
-                  <span className="font-medium text-blue-600">{updateInfo.version}</span>
+                  <span className="text-slate-500">Available</span>
+                  <span className="font-mono font-semibold text-cyan-300">v{updateInfo.version}</span>
                 </div>
                 {updateInfo.date && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Release Date:</span>
-                    <span className="font-medium">{formatDate(updateInfo.date)}</span>
+                  <div className="col-span-2 flex justify-between border-t border-slate-800 pt-3 text-sm">
+                    <span className="text-slate-500">Released</span>
+                    <span className="font-medium text-slate-300">{formatDate(updateInfo.date)}</span>
                   </div>
                 )}
               </div>
 
               {updateInfo.body && (
-                <div className="bg-gray-50 rounded-lg p-3 max-h-40 overflow-y-auto">
-                  <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                <div className="max-h-40 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+                  <p className="whitespace-pre-wrap text-sm leading-6 text-slate-300">
                     {updateInfo.body}
                   </p>
                 </div>
@@ -244,16 +264,16 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
           )}
 
           {isDownloading && progress && (
-            <div className="space-y-2">
+            <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
               <div className="relative">
-                <div className="w-full bg-gray-200 rounded-full h-3">
+                <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-800">
                   <div
-                    className="bg-blue-600 h-3 rounded-full transition-all duration-300 ease-out"
+                    className="h-full rounded-full bg-gradient-to-r from-teal-400 to-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.35)] transition-all duration-300 ease-out"
                     style={{ width: `${Math.min(progress.percentage, 100)}%` }}
                   />
                 </div>
-                <div className="flex justify-between text-xs text-gray-600 mt-1">
-                  <span>{Math.round(progress.percentage)}% complete</span>
+                <div className="mt-2 flex justify-between font-mono text-xs text-slate-400">
+                  <span>{phase === 'installing' ? 'Installing' : `${Math.round(progress.percentage)}%`}</span>
                   {progress.total > 0 && (
                     <span>
                       {formatBytes(progress.downloaded)} / {formatBytes(progress.total)}
@@ -261,33 +281,33 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
                   )}
                 </div>
               </div>
-              <p className="text-sm text-muted-foreground text-center">
-                The app will restart automatically after installation
+              <p className="text-center text-sm text-slate-400">
+                Meetily will restart automatically when the update is installed.
               </p>
             </div>
           )}
 
           {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-              <p className="text-sm text-red-800">{error}</p>
+            <div className="rounded-xl border border-red-400/25 bg-red-400/10 p-4">
+              <p className="text-sm text-red-200">{error}</p>
             </div>
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="border-t border-slate-800 bg-slate-950/30 px-6 py-4">
           {!isDownloading && !error && (
             <>
-              <Button variant="outline" onClick={() => handleOpenChange(false)}>
+              <Button variant="outline" className="border-slate-700 bg-transparent text-slate-300 hover:bg-slate-800 hover:text-white" onClick={() => handleOpenChange(false)}>
                 Later
               </Button>
-              <Button onClick={handleDownloadAndInstall} className="bg-blue-600 hover:bg-blue-700">
+              <Button onClick={handleDownloadAndInstall} className="bg-teal-500 text-slate-950 hover:bg-teal-400">
                 <Download className="h-4 w-4 mr-2" />
                 Download & Install
               </Button>
             </>
           )}
           {error && (
-            <Button variant="outline" onClick={() => handleOpenChange(false)}>
+            <Button variant="outline" className="border-slate-700 bg-transparent text-slate-300 hover:bg-slate-800 hover:text-white" onClick={() => handleOpenChange(false)}>
               Close
             </Button>
           )}

@@ -87,7 +87,8 @@ pub fn cancel_retranscription() {
 }
 
 /// Start retranscription of a meeting's audio
-pub async fn start_retranscription<R: Runtime>(
+async fn start_retranscription<R: Runtime>(
+    _guard: RetranscriptionGuard,
     app: AppHandle<R>,
     meeting_id: String,
     meeting_folder_path: String,
@@ -95,12 +96,6 @@ pub async fn start_retranscription<R: Runtime>(
     model: Option<String>,
     provider: Option<String>,
 ) -> Result<RetranscriptionResult> {
-    // Acquire guard - ensures flag is cleared even on panic/early return
-    let _guard = RetranscriptionGuard::acquire().map_err(|e| anyhow!(e))?;
-
-    // Reset cancellation flag
-    RETRANSCRIPTION_CANCELLED.store(false, Ordering::SeqCst);
-
     let use_parakeet = provider.as_deref() == Some("parakeet");
     let result = run_retranscription(app.clone(), meeting_id.clone(), meeting_folder_path, language, model, provider).await;
 
@@ -785,17 +780,19 @@ pub async fn start_retranscription_command<R: Runtime>(
     provider: Option<String>,
 ) -> Result<RetranscriptionStarted, String> {
 
-    // Check if retranscription is already in progress (guard will be acquired in start_retranscription)
-    if RETRANSCRIPTION_IN_PROGRESS.load(Ordering::SeqCst) {
-        return Err("Retranscription already in progress".to_string());
-    }
+    // Reserve before returning so duplicate requests and cancellation also see
+    // jobs queued behind an offline diarization pass.
+    let guard = RetranscriptionGuard::acquire()?;
+    RETRANSCRIPTION_CANCELLED.store(false, Ordering::SeqCst);
 
     // Clone values for the spawned task
     let meeting_id_clone = meeting_id.clone();
 
     // Spawn the retranscription in a background task
     tauri::async_runtime::spawn(async move {
+        let _operation_guard = crate::diarization::operation_guard().await;
         let result = start_retranscription(
+            guard,
             app,
             meeting_id_clone,
             meeting_folder_path,

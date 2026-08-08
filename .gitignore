@@ -81,6 +81,7 @@ frontend/src-tauri/binaries/
 /.cuda_toolkit/
 /.cuda_extra_include/
 /cuda_extract/
+/.build-tools/
 frontend/build_cuda.log
 frontend/build_cuda.pid
 frontend/.next/

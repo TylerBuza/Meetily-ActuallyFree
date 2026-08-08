@@ -5,6 +5,8 @@
 !include "LogicLib.nsh"
 !include "x64.nsh"
 
+Var MeetilyBackend
+
 !macro Meetily_CheckVcredist
   StrCpy $R9 0
   SetRegView 64
@@ -34,8 +36,15 @@
     nsExec::ExecToLog '"$R0" /install /quiet /norestart'
     Pop $0
     DetailPrint "      VC++ installer exit code: $0"
+    ${If} $0 != 0
+    ${AndIf} $0 != 1638
+    ${AndIf} $0 != 3010
+      MessageBox MB_ICONSTOP|MB_OK "Microsoft Visual C++ Runtime installation failed (code $0). Meetily setup cannot continue."
+      Abort
+    ${EndIf}
   ${Else}
-    DetailPrint "      VC++ package missing from bundle — skipped"
+    MessageBox MB_ICONSTOP|MB_OK "The Microsoft Visual C++ Runtime package is missing. Meetily setup cannot continue."
+    Abort
   ${EndIf}
 !macroend
 
@@ -71,6 +80,16 @@
   ${EndIf}
 !macroend
 
+!macro Meetily_InstallCommonRuntime
+  StrCpy $R1 "$INSTDIR\runtime-deps"
+  ${If} ${FileExists} "$R1\DirectML.dll"
+    CopyFiles /SILENT "$R1\DirectML.dll" "$INSTDIR\"
+    DetailPrint "      DirectML / ONNX runtime installed."
+  ${Else}
+    DetailPrint "      WARNING: DirectML.dll missing from bundle."
+  ${EndIf}
+!macroend
+
 ; Sets $R8=1 if an NVIDIA driver / nvidia-smi is present (WOW64-safe)
 !macro Meetily_CheckNvidia
   StrCpy $R8 0
@@ -100,6 +119,157 @@
   ${EndIf}
 !macroend
 
+; CUDA 13 requires a modern driver and this universal build targets Turing+
+; (compute capability 7.5 and newer). Sets $R8=1 when both checks pass.
+!macro Meetily_CheckCudaCapable
+  StrCpy $R8 0
+  StrCpy $R7 ""
+  ${DisableX64FSRedirection}
+  ${If} ${FileExists} "$WINDIR\System32\nvidia-smi.exe"
+    StrCpy $R7 "$WINDIR\System32\nvidia-smi.exe"
+  ${ElseIf} ${FileExists} "$WINDIR\Sysnative\nvidia-smi.exe"
+    StrCpy $R7 "$WINDIR\Sysnative\nvidia-smi.exe"
+  ${ElseIf} ${FileExists} "$PROGRAMFILES64\NVIDIA Corporation\NVSMI\nvidia-smi.exe"
+    StrCpy $R7 "$PROGRAMFILES64\NVIDIA Corporation\NVSMI\nvidia-smi.exe"
+  ${EndIf}
+
+  ${If} $R7 != ""
+    nsExec::ExecToStack '"$R7" --id=0 --query-gpu=driver_version --format=csv,noheader,nounits'
+    Pop $0
+    Pop $1
+    ${If} $0 == 0
+      ${VersionCompare} "$1" "580.00" $2
+      ${If} $2 != 2
+        nsExec::ExecToStack '"$R7" --id=0 --query-gpu=compute_cap --format=csv,noheader,nounits'
+        Pop $0
+        Pop $1
+        ${If} $0 == 0
+          ${VersionCompare} "$1" "7.5" $2
+          ${If} $2 != 2
+            StrCpy $R8 1
+          ${EndIf}
+        ${EndIf}
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+  ${EnableX64FSRedirection}
+!macroend
+
+; Sets $R6=1 when the 64-bit Vulkan loader and an enabled vendor ICD are installed.
+!macro Meetily_CheckVulkan
+  StrCpy $R6 0
+  ${DisableX64FSRedirection}
+  ${If} ${FileExists} "$WINDIR\System32\vulkan-1.dll"
+    StrCpy $R6 1
+  ${ElseIf} ${FileExists} "$WINDIR\Sysnative\vulkan-1.dll"
+    StrCpy $R6 1
+  ${EndIf}
+  ${If} $R6 == 1
+    StrCpy $R6 0
+    StrCpy $R5 0
+    SetRegView 64
+    ${Do}
+      EnumRegValue $R4 HKLM "SOFTWARE\Khronos\Vulkan\Drivers" $R5
+      ${If} $R4 == ""
+        ${ExitDo}
+      ${EndIf}
+      ReadRegDword $R3 HKLM "SOFTWARE\Khronos\Vulkan\Drivers" "$R4"
+      ${If} $R3 == 0
+      ${AndIf} ${FileExists} "$R4"
+        StrCpy $R6 1
+      ${EndIf}
+      IntOp $R5 $R5 + 1
+    ${LoopUntil} $R6 == 1
+    SetRegView lastused
+  ${EndIf}
+  ${EnableX64FSRedirection}
+!macroend
+
+; Pick and install the canonical meetily.exe. Optional command-line override:
+;   /BACKEND=cuda | /BACKEND=vulkan | /BACKEND=cpu
+!macro Meetily_SelectBackend
+  StrCpy $MeetilyBackend ""
+  ClearErrors
+  ${GetOptions} $CMDLINE "/BACKEND=" $MeetilyBackend
+
+  ; A standard Tauri bundle has no complete variant set. Keep its compiled
+  ; executable instead of accidentally consuming stale local variant files.
+  ${IfNot} ${FileExists} "$INSTDIR\installer-variants\universal.marker"
+    StrCpy $MeetilyBackend "bundled"
+    DetailPrint "      Standard bundle detected — keeping bundled executable."
+  ${ElseIf} $MeetilyBackend == "cuda"
+    !insertmacro Meetily_CheckCudaCapable
+    ${If} $R8 != 1
+      DetailPrint "      CUDA override unavailable — falling back to CPU."
+      StrCpy $MeetilyBackend "cpu"
+    ${EndIf}
+  ${ElseIf} $MeetilyBackend == "vulkan"
+    !insertmacro Meetily_CheckVulkan
+    ${If} $R6 != 1
+      DetailPrint "      Vulkan override unavailable — falling back to CPU."
+      StrCpy $MeetilyBackend "cpu"
+    ${EndIf}
+  ${ElseIf} $MeetilyBackend == ""
+    !insertmacro Meetily_CheckCudaCapable
+    ${If} $R8 == 1
+      StrCpy $MeetilyBackend "cuda"
+    ${Else}
+      !insertmacro Meetily_CheckVulkan
+      ${If} $R6 == 1
+        StrCpy $MeetilyBackend "vulkan"
+      ${Else}
+        StrCpy $MeetilyBackend "cpu"
+      ${EndIf}
+    ${EndIf}
+  ${ElseIf} $MeetilyBackend != "cpu"
+    DetailPrint "      Unknown backend override — falling back to CPU."
+    StrCpy $MeetilyBackend "cpu"
+  ${EndIf}
+
+  ; Invalid, unavailable, or missing variants always degrade safely to CPU.
+  ${If} $MeetilyBackend == "bundled"
+    StrCpy $R5 ""
+  ${ElseIf} $MeetilyBackend == "cuda"
+    StrCpy $R5 "$INSTDIR\installer-variants\meetily-cuda.exe"
+  ${ElseIf} $MeetilyBackend == "vulkan"
+    StrCpy $R5 "$INSTDIR\installer-variants\meetily-vulkan.exe"
+  ${Else}
+    StrCpy $MeetilyBackend "cpu"
+    StrCpy $R5 "$INSTDIR\installer-variants\meetily-cpu.exe"
+  ${EndIf}
+  ${If} $MeetilyBackend != "bundled"
+  ${AndIfNot} ${FileExists} "$R5"
+    DetailPrint "      Requested backend binary missing — falling back to CPU."
+    StrCpy $MeetilyBackend "cpu"
+    StrCpy $R5 "$INSTDIR\installer-variants\meetily-cpu.exe"
+  ${EndIf}
+
+  ${If} $MeetilyBackend != "bundled"
+    DetailPrint "      Selected transcription backend: $MeetilyBackend"
+    CopyFiles /SILENT "$R5" "$INSTDIR\meetily.selected.exe"
+    ${If} ${FileExists} "$INSTDIR\meetily.selected.exe"
+      Delete "$INSTDIR\${MAINBINARYNAME}.exe"
+      Rename "$INSTDIR\meetily.selected.exe" "$INSTDIR\${MAINBINARYNAME}.exe"
+    ${Else}
+      DetailPrint "      Backend replacement failed — keeping bundled executable."
+      StrCpy $MeetilyBackend "bundled"
+    ${EndIf}
+  ${EndIf}
+
+  CreateDirectory "$INSTDIR\data"
+  FileOpen $R4 "$INSTDIR\data\selected-backend.txt" w
+  FileWrite $R4 "$MeetilyBackend$\r$\n"
+  FileClose $R4
+
+  ${If} $MeetilyCheckUpdatesOnLaunch != ""
+    FileOpen $R4 "$INSTDIR\data\check-updates-on-launch.txt" w
+    FileWrite $R4 "$MeetilyCheckUpdatesOnLaunch$\r$\n"
+    FileClose $R4
+  ${EndIf}
+
+  RMDir /r "$INSTDIR\installer-variants"
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
   SetDetailsPrint both
   DetailPrint "────────────────────────────────────────"
@@ -115,7 +285,7 @@
   DetailPrint " Runtime setup"
   DetailPrint "────────────────────────────────────────"
 
-  DetailPrint "[1/3] Visual C++ 2015–2022 (x64)…"
+  DetailPrint "[1/4] Visual C++ 2015–2022 (x64)…"
   !insertmacro Meetily_CheckVcredist
   ${If} $R9 == 0
     DetailPrint "      Not found — installing quietly…"
@@ -124,16 +294,24 @@
     DetailPrint "      Already installed — skipped."
   ${EndIf}
 
-  DetailPrint "[2/3] CUDA / DirectML GPU libraries…"
-  !insertmacro Meetily_InstallCudaRuntime
+  DetailPrint "[2/4] Common local AI runtime…"
+  !insertmacro Meetily_InstallCommonRuntime
 
-  DetailPrint "[3/3] NVIDIA driver…"
-  !insertmacro Meetily_CheckNvidia
-  ${If} $R8 == 1
-    DetailPrint "      NVIDIA driver detected — CUDA acceleration ready."
+  DetailPrint "[3/4] Selecting CUDA, Vulkan, or CPU…"
+  !insertmacro Meetily_SelectBackend
+
+  DetailPrint "[4/4] Backend runtime…"
+  ${If} $MeetilyBackend == "cuda"
+    !insertmacro Meetily_InstallCudaRuntime
+    DetailPrint "      NVIDIA CUDA enabled."
+  ${ElseIf} $MeetilyBackend == "bundled"
+    ; Harmless for CPU/Vulkan bundles and required for legacy CUDA bundles.
+    !insertmacro Meetily_InstallCudaRuntime
+    DetailPrint "      Bundled backend runtime installed."
+  ${ElseIf} $MeetilyBackend == "vulkan"
+    DetailPrint "      Vulkan enabled (AMD / Intel / compatible NVIDIA)."
   ${Else}
-    DetailPrint "      No NVIDIA driver detected."
-    DetailPrint "      App still runs on CPU; install an NVIDIA driver for GPU speed."
+    DetailPrint "      CPU mode enabled — maximum compatibility."
   ${EndIf}
 
   DetailPrint ""

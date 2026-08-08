@@ -202,6 +202,56 @@ Var MeetilyDirBrowse
 Var MeetilyDirHint
 Var MeetilyFontTitle
 Var MeetilyFontBody
+Var MeetilyUpdateDlg
+Var MeetilyUpdateYes
+Var MeetilyUpdateNo
+Var MeetilyCheckUpdatesOnLaunch
+Var MeetilyFinishLaunch
+Var MeetilyFinishDesktop
+
+Function MeetilyWelcomePageShow
+  ${If} $PassiveMode = 1
+    Abort
+  ${EndIf}
+  nsDialogs::Create 1018
+  Pop $R0
+  ${If} $R0 == error
+    Abort
+  ${EndIf}
+  SetCtlColors $R0 E6EBF5 0A0C10
+
+  ${NSD_CreateLabel} 0 2u 100% 12u "MEETILY  /  LOCAL AI MEETINGS"
+  Pop $R1
+  SetCtlColors $R1 50D5C7 0A0C10
+  SendMessage $R1 ${WM_SETFONT} $MeetilyFontBody 1
+
+  ${NSD_CreateLabel} 0 24u 100% 30u "Meetings stay yours."
+  Pop $R1
+  SetCtlColors $R1 F1F5F9 0A0C10
+  SendMessage $R1 ${WM_SETFONT} $MeetilyFontTitle 1
+
+  ${NSD_CreateLabel} 0 58u 100% 28u "Private recording, transcription, speaker labels, and summaries on your own PC."
+  Pop $R1
+  SetCtlColors $R1 A8B3C7 0A0C10
+
+  ${NSD_CreateGroupBox} 0 96u 100% 62u "  ONE INSTALLER, THREE BACKENDS  "
+  Pop $R1
+  SetCtlColors $R1 7DD3FC 0A0C10
+  ${NSD_CreateLabel} 14u 116u -14u 12u "NVIDIA CUDA    |    AMD / Intel / NVIDIA Vulkan    |    CPU fallback"
+  Pop $R1
+  SetCtlColors $R1 E2E8F0 0A0C10
+  ${NSD_CreateLabel} 14u 136u -14u 12u "Setup detects compatible hardware automatically."
+  Pop $R1
+  SetCtlColors $R1 7F8CA3 0A0C10
+
+  ${NSD_CreateLabel} 0 174u 100% 24u "No account. No subscription. No analytics."
+  Pop $R1
+  SetCtlColors $R1 94A3B8 0A0C10
+  nsDialogs::Show
+FunctionEnd
+
+Function MeetilyWelcomePageLeave
+FunctionEnd
 
 ; Windows 10/11 immersive dark title bar + dark control hints
 Function MeetilyApplyOsDarkMode
@@ -440,16 +490,115 @@ Function MeetilyDirPageLeave
   ${EndIf}
 FunctionEnd
 
+Function MeetilyUpdatePageShow
+  ${If} $PassiveMode = 1
+  ${OrIf} $UpdateMode = 1
+    Abort
+  ${EndIf}
+
+  !insertmacro MUI_HEADER_TEXT "Update checks" "Choose whether Meetily checks GitHub when it starts."
+  nsDialogs::Create 1018
+  Pop $MeetilyUpdateDlg
+  ${If} $MeetilyUpdateDlg == error
+    Abort
+  ${EndIf}
+
+  SetCtlColors $MeetilyUpdateDlg E6EBF5 0A0C10
+  ${NSD_CreateLabel} 0 4u 100% 30u "Check this fork's GitHub releases for updates when Meetily starts?"
+  Pop $R0
+  SetCtlColors $R0 E6EBF5 0A0C10
+  SendMessage $R0 ${WM_SETFONT} $MeetilyFontTitle 1
+
+  ${NSD_CreateRadioButton} 8u 45u -8u 12u "Yes, check for updates on launch"
+  Pop $MeetilyUpdateYes
+  SetCtlColors $MeetilyUpdateYes E6EBF5 0A0C10
+
+  ${NSD_CreateRadioButton} 8u 66u -8u 12u "No, only check when I ask"
+  Pop $MeetilyUpdateNo
+  SetCtlColors $MeetilyUpdateNo E6EBF5 0A0C10
+
+  ${NSD_CreateLabel} 8u 94u -8u 48u "A launch check makes one request to this fork's GitHub release endpoint. Meetily collects no analytics and makes no other background internet requests. Model downloads and cloud providers only connect when you choose to use them. You can always check manually in About."
+  Pop $R0
+  SetCtlColors $R0 A8B3C7 0A0C10
+
+  ${If} $MeetilyCheckUpdatesOnLaunch == "yes"
+    ${NSD_Check} $MeetilyUpdateYes
+  ${Else}
+    ${NSD_Check} $MeetilyUpdateNo
+  ${EndIf}
+  nsDialogs::Show
+FunctionEnd
+
+Function MeetilyUpdatePageLeave
+  ${NSD_GetState} $MeetilyUpdateYes $R0
+  ${If} $R0 == ${BST_CHECKED}
+    StrCpy $MeetilyCheckUpdatesOnLaunch "yes"
+  ${Else}
+    StrCpy $MeetilyCheckUpdatesOnLaunch "no"
+  ${EndIf}
+FunctionEnd
+
+Function MeetilyFinishPageShow
+  ${If} $PassiveMode = 1
+    Abort
+  ${EndIf}
+  nsDialogs::Create 1018
+  Pop $R0
+  ${If} $R0 == error
+    Abort
+  ${EndIf}
+  SetCtlColors $R0 E6EBF5 0A0C10
+
+  ${NSD_CreateLabel} 0 6u 100% 14u "INSTALL COMPLETE"
+  Pop $R1
+  SetCtlColors $R1 50D5C7 0A0C10
+
+  ${NSD_CreateLabel} 0 32u 100% 32u "Meetily is ready."
+  Pop $R1
+  SetCtlColors $R1 F1F5F9 0A0C10
+  SendMessage $R1 ${WM_SETFONT} $MeetilyFontTitle 1
+
+  ${NSD_CreateLabel} 0 72u 100% 38u "Your selected transcription backend and local runtimes are installed. First launch includes a short name and audio setup."
+  Pop $R1
+  SetCtlColors $R1 A8B3C7 0A0C10
+
+  ${NSD_CreateCheckbox} 8u 128u -8u 14u "Launch Meetily now"
+  Pop $MeetilyFinishLaunch
+  SetCtlColors $MeetilyFinishLaunch E6EBF5 0A0C10
+  ${NSD_Check} $MeetilyFinishLaunch
+
+  ${NSD_CreateCheckbox} 8u 154u -8u 14u "Create a desktop shortcut"
+  Pop $MeetilyFinishDesktop
+  SetCtlColors $MeetilyFinishDesktop E6EBF5 0A0C10
+
+  ${NSD_CreateLabel} 0 188u 100% 20u "All app data remains local unless you explicitly configure a cloud provider."
+  Pop $R1
+  SetCtlColors $R1 64748B 0A0C10
+
+  GetDlgItem $R1 $HWNDPARENT 1
+  SendMessage $R1 ${WM_SETTEXT} 0 "STR:Finish"
+  nsDialogs::Show
+FunctionEnd
+
+Function MeetilyFinishPageLeave
+  ${NSD_GetState} $MeetilyFinishDesktop $R0
+  ${If} $R0 == ${BST_CHECKED}
+    Call CreateOrUpdateDesktopShortcut
+  ${EndIf}
+  ${NSD_GetState} $MeetilyFinishLaunch $R0
+  ${If} $R0 == ${BST_CHECKED}
+    Call RunMainBinary
+  ${EndIf}
+FunctionEnd
+
 ; Define registry key to store installer language
 !define MUI_LANGDLL_REGISTRY_ROOT "HKCU"
 !define MUI_LANGDLL_REGISTRY_KEY "${MANUPRODUCTKEY}"
 !define MUI_LANGDLL_REGISTRY_VALUENAME "Installer Language"
 
 ; Installer pages, must be ordered as they appear
-; 1. Welcome Page
-!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
-!define MUI_PAGE_CUSTOMFUNCTION_SHOW MeetilyDarkenPage
-!insertmacro MUI_PAGE_WELCOME
+; 1. Custom welcome page
+Page custom MeetilyWelcomePageShow MeetilyWelcomePageLeave
 
 ; 2. License Page (if defined)
 !if "${LICENSE}" != ""
@@ -670,7 +819,10 @@ FunctionEnd
 ; 5. Custom install-location page (no stock Wizard97 directory chrome)
 Page custom MeetilyDirPageShow MeetilyDirPageLeave
 
-; 6. Start menu shortcut page — skipped; shortcuts still created on finish
+; 6. Optional launch update checks
+Page custom MeetilyUpdatePageShow MeetilyUpdatePageLeave
+
+; 7. Start menu shortcut page - skipped; shortcuts still created on finish
 Var AppStartMenuFolder
 !define MUI_PAGE_CUSTOMFUNCTION_PRE Skip
 !if "${STARTMENUFOLDER}" != ""
@@ -678,28 +830,14 @@ Var AppStartMenuFolder
 !endif
 !insertmacro MUI_PAGE_STARTMENU Application $AppStartMenuFolder
 
-; 7. Installation page (details + teal progress)
+; 8. Installation page (details + teal progress)
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW MeetilyDarkenInstFiles
 !define MUI_PAGE_HEADER_TEXT "Installing Meetily"
 !define MUI_PAGE_HEADER_SUBTEXT "Copying files and setting up local runtimes…"
 !insertmacro MUI_PAGE_INSTFILES
 
-; 8. Finish page
-;
-; Don't auto jump to finish page after installation page,
-; because the installation page has useful info that can be used debug any issues with the installer.
-!define MUI_FINISHPAGE_NOAUTOCLOSE
-; Use show readme button in the finish page as a button create a desktop shortcut
-!define MUI_FINISHPAGE_SHOWREADME
-!define MUI_FINISHPAGE_SHOWREADME_TEXT "$(createDesktop)"
-!define MUI_FINISHPAGE_SHOWREADME_FUNCTION CreateOrUpdateDesktopShortcut
-; Show run app after installation.
-!define MUI_FINISHPAGE_RUN
-!define MUI_FINISHPAGE_RUN_TEXT "Launch Meetily"
-!define MUI_FINISHPAGE_RUN_FUNCTION RunMainBinary
-!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
-!define MUI_PAGE_CUSTOMFUNCTION_SHOW MeetilyDarkenPage
-!insertmacro MUI_PAGE_FINISH
+; 9. Custom completion page
+Page custom MeetilyFinishPageShow MeetilyFinishPageLeave
 
 Function RunMainBinary
   nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" ""
@@ -760,6 +898,7 @@ FunctionEnd
 {{/each}}
 
 Function .onInit
+  StrCpy $MeetilyCheckUpdatesOnLaunch ""
   ${GetOptions} $CMDLINE "/P" $PassiveMode
   ${IfNot} ${Errors}
     StrCpy $PassiveMode 1
@@ -1075,6 +1214,10 @@ Section Uninstall
   ; Delete the app directory and its content from disk
   ; Copy main executable
   Delete "$INSTDIR\${MAINBINARYNAME}.exe"
+  Delete "$INSTDIR\DirectML.dll"
+  Delete "$INSTDIR\cudart64_13.dll"
+  Delete "$INSTDIR\cublas64_13.dll"
+  Delete "$INSTDIR\cublasLt64_13.dll"
 
   ; Delete resources
   {{#each resources}}
@@ -1172,6 +1315,8 @@ Section Uninstall
     SetShellVarContext current
     RmDir /r "$APPDATA\${BUNDLEID}"
     RmDir /r "$LOCALAPPDATA\${BUNDLEID}"
+    RmDir /r "$INSTDIR\data"
+    RmDir "$INSTDIR"
   ${EndIf}
 
   !ifmacrodef NSIS_HOOK_POSTUNINSTALL

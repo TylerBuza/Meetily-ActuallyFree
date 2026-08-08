@@ -386,22 +386,18 @@ export function useRecordingStop(
           // Mark meeting as saved in IndexedDB (for recovery system)
           await markMeetingAsSaved();
 
-          // Offline diarize only to fill gaps. Live dual-path already labels
-          // mic as You and system as Guest/Speaker N — running offline on the
-          // mixed file used to wipe those labels. If most lines already have a
-          // speaker, skip auto offline; the user can still hit "Identify
-          // speakers" manually.
+          // Always run the post-call pass. New recordings retain aligned mic
+          // and system tracks, so offline diarization can deterministically pin
+          // the mic to You and globally cluster remote voices more accurately
+          // than the streaming labels. Older mixed-only meetings still use the
+          // enrolled voiceprint fallback.
           const labeled = freshTranscripts.filter((t) => !!t.speaker?.trim()).length;
           const labelRatio =
             freshTranscripts.length > 0 ? labeled / freshTranscripts.length : 0;
           console.log(
             `🏷️ Live speaker labels on save: ${labeled}/${freshTranscripts.length} (${Math.round(labelRatio * 100)}%)`
           );
-          if (labelRatio < 0.5) {
-            void autoDiarizeMeeting(meetingId);
-          } else {
-            console.log('[auto-diarize] skipped — live labels already present');
-          }
+          void autoDiarizeMeeting(meetingId);
 
           // Clean up session storage
           sessionStorage.removeItem('last_recording_folder_path');

@@ -388,11 +388,13 @@ impl AudioStreamManager {
             match AudioStream::create(mic_device.clone(), self.state.clone(), DeviceType::Microphone, recording_sender.clone()).await {
                 Ok(stream) => {
                     self.state.set_microphone_device(mic_device);
+                    self.state.set_capture_active(DeviceType::Microphone, true);
                     self.microphone_stream = Some(stream);
                     info!("✅ Microphone stream created successfully");
                 }
                 Err(e) => {
                     error!("❌ Failed to create microphone stream: {}", e);
+                    self.state.finish_capture_setup();
                     return Err(e);
                 }
             }
@@ -406,6 +408,7 @@ impl AudioStreamManager {
             match AudioStream::create(sys_device.clone(), self.state.clone(), DeviceType::System, recording_sender.clone()).await {
                 Ok(stream) => {
                     self.state.set_system_device(sys_device);
+                    self.state.set_capture_active(DeviceType::System, true);
                     self.system_stream = Some(stream);
                     info!("✅ System audio stream created with {:?} backend", backend);
                 }
@@ -420,9 +423,11 @@ impl AudioStreamManager {
 
         // Ensure at least one stream was created
         if self.microphone_stream.is_none() && self.system_stream.is_none() {
+            self.state.finish_capture_setup();
             return Err(anyhow::anyhow!("No audio streams could be created"));
         }
 
+        self.state.finish_capture_setup();
         Ok(())
     }
 

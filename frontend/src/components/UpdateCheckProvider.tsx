@@ -5,6 +5,7 @@ import { useUpdateCheck } from '@/hooks/useUpdateCheck';
 import { UpdateInfo } from '@/services/updateService';
 import { UpdateDialog } from './UpdateDialog';
 import { setUpdateDialogCallback, showUpdateNotification } from './UpdateNotification';
+import { invoke } from '@tauri-apps/api/core';
 
 interface UpdateCheckContextType {
   updateInfo: UpdateInfo | null;
@@ -17,17 +18,20 @@ const UpdateCheckContext = createContext<UpdateCheckContextType | undefined>(und
 
 export function UpdateCheckProvider({ children }: { children: React.ReactNode }) {
   const [showDialog, setShowDialog] = useState(false);
+  const [checkOnMount, setCheckOnMount] = useState(false);
 
   const handleShowDialog = useCallback(() => {
     setShowDialog(true);
   }, []);
 
-  // Fork: no automatic update checks against any server. (The upstream endpoint
-  // would offer the official Meetily release and overwrite this fork.) Manual
-  // "Check for Updates" still works and will target this fork's own releases once
-  // the endpoint in tauri.conf.json is pointed at your GitHub repo.
+  useEffect(() => {
+    invoke<boolean>('get_check_updates_on_launch')
+      .then(setCheckOnMount)
+      .catch(() => setCheckOnMount(false));
+  }, []);
+
   const { updateInfo, isChecking, checkForUpdates } = useUpdateCheck({
-    checkOnMount: false,
+    checkOnMount,
     showNotification: false,
     onUpdateAvailable: (info) => {
       showUpdateNotification(info, handleShowDialog);

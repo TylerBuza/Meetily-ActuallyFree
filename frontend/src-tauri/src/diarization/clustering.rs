@@ -106,7 +106,94 @@ pub fn agglomerative(
             next += 1;
         }
     }
+
+    // When a speaker count is known, refine with a few centroid reassignment
+    // passes (spherical k-means). AHC gives a good partition; reassignment
+    // cleans boundary points that average-linkage left in the wrong cluster.
+    if target.is_some() && next >= 2 {
+        refine_centroids(embeddings, &mut labels, next, 8);
+    }
+
     labels
+}
+
+/// Iterative nearest-centroid reassignment on unit embeddings.
+fn refine_centroids(embeddings: &[Vec<f32>], labels: &mut [usize], k: usize, iters: usize) {
+    let n = embeddings.len();
+    if n == 0 || k == 0 {
+        return;
+    }
+    let dim = embeddings[0].len();
+    for _ in 0..iters {
+        // Mean centroids, re-normalized.
+        let mut cents = vec![vec![0f32; dim]; k];
+        let mut counts = vec![0f32; k];
+        for i in 0..n {
+            let c = labels[i].min(k - 1);
+            counts[c] += 1.0;
+            for d in 0..dim {
+                cents[c][d] += embeddings[i][d];
+            }
+        }
+        for c in 0..k {
+            if counts[c] <= 0.0 {
+                continue;
+            }
+            for d in 0..dim {
+                cents[c][d] /= counts[c];
+            }
+            let norm = cents[c].iter().map(|v| v * v).sum::<f32>().sqrt().max(1e-8);
+            for d in 0..dim {
+                cents[c][d] /= norm;
+            }
+        }
+
+        let mut changed = false;
+        let mut proposed = labels.to_vec();
+        for i in 0..n {
+            let mut best = labels[i].min(k - 1);
+            let mut best_sim = f32::NEG_INFINITY;
+            for c in 0..k {
+                if counts[c] <= 0.0 {
+                    continue;
+                }
+                let sim = dot(&embeddings[i], &cents[c]);
+                if sim > best_sim {
+                    best_sim = sim;
+                    best = c;
+                }
+            }
+            if best != labels[i] {
+                proposed[i] = best;
+                changed = true;
+            }
+        }
+        // A forced count must remain exact. Reject an iteration that would
+        // empty any cluster (plain k-means can otherwise collapse k to k-1).
+        let mut proposed_counts = vec![0usize; k];
+        for &lab in &proposed {
+            proposed_counts[lab] += 1;
+        }
+        if proposed_counts.iter().any(|&count| count == 0) {
+            break;
+        }
+        labels.copy_from_slice(&proposed);
+        if !changed {
+            break;
+        }
+    }
+
+    // Relabel to contiguous 0..k'-1 in case empty clusters dropped out.
+    let mut map = vec![None; k];
+    let mut next = 0usize;
+    for lab in labels.iter_mut() {
+        let old = *lab;
+        if map[old].is_none() {
+            map[old] = Some(next);
+            next += 1;
+        }
+        *lab = map[old].unwrap();
+    }
 }
 
 fn dot(a: &[f32], b: &[f32]) -> f32 {
@@ -116,4 +203,32 @@ fn dot(a: &[f32], b: &[f32]) -> f32 {
         s += a[i] * b[i];
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forced_count_stays_exact_after_refinement() {
+        let embeddings = vec![
+            vec![1.0, 0.0],
+            vec![0.99, 0.01],
+            vec![0.0, 1.0],
+            vec![0.01, 0.99],
+        ];
+        let labels = agglomerative(&embeddings, Some(2), 0.60);
+        assert_eq!(labels.iter().copied().max().unwrap() + 1, 2);
+        assert_eq!(labels[0], labels[1]);
+        assert_eq!(labels[2], labels[3]);
+        assert_ne!(labels[0], labels[2]);
+    }
+
+    #[test]
+    fn threshold_keeps_obvious_speakers_apart() {
+        let embeddings = vec![vec![1.0, 0.0], vec![0.99, 0.01], vec![0.0, 1.0]];
+        let labels = agglomerative(&embeddings, None, 0.20);
+        assert_eq!(labels[0], labels[1]);
+        assert_ne!(labels[0], labels[2]);
+    }
 }

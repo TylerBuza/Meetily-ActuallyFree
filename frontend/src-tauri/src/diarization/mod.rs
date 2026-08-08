@@ -19,6 +19,7 @@ pub mod download;
 pub mod dsp;
 pub mod models;
 pub mod online;
+pub mod voiceprint;
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -61,8 +62,12 @@ pub struct DiarizationSegment {
     /// Seconds from the start of the recording.
     pub start: f32,
     pub end: f32,
-    /// Global speaker index (0-based).
+    /// Global speaker index (0-based). Speaker 0 is reserved for the local
+    /// user ("You") when dual-track mic/system files are available.
     pub speaker: usize,
+    /// True when another speaker was simultaneously active (overlap).
+    #[serde(default)]
+    pub overlapped: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -71,6 +76,9 @@ pub struct DiarizationResult {
     pub num_speakers: usize,
     /// Total audio duration in seconds.
     pub duration: f32,
+    /// Cluster index identified as the local user, when known.
+    #[serde(default)]
+    pub user_speaker: Option<usize>,
 }
 
 /// Required model files.
@@ -83,6 +91,14 @@ const REQUIRED_FILES: [&str; 3] = [
 /// Directory of the models shipped inside the app bundle, resolved once at
 /// startup from Tauri's resource directory.
 static BUNDLED_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+static OPERATION_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+pub async fn operation_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    OPERATION_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
+}
 
 /// Record where the bundled diarization models live (called during setup).
 pub fn set_bundled_dir(dir: PathBuf) {
@@ -127,6 +143,8 @@ pub fn models_available() -> bool {
 struct LocalTurn {
     /// Absolute (start, end) regions in seconds.
     regions: Vec<(f32, f32)>,
+    /// Absolute regions that overlapped another speaker (subset of `regions`).
+    overlapped_regions: Vec<(f32, f32)>,
     /// Concatenated active audio for embedding.
     audio: Vec<f32>,
     /// Total speech duration in seconds (audio.len() / sample_rate).
@@ -207,19 +225,28 @@ pub fn diarize_file_with_models(
     let total = samples.len();
     let duration = total as f32 / dsp::SAMPLE_RATE as f32;
     if total == 0 {
-        return Ok(DiarizationResult { segments: Vec::new(), num_speakers: 0, duration: 0.0 });
+        return Ok(DiarizationResult {
+            segments: Vec::new(),
+            num_speakers: 0,
+            duration: 0.0,
+            user_speaker: None,
+        });
     }
-    log::info!("ðŸ§‘â€ðŸ¤â€ðŸ§‘ Diarization starting: {:.1}s of audio", duration);
+    log::info!("🧑‍🤝‍🧑 Diarization starting: {:.1}s of audio", duration);
 
     let mut models = DiarizationModels::load(model_dir)?;
 
     // 2. Slide windows, decode segmentation, collect local turns.
-    // 2. Slide windows, decode segmentation, collect local turns.
     let turns = collect_turns(&mut models, &samples)?;
 
     if turns.is_empty() {
-        log::info!("ðŸ§‘â€ðŸ¤â€ðŸ§‘ Diarization: no speech detected");
-        return Ok(DiarizationResult { segments: Vec::new(), num_speakers: 0, duration });
+        log::info!("🧑‍🤝‍🧑 Diarization: no speech detected");
+        return Ok(DiarizationResult {
+            segments: Vec::new(),
+            num_speakers: 0,
+            duration,
+            user_speaker: None,
+        });
     }
 
     // 3. Embed each local turn.
@@ -235,9 +262,14 @@ pub fn diarize_file_with_models(
         }
     }
     if embeddings.is_empty() {
-        return Ok(DiarizationResult { segments: Vec::new(), num_speakers: 0, duration });
+        return Ok(DiarizationResult {
+            segments: Vec::new(),
+            num_speakers: 0,
+            duration,
+            user_speaker: None,
+        });
     }
-    log::info!("ðŸ§‘â€ðŸ¤â€ðŸ§‘ Diarization: {} turns embedded", embeddings.len());
+    log::info!("🧑‍🤝‍🧑 Diarization: {} turns embedded", embeddings.len());
 
     // 4. Cluster into global speakers.
     //
@@ -318,11 +350,22 @@ pub fn diarize_file_with_models(
     let num_found = labels.iter().copied().max().map(|m| m + 1).unwrap_or(0);
 
     // 5. Expand to segments, sort, merge adjacent same-speaker runs.
+    // Overlapped regions keep the primary speaker but are flagged.
     let mut segments: Vec<DiarizationSegment> = Vec::new();
     for (k, &turn_idx) in kept.iter().enumerate() {
         let speaker = labels[k];
-        for &(s, e) in &turns[turn_idx].regions {
-            segments.push(DiarizationSegment { start: s, end: e, speaker });
+        let turn = &turns[turn_idx];
+        for &(s, e) in &turn.regions {
+            let overlapped = turn
+                .overlapped_regions
+                .iter()
+                .any(|&(os, oe)| os < e && oe > s);
+            segments.push(DiarizationSegment {
+                start: s,
+                end: e,
+                speaker,
+                overlapped,
+            });
         }
     }
     segments.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap_or(std::cmp::Ordering::Equal));
@@ -330,7 +373,10 @@ pub fn diarize_file_with_models(
     let mut merged: Vec<DiarizationSegment> = Vec::with_capacity(segments.len());
     for seg in segments {
         if let Some(last) = merged.last_mut() {
-            if last.speaker == seg.speaker && seg.start - last.end <= MERGE_GAP_SECONDS {
+            if last.speaker == seg.speaker
+                && last.overlapped == seg.overlapped
+                && seg.start - last.end <= MERGE_GAP_SECONDS
+            {
                 if seg.end > last.end {
                     last.end = seg.end;
                 }
@@ -340,12 +386,53 @@ pub fn diarize_file_with_models(
         merged.push(seg);
     }
 
+    // Voiceprint match when available (mixed-file path).
+    let user_speaker = {
+        let k = num_found;
+        if k == 0 {
+            None
+        } else {
+            let dim = embeddings[0].len();
+            let mut cents = vec![vec![0f32; dim]; k];
+            let mut counts = vec![0f32; k];
+            for (i, &lab) in labels.iter().enumerate() {
+                if lab >= k {
+                    continue;
+                }
+                counts[lab] += 1.0;
+                for d in 0..dim {
+                    cents[lab][d] += embeddings[i][d];
+                }
+            }
+            for c in 0..k {
+                if counts[c] > 0.0 {
+                    for d in 0..dim {
+                        cents[c][d] /= counts[c];
+                    }
+                    let n = cents[c].iter().map(|v| v * v).sum::<f32>().sqrt().max(1e-8);
+                    for d in 0..dim {
+                        cents[c][d] /= n;
+                    }
+                }
+            }
+            voiceprint::match_cluster(&cents)
+        }
+    };
+
     log::info!(
-        "âœ… Diarization complete: {} speakers, {} segments over {:.1}s",
-        num_found, merged.len(), duration
+        "✅ Diarization complete: {} speakers, {} segments over {:.1}s (user={:?})",
+        num_found,
+        merged.len(),
+        duration,
+        user_speaker
     );
 
-    Ok(DiarizationResult { segments: merged, num_speakers: num_found, duration })
+    Ok(DiarizationResult {
+        segments: merged,
+        num_speakers: num_found,
+        duration,
+        user_speaker,
+    })
 }
 
 // ============================================================================
@@ -399,6 +486,7 @@ pub async fn rename_meeting_speaker(
     from: String,
     to: String,
 ) -> Result<u64, String> {
+    let _operation_guard = operation_guard().await;
     let to = to.trim();
     if to.is_empty() {
         return Err("Speaker name cannot be empty".to_string());
@@ -462,6 +550,14 @@ fn is_audio_file(path: &Path) -> bool {
 
 /// Newest audio file directly inside `dir`, if any.
 fn newest_audio_in(dir: &Path) -> Option<PathBuf> {
+    // Always use the mixed playback file as the meeting anchor. Dedicated
+    // mic/system siblings are discovered from its parent by diarize_meeting.
+    for name in ["audio.mp4", "audio.m4a", "audio.wav", "audio.mp3", "audio.webm"] {
+        let preferred = dir.join(name);
+        if preferred.is_file() {
+            return Some(preferred);
+        }
+    }
     let mut found: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
     for entry in std::fs::read_dir(dir).ok()?.flatten() {
         let path = entry.path();
@@ -540,12 +636,15 @@ fn ensure_wav(path: &Path) -> Result<(PathBuf, bool)> {
     let ffmpeg = crate::audio::ffmpeg::find_ffmpeg_path()
         .ok_or_else(|| anyhow!("ffmpeg not found — cannot decode {}", path.display()))?;
 
+    static TEMP_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let out = std::env::temp_dir().join(format!(
-        "meetily-diarize-{}.wav",
+        "meetily-diarize-{}-{}-{}.wav",
+        std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
-            .unwrap_or(0)
+            .unwrap_or(0),
+        TEMP_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
 
     log::info!("🎞️ Decoding {} → 16 kHz mono WAV for diarization", path.display());
@@ -570,6 +669,7 @@ fn ensure_wav(path: &Path) -> Result<(PathBuf, bool)> {
         .status()
         .map_err(|e| anyhow!("Failed to run ffmpeg: {}", e))?;
     if !status.success() || !out.exists() {
+        let _ = std::fs::remove_file(&out);
         return Err(anyhow!("ffmpeg failed to decode {}", path.display()));
     }
     Ok((out, true))
@@ -585,6 +685,7 @@ pub async fn diarize_meeting(
     num_speakers: Option<usize>,
     threshold: Option<f32>,
 ) -> Result<MeetingDiarizationResult, String> {
+    let _operation_guard = operation_guard().await;
     let pool = state.db_manager.pool();
 
     // Resolve the recording.
@@ -612,9 +713,128 @@ pub async fn diarize_meeting(
     };
     log::info!("🧑‍🤝‍🧑 Diarizing meeting {} using {}", meeting_id, source.display());
 
-    // Run the (CPU-heavy) pipeline off the async core threads. Non-WAV
-    // recordings (the normal case: audio.mp4) are decoded first.
+    // Run the CPU-heavy pipeline off the async core threads. New recordings
+    // have dedicated mic/system tracks: mic is deterministically "You" and
+    // only the system track needs remote-speaker clustering. Older meetings
+    // fall back to the mixed recording + enrolled voiceprint.
+    let voiceprint_source = meeting_id.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<DiarizationResult> {
+        let parent = source.parent().map(Path::to_path_buf);
+        let mic_source = parent.as_ref().map(|p| p.join("mic.mp4"));
+        let system_source = parent.as_ref().map(|p| p.join("system.mp4"));
+
+        if let (Some(mic), Some(system)) = (mic_source, system_source) {
+            if mic.exists() && system.exists() {
+                log::info!(
+                    "Using separate diarization tracks: mic={} system={}",
+                    mic.display(),
+                    system.display()
+                );
+                let (mic_wav, mic_temp) = ensure_wav(&mic)?;
+                let (system_wav, system_temp) = match ensure_wav(&system) {
+                    Ok(decoded) => decoded,
+                    Err(error) => {
+                        if mic_temp {
+                            let _ = std::fs::remove_file(&mic_wav);
+                        }
+                        return Err(error);
+                    }
+                };
+
+                let dual_result = (|| -> Result<DiarizationResult> {
+                    // Enroll each recording at most once so manual reruns cannot
+                    // overweight one meeting in the persistent profile.
+                    let model_dir = diarization_model_dir();
+                    let mic_embeddings = embeddings_for_debug(&mic_wav, &model_dir).ok();
+
+                    let mic_result = diarize_file(&mic_wav, Some(1), threshold)?;
+                // UI count includes the user, so system audio gets k - 1.
+                let remote_count = num_speakers.map(|k| k.saturating_sub(1).max(1));
+                    let system_result = if num_speakers == Some(1) {
+                    // The entered total includes the user. For a solo meeting,
+                    // ignore incidental system sounds instead of inventing a guest.
+                    DiarizationResult {
+                        segments: Vec::new(),
+                        num_speakers: 0,
+                        duration: mic_result.duration,
+                        user_speaker: None,
+                    }
+                    } else {
+                        diarize_file(&system_wav, remote_count, threshold)?
+                    };
+                    if let Some(embeddings) = mic_embeddings {
+                        let labels = clustering::agglomerative(
+                            &embeddings,
+                            None,
+                            DEFAULT_THRESHOLD,
+                        );
+                        let one_consistent_voice = embeddings.len() >= 3
+                            && labels.iter().copied().max().unwrap_or(0) == 0;
+                        if one_consistent_voice {
+                            if let Err(error) = voiceprint::update_from_embeddings(
+                                &embeddings,
+                                &voiceprint_source,
+                            ) {
+                                log::warn!("Could not update user voiceprint: {error}");
+                            }
+                        } else {
+                            log::info!(
+                                "Skipping voiceprint enrollment: mic track was not one consistent voice"
+                            );
+                        }
+                    }
+
+                    // Speaker 0 is always You; remote speakers begin at 1.
+                    let mut segments: Vec<DiarizationSegment> = mic_result
+                    .segments
+                    .into_iter()
+                    .map(|mut s| {
+                        s.speaker = 0;
+                        s
+                    })
+                    .collect();
+                    segments.extend(system_result.segments.into_iter().map(|mut s| {
+                    s.speaker += 1;
+                    s
+                }));
+                    segments.sort_by(|a, b| {
+                    a.start
+                        .partial_cmp(&b.start)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+
+                // Cross-track overlap means local + remote speech at once.
+                    let snapshot = segments.clone();
+                    for seg in &mut segments {
+                    if snapshot.iter().any(|other| {
+                        other.speaker != seg.speaker
+                            && other.start < seg.end
+                            && other.end > seg.start
+                    }) {
+                        seg.overlapped = true;
+                    }
+                }
+
+                    let num_remote = system_result.num_speakers;
+                    let duration = mic_result.duration.max(system_result.duration);
+                    Ok(DiarizationResult {
+                        segments,
+                        num_speakers: 1 + num_remote,
+                        duration,
+                        user_speaker: Some(0),
+                    })
+                })();
+
+                if mic_temp {
+                    let _ = std::fs::remove_file(&mic_wav);
+                }
+                if system_temp {
+                    let _ = std::fs::remove_file(&system_wav);
+                }
+                return dual_result;
+            }
+        }
+
         let (wav, is_temp) = ensure_wav(&source)?;
         let out = diarize_file(&wav, num_speakers, threshold);
         if is_temp {
@@ -655,7 +875,9 @@ pub async fn diarize_meeting(
         })
         .collect();
 
-    let user_speaker: Option<usize> = if user_ranges.is_empty() {
+    let user_speaker: Option<usize> = if result.user_speaker.is_some() {
+        result.user_speaker
+    } else if user_ranges.is_empty() {
         None
     } else {
         let mut overlap_per_speaker: std::collections::HashMap<usize, f32> =
@@ -678,25 +900,24 @@ pub async fn diarize_meeting(
         log::info!("🧑‍🤝‍🧑 Speaker {} identified as the local user", u + 1);
     }
 
-    // Assign each segment the speaker with the greatest temporal overlap.
-    //
-    // Live dual-path STT already labels mic as "You" and system as Guest/
-    // Speaker N. Offline clustering runs on the *mixed* file and used to
-    // overwrite those good live labels — which is why the post-call transcript
-    // lost what the live chat already showed. Preserve existing live labels
-    // (especially "You"); only fill gaps / refine unlabeled rows.
+    // Assign each transcript from the offline source-track result. Custom names
+    // are preserved, but transient live labels (You/Guest/Speaker N) are refined.
+    // If multiple source-track speakers overlap the transcript, persist a label
+    // such as "You + Speaker 1" instead of falsely choosing only one voice.
     let mut assignments: Vec<(String, String)> = Vec::new();
+    let mut updates: Vec<(String, Option<String>)> = Vec::new();
     let mut preserved = 0u32;
     for (id, start, end, existing) in rows {
         if let Some(ref live) = existing {
             let live_trim = live.trim();
             if !live_trim.is_empty() {
-                // Keep live identity. Offline may still refine pure "Guest" into
-                // Speaker N when multi-speaker clustering is confident.
-                let is_you = live_trim.eq_ignore_ascii_case("you");
-                let is_named = !live_trim.eq_ignore_ascii_case("guest")
-                    && !live_trim.to_ascii_lowercase().starts_with("speaker ");
-                if is_you || is_named {
+                let is_generated = live_trim.split(" + ").all(|part| {
+                    part.eq_ignore_ascii_case("guest")
+                        || part.eq_ignore_ascii_case("you")
+                        || part.to_ascii_lowercase().starts_with("speaker ")
+                });
+                let is_named = !is_generated;
+                if is_named {
                     preserved += 1;
                     assignments.push((id, live_trim.to_string()));
                     continue;
@@ -706,35 +927,93 @@ pub async fn diarize_meeting(
 
         let (s, e) = match (start, end) {
             (Some(s), Some(e)) if e > s => (s as f32, e as f32),
-            _ => continue, // no timing info — can't map reliably
+            _ => {
+                updates.push((id, None));
+                continue;
+            }
         };
 
-        let mut best_overlap = 0f32;
-        let mut best_speaker: Option<usize> = None;
+        let mut overlap_by_speaker: std::collections::HashMap<usize, f32> =
+            std::collections::HashMap::new();
         for seg in &result.segments {
             let ov = seg.end.min(e) - seg.start.max(s);
-            if ov > best_overlap {
-                best_overlap = ov;
-                best_speaker = Some(seg.speaker);
+            if ov > 0.0 {
+                *overlap_by_speaker.entry(seg.speaker).or_insert(0.0) += ov;
             }
         }
 
-        if let Some(spk) = best_speaker {
-            // "You" is a marker the frontend swaps for the user's display name.
-            let label = if Some(spk) == user_speaker {
-                "You".to_string()
-            } else {
-                format!("Speaker {}", spk + 1)
+        if !overlap_by_speaker.is_empty() {
+            let max_overlap = overlap_by_speaker
+                .values()
+                .copied()
+                .fold(0.0f32, f32::max);
+            // Keep genuine simultaneous speakers while dropping tiny boundary
+            // touches. 20% of the strongest overlap (min 80 ms) is meaningful.
+            let cutoff = (max_overlap * 0.20).max(0.08);
+            let mut speakers: Vec<(usize, f32)> = overlap_by_speaker.into_iter().collect();
+            speakers.sort_by(|a, b| {
+                b.1.partial_cmp(&a.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            if let Some(&(primary, _)) = speakers.first() {
+                speakers.retain(|(speaker, overlap)| {
+                    *speaker == primary
+                        || (*overlap >= cutoff
+                            && result.segments.iter().any(|a| {
+                                a.speaker == *speaker
+                                    && result.segments.iter().any(|b| {
+                                        b.speaker != a.speaker
+                                            && a.end.min(b.end).min(e)
+                                                - a.start.max(b.start).max(s)
+                                                >= 0.08
+                                    })
+                            }))
+                });
+            }
+
+            let speaker_label = |spk: usize| -> String {
+                if Some(spk) == user_speaker {
+                    return "You".to_string();
+                }
+                // Keep remote numbering compact when the user owns a cluster.
+                let display = match user_speaker {
+                    Some(user) if spk > user => spk,
+                    _ => spk + 1,
+                };
+                format!("Speaker {}", display)
             };
-            sqlx::query("UPDATE transcripts SET speaker = ? WHERE id = ?")
-                .bind(&label)
-                .bind(&id)
-                .execute(pool)
-                .await
-                .map_err(|e| format!("Failed to save speaker label: {}", e))?;
+
+            let mut labels: Vec<String> = speakers
+                .into_iter()
+                .take(3)
+                .map(|(spk, _)| speaker_label(spk))
+                .collect();
+            labels.dedup();
+            let label = labels.join(" + ");
+            if label.is_empty() {
+                continue;
+            }
+            updates.push((id.clone(), Some(label.clone())));
             assignments.push((id, label));
+        } else {
+            updates.push((id, None));
         }
     }
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| format!("Failed to begin speaker update: {e}"))?;
+    for (id, label) in updates {
+        sqlx::query("UPDATE transcripts SET speaker = ? WHERE id = ?")
+            .bind(label)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("Failed to save speaker label: {e}"))?;
+    }
+    tx.commit()
+        .await
+        .map_err(|e| format!("Failed to commit speaker labels: {e}"))?;
     if preserved > 0 {
         log::info!(
             "🧑‍🤝‍🧑 Preserved {} live speaker label(s); offline only filled gaps",
@@ -787,6 +1066,7 @@ fn collect_turns(models: &mut DiarizationModels, samples: &[f32]) -> Result<Vec<
         for spk in 0..MAX_LOCAL_SPEAKERS {
             // Contiguous runs of frames where this local speaker is active.
             let mut regions: Vec<(f32, f32)> = Vec::new();
+            let mut overlapped_regions: Vec<(f32, f32)> = Vec::new();
             let mut audio: Vec<f32> = Vec::new();
             let mut run_start: Option<usize> = None;
 
@@ -802,6 +1082,25 @@ fn collect_turns(models: &mut DiarizationModels, samples: &[f32]) -> Result<Vec<
                         let e_secs = e_secs.min(duration);
                         if e_secs > s_secs {
                             regions.push((s_secs, e_secs));
+                            // Keep overlap timing for multi-speaker transcript labels,
+                            // but continue excluding it from speaker embeddings.
+                            let mut overlap_start: Option<usize> = None;
+                            for fi in rs..=f {
+                                let overlapping = fi < f
+                                    && activity[fi].iter().filter(|&&a| a).count() > 1;
+                                if overlapping && overlap_start.is_none() {
+                                    overlap_start = Some(fi);
+                                } else if !overlapping {
+                                    if let Some(os) = overlap_start.take() {
+                                        let overlap_s = win_start_secs + os as f32 * frame_secs;
+                                        let overlap_e = (win_start_secs + fi as f32 * frame_secs)
+                                            .min(duration);
+                                        if overlap_e > overlap_s {
+                                            overlapped_regions.push((overlap_s, overlap_e));
+                                        }
+                                    }
+                                }
+                            }
                             // Gather samples for the embedding — but ONLY from
                             // frames where this speaker is the sole active one.
                             // Overlapped speech is assigned to every speaker
@@ -826,7 +1125,12 @@ fn collect_turns(models: &mut DiarizationModels, samples: &[f32]) -> Result<Vec<
 
             let speech_secs = audio.len() as f32 / dsp::SAMPLE_RATE as f32;
             if !regions.is_empty() && speech_secs >= MIN_EMBED_SECONDS {
-                turns.push(LocalTurn { regions, audio, speech_secs });
+                turns.push(LocalTurn {
+                    regions,
+                    overlapped_regions,
+                    audio,
+                    speech_secs,
+                });
             }
         }
 
