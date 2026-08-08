@@ -1,8 +1,10 @@
 # Meetily - Actually Free
 
-A Windows-focused fork of [Meetily](https://github.com/Zackriya-Solutions/meetily) that keeps the desktop app local, removes paid-feature gating, and ships as one self-contained installer.
+An entirely free, fully unlocked fork of [Meetily](https://github.com/Zackriya-Solutions/meetily). Every feature is available without an account, subscription, license key, trial, or paid tier.
 
 [Download the latest Windows release](https://github.com/TylerBuza/Meetily-ActuallyFree/releases/latest)
+
+This fork also goes beyond removing feature restrictions. It adds a universal Windows installer, broader GPU support, more reliable multi-track recording and recovery, improved speaker diarization, portable local storage, and in-app updates.
 
 The Windows installer includes all three transcription backends:
 
