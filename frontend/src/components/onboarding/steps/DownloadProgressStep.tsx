@@ -184,14 +184,15 @@ export function DownloadProgressStep() {
     });
   }, []);
 
-  // Start the selected summary model only after the backend recommendation is known.
+  // Step 2 starts only after the required transcription model reaches 100%.
   useEffect(() => {
     if (summaryDownloadStartedRef.current) return;
+    if (!parakeetDownloaded || summaryModelDownloaded) return;
     if (!selectedSummaryModel) return;
     summaryDownloadStartedRef.current = true;
 
     startSummaryDownload();
-  }, [selectedSummaryModel]);
+  }, [parakeetDownloaded, selectedSummaryModel, summaryModelDownloaded]);
 
   // Listen to Parakeet download progress
   useEffect(() => {
@@ -370,7 +371,9 @@ export function DownloadProgressStep() {
   };
 
   const renderDownloadCard = (
+    step: number,
     title: string,
+    modelName: string,
     icon: React.ReactNode,
     state: DownloadState,
     modelSize: string,
@@ -382,14 +385,17 @@ export function DownloadProgressStep() {
           <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
             {icon}
           </div>
-          <div>
-            <h3 className="font-medium text-gray-900">{title}</h3>
-            <p className="text-sm text-gray-500">{modelSize}</p>
+              <div>
+                <h3 className="font-medium text-gray-900">Step {step}: {title}</h3>
+                <p className="mt-0.5 text-xs font-medium text-blue-400">{modelName}</p>
+                <p className="text-sm text-gray-500">{modelSize}</p>
           </div>
         </div>
         <div>
           {state.status === 'waiting' && (
-            <span className="text-sm text-gray-500">Waiting...</span>
+            <span className="text-sm text-gray-500">
+              {step === 2 ? 'Waiting for Step 1' : 'Waiting...'}
+            </span>
           )}
           {state.status === 'downloading' && (
             <Loader2 className="w-5 h-5 text-gray-700 animate-spin" />
@@ -406,7 +412,7 @@ export function DownloadProgressStep() {
       </div>
 
       {/* Progress Bar */}
-      {(state.status === 'downloading' || state.status === 'completed') && (
+      {state.status === 'downloading' && (
         <div className="space-y-2">
           <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
             <div
@@ -464,14 +470,18 @@ export function DownloadProgressStep() {
         {/* Download Cards */}
         <div className="w-full max-w-lg space-y-4">
           {renderDownloadCard(
+            1,
             'Transcription Engine',
+            PARAKEET_MODEL,
             <Mic className="w-5 h-5 text-gray-600" />,
             parakeetState,
             '~670 MB'
           )}
 
           {renderDownloadCard(
+            2,
             'Summary Engine',
+            selectedSummaryModel || recommendedSummaryModel || 'Selecting recommended model...',
             <Sparkles className="w-5 h-5 text-gray-600" />,
             summaryState,
             getSummaryModelSizeLabel(selectedSummaryModel || recommendedSummaryModel),

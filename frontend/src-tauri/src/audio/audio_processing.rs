@@ -140,7 +140,7 @@ impl TruePeakLimiter {
 /// This is a STATEFUL normalizer that tracks cumulative loudness over time
 ///
 /// EBU R128 is the broadcast industry standard for loudness normalization:
-/// - Target: -23 LUFS (Loudness Units relative to Full Scale)
+/// - Target: -20 LUFS for meeting speech
 /// - Used by: Netflix, YouTube, Spotify, all professional broadcast
 /// - Perceptually accurate (not just simple RMS)
 ///
@@ -181,19 +181,21 @@ impl LoudnessNormalizer {
     /// This maintains cumulative loudness measurements across all processed audio,
     /// resulting in consistent normalization that sounds natural.
     ///
-    /// Target: -23 LUFS (professional broadcast standard for speech/dialog)
+    /// Target: -20 LUFS with bounded, smoothed gain
     /// Applies sample-by-sample with 10ms lookahead limiter to prevent clipping
-    pub fn normalize_loudness(&mut self, samples: &[f32]) -> Vec<f32> {
+    pub fn normalize_loudness(&mut self, samples: &[f32], additional_gain: f32) -> Vec<f32> {
         if samples.is_empty() {
             return Vec::new();
         }
 
-        // Meeting speech (not broadcast dialog): a bit hotter so the local mic
-        // holds its own against hot WASAPI loopback when both are present in the
-        // recording mix. Transcription no longer depends on the mix, but the
-        // saved file and live meters still benefit.
-        const TARGET_LUFS: f64 = -18.0;
+        // Keep speech clear without chasing quiet sections into clipping. The
+        // old unbounded, instantaneous gain produced thousands of 0 dBFS mic
+        // samples and damaged consonants before VAD/transcription.
+        const TARGET_LUFS: f64 = -20.0;
+        const MIN_GAIN: f32 = 0.5;
+        const MAX_GAIN: f32 = 2.0;
         const ANALYZE_CHUNK_SIZE: usize = 512;
+        let additional_gain = additional_gain.clamp(0.5, 3.0);
 
         let mut normalized_samples = Vec::with_capacity(samples.len());
 
@@ -210,7 +212,9 @@ impl LoudnessNormalizer {
                     if let Ok(current_lufs) = self.ebur128.loudness_global() {
                         if current_lufs.is_finite() && current_lufs < 0.0 {
                             let gain_db = TARGET_LUFS - current_lufs;
-                            self.gain_linear = 10_f32.powf(gain_db as f32 / 20.0);
+                            let target_gain = 10_f32.powf(gain_db as f32 / 20.0).clamp(MIN_GAIN, MAX_GAIN);
+                            let blend = if target_gain < self.gain_linear { 0.2 } else { 0.05 };
+                            self.gain_linear += (target_gain - self.gain_linear) * blend;
                         }
                     }
                 }
@@ -218,13 +222,39 @@ impl LoudnessNormalizer {
             }
 
             // Apply gain and true peak limiting
-            let amplified = sample * self.gain_linear;
+            let amplified = sample * self.gain_linear * additional_gain;
             let limited = self.limiter.process(amplified, self.true_peak_limit);
 
             normalized_samples.push(limited);
         }
 
         normalized_samples
+    }
+}
+
+#[cfg(test)]
+mod loudness_normalizer_tests {
+    use super::*;
+
+    #[test]
+    fn normalization_and_user_gain_never_exceed_true_peak_limit() {
+        let mut normalizer = LoudnessNormalizer::new(1, 48_000).unwrap();
+        let hot_signal = vec![0.9; 48_000];
+        let normalized = normalizer.normalize_loudness(&hot_signal, 3.0);
+        let peak = normalized.iter().map(|sample| sample.abs()).fold(0.0, f32::max);
+
+        assert!(peak <= normalizer.true_peak_limit + 1e-6);
+    }
+
+    #[test]
+    fn normalization_gain_stays_inside_safe_bounds() {
+        let mut normalizer = LoudnessNormalizer::new(1, 48_000).unwrap();
+        let quiet_signal: Vec<f32> = (0..96_000)
+            .map(|sample| ((sample as f32 * 440.0 * std::f32::consts::TAU) / 48_000.0).sin() * 0.001)
+            .collect();
+        normalizer.normalize_loudness(&quiet_signal, 1.0);
+
+        assert!((0.5..=2.0).contains(&normalizer.gain_linear));
     }
 }
 

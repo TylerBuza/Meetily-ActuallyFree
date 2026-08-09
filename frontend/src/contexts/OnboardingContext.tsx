@@ -517,11 +517,16 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
 
     try {
       const shouldStartParakeet = includeParakeet && !parakeetDownloaded;
-      const shouldStartSummary = includeSummary && !summaryModelDownloaded && !!summaryModel;
+      const shouldStartSummary = includeSummary
+        && parakeetDownloaded
+        && !summaryModelDownloaded
+        && !!summaryModel;
 
       if (!shouldStartParakeet && !shouldStartSummary) {
         if (includeSummary && !summaryModelDownloaded && !summaryModel) {
           console.warn('[OnboardingContext] Summary Model download skipped until recommendation is loaded');
+        } else if (includeSummary && !parakeetDownloaded) {
+          console.log('[OnboardingContext] Summary Model download is waiting for Parakeet');
         }
         return;
       }
@@ -535,7 +540,8 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
           .catch(err => console.error('[OnboardingContext] Parakeet download failed:', err));
       }
 
-      // Start selected Summary Model download immediately so completion cannot race the request.
+      // Preserve bandwidth for speech recognition. Summary starts only after
+      // the required transcription model has completed.
       if (shouldStartSummary && summaryModel) {
         requestSummaryModelDownload(summaryModel);
       }

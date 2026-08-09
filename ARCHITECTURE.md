@@ -55,6 +55,13 @@ diarization instead (§4).
 `RecordingControls`. This is the only place the pre-mix mic/system distinction
 survives.
 
+Mic and system speech use separate VAD instances. The mic path is intentionally
+more permissive (`0.42/0.30`) than hot digital loopback (`0.50/0.35`). Before
+VAD, mic loudness normalization targets -20 LUFS, limits automatic gain to
+0.5x-2.0x, smooths gain changes, and applies the user's gain before one final
+-1 dB limiter. Do not move user gain after that limiter or restore unbounded
+normalization; retained mic tracks showed hard 0 dBFS clipping under that design.
+
 Note: the webview **cannot** capture system audio itself, so browser-side
 `getUserMedia` visualizers can only ever show the microphone. That is why the
 levels come from Rust.
@@ -290,7 +297,17 @@ operation text. It combines that with explicit phase-completion milestones
 under the temporary
 `HKCU\Software\meetily\InstallerProgress\<token>` key. This gives a real percent
 while still identifying runtime phases where NSIS itself is waiting on a child
-installer. The key is unique per run and removed when the engine exits. Closing
+installer. For bundled files, `build-installer-bootstrapper.ps1` embeds the
+ordered uncompressed file sizes; the wrapper combines NSIS's current-file
+percentage with those sizes so large CUDA/runtime files advance smoothly rather
+than jumping once per `File` command. Text uses GDI+ grayscale grid-fitted
+antialiasing rather than GDI `DrawText`, and the
+completion badge alone is supersampled before being composited into the normal
+window buffer. Whole-window supersampling is unsafe because several GDI APIs
+ignore world transforms and produce a quarter-size UI. Progress from NSIS,
+milestones, and byte weighting is clamped monotonically because sources can
+briefly report an older value during phase transitions. The key is unique per run and removed when
+the engine exits. Closing
 is blocked once installation starts because externally terminating NSIS can
 leave a partial installation. The wrapper also restores the previously
 registered install path from `HKCU\Software\meetily\Meetily - Actually Free`
@@ -329,10 +346,17 @@ and uses the `open_external_url` Tauri command because browser-style
 command calls `ShellExecuteW` directly; do not regress it to `cmd /C start`,
 which flashes a console and mishandles some URLs.
 
-Model transfers continue when onboarding advances. Their persistent UI is
-`components/shared/DownloadProgressToast.tsx`: active downloads render in one
-stacked top-right region (not independent overlapping Sonner toasts), while
-completion and errors use short bottom-right Sonner notifications.
+The main window has `center: true` in `tauri.conf.json` so first-run onboarding
+opens on the center of the active display instead of inheriting Windows' default
+top-left placement.
+
+Model downloads are sequential: the required Parakeet transcription model owns
+the connection until it reaches 100%, then the selected summary model starts.
+The download step labels these as Step 1 and Step 2 and renders only the active
+step's progress bar. After the user continues, active transfers appear as a
+compact top-right indicator that expands on hover or keyboard focus; it must not
+reserve space or shift later onboarding pages. Completion and errors use short
+bottom-right Sonner notifications.
 
 ### Release rules
 
@@ -346,7 +370,24 @@ completion and errors use short bottom-right Sonner notifications.
 - Keep the updater private key and password under the ignored
   `.build-tools/updater/` directory. Losing them prevents compatible updates.
 - `-PackageOnly` reuses staged CPU/Vulkan/CUDA binaries but still rebuilds NSIS,
-  the bootstrapper, updater metadata, and checksums.
+  the bootstrapper, updater metadata, and checksums. Use it only for installer
+  shell/template changes. Frontend, Rust, icon, or Tauri-command changes require
+  a full universal build: the post-install hook replaces the freshly packaged
+  placeholder with one of those staged variants, so stale variants silently
+  install stale application code.
+- `-BootstrapperOnly` is narrower: it re-embeds the existing universal updater
+  engine, rebuilds only the native outer setup, and refreshes checksums. Use it
+  only for `installer-bootstrapper/bootstrapper.cpp` presentation changes; it
+  deliberately does not regenerate NSIS, application variants, or `latest.json`.
+  It refuses to run unless the existing metadata version, URL, and signature
+  match the updater engine.
+- `tauri.updater.conf.json` deliberately clears `beforeBuildCommand`. The
+  universal script builds Next.js once unless `-SkipFrontend` is passed; letting
+  Tauri build it again changes the embedded assets and forces a redundant second
+  CPU relink. The script also creates `universal.marker` before compiling any
+  variants so that adding the resource later cannot invalidate the first CPU
+  build. Do not restore the command in that overlay or move marker creation back
+  below variant compilation.
 - `setup.exe --verify-payload` extracts and verifies the embedded engine without
   installing it; use this as a release smoke test.
 

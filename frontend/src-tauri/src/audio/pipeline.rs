@@ -75,9 +75,11 @@ struct AudioMixerRingBuffer {
 
 impl AudioMixerRingBuffer {
     fn new(sample_rate: u32, mic_enabled: bool, system_enabled: bool) -> Self {
-        // Use 50ms windows for mixing
-        let window_ms = 600.0;
-        let window_size_samples = (sample_rate as f32 * window_ms / 1000.0) as usize;
+        Self::with_window_ms(sample_rate, mic_enabled, system_enabled, 50.0)
+    }
+
+    fn with_window_ms(sample_rate: u32, mic_enabled: bool, system_enabled: bool, window_ms: f32) -> Self {
+        let window_size_samples = ((sample_rate as f32 * window_ms / 1000.0) as usize).max(1);
 
         // CRITICAL FIX: Increase max buffer to 400ms for system audio stability
         // System audio (especially Core Audio on macOS) can have significant jitter
@@ -430,7 +432,7 @@ impl AudioCapture {
             // Initialize EBU R128 normalizer (professional loudness standard)
             let norm = match LoudnessNormalizer::new(1, TARGET_SAMPLE_RATE) {
                 Ok(normalizer) => {
-                    info!("✅ EBU R128 normalizer initialized for microphone '{}' (target: -18 LUFS)", device.name);
+                    info!("✅ EBU R128 normalizer initialized for microphone '{}' (target: -20 LUFS)", device.name);
                     Some(normalizer)
                 }
                 Err(e) => {
@@ -692,7 +694,8 @@ impl AudioCapture {
             // STEP 3: Apply EBU R128 normalization (professional loudness standard)
             if let Ok(mut normalizer_lock) = self.normalizer.lock() {
                 if let Some(ref mut normalizer) = *normalizer_lock {
-                    mono_data = normalizer.normalize_loudness(&mono_data);
+                    let mic_gain = super::recording_preferences::mic_gain();
+                    mono_data = normalizer.normalize_loudness(&mono_data, mic_gain);
 
                     // Log normalization occasionally for debugging
                     let chunk_id = self.chunk_counter.load(std::sync::atomic::Ordering::SeqCst);
@@ -704,14 +707,8 @@ impl AudioCapture {
                 }
             }
 
-            // STEP 4: User mic gain (Settings → Recording). Applied after normalize
-            // so "make me louder" is predictable and doesn't fight EBU R128.
-            let gain = super::recording_preferences::mic_gain();
-            if (gain - 1.0).abs() > 0.01 {
-                for s in &mut mono_data {
-                    *s = (*s * gain).clamp(-1.0, 1.0);
-                }
-            }
+            // User gain is included before the normalizer's final limiter so it
+            // cannot reintroduce hard clipping afterward.
         }
 
         // Create audio chunk with stream-specific timestamp (get ID first for logging)
@@ -880,7 +877,12 @@ impl AudioPipeline {
         let redemption_time = if cfg!(target_os = "macos") { 400 } else { 400 };
 
         // One VAD per capture source so simultaneous talk is segmented independently.
-        let make_vad = |label: &str| match ContinuousVadProcessor::new(sample_rate, redemption_time) {
+        let make_vad = |label: &str, positive_threshold, negative_threshold| match ContinuousVadProcessor::new_with_thresholds(
+            sample_rate,
+            redemption_time,
+            positive_threshold,
+            negative_threshold,
+        ) {
             Ok(processor) => {
                 info!("VAD ready for {label}: segments go straight to Whisper (no shared mix)");
                 processor
@@ -890,8 +892,9 @@ impl AudioPipeline {
                 panic!("VAD processor creation failed: {e}");
             }
         };
-        let mic_vad = make_vad("microphone");
-        let system_vad = make_vad("system");
+        // Headset/array microphones are usually quieter than digital loopback.
+        let mic_vad = make_vad("microphone", 0.42, 0.30);
+        let system_vad = make_vad("system", 0.50, 0.35);
 
         // Initialize professional audio mixing components (recording file only)
         let ring_buffer = AudioMixerRingBuffer::new(sample_rate, mic_enabled, system_enabled);
@@ -1369,7 +1372,7 @@ mod ring_buffer_tests {
 
     #[test]
     fn aligns_late_source_to_recording_clock() {
-        let mut ring = AudioMixerRingBuffer::new(10, true, true);
+        let mut ring = AudioMixerRingBuffer::with_window_ms(10, true, true, 600.0);
         ring.add_samples(DeviceType::Microphone, vec![1.0; 6], 0.6);
         ring.add_samples(DeviceType::System, vec![2.0; 6], 1.0);
 
@@ -1380,7 +1383,7 @@ mod ring_buffer_tests {
 
     #[test]
     fn falls_back_when_requested_source_did_not_start() {
-        let mut ring = AudioMixerRingBuffer::new(10, true, true);
+        let mut ring = AudioMixerRingBuffer::with_window_ms(10, true, true, 600.0);
         ring.add_samples(DeviceType::Microphone, vec![1.0; 6], 0.6);
         assert!(!ring.can_mix());
 
@@ -1392,7 +1395,7 @@ mod ring_buffer_tests {
 
     #[test]
     fn tail_tracks_keep_equal_lengths() {
-        let mut ring = AudioMixerRingBuffer::new(10, true, true);
+        let mut ring = AudioMixerRingBuffer::with_window_ms(10, true, true, 600.0);
         ring.add_samples(DeviceType::Microphone, vec![1.0; 4], 0.4);
         ring.add_samples(DeviceType::System, vec![2.0; 2], 0.2);
 
@@ -1403,12 +1406,34 @@ mod ring_buffer_tests {
 
     #[test]
     fn long_clock_gap_resets_without_allocating_silence() {
-        let mut ring = AudioMixerRingBuffer::new(10, true, true);
+        let mut ring = AudioMixerRingBuffer::with_window_ms(10, true, true, 600.0);
         ring.add_samples(DeviceType::Microphone, vec![1.0; 2], 0.2);
         ring.add_samples(DeviceType::System, vec![2.0; 2], 0.2);
         ring.add_samples(DeviceType::Microphone, vec![3.0; 2], 60.2);
 
         assert_eq!(ring.mic_buffer.len(), 2);
         assert!(ring.system_buffer.is_empty());
+    }
+
+    #[test]
+    fn production_window_is_fifty_milliseconds() {
+        let ring = AudioMixerRingBuffer::new(48_000, true, true);
+
+        assert_eq!(ring.window_size_samples, 2_400);
+        assert_eq!(ring.max_buffer_size, 19_200);
+    }
+
+    #[test]
+    fn production_window_aligns_split_callbacks_without_padding() {
+        let mut ring = AudioMixerRingBuffer::new(48_000, true, true);
+        ring.add_samples(DeviceType::Microphone, vec![1.0; 2_400], 0.05);
+        ring.add_samples(DeviceType::System, vec![2.0; 1_200], 0.025);
+        assert!(!ring.can_mix());
+
+        ring.add_samples(DeviceType::System, vec![2.0; 1_200], 0.05);
+        let (mic, system) = ring.extract_window().unwrap();
+
+        assert_eq!(mic, vec![1.0; 2_400]);
+        assert_eq!(system, vec![2.0; 2_400]);
     }
 }

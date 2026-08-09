@@ -30,6 +30,15 @@ pub struct ContinuousVadProcessor {
 
 impl ContinuousVadProcessor {
     pub fn new(input_sample_rate: u32, redemption_time_ms: u32) -> Result<Self> {
+        Self::new_with_thresholds(input_sample_rate, redemption_time_ms, 0.50, 0.35)
+    }
+
+    pub fn new_with_thresholds(
+        input_sample_rate: u32,
+        redemption_time_ms: u32,
+        positive_speech_threshold: f32,
+        negative_speech_threshold: f32,
+    ) -> Result<Self> {
         // Silero VAD MUST use 16kHz - this is hardcoded requirement
         const VAD_SAMPLE_RATE: u32 = 16000;
 
@@ -40,8 +49,8 @@ impl ContinuousVadProcessor {
         // CONTINUOUS SPEECH FIX: Tuned for capturing complete 5+ second utterances
         // Previous: 0.55/0.40 with 400ms redemption was fragmenting speech into 40ms segments
         // New: More lenient thresholds + longer redemption for continuous speech
-        config.positive_speech_threshold = 0.50;  // Silero default - good for continuous speech
-        config.negative_speech_threshold = 0.35;  // Silero default - allows natural pauses
+        config.positive_speech_threshold = positive_speech_threshold;
+        config.negative_speech_threshold = negative_speech_threshold;
 
         // CRITICAL FIX: Removed redemption_time capping to support long continuous speech
         // Previous: capped at 400ms, causing VAD to fragment 5-second speech into 40ms segments
@@ -55,8 +64,9 @@ impl ContinuousVadProcessor {
         // New: 250ms ensures segments are substantial enough for Whisper (>100ms requirement)
         config.min_speech_time = Duration::from_millis(250);  // Prevent tiny fragments
 
-        debug!("Creating VAD session with: sample_rate={}Hz, redemption={}ms, min_speech={}ms, input_rate={}Hz",
-               VAD_SAMPLE_RATE, redemption_time_ms, 250, input_sample_rate);
+        debug!("Creating VAD session with: sample_rate={}Hz, redemption={}ms, thresholds={:.2}/{:.2}, min_speech={}ms, input_rate={}Hz",
+               VAD_SAMPLE_RATE, redemption_time_ms, positive_speech_threshold,
+               negative_speech_threshold, 250, input_sample_rate);
 
         let session = VadSession::new(config)
             .map_err(|e| anyhow!("Failed to create VAD session: {:?}", e))?;

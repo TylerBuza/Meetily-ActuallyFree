@@ -12,9 +12,10 @@ REM --- MSVC environment ---
 call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
 
 REM --- Toolchain env ---
-set "LIBCLANG_PATH=C:\Program Files\LLVM\bin"
-REM LLVM 22 libclang breaks whisper-rs-sys bindgen (opaque structs); use its pre-generated bindings
-set "WHISPER_DONT_GENERATE_BINDINGS=1"
+set "LIBCLANG_PATH=%REPO%\.build-tools\clang+llvm-18.1.8-x86_64-pc-windows-msvc\bin"
+REM Bundled whisper-rs bindings are Linux-shaped; Windows must generate them
+REM with the repository's pinned LLVM 18 toolchain.
+set "WHISPER_DONT_GENERATE_BINDINGS="
 REM Reassembled, working CUDA 13.3 toolkit (user-space; nvcc test compile passes)
 set "CUDA_PATH=C:\Users\tyler\Documents\BuzaMeet\.cuda_toolkit"
 set "CUDA_TOOLKIT_ROOT_DIR=%CUDA_PATH%"

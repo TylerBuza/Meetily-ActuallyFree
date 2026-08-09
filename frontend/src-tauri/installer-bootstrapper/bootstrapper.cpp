@@ -3,11 +3,13 @@
 #include <dwmapi.h>
 #include <bcrypt.h>
 #include <commctrl.h>
+#include <gdiplus.h>
 #include <shlobj.h>
 #include <shobjidl.h>
 
 #include <algorithm>
 #include <atomic>
+#include <cwctype>
 #include <filesystem>
 #include <iomanip>
 #include <mutex>
@@ -21,6 +23,7 @@
 
 #pragma comment(lib, "bcrypt.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
 
@@ -45,6 +48,7 @@ std::wstring g_progress_token;
 std::mutex g_detail_mutex;
 std::wstring g_install_detail;
 HFONT g_title_font = nullptr;
+HFONT g_brand_font = nullptr;
 HFONT g_heading_font = nullptr;
 HFONT g_body_font = nullptr;
 HFONT g_small_font = nullptr;
@@ -96,27 +100,46 @@ void Border(HDC dc, const RECT& rect, int radius, unsigned color) {
 
 void Text(HDC dc, const std::wstring& value, RECT rect, HFONT font, unsigned color,
           UINT format = DT_LEFT | DT_SINGLELINE | DT_VCENTER) {
-  SetBkMode(dc, TRANSPARENT);
-  SetTextColor(dc, Color(color));
-  HGDIOBJ old_font = SelectObject(dc, font);
-  DrawTextW(dc, value.c_str(), -1, &rect, format);
-  SelectObject(dc, old_font);
+  LOGFONTW log_font{};
+  if (GetObjectW(font, sizeof(log_font), &log_font) == 0) return;
+
+  Gdiplus::Graphics graphics(dc);
+  graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
+  graphics.SetCompositingQuality(Gdiplus::CompositingQualityHighQuality);
+  Gdiplus::Font draw_font(dc, &log_font);
+  Gdiplus::SolidBrush brush(Gdiplus::Color(
+      255, (color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff));
+  Gdiplus::StringFormat string_format;
+  string_format.SetAlignment(
+      (format & DT_CENTER) ? Gdiplus::StringAlignmentCenter
+      : (format & DT_RIGHT) ? Gdiplus::StringAlignmentFar
+                            : Gdiplus::StringAlignmentNear);
+  string_format.SetLineAlignment(
+      (format & DT_VCENTER) ? Gdiplus::StringAlignmentCenter
+                            : Gdiplus::StringAlignmentNear);
+  if (format & DT_SINGLELINE) {
+    string_format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
+  }
+  const Gdiplus::RectF layout(
+      static_cast<Gdiplus::REAL>(rect.left),
+      static_cast<Gdiplus::REAL>(rect.top),
+      static_cast<Gdiplus::REAL>(rect.right - rect.left),
+      static_cast<Gdiplus::REAL>(rect.bottom - rect.top));
+  graphics.DrawString(value.c_str(), static_cast<INT>(value.size()), &draw_font,
+                      layout, &string_format, &brush);
 }
 
 void DrawChrome(HDC dc) {
   RECT client{0, 0, kWindowWidth, kWindowHeight};
   Fill(dc, client, 0x0d1117);
 
-  HBRUSH logo_brush = CreateSolidBrush(Color(0x4b88f7));
-  HGDIOBJ old_brush = SelectObject(dc, logo_brush);
-  HGDIOBJ old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
-  Ellipse(dc, 24, 15, 48, 39);
-  SelectObject(dc, old_pen);
-  SelectObject(dc, old_brush);
-  DeleteObject(logo_brush);
-
-  Text(dc, L"Meetily", {58, 8, 160, 46}, g_heading_font, 0xf0f5fc);
-  Text(dc, L"ACTUALLY FREE", {132, 9, 270, 46}, g_small_font, 0x7890b2);
+  Text(dc, L"Meetily", {34, 3, 146, 45}, g_brand_font, 0x4b88f7);
+  Text(dc, L"\u00b7", {122, 3, 138, 45}, g_brand_font, 0x3b6fb3,
+       DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+  Text(dc, L"Actually Free", {138, 3, 338, 45}, g_brand_font, 0x3b6fb3);
+  Text(dc, L"Actually Free Fork made by Tyler Buza  |  buza.dev",
+       {390, 486, 736, 512}, g_small_font, 0x657a98,
+       DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
 
   HPEN chrome_pen = CreatePen(PS_SOLID, 1, Color(0x91a2ba));
   HGDIOBJ previous_pen = SelectObject(dc, chrome_pen);
@@ -132,13 +155,10 @@ void DrawChrome(HDC dc) {
   DeleteObject(chrome_pen);
 }
 
-void DrawCapability(HDC dc, int left, const wchar_t* label, const wchar_t* title,
-                    const wchar_t* detail) {
-  Text(dc, label, {left, 175, left + 176, 197}, g_small_font, 0x6da2f8,
+void DrawCapability(HDC dc, int left, const wchar_t* title, const wchar_t* detail) {
+  Text(dc, title, {left, 177, left + 176, 207}, g_heading_font, 0xeaf1fb,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-  Text(dc, title, {left, 199, left + 176, 224}, g_heading_font, 0xeaf1fb,
-       DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-  Text(dc, detail, {left + 8, 229, left + 168, 263}, g_small_font, 0x8fa4c0,
+  Text(dc, detail, {left + 8, 210, left + 168, 250}, g_small_font, 0x8fa4c0,
        DT_CENTER | DT_WORDBREAK | DT_VCENTER);
 }
 
@@ -148,16 +168,16 @@ void DrawWelcome(HDC dc) {
   Text(dc, L"Private recording, transcription, speaker labels, and summaries on your PC.",
        {72, 112, 688, 142}, g_body_font, 0xa9bed9, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
-  RoundedFill(dc, {72, 158, 688, 272}, 14, 0x121925);
-  Border(dc, {72, 158, 688, 272}, 14, 0x202c3e);
-  Fill(dc, {277, 178, 278, 252}, 0x253247);
-  Fill(dc, {482, 178, 483, 252}, 0x253247);
-  DrawCapability(dc, 82, L"LOCAL FIRST", L"Private by default",
-                 L"Recording and AI stay on this PC.");
-  DrawCapability(dc, 287, L"HARDWARE AWARE", L"Built for your PC",
-                 L"Selects CUDA, Vulkan, or CPU.");
-  DrawCapability(dc, 492, L"NO PAYWALL", L"Actually free",
-                 L"No account, subscription, or analytics.");
+  RoundedFill(dc, {72, 158, 688, 264}, 14, 0x121925);
+  Border(dc, {72, 158, 688, 264}, 14, 0x202c3e);
+  Fill(dc, {277, 176, 278, 246}, 0x253247);
+  Fill(dc, {482, 176, 483, 246}, 0x253247);
+  DrawCapability(dc, 82, L"Private",
+                 L"Audio, transcripts, and notes stay on this PC.");
+  DrawCapability(dc, 287, L"Hardware-aware",
+                 L"CUDA, Vulkan, or CPU is selected automatically.");
+  DrawCapability(dc, 492, L"Actually free",
+                 L"No accounts, limits, subscriptions, or telemetry.");
 
   Text(dc, L"INSTALL LOCATION", {72, 286, 300, 312}, g_small_font, 0x6da2f8);
   RoundedFill(dc, {72, 317, 558, 357}, 10, 0x090e15);
@@ -255,14 +275,58 @@ void DrawProgress(HDC dc) {
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 }
 
+void DrawCompleteBadge(HDC dc) {
+  constexpr int badge_size = 72;
+  constexpr int render_scale = 4;
+  HDC badge_dc = CreateCompatibleDC(dc);
+  HBITMAP badge_bitmap = CreateCompatibleBitmap(
+      dc, badge_size * render_scale, badge_size * render_scale);
+  HGDIOBJ old_bitmap = SelectObject(badge_dc, badge_bitmap);
+
+  Fill(badge_dc, {0, 0, badge_size * render_scale, badge_size * render_scale}, 0x0d1117);
+  HBRUSH circle = CreateSolidBrush(Color(0x2f6fdb));
+  HGDIOBJ old_brush = SelectObject(badge_dc, circle);
+  HGDIOBJ old_pen = SelectObject(badge_dc, GetStockObject(NULL_PEN));
+  Ellipse(badge_dc, 0, 0, badge_size * render_scale, badge_size * render_scale);
+  SelectObject(badge_dc, old_pen);
+  SelectObject(badge_dc, old_brush);
+  DeleteObject(circle);
+
+  HPEN check = CreatePen(PS_SOLID, 4 * render_scale, Color(0xffffff));
+  old_pen = SelectObject(badge_dc, check);
+  MoveToEx(badge_dc, 17 * render_scale, 35 * render_scale, nullptr);
+  LineTo(badge_dc, 31 * render_scale, 49 * render_scale);
+  LineTo(badge_dc, 57 * render_scale, 20 * render_scale);
+  SelectObject(badge_dc, old_pen);
+  DeleteObject(check);
+
+  SetStretchBltMode(dc, HALFTONE);
+  SetBrushOrgEx(dc, 0, 0, nullptr);
+  StretchBlt(dc, 344, 92, badge_size, badge_size,
+             badge_dc, 0, 0, badge_size * render_scale,
+             badge_size * render_scale, SRCCOPY);
+  SelectObject(badge_dc, old_bitmap);
+  DeleteObject(badge_bitmap);
+  DeleteDC(badge_dc);
+}
+
 void DrawComplete(HDC dc) {
-  RoundedFill(dc, {342, 102, 418, 178}, 38, 0x152f58);
-  Text(dc, L"OK", {342, 102, 418, 178}, g_heading_font, 0x76a7fb,
+  DrawCompleteBadge(dc);
+
+  Text(dc, L"Meetily is ready.", {72, 182, 688, 232}, g_title_font, 0xf2f6fc,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-  Text(dc, L"Meetily is ready.", {72, 198, 688, 248}, g_title_font, 0xf2f6fc,
-       DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-  Text(dc, L"Launch it to finish the in-app welcome and audio check.", {72, 248, 688, 286},
+  Text(dc, L"Launch it to finish the in-app welcome and audio check.", {72, 232, 688, 266},
        g_body_font, 0xa9bed9, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+
+  RoundedFill(dc, {158, 294, 602, 352}, 12, 0x121925);
+  Border(dc, {158, 294, 602, 352}, 12, 0x202c3e);
+  Text(dc, L"INSTALLED IN", {178, 298, 582, 320}, g_small_font, 0x6da2f8,
+       DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+  std::wstring shown_path = g_install_dir;
+  if (shown_path.size() > 54) shown_path = L"..." + shown_path.substr(shown_path.size() - 51);
+  Text(dc, shown_path, {178, 320, 582, 346}, g_small_font, 0xb8c8dc,
+       DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+
   RoundedFill(dc, LaunchRect(), 12, 0x4b88f7);
   Text(dc, L"Launch Meetily", LaunchRect(), g_heading_font, 0xffffff,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
@@ -534,6 +598,36 @@ int ReadInstallerMilestone() {
   return std::clamp(static_cast<int>(percent), 0, 100);
 }
 
+int ParseOperationPercent(const std::wstring& detail) {
+  const size_t percent = detail.rfind(L'%');
+  if (percent == std::wstring::npos) return -1;
+  size_t start = percent;
+  while (start > 0 && std::iswdigit(detail[start - 1])) --start;
+  if (start == percent) return -1;
+  return std::clamp(std::stoi(detail.substr(start, percent - start)), 0, 100);
+}
+
+int ReadBundledByteProgress(const std::wstring& detail) {
+  if (detail.empty() || kBundledFilesTotalBytes == 0) return -1;
+  std::wstring folded_detail = detail;
+  std::transform(folded_detail.begin(), folded_detail.end(), folded_detail.begin(), std::towlower);
+
+  unsigned long long completed = 0;
+  for (const auto& file : kBundledFiles) {
+    std::wstring path = file.path;
+    std::transform(path.begin(), path.end(), path.begin(), std::towlower);
+    if (folded_detail.find(path) != std::wstring::npos) {
+      const int operation_percent = ParseOperationPercent(detail);
+      if (operation_percent < 0) return -1;
+      const unsigned long long current = file.size * operation_percent / 100;
+      const unsigned long long copied = std::min(completed + current, kBundledFilesTotalBytes);
+      return 12 + static_cast<int>(copied * 60 / kBundledFilesTotalBytes);
+    }
+    completed += file.size;
+  }
+  return -1;
+}
+
 void InstallWorker() {
   CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   std::wstring error;
@@ -569,14 +663,19 @@ void InstallWorker() {
     const int native_progress = ReadInstallerProgress(process.dwProcessId);
     const int milestone = ReadInstallerMilestone();
     if (milestone >= 0) g_milestone.store(milestone);
-    const int progress = std::max(native_progress, milestone);
     std::wstring detail = ReadInstallerDetail(process.dwProcessId);
+    const int byte_progress = ReadBundledByteProgress(detail);
+    const int progress = milestone >= 12 && milestone < 72 && byte_progress >= 0
+        ? byte_progress
+        : std::max(native_progress, milestone);
     if (!detail.empty()) {
       std::lock_guard<std::mutex> lock(g_detail_mutex);
       g_install_detail = std::move(detail);
     }
-    if (progress >= 0 && progress != g_progress.load()) {
-      g_progress.store(progress);
+    const int displayed_progress = g_progress.load();
+    const int next_progress = std::max(displayed_progress, progress);
+    if (progress >= 0 && next_progress != displayed_progress) {
+      g_progress.store(next_progress);
       PostMessageW(g_window, kWorkUpdate, 0, 0);
     }
   }
@@ -709,18 +808,28 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int) {
   }
   g_install_dir = DefaultInstallDirectory();
 
+  Gdiplus::GdiplusStartupInput gdiplus_input;
+  ULONG_PTR gdiplus_token = 0;
+  if (Gdiplus::GdiplusStartup(&gdiplus_token, &gdiplus_input, nullptr) != Gdiplus::Ok) {
+    CoUninitialize();
+    return 1;
+  }
+
   g_title_font = CreateFontW(-36, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                            DEFAULT_PITCH, L"Segoe UI");
+                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+                             DEFAULT_PITCH, L"Segoe UI");
+  g_brand_font = CreateFontW(-24, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+                             DEFAULT_PITCH, L"Segoe UI");
   g_heading_font = CreateFontW(-17, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                              OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                              DEFAULT_PITCH, L"Segoe UI");
+                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+                               DEFAULT_PITCH, L"Segoe UI");
   g_body_font = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                           OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                           DEFAULT_PITCH, L"Segoe UI");
-  g_small_font = CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
                             DEFAULT_PITCH, L"Segoe UI");
+  g_small_font = CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+                             DEFAULT_PITCH, L"Segoe UI");
 
   WNDCLASSEXW window_class{};
   window_class.cbSize = sizeof(window_class);
@@ -754,9 +863,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int) {
   }
 
   DeleteObject(g_title_font);
+  DeleteObject(g_brand_font);
   DeleteObject(g_heading_font);
   DeleteObject(g_body_font);
   DeleteObject(g_small_font);
+  Gdiplus::GdiplusShutdown(gdiplus_token);
   CoUninitialize();
   return g_exit_code;
 }

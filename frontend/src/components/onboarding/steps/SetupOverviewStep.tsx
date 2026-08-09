@@ -46,7 +46,7 @@ export function SetupOverviewStep() {
 
   const openIssues = () => {
     invoke('open_external_url', {
-      url: 'https://github.com/TylerBuza/Meetily-ActuallyFree/issues',
+      url: 'https://github.com/TylerBuza/Meetily-ActuallyFree',
     }).catch((error) => console.error('Failed to open GitHub issues:', error));
   };
 
@@ -109,7 +109,7 @@ export function SetupOverviewStep() {
               onClick={openIssues}
               className="text-xs text-gray-600 hover:underline"
             >
-              Report issues on GitHub
+              View project on GitHub
             </button>
           </div>
         </div>

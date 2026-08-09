@@ -1,7 +1,7 @@
 {
     "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
     "productName": "Meetily - Actually Free",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "identifier": "com.meetily.ai",
     "build": {
         "frontendDist": "../out",
@@ -15,6 +15,7 @@
                 "title": "Meetily - Actually Free",
                 "width": 1100,
                 "height": 700,
+                "center": true,
                 "resizable": true,
                 "fullscreen": false,
                 "theme": "Dark",

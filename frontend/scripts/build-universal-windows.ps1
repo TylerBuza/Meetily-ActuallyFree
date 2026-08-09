@@ -4,7 +4,8 @@ param(
   [switch]$SkipFrontend,
   [switch]$AllowUnsigned,
   [string]$UpdaterPrivateKeyPath,
-  [switch]$PackageOnly
+  [switch]$PackageOnly,
+  [switch]$BootstrapperOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -43,6 +44,69 @@ cmd /c "call `"$vcvars`" >nul 2>&1 && set" | ForEach-Object {
   }
 }
 
+if ($BootstrapperOnly) {
+  $dist = Join-Path $repo "dist"
+  $engineOutput = Join-Path $dist "Meetily-ActuallyFree-${appVersion}-x64-universal-updater.exe"
+  $updaterSignatureOutput = "$engineOutput.sig"
+  $output = Join-Path $dist "Meetily-ActuallyFree-${appVersion}-x64-universal-setup.exe"
+  $cpuBinary = Join-Path $repo "target\variants\cpu\release\meetily.exe"
+
+  foreach ($required in @($engineOutput, $updaterSignatureOutput, $cpuBinary)) {
+    if (-not (Test-Path -LiteralPath $required)) {
+      throw "Bootstrapper-only input is missing: $required"
+    }
+  }
+  foreach ($variant in @("meetily-cpu.exe", "meetily-vulkan.exe", "meetily-cuda.exe")) {
+    $variantPath = Join-Path $variants $variant
+    if (-not (Test-Path -LiteralPath $variantPath)) {
+      throw "Staged variant missing: $variantPath"
+    }
+  }
+
+  & (Join-Path $PSScriptRoot "build-installer-bootstrapper.ps1") `
+    -Payload $engineOutput `
+    -Output $output `
+    -Version $appVersion `
+    -ProgressMainBinary $cpuBinary `
+    -CpuVariantBytes (Get-Item (Join-Path $variants "meetily-cpu.exe")).Length `
+    -CudaVariantBytes (Get-Item (Join-Path $variants "meetily-cuda.exe")).Length `
+    -VulkanVariantBytes (Get-Item (Join-Path $variants "meetily-vulkan.exe")).Length
+  if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $output)) {
+    throw "Frameless installer bootstrapper build failed"
+  }
+  & $sign -FilePath $output
+  if ($LASTEXITCODE -ne 0) { throw "Frameless installer signing failed" }
+
+  $latestPath = Join-Path $dist "latest.json"
+  if (-not (Test-Path -LiteralPath $latestPath)) {
+    throw "Updater metadata is missing: $latestPath"
+  }
+  $latestMetadata = Get-Content $latestPath -Raw | ConvertFrom-Json
+  $latestPlatform = $latestMetadata.platforms.'windows-x86_64'
+  $expectedUpdaterUrl = "https://github.com/TylerBuza/Meetily-ActuallyFree/releases/download/v${appVersion}/$(Split-Path $engineOutput -Leaf)"
+  $expectedUpdaterSignature = (Get-Content $updaterSignatureOutput -Raw).Trim()
+  if ($latestMetadata.version -ne $appVersion -or
+      $latestPlatform.url -ne $expectedUpdaterUrl -or
+      $latestPlatform.signature -ne $expectedUpdaterSignature) {
+    throw "Existing latest.json does not match the current updater engine"
+  }
+  $checksums = @(
+    "{0}  {1}" -f (Get-FileHash $output -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path $output -Leaf)
+    "{0}  {1}" -f (Get-FileHash $engineOutput -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path $engineOutput -Leaf)
+    "{0}  {1}" -f (Get-FileHash $updaterSignatureOutput -Algorithm SHA256).Hash.ToLowerInvariant(), (Split-Path $updaterSignatureOutput -Leaf)
+    "{0}  latest.json" -f (Get-FileHash $latestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  ) -join "`n"
+  [System.IO.File]::WriteAllText(
+    (Join-Path $dist "SHA256SUMS.txt"),
+    $checksums + "`n",
+    [System.Text.UTF8Encoding]::new($false)
+  )
+
+  Write-Host "Bootstrapper-only installer ready: $output"
+  Get-Item $output | Select-Object FullName, Length, LastWriteTime
+  exit 0
+}
+
 if (-not $LlvmDir) { $LlvmDir = $env:MEETILY_LLVM_DIR }
 if (-not $LlvmDir) { $LlvmDir = "C:\Program Files\LLVM" }
 $clang = Join-Path $LlvmDir "bin\clang.exe"
@@ -72,6 +136,9 @@ if (-not $SkipFrontend) {
 $cpuTarget = Join-Path $repo "target\variants\cpu"
 $vulkanTarget = Join-Path $repo "target\variants\vulkan"
 $cudaTarget = Join-Path $repo "target\variants\cuda"
+$universalMarker = Join-Path $variants "universal.marker"
+try {
+[System.IO.File]::WriteAllText($universalMarker, "universal`r`n")
 
 if (-not $PackageOnly) {
 if (-not $VulkanSdk) { $VulkanSdk = $env:VULKAN_SDK }
@@ -145,14 +212,14 @@ foreach ($binary in Get-ChildItem $variants -Filter "*.exe") {
 # Bundle once with CPU as the safe main executable. The post-install hook
 # replaces it with the selected signed variant and keeps meetily.exe canonical.
 $env:CARGO_TARGET_DIR = $cpuTarget
-$universalMarker = Join-Path $variants "universal.marker"
-[System.IO.File]::WriteAllText($universalMarker, "universal`r`n")
 Push-Location $frontend
 try {
   & node "node_modules\@tauri-apps\cli\tauri.js" build --config "src-tauri\tauri.updater.conf.json" -- --no-default-features --features custom-protocol
   if ($LASTEXITCODE -ne 0) { throw "Universal Tauri bundle failed" }
 } finally {
   Pop-Location
+}
+} finally {
   Remove-Item $universalMarker -Force -ErrorAction SilentlyContinue
 }
 
@@ -175,7 +242,11 @@ Copy-Item $updaterSignatureSource $updaterSignatureOutput -Force
 & (Join-Path $PSScriptRoot "build-installer-bootstrapper.ps1") `
   -Payload $installer `
   -Output $output `
-  -Version $appVersion
+  -Version $appVersion `
+  -ProgressMainBinary (Join-Path $cpuTarget "release\meetily.exe") `
+  -CpuVariantBytes (Get-Item (Join-Path $variants "meetily-cpu.exe")).Length `
+  -CudaVariantBytes (Get-Item (Join-Path $variants "meetily-cuda.exe")).Length `
+  -VulkanVariantBytes (Get-Item (Join-Path $variants "meetily-vulkan.exe")).Length
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $output)) {
   throw "Frameless installer bootstrapper build failed"
 }
@@ -185,7 +256,7 @@ if ($LASTEXITCODE -ne 0) { throw "Frameless installer signing failed" }
 $signature = (Get-Content $updaterSignatureOutput -Raw).Trim()
 $latest = [ordered]@{
   version = $appVersion
-  notes = "Universal CPU, Vulkan, and NVIDIA CUDA installer; improved recording recovery and speaker diarization."
+  notes = "Audio capture and transcription reliability improvements, faster model setup, performance tuning, and installer robustness."
   pub_date = [DateTime]::UtcNow.ToString("o")
   platforms = [ordered]@{
     "windows-x86_64" = [ordered]@{

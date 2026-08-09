@@ -5,6 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import { X, Check, ArrowBigDownDash } from 'lucide-react';
 import { getDownloadTotalMb } from '@/lib/onboarding-summary-model';
+import { useOnboarding } from '@/contexts/OnboardingContext';
 
 interface DownloadProgress {
   modelName: string;
@@ -50,8 +51,10 @@ function categorizeError(error: string): string {
 // Custom toast component for download progress
 function DownloadToastContent({
   download,
+  collapsible = false,
 }: {
   download: DownloadProgress;
+  collapsible?: boolean;
 }) {
   const isComplete = download.status === 'completed';
   const hasError = download.status === 'error';
@@ -59,7 +62,14 @@ function DownloadToastContent({
   const unitLabel = download.unitLabel ?? 'MB';
 
   return (
-    <div className="flex items-center gap-3 w-full max-w-sm bg-white rounded-lg shadow-lg border border-gray-200 p-3 relative">
+    <div
+      tabIndex={collapsible ? 0 : undefined}
+      aria-label={collapsible ? `${download.displayName}: ${Math.round(download.progress)}%` : undefined}
+      className={collapsible
+        ? 'group pointer-events-auto ml-auto flex max-h-14 w-14 items-center gap-3 overflow-hidden rounded-lg border border-gray-200 bg-white p-3 shadow-lg transition-[width,max-height] duration-200 hover:max-h-24 hover:w-full focus:max-h-24 focus:w-full focus:outline-none'
+        : 'relative flex w-full max-w-sm items-center gap-3 rounded-lg border border-gray-200 bg-white p-3 shadow-lg'
+      }
+    >
       {/* Icon */}
       <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${isComplete ? 'bg-green-100' : hasError ? 'bg-red-100' : isCancelled ? 'bg-gray-100' : 'bg-gray-100'
         }`}>
@@ -75,7 +85,10 @@ function DownloadToastContent({
       </div>
 
       {/* Content */}
-      <div className="flex-1 min-w-0">
+      <div className={collapsible
+        ? 'w-[17rem] flex-none opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus:opacity-100'
+        : 'min-w-0 flex-1'
+      }>
         <div className="flex items-center justify-between gap-2 mb-1">
           <p className="text-sm font-medium text-gray-900 truncate">
             {download.displayName}
@@ -206,7 +219,7 @@ export function useDownloadProgressToast() {
 
       const downloadData: DownloadProgress = {
         modelName,
-        displayName: 'Transcription Model (Parakeet)',
+        displayName: `Transcription Model (${modelName})`,
         progress,
         downloadedMb: downloaded_mb ?? 0,
         totalMb: total_mb ?? 670,
@@ -233,7 +246,7 @@ export function useDownloadProgressToast() {
         const { modelName } = event.payload;
         const downloadData: DownloadProgress = {
           modelName,
-          displayName: 'Transcription Model (Parakeet)',
+          displayName: `Transcription Model (${modelName})`,
           progress: 100,
           downloadedMb: 670,
           totalMb: 670,
@@ -252,7 +265,7 @@ export function useDownloadProgressToast() {
         const { modelName, error } = event.payload;
         const downloadData: DownloadProgress = {
           modelName,
-          displayName: 'Transcription Model (Parakeet)',
+          displayName: `Transcription Model (${modelName})`,
           progress: 0,
           downloadedMb: 0,
           totalMb: 670,
@@ -327,18 +340,22 @@ export function useDownloadProgressToast() {
 // Component to initialize download toast listeners at app level
 export function DownloadProgressToastProvider() {
   const { downloads } = useDownloadProgressToast();
+  const { currentStep } = useOnboarding();
   const activeDownloads = Array.from(downloads.values()).filter(
     (download) => download.status === 'downloading',
   );
 
-  if (activeDownloads.length === 0) return null;
+  // The download step owns its progress UI. Show this background status only
+  // after the user continues to the rest of onboarding.
+  if (currentStep <= 3 || activeDownloads.length === 0) return null;
 
   return (
-    <div className="pointer-events-none fixed right-5 top-28 z-[70] flex w-[min(22rem,calc(100vw-2.5rem))] flex-col gap-2">
+    <div className="pointer-events-none fixed right-5 top-20 z-[70] flex w-[min(22rem,calc(100vw-2.5rem))] flex-col items-end gap-2">
       {activeDownloads.map((download) => (
-        <div key={download.modelName} className="pointer-events-auto">
+        <div key={download.modelName} className="w-full">
           <DownloadToastContent
             download={download}
+            collapsible
           />
         </div>
       ))}

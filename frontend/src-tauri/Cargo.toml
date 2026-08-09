@@ -1,6 +1,6 @@
 [package]
 name = "meetily"
-version = "0.2.0"
+version = "0.2.1"
 description = "Meetily - Actually Free: privacy-first AI meeting assistant"
 authors = ["TylerBuza"]
 repository = "https://github.com/TylerBuza/Meetily-ActuallyFree"

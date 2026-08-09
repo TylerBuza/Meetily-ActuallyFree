@@ -41,8 +41,8 @@ export function YourNameStep() {
       canGoPrevious
     >
       <div className="mx-auto max-w-md space-y-4">
-        <div className="flex items-center gap-3 rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] p-4">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-500/15 text-blue-400">
+        <div className="flex items-center gap-4">
+          <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-blue-500/15 text-blue-400">
             <User size={20} />
           </div>
           <input
@@ -53,7 +53,7 @@ export function YourNameStep() {
               if (e.key === 'Enter') saveAndNext();
             }}
             placeholder="Your name"
-            className="af-bare flex-1 border-0 bg-transparent text-base text-[var(--af-text)] placeholder:text-[var(--af-text-3)] focus:outline-none"
+            className="h-12 min-w-0 flex-1 rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] px-4 text-base text-[var(--af-text)] placeholder:text-[var(--af-text-3)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
             autoFocus
           />
         </div>
