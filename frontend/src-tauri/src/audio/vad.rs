@@ -345,12 +345,36 @@ pub fn get_speech_chunks(samples_mono_16k: &[f32], redemption_time_ms: u32) -> R
 pub fn get_speech_chunks_with_progress<F>(
     samples_mono_16k: &[f32],
     redemption_time_ms: u32,
+    progress_callback: F,
+) -> Result<Vec<SpeechSegment>>
+where
+    F: FnMut(u32, usize) -> bool,
+{
+    get_speech_chunks_with_thresholds_and_progress(
+        samples_mono_16k,
+        redemption_time_ms,
+        0.50,
+        0.35,
+        progress_callback,
+    )
+}
+
+pub fn get_speech_chunks_with_thresholds_and_progress<F>(
+    samples_mono_16k: &[f32],
+    redemption_time_ms: u32,
+    positive_speech_threshold: f32,
+    negative_speech_threshold: f32,
     mut progress_callback: F,
 ) -> Result<Vec<SpeechSegment>>
 where
     F: FnMut(u32, usize) -> bool,
 {
-    let mut processor = ContinuousVadProcessor::new(16000, redemption_time_ms)?;
+    let mut processor = ContinuousVadProcessor::new_with_thresholds(
+        16000,
+        redemption_time_ms,
+        positive_speech_threshold,
+        negative_speech_threshold,
+    )?;
 
     let total_samples = samples_mono_16k.len();
 
@@ -413,6 +437,9 @@ where
         all_segments = processor.process_audio(samples_mono_16k)?;
         let final_segments = processor.flush()?;
         all_segments.extend(final_segments);
+        if !progress_callback(100, all_segments.len()) {
+            return Err(anyhow!("VAD processing cancelled"));
+        }
     }
 
     Ok(all_segments)

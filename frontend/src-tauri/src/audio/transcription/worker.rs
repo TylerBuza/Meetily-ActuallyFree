@@ -57,6 +57,11 @@ pub struct TranscriptUpdate {
     pub duration: f64,          // Segment duration in seconds (e.g., 3.3)
 }
 
+fn should_emit_transcript(transcript: &str, _confidence: Option<f32>) -> bool {
+    // Confidence is currently a text-length heuristic, not a model probability.
+    !transcript.trim().is_empty()
+}
+
 // NOTE: get_transcript_history and get_recording_meeting_name functions
 // have been moved to recording_commands.rs where they have access to RECORDING_MANAGER
 
@@ -206,27 +211,18 @@ pub fn start_transcription_task<R: Runtime>(
                                 chunk,
                                 &app_clone,
                             )
-                            .await
-                            {
-                                Ok((transcript, confidence_opt, is_partial)) => {
-                                    // Provider-aware confidence threshold
-                                    let confidence_threshold = match &engine_clone {
-                                        TranscriptionEngine::Whisper(_) | TranscriptionEngine::Provider(_) => 0.3,
-                                        TranscriptionEngine::Parakeet(_) => 0.0, // Parakeet has no confidence, accept all
-                                    };
-
+                                .await
+                                {
+                                    Ok((transcript, confidence_opt, is_partial)) => {
                                     let confidence_str = match confidence_opt {
                                         Some(c) => format!("{:.2}", c),
                                         None => "N/A".to_string(),
                                     };
 
-                                    info!("🔍 Worker {} transcription result: text='{}', confidence={}, partial={}, threshold={:.2}",
-                                          worker_id, transcript, confidence_str, is_partial, confidence_threshold);
+                                    info!("🔍 Worker {} transcription result: text='{}', confidence={}, partial={}",
+                                          worker_id, transcript, confidence_str, is_partial);
 
-                                    // Check confidence threshold (or accept if no confidence provided)
-                                    let meets_threshold = confidence_opt.map_or(true, |c| c >= confidence_threshold);
-
-                                    if !transcript.trim().is_empty() && meets_threshold {
+                                    if should_emit_transcript(&transcript, confidence_opt) {
                                         // PERFORMANCE: Only log transcription results, not every processing step
                                         info!("✅ Worker {} transcribed: {} (confidence: {}, partial: {})",
                                               worker_id, transcript, confidence_str, is_partial);
@@ -650,4 +646,15 @@ fn format_recording_time(seconds: f64) -> String {
     let secs = total_seconds % 60;
 
     format!("[{:02}:{:02}]", minutes, secs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_emit_transcript;
+
+    #[test]
+    fn short_transcript_is_not_rejected_by_placeholder_confidence() {
+        assert!(should_emit_transcript("yes", Some(0.13)));
+        assert!(!should_emit_transcript("   ", Some(0.9)));
+    }
 }

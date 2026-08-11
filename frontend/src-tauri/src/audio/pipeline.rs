@@ -44,7 +44,7 @@ use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolat
 use super::devices::AudioDevice;
 use super::recording_state::{AudioChunk, AudioError, RecordingState, DeviceType};
 use super::audio_processing::{audio_to_mono, LoudnessNormalizer, NoiseSuppressionProcessor, HighPassFilter};
-use super::vad::{ContinuousVadProcessor};
+use super::vad::{ContinuousVadProcessor, SpeechSegment};
 
 /// Per-source live audio level sample emitted to the frontend visualizer.
 /// One of these is sent per incoming (single-source) audio chunk, throttled
@@ -869,12 +869,9 @@ impl AudioPipeline {
         let system_enabled = system_device_name != "No System Audio";
         let _ = (mic_device_kind, system_device_kind);
 
-        // Create VAD processor with balanced redemption time for speech accumulation
-        // The VAD processor now handles 48kHz->16kHz resampling internally
-        // This bridges natural pauses without excessive fragmentation
-        // For mac os core audio, 900ms, for windows 400ms seems good
-
-        let redemption_time = if cfg!(target_os = "macos") { 400 } else { 400 };
+        // Bridge short natural pauses without adding the two-second latency used by
+        // offline retranscription.
+        let redemption_time = 800;
 
         // One VAD per capture source so simultaneous talk is segmented independently.
         let make_vad = |label: &str, positive_threshold, negative_threshold| match ContinuousVadProcessor::new_with_thresholds(
@@ -893,7 +890,7 @@ impl AudioPipeline {
             }
         };
         // Headset/array microphones are usually quieter than digital loopback.
-        let mic_vad = make_vad("microphone", 0.42, 0.30);
+        let mic_vad = make_vad("microphone", 0.20, 0.10);
         let system_vad = make_vad("system", 0.50, 0.35);
 
         // Initialize professional audio mixing components (recording file only)
@@ -936,47 +933,51 @@ impl AudioPipeline {
         transcription_sender: &mpsc::UnboundedSender<AudioChunk>,
         chunk_id_counter: &mut u64,
     ) {
-        // Skip pure silence windows quickly (all-zero pad from the ring buffer).
-        let has_energy = samples.iter().any(|&s| s.abs() > 1e-5);
-        if !has_energy {
-            // Still feed VAD so its clock advances in lockstep with the other source.
-            let _ = vad.process_audio(samples);
-            return;
-        }
-
         match vad.process_audio(samples) {
-            Ok(speech_segments) => {
-                for segment in speech_segments {
-                    let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
-                    if segment.samples.len() < 800 {
-                        debug!(
-                            "⏭️ Dropping short {:?} VAD segment: {:.1}ms ({} samples < 800)",
-                            device_type, duration_ms, segment.samples.len()
-                        );
-                        continue;
-                    }
-                    info!(
-                        "📤 Sending {:?} VAD segment: {:.1}ms, {} samples @ {:.2}s",
-                        device_type,
-                        duration_ms,
-                        segment.samples.len(),
-                        segment.start_timestamp_ms / 1000.0
-                    );
-                    let transcription_chunk = AudioChunk {
-                        data: segment.samples,
-                        sample_rate: 16000,
-                        timestamp: segment.start_timestamp_ms / 1000.0,
-                        chunk_id: *chunk_id_counter,
-                        device_type: device_type.clone(),
-                    };
-                    if let Err(e) = transcription_sender.send(transcription_chunk) {
-                        warn!("Failed to send {:?} VAD segment: {}", device_type, e);
-                    } else {
-                        *chunk_id_counter += 1;
-                    }
-                }
-            }
+            Ok(speech_segments) => Self::enqueue_source_speech(
+                speech_segments,
+                device_type,
+                transcription_sender,
+                chunk_id_counter,
+            ),
             Err(e) => warn!("⚠️ {:?} VAD error: {}", device_type, e),
+        }
+    }
+
+    fn enqueue_source_speech(
+        speech_segments: Vec<SpeechSegment>,
+        device_type: DeviceType,
+        transcription_sender: &mpsc::UnboundedSender<AudioChunk>,
+        chunk_id_counter: &mut u64,
+    ) {
+        for segment in speech_segments {
+            let duration_ms = segment.end_timestamp_ms - segment.start_timestamp_ms;
+            if segment.samples.len() < 800 {
+                debug!(
+                    "⏭️ Dropping short {:?} VAD segment: {:.1}ms ({} samples < 800)",
+                    device_type, duration_ms, segment.samples.len()
+                );
+                continue;
+            }
+            info!(
+                "📤 Sending {:?} VAD segment: {:.1}ms, {} samples @ {:.2}s",
+                device_type,
+                duration_ms,
+                segment.samples.len(),
+                segment.start_timestamp_ms / 1000.0
+            );
+            let transcription_chunk = AudioChunk {
+                data: segment.samples,
+                sample_rate: 16000,
+                timestamp: segment.start_timestamp_ms / 1000.0,
+                chunk_id: *chunk_id_counter,
+                device_type: device_type.clone(),
+            };
+            if let Err(e) = transcription_sender.send(transcription_chunk) {
+                warn!("Failed to send {:?} VAD segment: {}", device_type, e);
+            } else {
+                *chunk_id_counter += 1;
+            }
         }
     }
 
@@ -1435,5 +1436,30 @@ mod ring_buffer_tests {
 
         assert_eq!(mic, vec![1.0; 2_400]);
         assert_eq!(system, vec![2.0; 2_400]);
+    }
+
+    #[test]
+    fn completed_vad_segments_are_queued() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let mut chunk_id = 0;
+        let segment = SpeechSegment {
+            samples: vec![0.25; 1_600],
+            start_timestamp_ms: 1_000.0,
+            end_timestamp_ms: 1_100.0,
+            confidence: 0.8,
+        };
+
+        AudioPipeline::enqueue_source_speech(
+            vec![segment],
+            DeviceType::Microphone,
+            &sender,
+            &mut chunk_id,
+        );
+
+        let segment = receiver
+            .try_recv()
+            .expect("completed speech should be queued");
+        assert!(!segment.data.is_empty());
+        assert_eq!(chunk_id, 1);
     }
 }

@@ -52,8 +52,8 @@ impl Drop for ImportGuard {
 }
 
 /// VAD redemption time in milliseconds - bridges natural pauses in speech
-/// Batch processing needs longer redemption (2000ms) than live pipeline (400ms)
-/// because the entire file is processed at once by VAD, and 400ms fragments
+/// Batch processing needs longer redemption (2000ms) than the live pipeline
+/// because the entire file is processed at once and short redemption fragments
 /// speech at every natural sentence/topic pause (500ms-2s)
 const VAD_REDEMPTION_TIME_MS: u32 = 2000;
 
@@ -1318,6 +1318,41 @@ mod tests {
                         i
                     );
                 }
+            }
+        }
+
+        for (positive, negative) in [(0.42, 0.30), (0.30, 0.20), (0.20, 0.10), (0.10, 0.05)] {
+            let segments = crate::audio::vad::get_speech_chunks_with_thresholds_and_progress(
+                &samples,
+                800,
+                positive,
+                negative,
+                |_, _| true,
+            )
+            .expect("threshold sweep failed");
+            let speech_seconds: f64 = segments
+                .iter()
+                .map(|segment| segment.end_timestamp_ms - segment.start_timestamp_ms)
+                .sum::<f64>()
+                / 1000.0;
+            println!(
+                "Thresholds {:.2}/{:.2}: {} segments, {:.1}s speech",
+                positive,
+                negative,
+                segments.len(),
+                speech_seconds
+            );
+            if positive == 0.20 {
+                println!(
+                    "Mic-calibrated ranges: {:?}",
+                    segments
+                        .iter()
+                        .map(|segment| (
+                            segment.start_timestamp_ms / 1000.0,
+                            segment.end_timestamp_ms / 1000.0,
+                        ))
+                        .collect::<Vec<_>>()
+                );
             }
         }
     }

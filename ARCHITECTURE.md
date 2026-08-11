@@ -29,34 +29,42 @@ and has been removed from this fork.
 
 ## 2. Audio pipeline
 
-Capture → mix → VAD → transcription, in `src-tauri/src/audio/`.
+Capture, recording, and transcription deliberately split into parallel paths in
+`src-tauri/src/audio/`:
 
 ```
-mic  ─┐
-      ├─▶ AudioPipeline ─┬─▶ recording file (mixed, saved to disk)
-sys  ─┘                  └─▶ VAD ─▶ speech segments ─▶ transcription worker
+mic ─▶ normalize/limit ─┬─▶ mic VAD ─────▶ transcription worker
+                       ├─▶ mic.mp4
+                       └─┐
+                         ├─▶ professional mix ─▶ audio.mp4 (playback)
+sys ───────────────────┬─┘
+                      ├─▶ system VAD ───▶ transcription worker
+                      └─▶ system.mp4
 ```
 
 ### The mixed-audio trap ⚠️
 
-By the time audio reaches transcription, mic and system audio have been **mixed
-into one stream**. The `AudioChunk.device_type` on those chunks is a hard-coded
-placeholder (`Microphone`) because no single device owns the samples.
+Current live transcription receives **separate mic and system VAD segments**.
+Mixing is only for `audio.mp4`, the user-facing playback track. Do not collapse
+live STT back onto that mixed track: overlapping system speech can mask the
+local user even when `mic.mp4` clearly contains their voice.
 
-This means **you cannot tell who is speaking from `device_type`**. An earlier
-attempt at speaker labelling did exactly that and produced "You" for every
-single line, including the other participants. Speaker identity comes from
-diarization instead (§4).
+The old mixed-chunk `device_type = Microphone` placeholder can still appear in
+legacy/import paths and must never be interpreted as speaker identity. Current
+live source chunks preserve their actual capture source; final identity
+refinement still comes from diarization (§4).
 
 ### Live audio levels
 
 `pipeline.rs` computes per-source RMS/peak *before* mixing and emits them as
 `recording-audio-levels` events (~25/sec per source), which drive the meters in
-`RecordingControls`. This is the only place the pre-mix mic/system distinction
-survives.
+`RecordingControls`.
 
 Mic and system speech use separate VAD instances. The mic path is intentionally
-more permissive (`0.42/0.30`) than hot digital loopback (`0.50/0.35`). Before
+more permissive (`0.20/0.10`) than hot digital loopback (`0.50/0.35`). These mic
+values were calibrated against the retained Logitech G733 track from the
+"Vehicle Trade-In Discussion" failure: `0.42/0.30` and `0.30/0.20` found zero
+speech, while `0.20/0.10` recovered 8 plausible segments / 16.9 seconds. Before
 VAD, mic loudness normalization targets -20 LUFS, limits automatic gain to
 0.5x-2.0x, smooths gain changes, and applies the user's gain before one final
 -1 dB limiter. Do not move user gain after that limiter or restore unbounded
@@ -65,6 +73,23 @@ normalization; retained mic tracks showed hard 0 dBFS clipping under that design
 Note: the webview **cannot** capture system audio itself, so browser-side
 `getUserMedia` visualizers can only ever show the microphone. That is why the
 levels come from Rust.
+
+### Live segmentation and shutdown invariants
+
+- Live VAD redemption is 800 ms. Offline retranscription uses 2,000 ms because
+  it has no live-latency constraint.
+- Every window, including exact zero-filled padding, must handle the segments
+  returned by `ContinuousVadProcessor`. Speech-end commonly arrives during the
+  trailing silent window; discarding that return drops the whole utterance.
+- Whisper's current `confidence` is text-length-derived, not a token
+  probability. It is diagnostic and must not filter short valid phrases.
+- During shutdown `RecordingManager` is temporarily outside its global slot.
+  The transcript listener owns a cloned shared segment handle so final events
+  remain writable until the worker finishes.
+- Timed-out workers are aborted and awaited before listener removal and model
+  unload. Dropping a Tokio `JoinHandle` only detaches it.
+- Transcript-only sessions still write their final segment vector even when
+  audio auto-save is disabled.
 
 ---
 
@@ -207,6 +232,47 @@ exactly this confusion; it has been deleted along with `SettingTabs.tsx`,
 
 The label also has to survive the Rust side: `MeetingTranscript` must include
 `speaker`, and every place constructing it must set it.
+
+### Stable speaker colors
+
+`VirtualizedTranscriptView.tsx` owns identity colors for both screens. `You` and
+labels ending in `(You)` normalize to the same reserved blue, right-aligned user
+identity. Blue is excluded from remote colors: Speaker 1 is purple, Speaker 2
+emerald, followed by amber, pink, and cyan. Dot and text colors share one index
+function, and normalized identity is also used when adjacent turns merge.
+
+### Automatic post-call pipeline
+
+`source=recording` transfers control to `PostCallProcessingDialog.tsx`:
+
+```text
+save live meeting and retained tracks
+  -> ask exact total speakers, including the user
+  -> retranscribe mic.mp4 and system.mp4 independently
+  -> refetch replaced transcript rows
+  -> diarize using the exact count
+  -> refetch persisted labels
+  -> summarize fresh SQLite transcript rows
+```
+
+Do not reintroduce unknown-count auto-diarization or immediate summary generation
+before this sequence. Register retranscription listeners before invoking Rust,
+filter events by meeting ID, and clean them once. Model fallback stays within the
+configured local provider. Timeout cancellation waits for the native reservation
+to clear before retry. Pre-diarization and post-diarization refresh failures are
+distinct retry stages. Workflow refetch failures reject without replacing the
+already-mounted page with its initial fatal-load screen.
+
+Summary generation is gated by both the initial summary lookup and post-call
+completion. It fetches all current rows directly from SQLite, not the paginated
+React page. Both success-toast and delayed navigation paths must preserve
+`source=recording`. Completed meeting IDs are recorded in `sessionStorage` to
+prevent React remount duplication.
+
+If audio saving was disabled or retained audio is unavailable, enhancement and
+diarization are impossible. The error state offers **Use live transcript**, which
+refetches the saved live rows, unblocks the sequence, and summarizes those rows
+instead of trapping the user in a retry loop.
 
 ---
 
@@ -359,6 +425,13 @@ reserve space or shift later onboarding pages. Completion and errors use short
 bottom-right Sonner notifications.
 
 ### Release rules
+
+The updater is already "inside the app" from the user's perspective: the Tauri
+plugin checks `latest.json`, downloads `*-universal-updater.exe`, verifies its
+matching `.sig`, exits Meetily, and launches that payload to replace files that
+the running process cannot overwrite. GitHub must expose the updater as a
+release asset so installed clients can download it. Users manually launch only
+`*-universal-setup.exe`; removing the updater asset breaks in-app updates.
 
 - Tauri updater signing and Windows Authenticode are separate. This fork's
   updater signature is required. Published builds are currently unsigned and

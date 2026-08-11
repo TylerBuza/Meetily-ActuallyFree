@@ -24,7 +24,7 @@ function MeetingDetailsContent() {
   const meetingId = searchParams.get('id');
   const source = searchParams.get('source'); // Check if navigated from recording
   const { setCurrentMeeting, refetchMeetings, stopSummaryPolling } = useSidebar();
-  const { isAutoSummary } = useConfig(); // Get auto-summary toggle state
+  const { isAutoSummary, setModelConfig } = useConfig(); // Get auto-summary toggle state
   const router = useRouter();
   const [meetingDetails, setMeetingDetails] = useState<MeetingDetailsResponse | null>(null);
   const [meetingSummary, setMeetingSummary] = useState<Summary | null>(null);
@@ -32,6 +32,7 @@ function MeetingDetailsContent() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [shouldAutoGenerate, setShouldAutoGenerate] = useState<boolean>(false);
   const [hasCheckedAutoGen, setHasCheckedAutoGen] = useState<boolean>(false);
+  const [summaryLoaded, setSummaryLoaded] = useState<boolean>(false);
 
   // Use pagination hook for efficient transcript loading
   const {
@@ -72,9 +73,10 @@ function MeetingDetailsContent() {
       return;
     }
 
-    // Respect user's auto-summary toggle preference
-    if (!isAutoSummary) {
-      console.log('Auto-summary is disabled in settings');
+    // A newly stopped recording owns an explicit post-call pipeline whose final
+    // stage is summary generation. Other entry points continue to respect the
+    // general auto-summary preference.
+    if (!isAutoSummary && source !== 'recording') {
       setHasCheckedAutoGen(true);
       return;
     }
@@ -97,13 +99,17 @@ function MeetingDetailsContent() {
       if (hasGemma) {
         console.log('💾 DB empty, using gemma3:1b as initial default');
 
-        await invoke('api_save_model_config', {
-          provider: 'ollama',
-          model: '',
+        const fallbackConfig = {
+          provider: 'ollama' as const,
+          model: 'gemma3:1b',
           whisperModel: 'large-v3',
           apiKey: null,
           ollamaEndpoint: null,
-        });
+        };
+        await invoke('api_save_model_config', fallbackConfig);
+        setModelConfig(fallbackConfig);
+        const { emit } = await import('@tauri-apps/api/event');
+        await emit('model-config-updated', fallbackConfig);
 
         setShouldAutoGenerate(true);
       } else {
@@ -114,7 +120,7 @@ function MeetingDetailsContent() {
     }
 
     setHasCheckedAutoGen(true);
-  }, [hasCheckedAutoGen, checkForGemmaModel, source, isAutoSummary]);
+  }, [hasCheckedAutoGen, checkForGemmaModel, source, isAutoSummary, setModelConfig]);
 
   // Sync meeting metadata from pagination hook to meeting details state
   useEffect(() => {
@@ -169,6 +175,7 @@ function MeetingDetailsContent() {
     // Reset auto-generation state to allow new meeting to be checked
     setHasCheckedAutoGen(false);
     setShouldAutoGenerate(false);
+    setSummaryLoaded(false);
   }, [meetingId]);
 
   // Cleanup: stop polling only when leaving this meeting / unmounting.
@@ -310,6 +317,7 @@ function MeetingDetailsContent() {
         await fetchMeetingSummary();
       } finally {
         setIsLoading(false);
+        setSummaryLoaded(true);
       }
     };
 
@@ -326,6 +334,7 @@ function MeetingDetailsContent() {
       // 4. Haven't checked yet
       if (
         meetingDetails &&
+        summaryLoaded &&
         meetingSummary === null &&
         meetingDetails.transcripts &&
         meetingDetails.transcripts.length > 0 &&
@@ -337,7 +346,7 @@ function MeetingDetailsContent() {
     };
 
     checkAutoGen();
-  }, [meetingDetails, meetingSummary, hasCheckedAutoGen, setupAutoGeneration]);
+  }, [meetingDetails, meetingSummary, summaryLoaded, hasCheckedAutoGen, setupAutoGeneration]);
 
   if (error) {
     return (
@@ -367,6 +376,7 @@ function MeetingDetailsContent() {
   return <PageContent
     meeting={meetingDetails}
     summaryData={meetingSummary}
+    isPostCallRecording={source === 'recording'}
     shouldAutoGenerate={shouldAutoGenerate}
     onAutoGenerateComplete={() => setShouldAutoGenerate(false)}
     onSummaryReady={(summary) => setMeetingSummary(summary)}

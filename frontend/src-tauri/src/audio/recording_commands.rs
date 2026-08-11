@@ -302,6 +302,12 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     // Store listener ID for cleanup during stop_recording to ensure microphone is released
     {
         use tauri::Listener;
+        let transcript_segments = RECORDING_MANAGER
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("recording manager missing after start")
+            .transcript_segments_handle();
         let listener_id = app.listen("transcript-update", move |event: tauri::Event| {
             // Parse the transcript update from the event payload
             if let Ok(update) = serde_json::from_str::<TranscriptUpdate>(event.payload()) {
@@ -325,10 +331,18 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
                 };
 
                 // Save to recording manager
+                let mut saved_through_manager = false;
                 if let Ok(manager_guard) = RECORDING_MANAGER.lock() {
                     if let Some(manager) = manager_guard.as_ref() {
-                        manager.add_transcript_segment(segment);
+                        manager.add_transcript_segment(segment.clone());
+                        saved_through_manager = true;
                     }
+                }
+                if !saved_through_manager {
+                    crate::audio::recording_saver::RecordingSaver::upsert_transcript_segment(
+                        &transcript_segments,
+                        segment,
+                    );
                 }
             }
         });
@@ -490,6 +504,12 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     // Store listener ID for cleanup during stop_recording to ensure microphone is released
     {
         use tauri::Listener;
+        let transcript_segments = RECORDING_MANAGER
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("recording manager missing after start")
+            .transcript_segments_handle();
         let listener_id = app.listen("transcript-update", move |event: tauri::Event| {
             // Parse the transcript update from the event payload
             if let Ok(update) = serde_json::from_str::<TranscriptUpdate>(event.payload()) {
@@ -511,10 +531,18 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
                 };
 
                 // Save to recording manager
+                let mut saved_through_manager = false;
                 if let Ok(manager_guard) = RECORDING_MANAGER.lock() {
                     if let Some(manager) = manager_guard.as_ref() {
-                        manager.add_transcript_segment(segment);
+                        manager.add_transcript_segment(segment.clone());
+                        saved_through_manager = true;
                     }
+                }
+                if !saved_through_manager {
+                    crate::audio::recording_saver::RecordingSaver::upsert_transcript_segment(
+                        &transcript_segments,
+                        segment,
+                    );
                 }
             }
         });
@@ -596,16 +624,6 @@ pub async fn stop_recording<R: Runtime>(
         }
     }
 
-    // Step 1.5: Clean up transcript listener to release microphone
-    // Unlisten transcript-update event to prevent lingering references
-    {
-        use tauri::Listener;
-        if let Some(listener_id) = TRANSCRIPT_LISTENER_ID.lock().unwrap().take() {
-            app.unlisten(listener_id);
-            info!("âœ… Transcript-update listener removed");
-        }
-    }
-
     // Step 2: Signal transcription workers to finish processing ALL queued chunks
     let _ = app.emit(
         "recording-shutdown-progress",
@@ -622,7 +640,7 @@ pub async fn stop_recording<R: Runtime>(
         global_task.take()
     };
 
-    if let Some(task_handle) = transcription_task {
+    if let Some(mut task_handle) = transcription_task {
         info!("â³ Waiting for ALL transcription chunks to be processed (no timeout - preserving every chunk)");
 
         // Enhanced progress monitoring during shutdown
@@ -651,7 +669,7 @@ pub async fn stop_recording<R: Runtime>(
         // Wait up to 10 minutes for transcription completion to prevent indefinite hangs
         match tokio::time::timeout(
             tokio::time::Duration::from_secs(600), // 10 minutes max
-            task_handle
+            &mut task_handle
         ).await {
             Ok(Ok(())) => {
                 info!("âœ… ALL transcription chunks processed successfully - no data lost");
@@ -662,7 +680,8 @@ pub async fn stop_recording<R: Runtime>(
             }
             Err(_) => {
                 warn!("â±ï¸ Transcription timeout (10 minutes) reached, continuing shutdown to prevent indefinite hang");
-                // Continue shutdown even on timeout - better to lose some chunks than hang forever
+                task_handle.abort();
+                let _ = task_handle.await;
             }
         }
 
@@ -670,6 +689,15 @@ pub async fn stop_recording<R: Runtime>(
         progress_task.abort();
     } else {
         info!("â„¹ï¸ No transcription task found to wait for");
+    }
+
+    // Keep persistence active until final queued transcript events have been handled.
+    {
+        use tauri::Listener;
+        if let Some(listener_id) = TRANSCRIPT_LISTENER_ID.lock().unwrap().take() {
+            app.unlisten(listener_id);
+            info!("âœ… Transcript-update listener removed");
+        }
     }
 
     // Step 3: Now safely unload Whisper model after ALL chunks are processed

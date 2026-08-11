@@ -1,6 +1,5 @@
 ﻿"use client";
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { DIARIZATION_UPDATED_EVENT } from '@/hooks/useRecordingStop';
 import { motion } from 'framer-motion';
 import { Summary, SummaryResponse } from '@/types';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
@@ -19,10 +18,12 @@ import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
 import { useConfig } from '@/contexts/ConfigContext';
+import { PostCallProcessingDialog } from '@/components/MeetingDetails/PostCallProcessingDialog';
 
 export default function PageContent({
   meeting,
   summaryData,
+  isPostCallRecording = false,
   shouldAutoGenerate = false,
   onAutoGenerateComplete,
   onSummaryReady,
@@ -38,6 +39,7 @@ export default function PageContent({
 }: {
   meeting: any;
   summaryData: Summary | null;
+  isPostCallRecording?: boolean;
   shouldAutoGenerate?: boolean;
   onAutoGenerateComplete?: () => void;
   /** Lift a freshly generated summary up so parent state survives remounts. */
@@ -63,6 +65,7 @@ export default function PageContent({
   const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
   const [isRecording] = useState(false);
   const [summaryResponse] = useState<SummaryResponse | null>(null);
+  const [postCallProcessingComplete, setPostCallProcessingComplete] = useState(false);
 
   // Ref to store the modal open function from SummaryGeneratorButtonGroup
   const openModelSettingsRef = useRef<(() => void) | null>(null);
@@ -155,26 +158,21 @@ export default function PageContent({
     Analytics.trackPageView('meeting_details');
   }, []);
 
-  // Speaker labels are refined by a background diarization pass that finishes
-  // after a recording is saved â€” often once this screen is already open. Refetch
-  // the transcript when that lands so the better labels appear on their own.
   useEffect(() => {
-    const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ meetingId?: string }>).detail;
-      if (detail?.meetingId && detail.meetingId !== meeting.id) return;
-      console.log('[meeting-details] diarization updated â€” refreshing transcript');
-      void onRefetchTranscripts?.();
-    };
-    window.addEventListener(DIARIZATION_UPDATED_EVENT, handler);
-    return () => window.removeEventListener(DIARIZATION_UPDATED_EVENT, handler);
-  }, [meeting.id, onRefetchTranscripts]);
+    setPostCallProcessingComplete(false);
+  }, [meeting.id]);
 
   // Auto-generate summary when flag is set
   useEffect(() => {
     let cancelled = false;
 
     const autoGenerate = async () => {
-      if (shouldAutoGenerate && meetingData.transcripts.length > 0 && !cancelled) {
+      if (
+        shouldAutoGenerate &&
+        meetingData.transcripts.length > 0 &&
+        (!isPostCallRecording || postCallProcessingComplete) &&
+        !cancelled
+      ) {
         console.log(`ðŸ¤– Auto-generating summary with ${modelConfig.provider}/${modelConfig.model}...`);
         await summaryGeneration.handleGenerateSummary('');
 
@@ -191,7 +189,7 @@ export default function PageContent({
     return () => {
       cancelled = true;
     };
-  }, [shouldAutoGenerate, meeting.id]); // Re-run if meeting changes
+  }, [shouldAutoGenerate, meeting.id, isPostCallRecording, postCallProcessingComplete]);
 
   return (
     <motion.div
@@ -270,6 +268,13 @@ export default function PageContent({
         availableTemplates={templates.availableTemplates}
         onSave={templates.saveCustomTemplate}
         onDelete={templates.deleteCustomTemplate}
+      />
+      <PostCallProcessingDialog
+        enabled={isPostCallRecording}
+        meetingId={meeting.id}
+        meetingFolderPath={meeting.folder_path}
+        onRefetchTranscripts={onRefetchTranscripts}
+        onComplete={() => setPostCallProcessingComplete(true)}
       />
     </motion.div>
   );

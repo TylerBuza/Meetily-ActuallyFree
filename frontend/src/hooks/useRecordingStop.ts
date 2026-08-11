@@ -16,49 +16,6 @@ import {
 
 type SummaryStatus = 'idle' | 'processing' | 'summarizing' | 'regenerating' | 'completed' | 'error';
 
-/**
- * Event dispatched once background diarization has rewritten a meeting's
- * speaker labels, so any open view can refetch and show them.
- */
-export const DIARIZATION_UPDATED_EVENT = 'meetily:diarization-updated';
-
-/**
- * Run full offline speaker diarization for a finished meeting and persist the
- * resulting labels, without blocking the caller.
- *
- * This deliberately fails quietly. Live diarization has already labelled the
- * transcript, so if this pass can't run (models absent, recording still being
- * flushed, unreadable audio) the user simply keeps the live labels — there is
- * nothing for them to act on, so an error toast would be noise.
- */
-async function autoDiarizeMeeting(meetingId: string): Promise<void> {
-  try {
-    const available = await invoke<boolean>('diarization_models_available');
-    if (!available) return;
-
-    // The recording is written by the Rust side as the meeting is finalized;
-    // give the file a moment to be fully flushed before reading it back.
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-
-    const result = await invoke<{ num_speakers: number; labeled: number }>(
-      'diarize_meeting',
-      { meetingId, numSpeakers: null }
-    );
-
-    if (result.labeled > 0) {
-      console.log(
-        `[auto-diarize] ${result.num_speakers} speakers, ${result.labeled} segments labeled`
-      );
-      // Tell any open meeting view to refresh its transcript labels.
-      window.dispatchEvent(
-        new CustomEvent(DIARIZATION_UPDATED_EVENT, { detail: { meetingId } })
-      );
-    }
-  } catch (error) {
-    console.warn('[auto-diarize] skipped:', error);
-  }
-}
-
 interface UseRecordingStopReturn {
   handleRecordingStop: (callApi: boolean) => Promise<void>;
   isStopping: boolean;
@@ -386,19 +343,12 @@ export function useRecordingStop(
           // Mark meeting as saved in IndexedDB (for recovery system)
           await markMeetingAsSaved();
 
-          // Always run the post-call pass. New recordings retain aligned mic
-          // and system tracks, so offline diarization can deterministically pin
-          // the mic to You and globally cluster remote voices more accurately
-          // than the streaming labels. Older mixed-only meetings still use the
-          // enrolled voiceprint fallback.
           const labeled = freshTranscripts.filter((t) => !!t.speaker?.trim()).length;
           const labelRatio =
             freshTranscripts.length > 0 ? labeled / freshTranscripts.length : 0;
           console.log(
             `🏷️ Live speaker labels on save: ${labeled}/${freshTranscripts.length} (${Math.round(labelRatio * 100)}%)`
           );
-          void autoDiarizeMeeting(meetingId);
-
           // Clean up session storage
           sessionStorage.removeItem('last_recording_folder_path');
           sessionStorage.removeItem('last_recording_meeting_name');
@@ -431,7 +381,7 @@ export function useRecordingStop(
             action: {
               label: 'View Meeting',
               onClick: () => {
-                router.push(`/meeting-details?id=${meetingId}`);
+                router.push(`/meeting-details?id=${meetingId}&source=recording`);
                 Analytics.trackButtonClick('view_meeting_from_toast', 'recording_complete');
               }
             },

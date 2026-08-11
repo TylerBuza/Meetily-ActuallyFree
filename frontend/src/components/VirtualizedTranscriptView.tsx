@@ -102,8 +102,13 @@ function cleanStopWords(text: string): string {
  * local microphone. The display name lives in settings (not in Rust) so it can
  * be changed without restarting, which is why substitution happens here.
  */
+function isUserSpeaker(speaker?: string): boolean {
+    const normalized = speaker?.trim() ?? '';
+    return /^you\b/i.test(normalized) || /\(\s*you\s*\)$/i.test(normalized);
+}
+
 function displaySpeaker(speaker: string, userName: string): string {
-    if (/^you\b/i.test(speaker)) {
+    if (isUserSpeaker(speaker)) {
         return userName ? `${userName} (You)` : 'You';
     }
     return speaker;
@@ -111,7 +116,37 @@ function displaySpeaker(speaker: string, userName: string): string {
 
 /** Normalize speaker keys so "You" / "you" / empty compare cleanly. */
 function speakerKey(speaker?: string): string {
+    if (isUserSpeaker(speaker)) return '__you__';
     return (speaker ?? '').trim().toLowerCase() || '__unknown__';
+}
+
+const speakerDotPalette = [
+    'bg-purple-500',
+    'bg-emerald-500',
+    'bg-amber-500',
+    'bg-pink-500',
+    'bg-cyan-500',
+];
+
+const speakerTextPalette = [
+    'text-purple-500',
+    'text-emerald-500',
+    'text-amber-500',
+    'text-pink-500',
+    'text-cyan-500',
+];
+
+function speakerPaletteIndex(speaker: string): number {
+    const numberedSpeaker = speaker.trim().match(/^speaker\s+(\d+)$/i);
+    if (numberedSpeaker) {
+        return (Number(numberedSpeaker[1]) - 1) % speakerTextPalette.length;
+    }
+    let hash = 0;
+    const normalized = speaker.trim().toLowerCase();
+    for (let i = 0; i < normalized.length; i++) {
+        hash = (hash * 31 + normalized.charCodeAt(i)) >>> 0;
+    }
+    return hash % speakerTextPalette.length;
 }
 
 /**
@@ -152,36 +187,16 @@ function mergeAdjacentSameSpeaker(
 /** Dot colour on the timeline rail — same mapping as the text colour. */
 function speakerDot(speaker?: string): string {
     if (!speaker) return 'bg-gray-600';
-    if (/^you\b/i.test(speaker)) return 'bg-blue-500';
+    if (isUserSpeaker(speaker)) return 'bg-blue-500';
     if (/^guest\b/i.test(speaker)) return 'bg-purple-500';
-    const palette = [
-        'bg-blue-500',
-        'bg-purple-500',
-        'bg-emerald-500',
-        'bg-amber-500',
-        'bg-pink-500',
-        'bg-cyan-500',
-    ];
-    let hash = 0;
-    for (let i = 0; i < speaker.length; i++) hash = (hash * 31 + speaker.charCodeAt(i)) >>> 0;
-    return palette[hash % palette.length];
+    return speakerDotPalette[speakerPaletteIndex(speaker)];
 }
 
 /** Stable colour per speaker label so each speaker reads consistently. */
 function speakerColor(speaker: string): string {
-    if (/^you\b/i.test(speaker)) return 'text-blue-500';
+    if (isUserSpeaker(speaker)) return 'text-blue-500';
     if (/^guest\b/i.test(speaker)) return 'text-purple-500';
-    const palette = [
-        'text-blue-500',
-        'text-purple-500',
-        'text-emerald-500',
-        'text-amber-500',
-        'text-pink-500',
-        'text-cyan-500',
-    ];
-    let hash = 0;
-    for (let i = 0; i < speaker.length; i++) hash = (hash * 31 + speaker.charCodeAt(i)) >>> 0;
-    return palette[hash % palette.length];
+    return speakerTextPalette[speakerPaletteIndex(speaker)];
 }
 
 const TranscriptSegment = memo(function TranscriptSegment({
@@ -211,7 +226,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
     // Split conversation: local user ("You" + their name) on the right in blue,
     // everyone else on the left in purple/hashed colors. Timestamps stay shared
     // so turns still line up chronologically.
-    const isYou = !!(speaker && /^you\b/i.test(speaker));
+    const isYou = isUserSpeaker(speaker);
     const label = speaker ? displaySpeaker(speaker, userName) : '';
 
     return (

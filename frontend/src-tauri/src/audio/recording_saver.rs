@@ -115,7 +115,25 @@ impl RecordingSaver {
     /// Add or update a structured transcript segment (upserts based on sequence_id)
     /// Also saves incrementally to disk
     pub fn add_transcript_segment(&self, segment: TranscriptSegment) {
-        if let Ok(mut segments) = self.transcript_segments.lock() {
+        Self::upsert_transcript_segment(&self.transcript_segments, segment);
+
+        // NEW: Save incrementally to disk
+        if let Some(folder) = &self.meeting_folder {
+            if let Err(e) = self.write_transcripts_json(folder) {
+                warn!("Failed to write incremental transcript update: {}", e);
+            }
+        }
+    }
+
+    pub(crate) fn transcript_segments_handle(&self) -> Arc<Mutex<Vec<TranscriptSegment>>> {
+        self.transcript_segments.clone()
+    }
+
+    pub(crate) fn upsert_transcript_segment(
+        transcript_segments: &Arc<Mutex<Vec<TranscriptSegment>>>,
+        segment: TranscriptSegment,
+    ) {
+        if let Ok(mut segments) = transcript_segments.lock() {
             // Check if segment with same sequence_id exists (update it)
             if let Some(existing) = segments.iter_mut().find(|s| s.sequence_id == segment.sequence_id) {
                 *existing = segment.clone();
@@ -129,13 +147,6 @@ impl RecordingSaver {
             }
         } else {
             error!("Failed to lock transcript segments for adding segment {}", segment.id);
-        }
-
-        // NEW: Save incrementally to disk
-        if let Some(folder) = &self.meeting_folder {
-            if let Err(e) = self.write_transcripts_json(folder) {
-                warn!("Failed to write incremental transcript update: {}", e);
-            }
         }
     }
 
@@ -398,7 +409,11 @@ impl RecordingSaver {
 
         if !should_save_audio {
             info!("⚠️  No audio saver initialized (auto-save was disabled) - skipping audio finalization");
-            info!("✅ Transcripts and metadata already saved incrementally");
+            if let Some(folder) = &self.meeting_folder {
+                self.write_transcripts_json(folder)
+                    .map_err(|e| format!("Failed to save final transcripts: {e}"))?;
+            }
+            info!("✅ Final transcripts saved");
             return Ok(None);
         }
 
@@ -530,5 +545,37 @@ impl RecordingSaver {
 impl Default for RecordingSaver {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn segment(text: &str) -> TranscriptSegment {
+        TranscriptSegment {
+            id: "seg_1".to_string(),
+            text: text.to_string(),
+            audio_start_time: 1.0,
+            audio_end_time: 2.0,
+            duration: 1.0,
+            display_time: "[00:01]".to_string(),
+            confidence: 0.9,
+            sequence_id: 1,
+            speaker: Some("You".to_string()),
+        }
+    }
+
+    #[test]
+    fn detached_transcript_handle_updates_recording_saver() {
+        let saver = RecordingSaver::new();
+        let handle = saver.transcript_segments_handle();
+
+        RecordingSaver::upsert_transcript_segment(&handle, segment("first"));
+        RecordingSaver::upsert_transcript_segment(&handle, segment("updated"));
+
+        let segments = saver.get_transcript_segments();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].text, "updated");
     }
 }

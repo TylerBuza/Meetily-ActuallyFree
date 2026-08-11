@@ -1,7 +1,7 @@
 // Retranscription module - allows re-processing stored audio with different settings
 
 use crate::audio::decoder::decode_audio_file;
-use crate::audio::vad::get_speech_chunks_with_progress;
+use crate::audio::vad::get_speech_chunks_with_thresholds_and_progress;
 use super::common::{create_transcript_segments, split_segment_at_silence, write_transcripts_json};
 use super::constants::AUDIO_EXTENSIONS;
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
@@ -46,8 +46,8 @@ impl Drop for RetranscriptionGuard {
 }
 
 /// VAD redemption time in milliseconds - bridges natural pauses in speech
-/// Batch processing needs longer redemption (2000ms) than live pipeline (400ms)
-/// because the entire file is processed at once by VAD, and 400ms fragments
+/// Batch processing needs longer redemption (2000ms) than the live pipeline
+/// because the entire file is processed at once and short redemption fragments
 /// speech at every natural sentence/topic pause (500ms-2s)
 const VAD_REDEMPTION_TIME_MS: u32 = 2000;
 
@@ -163,6 +163,44 @@ fn find_audio_file(folder: &Path) -> Result<PathBuf> {
     Err(anyhow!("No audio file found in: {}", folder.display()))
 }
 
+struct RetranscriptionSource {
+    path: PathBuf,
+    label: &'static str,
+    positive_threshold: f32,
+    negative_threshold: f32,
+}
+
+fn find_retranscription_sources(folder: &Path, fallback: &Path) -> Vec<RetranscriptionSource> {
+    let mic_path = folder.join("mic.mp4");
+    let system_path = folder.join("system.mp4");
+    let mut sources = Vec::new();
+
+    if mic_path.is_file() && system_path.is_file() {
+        sources.push(RetranscriptionSource {
+            path: mic_path,
+            label: "microphone",
+            positive_threshold: 0.20,
+            negative_threshold: 0.10,
+        });
+        sources.push(RetranscriptionSource {
+            path: system_path,
+            label: "system audio",
+            positive_threshold: 0.50,
+            negative_threshold: 0.35,
+        });
+    }
+    if sources.is_empty() {
+        sources.push(RetranscriptionSource {
+            path: fallback.to_path_buf(),
+            label: "mixed audio",
+            positive_threshold: 0.50,
+            negative_threshold: 0.35,
+        });
+    }
+
+    sources
+}
+
 /// Internal function to run retranscription
 async fn run_retranscription<R: Runtime>(
     app: AppHandle<R>,
@@ -174,6 +212,7 @@ async fn run_retranscription<R: Runtime>(
 ) -> Result<RetranscriptionResult> {
     let folder_path = PathBuf::from(&meeting_folder_path);
     let audio_path = find_audio_file(&folder_path)?;
+    let sources = find_retranscription_sources(&folder_path, &audio_path);
 
     // Determine which provider to use (default to whisper)
     let use_parakeet = provider.as_deref() == Some("parakeet");
@@ -183,79 +222,83 @@ async fn run_retranscription<R: Runtime>(
         meeting_id, language, model, provider
     );
 
-    // Emit progress: decoding
-    emit_progress(&app, &meeting_id, "decoding", 5, "Decoding audio file...");
+    let source_count = sources.len();
+    let mut duration_seconds = 0.0f64;
+    let mut speech_segments = Vec::new();
 
-    // Check for cancellation
-    if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
-        return Err(anyhow!("Retranscription cancelled"));
+    // Retained source tracks prevent one speaker from masking the other. Older
+    // recordings fall back to the mixed playback file.
+    for (source_index, source) in sources.into_iter().enumerate() {
+        if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
+            return Err(anyhow!("Retranscription cancelled"));
+        }
+
+        emit_progress(
+            &app,
+            &meeting_id,
+            "decoding",
+            (5.0 + (source_index as f32 / source_count as f32) * 20.0) as u32,
+            &format!("Decoding {}...", source.label),
+        );
+
+        let path_for_decode = source.path.clone();
+        let decoded = tokio::task::spawn_blocking(move || decode_audio_file(&path_for_decode))
+            .await
+            .map_err(|e| anyhow!("Decode task panicked: {}", e))??;
+        duration_seconds = duration_seconds.max(decoded.duration_seconds);
+        info!(
+            "Decoded {}: {:.2}s, {}Hz, {} channels",
+            source.label, decoded.duration_seconds, decoded.sample_rate, decoded.channels
+        );
+
+        let audio_samples = tokio::task::spawn_blocking(move || decoded.to_whisper_format())
+            .await
+            .map_err(|e| anyhow!("Resample task panicked: {}", e))?;
+        let app_for_vad = app.clone();
+        let meeting_id_for_vad = meeting_id.clone();
+        let source_label = source.label;
+        let source_progress_span = 20.0 / source_count as f32;
+        let source_progress_start = 5.0
+            + source_index as f32 * source_progress_span
+            + source_progress_span / 2.0;
+        let vad_progress_span = source_progress_span / 2.0;
+
+        let mut source_segments = tokio::task::spawn_blocking(move || {
+            get_speech_chunks_with_thresholds_and_progress(
+                &audio_samples,
+                VAD_REDEMPTION_TIME_MS,
+                source.positive_threshold,
+                source.negative_threshold,
+                |vad_progress, segments_found| {
+                    emit_progress(
+                        &app_for_vad,
+                        &meeting_id_for_vad,
+                        "vad",
+                        (source_progress_start
+                            + vad_progress_span * vad_progress as f32 / 100.0)
+                            as u32,
+                        &format!(
+                            "Detecting {} speech... {}% ({} found)",
+                            source_label, vad_progress, segments_found
+                        ),
+                    );
+                    !RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst)
+                },
+            )
+        })
+        .await
+        .map_err(|e| anyhow!("VAD task panicked: {}", e))?
+        .map_err(|e| anyhow!("VAD processing failed for {}: {}", source_label, e))?;
+
+        info!("VAD detected {} {} segments", source_segments.len(), source_label);
+        speech_segments.append(&mut source_segments);
     }
 
-    // Decode the audio file (CPU-intensive, run in blocking task)
-    let path_for_decode = audio_path.clone();
-    let decoded = tokio::task::spawn_blocking(move || {
-        decode_audio_file(&path_for_decode)
-    })
-    .await
-    .map_err(|e| anyhow!("Decode task panicked: {}", e))??;
-    let duration_seconds = decoded.duration_seconds;
-
-    info!(
-        "Decoded audio: {:.2}s, {}Hz, {} channels",
-        duration_seconds, decoded.sample_rate, decoded.channels
-    );
-
-    emit_progress(&app, &meeting_id, "decoding", 15, "Converting audio format...");
-
-    // Check for cancellation
-    if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
-        return Err(anyhow!("Retranscription cancelled"));
-    }
-
-    // Convert to 16kHz mono format (CPU-intensive, run in blocking task)
-    let audio_samples = tokio::task::spawn_blocking(move || {
-        decoded.to_whisper_format()
-    })
-    .await
-    .map_err(|e| anyhow!("Resample task panicked: {}", e))?;
-    info!("Converted to 16kHz mono format: {} samples", audio_samples.len());
-
-    emit_progress(&app, &meeting_id, "vad", 20, "Detecting speech segments...");
-
-    // Check for cancellation
-    if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
-        return Err(anyhow!("Retranscription cancelled"));
-    }
-
-    // Use VAD to find natural speech boundaries (same approach as live transcription)
-    // IMPORTANT: Run VAD in a blocking task to avoid blocking the async runtime
-    // For large files (35+ minutes), VAD processing can take several minutes
-    let app_for_vad = app.clone();
-    let meeting_id_for_vad = meeting_id.clone();
-
-    let speech_segments = tokio::task::spawn_blocking(move || {
-        get_speech_chunks_with_progress(
-            &audio_samples,
-            VAD_REDEMPTION_TIME_MS,
-            |vad_progress, segments_found| {
-                // Map VAD progress (0-100) to overall progress (20-25)
-                let overall_progress = 20 + (vad_progress as f32 * 0.05) as u32;
-                emit_progress(
-                    &app_for_vad,
-                    &meeting_id_for_vad,
-                    "vad",
-                    overall_progress,
-                    &format!("Detecting speech segments... {}% ({} found)", vad_progress, segments_found),
-                );
-
-                // Return false to cancel if cancellation requested
-                !RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst)
-            },
-        )
-    })
-    .await
-    .map_err(|e| anyhow!("VAD task panicked: {}", e))?
-    .map_err(|e| anyhow!("VAD processing failed: {}", e))?;
+    speech_segments.sort_by(|a, b| {
+        a.start_timestamp_ms
+            .partial_cmp(&b.start_timestamp_ms)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let total_segments = speech_segments.len();
     info!("VAD detected {} speech segments (redemption_time={}ms)", total_segments, VAD_REDEMPTION_TIME_MS);
@@ -942,6 +985,50 @@ mod tests {
         std::fs::write(dir.path().join("audio.mp4"), b"fake").unwrap();
         let found = find_audio_file(dir.path()).unwrap();
         assert_eq!(found.file_name().unwrap(), "audio.mp4");
+    }
+
+    #[test]
+    fn retained_tracks_are_transcribed_separately() {
+        let dir = tempfile::tempdir().unwrap();
+        let fallback = dir.path().join("audio.mp4");
+        std::fs::write(&fallback, b"mixed").unwrap();
+        std::fs::write(dir.path().join("mic.mp4"), b"mic").unwrap();
+        std::fs::write(dir.path().join("system.mp4"), b"system").unwrap();
+
+        let sources = find_retranscription_sources(dir.path(), &fallback);
+
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].label, "microphone");
+        assert_eq!(sources[0].positive_threshold, 0.20);
+        assert_eq!(sources[0].negative_threshold, 0.10);
+        assert_eq!(sources[1].label, "system audio");
+    }
+
+    #[test]
+    fn old_recordings_fall_back_to_mixed_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        let fallback = dir.path().join("audio.mp4");
+        std::fs::write(&fallback, b"mixed").unwrap();
+
+        let sources = find_retranscription_sources(dir.path(), &fallback);
+
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].label, "mixed audio");
+        assert_eq!(sources[0].path, fallback);
+    }
+
+    #[test]
+    fn incomplete_retained_tracks_fall_back_to_mixed_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        let fallback = dir.path().join("audio.mp4");
+        std::fs::write(&fallback, b"mixed").unwrap();
+        std::fs::write(dir.path().join("mic.mp4"), b"mic").unwrap();
+
+        let sources = find_retranscription_sources(dir.path(), &fallback);
+
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].label, "mixed audio");
+        assert_eq!(sources[0].path, fallback);
     }
 
     #[test]

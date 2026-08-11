@@ -71,7 +71,10 @@ export function usePaginatedTranscripts({
     }, []);
 
     // Load meeting metadata
-    const loadMetadata = useCallback(async (): Promise<MeetingMetadata | null> => {
+    const loadMetadata = useCallback(async (
+        throwOnError = false,
+        reportError = true,
+    ): Promise<MeetingMetadata | null> => {
         if (!meetingId) return null;
 
         try {
@@ -82,7 +85,8 @@ export function usePaginatedTranscripts({
             return data;
         } catch (err) {
             console.error('Failed to load meeting metadata:', err);
-            setError('Failed to load meeting details');
+            if (reportError) setError('Failed to load meeting details');
+            if (throwOnError) throw err;
             return null;
         }
     }, [meetingId]);
@@ -90,7 +94,9 @@ export function usePaginatedTranscripts({
     // Load transcripts at specific offset
     const loadTranscriptsAtOffset = useCallback(async (
         offset: number,
-        append: boolean = true
+        append: boolean = true,
+        throwOnError = false,
+        reportError = true,
     ): Promise<Transcript[]> => {
         if (!meetingId) return [];
 
@@ -127,7 +133,8 @@ export function usePaginatedTranscripts({
             return newTranscripts;
         } catch (err) {
             console.error('Failed to load transcripts:', err);
-            setError('Failed to load transcripts');
+            if (reportError) setError('Failed to load transcripts');
+            if (throwOnError) throw err;
             return [];
         }
     }, [meetingId]);
@@ -160,8 +167,8 @@ export function usePaginatedTranscripts({
         reset();
         setIsLoading(true);
         try {
-            await loadMetadata();
-            await loadTranscriptsAtOffset(0, false);
+            await loadMetadata(true, false);
+            await loadTranscriptsAtOffset(0, false, true, false);
         } finally {
             setIsLoading(false);
         }
