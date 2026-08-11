@@ -36,6 +36,7 @@ ${StrLoc}
 ; these milestones keep status truthful even while a runtime installer owns the
 ; foreground work and the NSIS bar is temporarily stationary.
 !macro MeetilyReportProgress Percent
+  StrCpy $MeetilyReportedProgress ${Percent}
   ${If} $MeetilyProgressToken != ""
     WriteRegDWORD HKCU "Software\meetily\InstallerProgress\$MeetilyProgressToken" "Percent" ${Percent}
   ${EndIf}
@@ -86,6 +87,9 @@ Var NoShortcutMode
 Var WixMode
 Var OldMainBinaryName
 Var MeetilyProgressToken
+Var MeetilyReportedProgress
+Var MeetilyInstallProgress
+Var MeetilyDisplayedProgress
 
 Name "${PRODUCTNAME}"
 BrandingText "Meetily - Actually Free"
@@ -199,13 +203,17 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 
 !define MUI_CUSTOMFUNCTION_GUIINIT MeetilyGUIInit
 
-ShowInstDetails show
+; The in-app updater should emphasize status and overall progress, not expose
+; NSIS's noisy extraction log as the primary interface.
+ShowInstDetails hide
 ShowUnInstDetails show
 XPStyle on
 
 ; Progress bar messages (comctl32)
 !define /ifndef PBM_SETBARCOLOR 0x409
 !define /ifndef PBM_SETBKCOLOR  0x2001
+!define /ifndef PBM_GETRANGE    0x407
+!define /ifndef PBM_GETPOS      0x408
 
 Var MeetilyDirDlg
 Var MeetilyDirText
@@ -318,20 +326,20 @@ Function MeetilyDarkenPage
   Push $R0
   Push $R1
   Push $R2
+  Push $R3
 
   FindWindow $R0 "#32770" "" $HWNDPARENT
   SetCtlColors $R0 E6EBF5 0A0C10
   System::Call 'uxtheme::SetWindowTheme(p$R0, w"DarkMode_Explorer", p0)'
 
-  ; Header labels on outer window
+  ; Keep stock header font metrics. Larger fonts in these fixed MUI rectangles
+  ; overlap at common Windows display scaling values.
   GetDlgItem $R1 $HWNDPARENT 1037
-  IntCmp $R1 0 +3 0 0
+  IntCmp $R1 0 +2 0 0
     SetCtlColors $R1 E6EBF5 0A0C10
-    SendMessage $R1 ${WM_SETFONT} $MeetilyFontTitle 1
   GetDlgItem $R1 $HWNDPARENT 1038
-  IntCmp $R1 0 +3 0 0
+  IntCmp $R1 0 +2 0 0
     SetCtlColors $R1 A8B3C7 0A0C10
-    SendMessage $R1 ${WM_SETFONT} $MeetilyFontBody 1
 
   ; Branding
   GetDlgItem $R1 $HWNDPARENT 1028
@@ -390,6 +398,7 @@ Function MeetilyDarkenPage
   IntCmp $R1 0 +2 0 0
     System::Call 'uxtheme::SetWindowTheme(p$R1, w"DarkMode_Explorer", p0)'
 
+  Pop $R3
   Pop $R2
   Pop $R1
   Pop $R0
@@ -401,19 +410,37 @@ Function MeetilyDarkenInstFiles
   Push $R1
   FindWindow $R0 "#32770" "" $HWNDPARENT
 
+  ${If} $UpdateMode = 1
+    SendMessage $HWNDPARENT ${WM_SETTEXT} 0 "STR:Meetily - Actually Free Updater"
+    !insertmacro MUI_HEADER_TEXT "Updating Meetily" "Updating app files and refreshing local AI runtimes..."
+    GetDlgItem $R1 $HWNDPARENT 1028
+    SendMessage $R1 ${WM_SETTEXT} 0 "STR:Meetily updater  ·  local AI meetings"
+    GetDlgItem $R1 $HWNDPARENT 2
+    SendMessage $R1 ${WM_SETTEXT} 0 "STR:Cancel update"
+  ${Else}
+    !insertmacro MUI_HEADER_TEXT "Installing Meetily" "Copying app files and preparing local AI runtimes..."
+  ${EndIf}
+
   ; Progress bar → teal on dark track
   GetDlgItem $R1 $R0 1004
-  IntCmp $R1 0 +4 0 0
-    SendMessage $R1 ${PBM_SETBARCOLOR} 0 0xBFD42D
+  ${If} $R1 != 0
+    StrCpy $MeetilyInstallProgress $R1
+    ${If} $UpdateMode = 1
+      ; Match the current bootstrapper's blue progress treatment.
+      SendMessage $R1 ${PBM_SETBARCOLOR} 0 0xF7884B
+    ${Else}
+      SendMessage $R1 ${PBM_SETBARCOLOR} 0 0xBFD42D
+    ${EndIf}
     SendMessage $R1 ${PBM_SETBKCOLOR} 0 0x1C1512
     System::Call 'uxtheme::SetWindowTheme(p$R1, w"", w"")'
+  ${EndIf}
 
   ; Details log
   GetDlgItem $R1 $R0 1016
   IntCmp $R1 0 +4 0 0
     SetCtlColors $R1 A8B3C7 12151C
     System::Call 'uxtheme::SetWindowTheme(p$R1, w"DarkMode_Explorer", p0)'
-    ShowWindow $R1 ${SW_SHOW}
+    ShowWindow $R1 ${SW_HIDE}
 
   ; Status labels above progress
   GetDlgItem $R1 $R0 1006
@@ -426,6 +453,10 @@ Function MeetilyDarkenInstFiles
   IntCmp $R1 0 +2 0 0
     ShowWindow $R1 ${SW_HIDE}
 
+  StrCpy $MeetilyDisplayedProgress 0
+  Call MeetilyRefreshInstallProgress
+  nsDialogs::CreateTimer MeetilyRefreshInstallProgress 150
+
   ; There is nowhere to navigate while files are being installed. Keep only
   ; Cancel visible, then reveal Next once .onInstSuccess runs.
   GetDlgItem $R1 $HWNDPARENT 1
@@ -435,6 +466,56 @@ Function MeetilyDarkenInstFiles
   IntCmp $R1 0 +2 0 0
     ShowWindow $R1 ${SW_HIDE}
 
+  Pop $R1
+  Pop $R0
+FunctionEnd
+
+Function MeetilyRefreshInstallProgress
+  Push $R0
+  Push $R1
+  Push $R2
+  Push $R3
+  ${If} $MeetilyInstallProgress == ""
+    Goto meetily_progress_done
+  ${EndIf}
+
+  SendMessage $MeetilyInstallProgress ${PBM_GETRANGE} 1 0 $R1
+  SendMessage $MeetilyInstallProgress ${PBM_GETRANGE} 0 0 $R2
+  SendMessage $MeetilyInstallProgress ${PBM_GETPOS} 0 0 $R0
+  ${If} $R2 > $R1
+    IntOp $R0 $R0 - $R1
+    IntOp $R0 $R0 * 100
+    IntOp $R3 $R2 - $R1
+    IntOp $R0 $R0 / $R3
+  ${Else}
+    StrCpy $R0 0
+  ${EndIf}
+  ${If} $R0 > 100
+    StrCpy $R0 100
+  ${ElseIf} $R0 < 0
+    StrCpy $R0 0
+  ${EndIf}
+  ${If} $MeetilyReportedProgress > $R0
+    StrCpy $R0 $MeetilyReportedProgress
+  ${EndIf}
+  ${If} $R0 > $MeetilyDisplayedProgress
+    IntOp $R2 $R0 - $MeetilyDisplayedProgress
+    ${If} $R2 > 6
+      IntOp $MeetilyDisplayedProgress $MeetilyDisplayedProgress + 2
+    ${Else}
+      StrCpy $MeetilyDisplayedProgress $R0
+    ${EndIf}
+  ${EndIf}
+
+  GetDlgItem $R1 $HWNDPARENT 1038
+  ${If} $UpdateMode = 1
+    SendMessage $R1 ${WM_SETTEXT} 0 "STR:Updating app files to version ${VERSION}  |  $MeetilyDisplayedProgress% complete"
+  ${Else}
+    SendMessage $R1 ${WM_SETTEXT} 0 "STR:Copying files and setting up local runtimes  |  $MeetilyDisplayedProgress% complete"
+  ${EndIf}
+  meetily_progress_done:
+  Pop $R3
+  Pop $R2
   Pop $R1
   Pop $R0
 FunctionEnd
@@ -921,6 +1002,8 @@ FunctionEnd
 
 
 Section EarlyChecks
+  StrCpy $MeetilyReportedProgress 0
+  StrCpy $MeetilyDisplayedProgress 0
   !insertmacro MeetilyReportProgress 1
   ; Abort silent installer if downgrades is disabled
   !if "${ALLOWDOWNGRADES}" == "false"
@@ -1119,6 +1202,14 @@ Section Install
     WriteRegStr SHCTX "${UNINSTKEY}" "HelpLink" "${HOMEPAGE}"
   !endif
 
+  ; DisplayVersion is rewritten above on every update. Notify Explorer and
+  ; Settings so an Installed Apps page that was already open does not keep
+  ; showing the previous version from its process-local cache.
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0x0000, p 0, p 0)'
+  Push $9
+  System::Call 'user32::SendMessageTimeoutW(p 0xffff, i 0x001A, p 0, w "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall", i 0x0002, i 2000, *p .r9)'
+  Pop $9
+
   ; Create start menu shortcut
   !insertmacro MUI_STARTMENU_WRITE_BEGIN Application
     Call CreateOrUpdateStartMenuShortcut
@@ -1144,14 +1235,23 @@ Section Install
     ShowWindow $R1 ${SW_SHOW}
   ${EndIf}
   !insertmacro MeetilyReportProgress 100
+  StrCpy $MeetilyDisplayedProgress 100
+  Call MeetilyRefreshInstallProgress
+  nsDialogs::KillTimer MeetilyRefreshInstallProgress
 
-  ; Auto close this page for passive mode
+  ; Auto close this page for passive mode. In-app updates are visible even in
+  ; passive mode, so leave the completed state onscreen briefly instead of
+  ; jumping from the last extraction operation straight back into the app.
   ${If} $PassiveMode = 1
+    ${If} $UpdateMode = 1
+      Sleep 450
+    ${EndIf}
     SetAutoClose true
   ${EndIf}
 SectionEnd
 
 Function .onInstSuccess
+  nsDialogs::KillTimer MeetilyRefreshInstallProgress
   ; Check for `/R` flag only in silent and passive installers because
   ; GUI installer has a toggle for the user to (re)start the app
   ${If} $PassiveMode = 1
@@ -1162,6 +1262,10 @@ Function .onInstSuccess
       nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" "$R0"
     ${EndIf}
   ${EndIf}
+FunctionEnd
+
+Function .onInstFailed
+  nsDialogs::KillTimer MeetilyRefreshInstallProgress
 FunctionEnd
 
 Function un.onInit

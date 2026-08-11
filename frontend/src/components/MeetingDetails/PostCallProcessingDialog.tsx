@@ -2,9 +2,9 @@
 
 /**
  * Owns the post-recording handoff. This must remain a single ordered workflow:
- * exact speaker count -> source-track retranscription -> refetch -> exact-count
- * diarization -> refetch -> summary gate. Starting summary or unknown-count
- * diarization elsewhere races the transactional transcript replacement.
+ * speaker count choice -> source-track retranscription -> refetch ->
+ * diarization -> refetch -> summary gate. Starting summary or diarization
+ * elsewhere races the transactional transcript replacement.
  *
  * Retranscription is event-driven because the Tauri start command returns after
  * spawning its native task. Listeners therefore register before invoke and are
@@ -190,12 +190,14 @@ export function PostCallProcessingDialog({
   const { selectedLanguage, transcriptModelConfig } = useConfig();
   const [stage, setStage] = useState<Stage>('idle');
   const [speakerCount, setSpeakerCount] = useState('2');
+  const [autoDetectSpeakers, setAutoDetectSpeakers] = useState(false);
   const [progress, setProgress] = useState(0);
   const [message, setMessage] = useState('Preparing enhanced transcript...');
   const [error, setError] = useState<string | null>(null);
   const [failedStage, setFailedStage] = useState<FailedStage | null>(null);
   const initializedMeetingRef = useRef<string | null>(null);
   const activeStageRef = useRef<FailedStage>('enhancing');
+  const skippedEnhancementRef = useRef(false);
 
   const storageKey = `post-call-processing:${meetingId}`;
 
@@ -214,7 +216,9 @@ export function PostCallProcessingDialog({
     sessionStorage.setItem(storageKey, 'completed');
     setStage('idle');
     toast.success('Post-call processing complete', {
-      description: 'Transcript enhanced and speaker labels refreshed. Generating summary next.',
+      description: skippedEnhancementRef.current
+        ? 'Speaker labels refreshed from the saved transcript. Generating summary next.'
+        : 'Transcript enhanced and speaker labels refreshed. Generating summary next.',
     });
     onComplete();
   };
@@ -228,17 +232,19 @@ export function PostCallProcessingDialog({
     await onRefetchTranscripts?.();
   };
 
-  const identifySpeakers = async (count: number) => {
+  const identifySpeakers = async (count: number | null) => {
     activeStageRef.current = 'diarizing';
     setStage('diarizing');
     setProgress(100);
-    setMessage(`Identifying ${count} speaker${count === 1 ? '' : 's'}...`);
+    setMessage(count === null
+      ? 'Auto-detecting speakers...'
+      : `Identifying ${count} speaker${count === 1 ? '' : 's'}...`);
     await invoke('diarize_meeting', { meetingId, numSpeakers: count });
     await refreshTranscript('post-diarization-refresh');
     completeWorkflow();
   };
 
-  const runWorkflow = async (count: number) => {
+  const runWorkflow = async (count: number | null) => {
     if (!meetingFolderPath) {
       throw new Error('The recording folder is unavailable for enhancement.');
     }
@@ -271,12 +277,19 @@ export function PostCallProcessingDialog({
     await identifySpeakers(count);
   };
 
-  const start = async () => {
+  const getSelectedSpeakerCount = (): number | null | undefined => {
+    if (autoDetectSpeakers) return null;
     const count = Number(speakerCount);
     if (!Number.isInteger(count) || count < 1 || count > 20) {
       setError('Enter the total number of speakers, from 1 to 20.');
-      return;
+      return undefined;
     }
+    return count;
+  };
+
+  const start = async () => {
+    const count = getSelectedSpeakerCount();
+    if (count === undefined) return;
     try {
       if (failedStage === 'diarizing') {
         await identifySpeakers(count);
@@ -287,6 +300,7 @@ export function PostCallProcessingDialog({
         await refreshTranscript('post-diarization-refresh');
         completeWorkflow();
       } else {
+        skippedEnhancementRef.current = false;
         await runWorkflow(count);
       }
     } catch (cause) {
@@ -298,8 +312,26 @@ export function PostCallProcessingDialog({
     }
   };
 
+  const skipEnhancement = async () => {
+    const count = getSelectedSpeakerCount();
+    if (count === undefined) return;
+    skippedEnhancementRef.current = true;
+    setError(null);
+    setFailedStage(null);
+    try {
+      await identifySpeakers(count);
+    } catch (cause) {
+      const nextError = cause instanceof Error ? cause.message : String(cause);
+      setFailedStage(activeStageRef.current);
+      setError(nextError);
+      setStage('error');
+      toast.error('Speaker identification failed', { description: nextError });
+    }
+  };
+
   const continueWithLiveTranscript = async () => {
     try {
+      skippedEnhancementRef.current = true;
       await refreshTranscript('post-diarization-refresh');
       completeWorkflow();
       toast.info('Using the live transcript', {
@@ -315,8 +347,20 @@ export function PostCallProcessingDialog({
 
   const isWorking = stage === 'enhancing' || stage === 'diarizing' || stage === 'refreshing';
 
+  // DialogContent already renders a compact X button. At the count prompt that
+  // X means "keep the live transcript": skip only retranscription, then still
+  // run speaker identification and unblock the fresh-summary stage.
+  const handleOpenChange = (open: boolean) => {
+    if (open || isWorking) return;
+    if (stage === 'prompt') {
+      void skipEnhancement();
+    } else if (stage === 'error') {
+      void continueWithLiveTranscript();
+    }
+  };
+
   return (
-    <Dialog open={stage !== 'idle'} onOpenChange={() => undefined}>
+    <Dialog open={stage !== 'idle'} onOpenChange={handleOpenChange}>
       <DialogContent
         aria-describedby="post-call-processing-description"
         className="sm:max-w-md"
@@ -335,7 +379,7 @@ export function PostCallProcessingDialog({
           <DialogDescription id="post-call-processing-description">
             {isWorking
               ? 'Meetily is rebuilding the transcript before creating the AI summary.'
-              : 'Include yourself in the total. Meetily will use this count to enhance the transcript and identify speakers.'}
+              : 'Include yourself in the total. Entering the actual number gives more accurate speaker labels, or choose Auto-detect if you are not sure.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -346,19 +390,39 @@ export function PostCallProcessingDialog({
                 <Button
                   key={count}
                   type="button"
-                  variant={speakerCount === String(count) ? 'default' : 'outline'}
-                  onClick={() => setSpeakerCount(String(count))}
+                  variant={!autoDetectSpeakers && speakerCount === String(count) ? 'default' : 'outline'}
+                  onClick={() => {
+                    setSpeakerCount(String(count));
+                    setAutoDetectSpeakers(false);
+                    setError(null);
+                  }}
                 >
                   {count}
                 </Button>
               ))}
+              <Button
+                type="button"
+                className="col-span-4"
+                variant={autoDetectSpeakers ? 'default' : 'outline'}
+                onClick={() => {
+                  setAutoDetectSpeakers(true);
+                  setError(null);
+                }}
+              >
+                Auto-detect
+              </Button>
             </div>
             <input
               type="number"
               min={1}
               max={20}
-              value={speakerCount}
-              onChange={(event) => setSpeakerCount(event.target.value)}
+              value={autoDetectSpeakers ? '' : speakerCount}
+              placeholder={autoDetectSpeakers ? 'Speakers will be detected automatically' : undefined}
+              onFocus={() => setAutoDetectSpeakers(false)}
+              onChange={(event) => {
+                setSpeakerCount(event.target.value);
+                setAutoDetectSpeakers(false);
+              }}
               className="w-full rounded-md border border-[var(--af-border)] bg-[var(--af-panel-2)] px-3 py-2 text-sm text-[var(--af-text)] outline-none focus:ring-2 focus:ring-blue-500"
               aria-label="Total number of speakers"
             />

@@ -6,10 +6,8 @@
  * Shown while recording so the user can keep an eye on the timer and input
  * levels, and pause/stop, without the full window taking over their screen.
  *
- * Deliberately does NOT own the stop logic. Stopping a meeting saves audio,
- * persists transcripts, kicks off summarisation and navigates â€” all of which
- * lives in the main window. Stop here asks the main window to do it, so there
- * is exactly one implementation of that sequence.
+ * Deliberately does NOT duplicate the stop logic. Rust owns native finalization
+ * and emits the completion event that makes the main window save and navigate.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -65,13 +63,16 @@ export default function MiniBarPage() {
   // here, from the tray, or by the main window. `recording-stopped` fires from
   // the stop command itself; `recording-stop-complete` is the tray's follow-up.
   useEffect(() => {
+    const beginStopping = () => setIsStopping(true);
     const close = () => {
       setIsStopping(true);
       invoke('exit_compact_mode').catch((e) => console.error(e));
     };
+    const unlistenStopping = listen('recording-shutdown-progress', beginStopping);
     const unlistenStopped = listen('recording-stopped', close);
     const unlistenComplete = listen('recording-stop-complete', close);
     return () => {
+      unlistenStopping.then((fn) => fn());
       unlistenStopped.then((fn) => fn());
       unlistenComplete.then((fn) => fn());
     };
@@ -98,7 +99,13 @@ export default function MiniBarPage() {
     // bar) and signals the main window to save + navigate, mirroring the tray.
     setIsStopping(true);
     try {
-      await invoke('stop_recording_from_minibar');
+      const didStop = await invoke<boolean>('stop_recording_from_minibar');
+      if (!didStop) {
+        // Another surface already owns shutdown, or recording already ended.
+        // Either way this detached window has no useful state left to show.
+        await invoke('exit_compact_mode');
+        return;
+      }
     } catch (e) {
       console.error('Compact bar: stop failed', e);
       setIsStopping(false);
@@ -149,12 +156,12 @@ export default function MiniBarPage() {
         <div className="flex items-center gap-2">
           <Mic size={12} className="shrink-0 text-gray-400" />
           <span className="w-12 text-[11px] text-gray-400">Mic</span>
-          <LiveAudioVisualizer active={!isPaused} source="mic" bars={14} />
+          <LiveAudioVisualizer active={!isPaused && !isStopping} source="mic" bars={14} />
         </div>
         <div className="flex items-center gap-2">
           <Monitor size={12} className="shrink-0 text-gray-400" />
           <span className="w-12 text-[11px] text-gray-400">System</span>
-          <LiveAudioVisualizer active={!isPaused} source="system" bars={14} />
+          <LiveAudioVisualizer active={!isPaused && !isStopping} source="system" bars={14} />
         </div>
       </div>
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { getVersion } from '@tauri-apps/api/app';
+import { invoke } from '@tauri-apps/api/core';
 import Image from 'next/image';
 import { UpdateDialog } from "./UpdateDialog";
 import { updateService, UpdateInfo } from '@/services/updateService';
@@ -35,6 +36,13 @@ export function About() {
         } finally {
             setIsChecking(false);
         }
+    };
+
+    const openExternal = (url: string) => {
+        invoke('open_external_url', { url }).catch((error) => {
+            console.error('Failed to open external link:', error);
+            toast.error('Could not open the link');
+        });
     };
 
     return (
@@ -110,6 +118,24 @@ export function About() {
             <div className="pt-2 border-t border-gray-200 text-center">
                 <p className="text-xs text-gray-400">
                     Meetily - Actually Free · Open source (MIT)
+                </p>
+                <p className="mt-1 text-xs text-gray-500">
+                    Tyler Buza ·{' '}
+                    <button
+                        type="button"
+                        className="underline underline-offset-2 transition-colors hover:text-blue-500"
+                        onClick={() => openExternal('https://github.com/TylerBuza')}
+                    >
+                        GitHub
+                    </button>
+                    {' '}·{' '}
+                    <button
+                        type="button"
+                        className="underline underline-offset-2 transition-colors hover:text-blue-500"
+                        onClick={() => openExternal('https://buza.dev')}
+                    >
+                        buza.dev
+                    </button>
                 </p>
             </div>
 

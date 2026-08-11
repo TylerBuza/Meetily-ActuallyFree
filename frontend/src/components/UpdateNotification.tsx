@@ -11,6 +11,7 @@ export function setUpdateDialogCallback(callback: () => void) {
 
 export function showUpdateNotification(updateInfo: UpdateInfo, onUpdateClick?: () => void) {
   const handleClick = () => {
+    toast.dismiss(toastId);
     if (onUpdateClick) {
       onUpdateClick();
     } else if (globalShowDialogCallback) {
@@ -18,7 +19,7 @@ export function showUpdateNotification(updateInfo: UpdateInfo, onUpdateClick?: (
     }
   };
 
-  toast.info(
+  const toastId = toast.info(
     <div className="flex items-center justify-between gap-4">
       <div className="flex items-center gap-2">
         <Download className="h-4 w-4" />

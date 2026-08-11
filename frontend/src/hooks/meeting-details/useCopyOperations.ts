@@ -6,6 +6,51 @@ import Analytics from '@/lib/analytics';
 import { invoke as invokeTauri } from '@tauri-apps/api/core';
 import { exportSummaryAs, ExportFormat } from '@/lib/exportSummary';
 
+export type MeetingExportContent = 'transcript' | 'summary' | 'both';
+export type MeetingExportFormat = ExportFormat | 'clipboard';
+
+function blockContentToText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) return content.map(blockContentToText).join('');
+  if (content && typeof content === 'object') {
+    const node = content as { text?: unknown; content?: unknown };
+    if (typeof node.text === 'string') return node.text;
+    return blockContentToText(node.content);
+  }
+  return '';
+}
+
+function blockNoteToMarkdown(blocks: unknown[]): string {
+  const lines: string[] = [];
+  const appendBlocks = (items: unknown[]) => {
+    for (const item of items) {
+      if (!item || typeof item !== 'object') continue;
+      const block = item as {
+        type?: string;
+        props?: { level?: number };
+        content?: unknown;
+        children?: unknown[];
+      };
+      const text = blockContentToText(block.content).trim();
+      if (text) {
+        if (block.type === 'heading') {
+          const level = Math.min(6, Math.max(1, Number(block.props?.level) || 2));
+          lines.push(`${'#'.repeat(level)} ${text}`);
+        } else if (block.type === 'numberedListItem') {
+          lines.push(`1. ${text}`);
+        } else if (block.type === 'bulletListItem' || block.type === 'checkListItem') {
+          lines.push(`- ${text}`);
+        } else {
+          lines.push(text);
+        }
+      }
+      if (Array.isArray(block.children)) appendBlocks(block.children);
+    }
+  };
+  appendBlocks(blocks);
+  return lines.join('\n\n');
+}
+
 interface UseCopyOperationsProps {
   meeting: any;
   transcripts: Transcript[];
@@ -126,6 +171,10 @@ export function useCopyOperations({
         console.log('📝 Markdown from aiSummary, length:', summaryMarkdown.length);
       }
 
+      if (!summaryMarkdown && Array.isArray((aiSummary as any)?.summary_json)) {
+        summaryMarkdown = blockNoteToMarkdown((aiSummary as any).summary_json);
+      }
+
       // Fallback: Check for legacy format
       if (!summaryMarkdown && aiSummary) {
         console.log('📝 Converting legacy format to markdown');
@@ -199,6 +248,9 @@ export function useCopyOperations({
     if (!summaryMarkdown && aiSummary && 'markdown' in aiSummary) {
       summaryMarkdown = (aiSummary as any).markdown || '';
     }
+    if (!summaryMarkdown && Array.isArray((aiSummary as any)?.summary_json)) {
+      summaryMarkdown = blockNoteToMarkdown((aiSummary as any).summary_json);
+    }
     if (!summaryMarkdown && aiSummary) {
       summaryMarkdown = Object.entries(aiSummary)
         .filter(([key]) => key !== 'markdown' && key !== 'summary_json' && key !== '_section_order' && key !== 'MeetingName')
@@ -222,6 +274,31 @@ export function useCopyOperations({
     return header + metadata + summaryMarkdown;
   }, [aiSummary, meetingTitle, meeting, blockNoteSummaryRef]);
 
+  const getTranscriptMarkdown = useCallback(async (): Promise<string | null> => {
+    const allTranscripts = await fetchAllTranscripts(meeting.id);
+    if (!allTranscripts.length) return null;
+
+    const formatTime = (seconds: number | undefined, fallbackTimestamp: string): string => {
+      if (seconds === undefined) return fallbackTimestamp;
+      const totalSeconds = Math.floor(seconds);
+      const minutes = Math.floor(totalSeconds / 60);
+      const remainder = totalSeconds % 60;
+      return `[${minutes.toString().padStart(2, '0')}:${remainder.toString().padStart(2, '0')}]`;
+    };
+
+    const body = allTranscripts
+      .map((transcript) => {
+        const speaker = transcript.speaker ? ` **${transcript.speaker}:**` : '';
+        return `${formatTime(transcript.audio_start_time, transcript.timestamp)}${speaker} ${transcript.text}`;
+      })
+      .join('\n\n');
+    const date = new Date(meeting.created_at).toLocaleDateString('en-US', {
+      year: 'numeric', month: 'long', day: 'numeric',
+    });
+
+    return `# Meeting Transcript: ${meetingTitle}\n\n**Meeting ID:** ${meeting.id}\n**Date:** ${date}\n\n---\n\n${body}`;
+  }, [fetchAllTranscripts, meeting.id, meeting.created_at, meetingTitle]);
+
   // Export summary to a file (Markdown, PDF, or DOCX)
   const handleExportSummary = useCallback(async (format: ExportFormat) => {
     try {
@@ -242,9 +319,53 @@ export function useCopyOperations({
     }
   }, [getSummaryMarkdown, meetingTitle, meeting]);
 
+  const handleExportMeeting = useCallback(async (
+    content: MeetingExportContent,
+    format: MeetingExportFormat,
+  ): Promise<boolean> => {
+    try {
+      const transcriptMarkdown = content === 'summary' ? null : await getTranscriptMarkdown();
+      const summaryMarkdown = content === 'transcript' ? null : await getSummaryMarkdown();
+
+      if (content !== 'summary' && !transcriptMarkdown) {
+        toast.error('No transcript content available to export');
+        return false;
+      }
+      if (content !== 'transcript' && !summaryMarkdown) {
+        toast.error('No summary content available to export');
+        return false;
+      }
+
+      const markdown = content === 'transcript'
+        ? transcriptMarkdown!
+        : content === 'summary'
+          ? summaryMarkdown!
+          : `${transcriptMarkdown!}\n\n---\n\n${summaryMarkdown!}`;
+      const baseName = `${String(meetingTitle || meeting?.title || 'meeting')}-${content}`;
+
+      if (format === 'clipboard') {
+        await navigator.clipboard.writeText(markdown);
+        toast.success(`${content === 'both' ? 'Transcript and summary' : content} copied to clipboard`);
+      } else {
+        await exportSummaryAs(format, markdown, baseName);
+        toast.success(`Meeting exported as ${format.toUpperCase()}`);
+      }
+
+      try {
+        await Analytics.trackFeatureUsed(`export_meeting_${content}_${format}`);
+      } catch { /* analytics is best-effort */ }
+      return true;
+    } catch (error) {
+      console.error('Failed to export meeting:', error);
+      toast.error('Failed to export meeting');
+      return false;
+    }
+  }, [getTranscriptMarkdown, getSummaryMarkdown, meetingTitle, meeting]);
+
   return {
     handleCopyTranscript,
     handleCopySummary,
     handleExportSummary,
+    handleExportMeeting,
   };
 }

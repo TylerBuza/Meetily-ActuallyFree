@@ -19,6 +19,8 @@ import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
 import { useConfig } from '@/contexts/ConfigContext';
 import { PostCallProcessingDialog } from '@/components/MeetingDetails/PostCallProcessingDialog';
+import { MeetingExportDialog } from '@/components/MeetingDetails/MeetingExportDialog';
+import { SummaryRegenerationDialog } from '@/components/MeetingDetails/SummaryRegenerationDialog';
 
 export default function PageContent({
   meeting,
@@ -66,6 +68,12 @@ export default function PageContent({
   const [isRecording] = useState(false);
   const [summaryResponse] = useState<SummaryResponse | null>(null);
   const [postCallProcessingComplete, setPostCallProcessingComplete] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [regenerationRequest, setRegenerationRequest] = useState<{
+    open: boolean;
+    initialContext: string;
+    speakerNamesChanged: boolean;
+  }>({ open: false, initialContext: '', speakerNamesChanged: false });
 
   // Ref to store the modal open function from SummaryGeneratorButtonGroup
   const openModelSettingsRef = useRef<(() => void) | null>(null);
@@ -206,6 +214,15 @@ export default function PageContent({
           customPrompt={customPrompt}
           onPromptChange={setCustomPrompt}
           onCopyTranscript={copyOperations.handleCopyTranscript}
+          onOpenExport={() => setExportOpen(true)}
+          onSpeakerRenamed={({ to }) => {
+            if (!meetingData.aiSummary) return;
+            setRegenerationRequest({
+              open: true,
+              initialContext: `Use the updated speaker name "${to}" and the other speaker labels from the transcript when writing the summary.`,
+              speakerNamesChanged: true,
+            });
+          }}
           onOpenMeetingFolder={meetingOperations.handleOpenMeetingFolder}
           isRecording={isRecording}
           disableAutoScroll={true}
@@ -235,7 +252,7 @@ export default function PageContent({
           onSaveAll={meetingData.saveAllChanges}
           onCopySummary={copyOperations.handleCopySummary}
           onCopyTranscript={copyOperations.handleCopyTranscript}
-          onExportSummary={copyOperations.handleExportSummary}
+          onOpenExport={() => setExportOpen(true)}
           onOpenFolder={meetingOperations.handleOpenMeetingFolder}
           aiSummary={meetingData.aiSummary}
           summaryStatus={summaryGeneration.summaryStatus}
@@ -251,7 +268,11 @@ export default function PageContent({
           onSummaryChange={meetingData.handleSummaryChange}
           onDirtyChange={meetingData.setIsSummaryDirty}
           summaryError={summaryGeneration.summaryError}
-          onRegenerateSummary={summaryGeneration.handleRegenerateSummary}
+          onRequestRegenerate={() => setRegenerationRequest({
+            open: true,
+            initialContext: '',
+            speakerNamesChanged: false,
+          })}
           getSummaryStatusMessage={summaryGeneration.getSummaryStatusMessage}
           availableTemplates={templates.availableTemplates}
           selectedTemplate={templates.selectedTemplate}
@@ -268,6 +289,20 @@ export default function PageContent({
         availableTemplates={templates.availableTemplates}
         onSave={templates.saveCustomTemplate}
         onDelete={templates.deleteCustomTemplate}
+      />
+      <MeetingExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        hasTranscript={(totalCount ?? meetingData.transcripts.length) > 0}
+        hasSummary={!!meetingData.aiSummary}
+        onExport={copyOperations.handleExportMeeting}
+      />
+      <SummaryRegenerationDialog
+        open={regenerationRequest.open}
+        onOpenChange={(open) => setRegenerationRequest((current) => ({ ...current, open }))}
+        initialContext={regenerationRequest.initialContext}
+        speakerNamesChanged={regenerationRequest.speakerNamesChanged}
+        onRegenerate={summaryGeneration.handleRegenerateSummary}
       />
       <PostCallProcessingDialog
         enabled={isPostCallRecording}

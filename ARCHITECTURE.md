@@ -182,7 +182,8 @@ speaker counts, not by guess:
 land depends on mic, codec and room. The chosen value never invents speakers in
 single-speaker audio, which is the worst failure mode. When the count is known,
 passing `num_speakers` bypasses the threshold and resolved *every* test case
-exactly; this is what the "Speakers" dialog asks for.
+exactly. The post-call dialog therefore recommends an entered count, but offers
+threshold-based **Auto-detect** when the user does not know it.
 
 A silhouette-based automatic speaker-count search was tried and **removed** — it
 consistently preferred the maximum candidate count and did worse than a fixed
@@ -247,16 +248,19 @@ function, and normalized identity is also used when adjacent turns merge.
 
 ```text
 save live meeting and retained tracks
-  -> ask exact total speakers, including the user
-  -> retranscribe mic.mp4 and system.mp4 independently
+  -> ask for total speakers (exact count recommended; Auto-detect optional)
+  -> retranscribe mic.mp4 and system.mp4 independently, unless skipped with X
   -> refetch replaced transcript rows
-  -> diarize using the exact count
+  -> diarize using the selected exact count or threshold-based Auto-detect
   -> refetch persisted labels
   -> summarize fresh SQLite transcript rows
 ```
 
-Do not reintroduce unknown-count auto-diarization or immediate summary generation
-before this sequence. Register retranscription listeners before invoking Rust,
+Do not start automatic diarization without the user's explicit Auto-detect
+choice, or generate a summary before this sequence. The count-prompt X skips
+only retranscription: it keeps the live rows, still runs the selected exact or
+automatic diarization, refetches labels, and then releases the summary gate.
+Register retranscription listeners before invoking Rust,
 filter events by meeting ID, and clean them once. Model fallback stays within the
 configured local provider. Timeout cancellation waits for the native reservation
 to clear before retry. Pre-diarization and post-diarization refresh failures are
@@ -273,6 +277,16 @@ If audio saving was disabled or retained audio is unavailable, enhancement and
 diarization are impossible. The error state offers **Use live transcript**, which
 refetches the saved live rows, unblocks the sequence, and summarizes those rows
 instead of trapping the user in a retry loop.
+
+Summary prompts serialize every persisted transcript row with timestamp,
+speaker label, and text. This is required for a regeneration after speaker
+rename to actually expose the renamed identities to the model. Generated
+meeting titles are written through `api_save_meeting_title` before meeting and
+sidebar refetches; a local-only title is otherwise immediately replaced by the
+stale database value. Meeting export owns content selection first (transcript,
+summary, or both) and format selection second. It always fetches all transcript
+rows from SQLite, and summary export must support markdown, BlockNote
+`summary_json`, and legacy section representations.
 
 ---
 
@@ -386,6 +400,19 @@ in the bootstrapper. The universal package stages three app executables and the
 hook chooses CUDA, Vulkan, or CPU, then installs the chosen variant as the
 canonical `meetily.exe`. In-app updates continue through the raw NSIS engine so
 they retain Tauri's `/P /R /UPDATE /ARGS` behavior.
+
+The raw engine detects `/UPDATE` before its install-files page is shown. Update
+mode must use updater-specific chrome and language (`Meetily - Actually Free
+Updater`, `Updating Meetily`, and `Updating app files`) rather than exposing the
+setup wording. Keep the verbose NSIS extraction log collapsed, preserve the
+stock MUI header font metrics so title/subtitle rectangles do not overlap at
+scaled DPI, and show a monotonic overall percentage in the header. The update
+progress color matches the blue native bootstrapper; setup-only pages and all
+hardware/runtime decisions remain shared with the normal installer.
+Every install/update rewrites uninstall-key `DisplayVersion`, then broadcasts a
+shell/settings change notification. Without that notification, an Installed
+Apps window left open during an update can continue showing the previous
+version even though the registry and executable already contain the new one.
 
 ### Update-consent path
 

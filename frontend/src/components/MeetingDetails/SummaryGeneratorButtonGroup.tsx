@@ -30,6 +30,7 @@ interface SummaryGeneratorButtonGroupProps {
   setModelConfig: (config: ModelConfig | ((prev: ModelConfig) => ModelConfig)) => void;
   onSaveModelConfig: (config?: ModelConfig) => Promise<void>;
   onGenerateSummary: (customPrompt: string) => Promise<void>;
+  onRequestRegenerate?: () => void;
   onStopGeneration: () => void;
   customPrompt: string;
   summaryStatus: 'idle' | 'processing' | 'summarizing' | 'regenerating' | 'completed' | 'error';
@@ -48,6 +49,7 @@ export function SummaryGeneratorButtonGroup({
   setModelConfig,
   onSaveModelConfig,
   onGenerateSummary,
+  onRequestRegenerate,
   onStopGeneration,
   customPrompt,
   summaryStatus,
@@ -257,6 +259,10 @@ export function SummaryGeneratorButtonGroup({
   const handlePrimaryClick = () => {
     Analytics.trackButtonClick(hasSummary ? 'regenerate_summary' : 'generate_summary', 'meeting_details');
     if (hasSummary) {
+      if (onRequestRegenerate) {
+        onRequestRegenerate();
+        return;
+      }
       setContextInput('');
       setContextModalOpen(true);
     } else {

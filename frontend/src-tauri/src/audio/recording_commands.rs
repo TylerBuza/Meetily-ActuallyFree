@@ -37,6 +37,15 @@ pub use super::transcription::TranscriptUpdate;
 
 // Simple recording state tracking
 static IS_RECORDING: AtomicBool = AtomicBool::new(false);
+static IS_STOPPING: AtomicBool = AtomicBool::new(false);
+
+struct StopGuard;
+
+impl Drop for StopGuard {
+    fn drop(&mut self) {
+        IS_STOPPING.store(false, Ordering::SeqCst);
+    }
+}
 
 /// Whether a recording session is currently active (for the auto compact bar).
 pub fn is_recording_active() -> bool {
@@ -82,6 +91,13 @@ fn spawn_level_forwarder<R: Runtime>(
 #[derive(Debug, Deserialize)]
 pub struct RecordingArgs {
     pub save_path: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopOutcome {
+    Completed,
+    AlreadyStopping,
+    AlreadyStopped,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -573,7 +589,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
 pub async fn stop_recording<R: Runtime>(
     app: AppHandle<R>,
     _args: RecordingArgs,
-) -> Result<(), String> {
+) -> Result<StopOutcome, String> {
     info!(
         "ðŸ›‘ Starting optimized recording shutdown - ensuring ALL transcript chunks are preserved"
     );
@@ -581,7 +597,23 @@ pub async fn stop_recording<R: Runtime>(
     // Check if recording is active
     if !IS_RECORDING.load(Ordering::SeqCst) {
         info!("Recording was not active");
-        return Ok(());
+        return Ok(StopOutcome::AlreadyStopped);
+    }
+
+    if IS_STOPPING
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        info!("Recording shutdown is already in progress");
+        return Ok(StopOutcome::AlreadyStopping);
+    }
+    let _stop_guard = StopGuard;
+
+    // The compact bar has no shared React recording context. Close it as soon
+    // as this call owns shutdown so its local timer and controls cannot remain
+    // active or issue a second Stop while finalization is running.
+    if app.get_webview_window("minibar").is_some() {
+        let _ = crate::minibar::exit_compact_mode(app.clone()).await;
     }
 
     // Emit shutdown progress to frontend
@@ -998,7 +1030,7 @@ pub async fn stop_recording<R: Runtime>(
     }
 
     info!("ðŸŽ‰ Recording stopped successfully with ZERO transcript chunks lost");
-    Ok(())
+    Ok(StopOutcome::Completed)
 }
 
 /// Check if recording is active

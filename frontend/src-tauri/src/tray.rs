@@ -97,7 +97,7 @@ fn toggle_recording_handler<R: Runtime>(app: &AppHandle<R>) {
 
             // Handle result
             match stop_result {
-                Ok(_) => {
+                Ok(crate::audio::recording_commands::StopOutcome::Completed) => {
                     log::info!("Tray toggle: Recording stopped successfully");
 
                     // Trigger frontend post-processing via event (works from any page)
@@ -105,6 +105,13 @@ fn toggle_recording_handler<R: Runtime>(app: &AppHandle<R>) {
                     if let Err(e) = app_clone.emit("recording-stop-complete", true) {
                         log::error!("Tray toggle: Failed to emit recording-stop-complete event: {}", e);
                     }
+                }
+                Ok(crate::audio::recording_commands::StopOutcome::AlreadyStopping) => {
+                    log::info!("Tray toggle: Recording stop is already in progress");
+                }
+                Ok(crate::audio::recording_commands::StopOutcome::AlreadyStopped) => {
+                    log::info!("Tray toggle: Recording was already stopped");
+                    update_tray_menu_async(&app_clone).await;
                 }
                 Err(e) => {
                     log::error!("Tray toggle: Failed to stop recording: {}", e);
@@ -186,7 +193,7 @@ fn stop_recording_handler<R: Runtime>(app: &AppHandle<R>) {
 
         // Handle result
         match stop_result {
-            Ok(_) => {
+            Ok(crate::audio::recording_commands::StopOutcome::Completed) => {
                 log::info!("Tray: Recording stopped successfully");
 
                 // Trigger frontend post-processing via event (works from any page)
@@ -194,6 +201,13 @@ fn stop_recording_handler<R: Runtime>(app: &AppHandle<R>) {
                 if let Err(e) = app_clone.emit("recording-stop-complete", true) {
                     log::error!("Tray: Failed to emit recording-stop-complete event: {}", e);
                 }
+            }
+            Ok(crate::audio::recording_commands::StopOutcome::AlreadyStopping) => {
+                log::info!("Tray: Recording stop is already in progress");
+            }
+            Ok(crate::audio::recording_commands::StopOutcome::AlreadyStopped) => {
+                log::info!("Tray: Recording was already stopped");
+                update_tray_menu_async(&app_clone).await;
             }
             Err(e) => {
                 log::error!("Tray: Failed to stop recording: {}", e);

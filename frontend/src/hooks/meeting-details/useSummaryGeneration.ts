@@ -57,7 +57,7 @@ interface UseSummaryGenerationProps {
   isModelConfigLoading: boolean;
   selectedTemplate: string;
   onMeetingUpdated?: () => Promise<void>;
-  updateMeetingTitle: (title: string) => void;
+  updateMeetingTitle: (title: string) => Promise<boolean>;
   setAiSummary: (summary: Summary | null) => void;
   onOpenModelSettings?: () => void;
 }
@@ -90,7 +90,7 @@ export function useSummaryGeneration({
           stage: string;
           message?: string;
           data?: any;
-        }>('summary-progress', (event) => {
+        }>('summary-progress', async (event) => {
           const { meetingId, stage, message, data } = event.payload || ({} as any);
           if (meetingId && meetingId !== meeting.id) return;
 
@@ -101,6 +101,8 @@ export function useSummaryGeneration({
             return;
           }
           if (stage === 'completed' && data) {
+            const meetingName = data.MeetingName || data.meetingName || data.meeting_name;
+            const titleSaved = meetingName ? await updateMeetingTitle(meetingName) : true;
             if (data.markdown) {
               setAiSummary({ markdown: data.markdown } as any);
             } else if (data.summary_json) {
@@ -115,7 +117,7 @@ export function useSummaryGeneration({
               description: message || 'Your meeting summary is ready',
               duration: 4000,
             });
-            void onMeetingUpdated?.();
+            if (titleSaved) await onMeetingUpdated?.();
             return;
           }
           if (stage === 'cancelled') {
@@ -136,7 +138,7 @@ export function useSummaryGeneration({
     return () => {
       unlisten?.();
     };
-  }, [meeting.id, setAiSummary, stopSummaryPolling, onMeetingUpdated]);
+  }, [meeting.id, setAiSummary, stopSummaryPolling, onMeetingUpdated, updateMeetingTitle]);
 
   // Helper to get status message
   const getSummaryStatusMessage = useCallback((status: SummaryStatus) => {
@@ -329,9 +331,7 @@ export function useSummaryGeneration({
 
           // Update meeting title if available
           const meetingName = pollingResult.data.MeetingName || pollingResult.meetingName;
-          if (meetingName) {
-            updateMeetingTitle(meetingName);
-          }
+          const titleSaved = meetingName ? await updateMeetingTitle(meetingName) : true;
 
           // Check if backend returned markdown format (new flow)
           if (pollingResult.data.markdown) {
@@ -345,7 +345,7 @@ export function useSummaryGeneration({
               duration: 4000,
             });
 
-            if (meetingName && onMeetingUpdated) {
+            if (meetingName && titleSaved && onMeetingUpdated) {
               await onMeetingUpdated();
             }
 
@@ -425,7 +425,7 @@ export function useSummaryGeneration({
             true
           );
 
-          if (meetingName && onMeetingUpdated) {
+          if (meetingName && titleSaved && onMeetingUpdated) {
             await onMeetingUpdated();
           }
         }
@@ -508,7 +508,10 @@ export function useSummaryGeneration({
 
     return {
       transcriptText: allTranscripts
-        .map(t => `${formatTime(t.audio_start_time, t.timestamp)} ${t.text}`)
+        .map(t => {
+          const speaker = t.speaker ? `${t.speaker}: ` : '';
+          return `${formatTime(t.audio_start_time, t.timestamp)} ${speaker}${t.text}`;
+        })
         .join('\n'),
       transcriptTexts: allTranscripts.map(t => t.text),
     };
@@ -694,7 +697,7 @@ export function useSummaryGeneration({
   }, [meeting.id, fetchAllTranscripts, buildSummaryTranscriptPayload, processSummary, modelConfig, isModelConfigLoading, selectedTemplate]);
 
   // Public API: Regenerate summary from the current saved transcript
-  const handleRegenerateSummary = useCallback(async () => {
+  const handleRegenerateSummary = useCallback(async (customPrompt = '') => {
     setSummaryStatus('regenerating');
     setSummaryError(null);
 
@@ -709,6 +712,7 @@ export function useSummaryGeneration({
 
     await processSummary({
       ...buildSummaryTranscriptPayload(allTranscripts),
+      customPrompt,
       isRegeneration: true
     });
   }, [meeting.id, fetchAllTranscripts, buildSummaryTranscriptPayload, processSummary]);

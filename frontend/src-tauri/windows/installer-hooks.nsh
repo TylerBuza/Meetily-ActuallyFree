@@ -268,7 +268,11 @@ Var MeetilyBackend
   SetDetailsPrint both
   DetailPrint "────────────────────────────────────────"
   DetailPrint " Meetily - Actually Free"
-  DetailPrint " Installing app files…"
+  ${If} $UpdateMode == 1
+    DetailPrint " Updating app files…"
+  ${Else}
+    DetailPrint " Installing app files…"
+  ${EndIf}
   DetailPrint "────────────────────────────────────────"
 !macroend
 

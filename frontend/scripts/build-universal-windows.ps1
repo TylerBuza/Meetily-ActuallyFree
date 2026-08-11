@@ -256,7 +256,7 @@ if ($LASTEXITCODE -ne 0) { throw "Frameless installer signing failed" }
 $signature = (Get-Content $updaterSignatureOutput -Raw).Trim()
 $latest = [ordered]@{
   version = $appVersion
-  notes = "More reliable microphone and live transcription, automatic post-call enhancement with exact speaker counts, consistent speaker colors, and summaries generated from refreshed transcripts."
+  notes = "Polished in-app updates, reliable compact-bar shutdown, optional post-call speaker auto-detection, flexible meeting exports, contextual summary regeneration, and faster title/sidebar refresh."
   pub_date = [DateTime]::UtcNow.ToString("o")
   platforms = [ordered]@{
     "windows-x86_64" = [ordered]@{

@@ -154,14 +154,29 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
   }, [isTitleDirty, handleSaveMeetingTitle, aiSummary, handleSaveSummary]);
 
   // Update meeting title from external source (e.g., AI summary)
-  const updateMeetingTitle = useCallback((newTitle: string) => {
+  const updateMeetingTitle = useCallback(async (newTitle: string): Promise<boolean> => {
     console.log('📝 Updating meeting title to:', newTitle);
     setMeetingTitle(newTitle);
+    // Keep stale meeting props from restoring the old title while persistence
+    // and the subsequent sidebar refetch are still in flight.
+    setIsTitleDirty(true);
     const updatedMeetings = sidebarMeetings.map((m: CurrentMeeting) =>
       m.id === meeting.id ? { id: m.id, title: newTitle } : m
     );
     setMeetings(updatedMeetings);
     setCurrentMeeting({ id: meeting.id, title: newTitle });
+    try {
+      await invokeTauri('api_save_meeting_title', {
+        meetingId: meeting.id,
+        title: newTitle,
+      });
+      setIsTitleDirty(false);
+      return true;
+    } catch (error) {
+      console.error('Failed to save generated meeting title:', error);
+      toast.error('Generated title could not be saved');
+      return false;
+    }
   }, [meeting.id, sidebarMeetings, setMeetings, setCurrentMeeting]);
 
   return {

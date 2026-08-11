@@ -53,7 +53,7 @@ interface SummaryPanelProps {
   onSaveAll: () => Promise<void>;
   onCopySummary: () => Promise<void>;
   onCopyTranscript?: () => Promise<void>;
-  onExportSummary?: (format: import('@/lib/exportSummary').ExportFormat) => Promise<void>;
+  onOpenExport?: () => void;
   onOpenFolder: () => Promise<void>;
   aiSummary: Summary | null;
   summaryStatus: 'idle' | 'processing' | 'summarizing' | 'regenerating' | 'completed' | 'error';
@@ -69,7 +69,7 @@ interface SummaryPanelProps {
   onSummaryChange: (summary: Summary) => void;
   onDirtyChange: (isDirty: boolean) => void;
   summaryError: string | null;
-  onRegenerateSummary: () => Promise<void>;
+  onRequestRegenerate: () => void;
   getSummaryStatusMessage: (status: 'idle' | 'processing' | 'summarizing' | 'regenerating' | 'completed' | 'error') => string;
   availableTemplates: Array<{ id: string, name: string, description: string }>;
   selectedTemplate: string;
@@ -92,7 +92,7 @@ export function SummaryPanel({
   onSaveAll,
   onCopySummary,
   onCopyTranscript,
-  onExportSummary,
+  onOpenExport,
   onOpenFolder,
   aiSummary,
   summaryStatus,
@@ -108,7 +108,7 @@ export function SummaryPanel({
   onSummaryChange,
   onDirtyChange,
   summaryError,
-  onRegenerateSummary,
+  onRequestRegenerate,
   getSummaryStatusMessage,
   availableTemplates,
   selectedTemplate,
@@ -294,6 +294,7 @@ export function SummaryPanel({
                 setModelConfig={setModelConfig}
                 onSaveModelConfig={onSaveModelConfig}
                 onGenerateSummary={onGenerateSummary}
+                onRequestRegenerate={onRequestRegenerate}
                 onStopGeneration={onStopGeneration}
                 customPrompt={customPrompt}
                 summaryStatus={summaryStatus}
@@ -316,7 +317,7 @@ export function SummaryPanel({
                 isDirty={isTitleDirty || (summaryRef.current?.isDirty || false)}
                 onSave={onSaveAll}
                 onCopy={onCopySummary}
-                onExport={onExportSummary}
+                onExport={onOpenExport}
                 onFind={() => {
                   // TODO: Implement find in summary functionality
                   console.log('Find in summary clicked');
@@ -344,7 +345,7 @@ export function SummaryPanel({
           onCopySummary={onCopySummary}
           onRegenerate={() => {
             Analytics.trackButtonClick('regenerate_summary', 'meeting_details');
-            void onRegenerateSummary();
+            onRequestRegenerate();
           }}
         />
       </div>

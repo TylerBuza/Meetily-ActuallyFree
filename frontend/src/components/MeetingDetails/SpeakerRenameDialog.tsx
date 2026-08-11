@@ -14,7 +14,7 @@ interface SpeakerRenameDialogProps {
   meetingId?: string;
   onOpenChange: (open: boolean) => void;
   /** Called after a successful rename so the transcript can refresh. */
-  onRenamed?: () => Promise<void> | void;
+  onRenamed?: (rename: { from: string; to: string; count: number }) => Promise<void> | void;
 }
 
 /**
@@ -65,7 +65,7 @@ export function SpeakerRenameDialog({
         description: `${count} transcript ${count === 1 ? 'segment' : 'segments'} updated.`,
       });
       onOpenChange(false);
-      await onRenamed?.();
+       await onRenamed?.({ from: speaker, to: next, count });
     } catch (e) {
       toast.error('Rename failed', {
         description: e instanceof Error ? e.message : String(e),

@@ -28,6 +28,7 @@ interface TranscriptPanelProps {
   customPrompt: string;
   onPromptChange: (value: string) => void;
   onCopyTranscript: () => void;
+  onOpenExport?: () => void;
   onOpenMeetingFolder: () => Promise<void>;
   isRecording: boolean;
   disableAutoScroll?: boolean;
@@ -45,6 +46,7 @@ interface TranscriptPanelProps {
   meetingId?: string;
   meetingFolderPath?: string | null;
   onRefetchTranscripts?: () => Promise<void>;
+  onSpeakerRenamed?: (rename: { from: string; to: string; count: number }) => void;
 }
 
 function fmtDate(d: Date): string {
@@ -61,6 +63,7 @@ export function TranscriptPanel({
   customPrompt,
   onPromptChange,
   onCopyTranscript,
+  onOpenExport,
   onOpenMeetingFolder,
   isRecording,
   disableAutoScroll = false,
@@ -74,6 +77,7 @@ export function TranscriptPanel({
   meetingId,
   meetingFolderPath,
   onRefetchTranscripts,
+  onSpeakerRenamed,
 }: TranscriptPanelProps) {
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
 
@@ -141,6 +145,7 @@ export function TranscriptPanel({
           <TranscriptButtonGroup
             transcriptCount={usePagination ? (totalCount ?? convertedSegments.length) : (transcripts?.length || 0)}
             onCopyTranscript={onCopyTranscript}
+            onOpenExport={onOpenExport}
             onOpenMeetingFolder={onOpenMeetingFolder}
             meetingId={meetingId}
             meetingFolderPath={meetingFolderPath}
@@ -154,7 +159,10 @@ export function TranscriptPanel({
         speaker={renameTarget}
         meetingId={meetingId}
         onOpenChange={(open) => !open && setRenameTarget(null)}
-        onRenamed={onRefetchTranscripts}
+        onRenamed={async (rename) => {
+          await onRefetchTranscripts?.();
+          onSpeakerRenamed?.(rename);
+        }}
       />
 
       {/* Transcript content */}

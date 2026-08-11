@@ -103,7 +103,7 @@ pub async fn is_compact_mode<R: Runtime>(app: AppHandle<R>) -> Result<bool, Stri
 /// this bar) and emit `recording-stop-complete` so the main window runs its
 /// post-processing (save + navigate) exactly as it does for a tray stop.
 #[tauri::command]
-pub async fn stop_recording_from_minibar<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+pub async fn stop_recording_from_minibar<R: Runtime>(app: AppHandle<R>) -> Result<bool, String> {
     use tauri::Emitter;
 
     let save_path = crate::paths::install_data_root()
@@ -114,14 +114,18 @@ pub async fn stop_recording_from_minibar<R: Runtime>(app: AppHandle<R>) -> Resul
         .to_string_lossy()
         .to_string();
 
-    crate::audio::recording_commands::stop_recording(
+    let outcome = crate::audio::recording_commands::stop_recording(
         app.clone(),
         crate::audio::recording_commands::RecordingArgs { save_path },
     )
     .await?;
 
-    // Drive the main window's save/navigate flow (RecordingPostProcessingProvider
-    // listens for this), the same signal the tray uses.
-    let _ = app.emit("recording-stop-complete", true);
-    Ok(())
+    if outcome == crate::audio::recording_commands::StopOutcome::Completed {
+        // Drive the main window's save/navigate flow (RecordingPostProcessingProvider
+        // listens for this), the same signal the tray uses.
+        let _ = app.emit("recording-stop-complete", true);
+        return Ok(true);
+    }
+
+    Ok(false)
 }

@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
-import { Copy, FolderOpen, RefreshCw, Users, Loader2 } from 'lucide-react';
+import { Copy, Download, FolderOpen, RefreshCw, Users, Loader2 } from 'lucide-react';
 import Analytics from '@/lib/analytics';
 import { RetranscribeDialog } from './RetranscribeDialog';
 import { useConfig } from '@/contexts/ConfigContext';
@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 interface TranscriptButtonGroupProps {
   transcriptCount: number;
   onCopyTranscript: () => void;
+  onOpenExport?: () => void;
   onOpenMeetingFolder: () => Promise<void>;
   meetingId?: string;
   meetingFolderPath?: string | null;
@@ -25,6 +26,7 @@ interface TranscriptButtonGroupProps {
 export function TranscriptButtonGroup({
   transcriptCount,
   onCopyTranscript,
+  onOpenExport,
   onOpenMeetingFolder,
   meetingId,
   meetingFolderPath,
@@ -119,6 +121,23 @@ export function TranscriptButtonGroup({
           <Copy size={16} />
           <span className="ml-1.5 hidden xl:inline">Copy</span>
         </Button>
+
+        {onOpenExport && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 w-8 shrink-0 px-0 sm:h-9 sm:w-auto sm:px-3"
+            onClick={() => {
+              Analytics.trackButtonClick('open_meeting_export', 'meeting_details');
+              onOpenExport();
+            }}
+            disabled={transcriptCount === 0}
+            title={transcriptCount === 0 ? 'No meeting content available' : 'Export meeting'}
+          >
+            <Download size={16} />
+            <span className="ml-1.5 hidden xl:inline">Export</span>
+          </Button>
+        )}
 
         <Button
           size="sm"
