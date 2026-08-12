@@ -529,6 +529,16 @@ jobs:
           Write-Host "Copied llama-helper to frontend/src-tauri/binaries/"
           Get-ChildItem "frontend/src-tauri/binaries/"
 
+      - name: Build Windows NSIS overall-progress plugin
+        if: contains(inputs.platform, 'windows')
+        shell: pwsh
+        run: |
+          $profile = "${{ steps.build-profile.outputs.profile }}"
+          $profileFlag = if ($profile -eq "release") { "--release" } else { $null }
+          cargo build $profileFlag -p meetily --bin meetily --no-default-features --features vulkan,custom-protocol
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "frontend/scripts/build-nsis-progress-plugin.ps1" -ProgressMainBinary "target/$profile/meetily.exe"
+
       - name: Build llama-helper sidecar (macOS/Linux)
         if: "!contains(inputs.platform, 'windows')"
         shell: bash

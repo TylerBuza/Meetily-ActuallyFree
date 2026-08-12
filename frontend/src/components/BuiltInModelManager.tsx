@@ -14,7 +14,7 @@ interface ModelInfo {
   name: string;
   display_name: string;
   status: {
-    type: 'not_downloaded' | 'downloading' | 'available' | 'corrupted' | 'error';
+    type: 'not_downloaded' | 'downloading' | 'available' | 'incomplete' | 'corrupted' | 'error';
     progress?: number;
   };
   size_mb: number;
@@ -293,6 +293,7 @@ export function BuiltInModelManager({
           const modelIsDownloading = downloadingModels.has(model.name);
           const isAvailable = model.status.type === 'available';
           const isNotDownloaded = model.status.type === 'not_downloaded';
+          const isIncomplete = model.status.type === 'incomplete';
           const isCorrupted = model.status.type === 'corrupted';
           const isError = model.status.type === 'error';
 
@@ -337,6 +338,11 @@ export function BuiltInModelManager({
                       <span className="flex shrink-0 items-center gap-1 rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
                         <BadgeAlert className="h-3 w-3" />
                         Corrupted
+                      </span>
+                    )}
+                    {isIncomplete && (
+                      <span className="flex shrink-0 items-center gap-1 rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                        Incomplete
                       </span>
                     )}
                     {isError && (
@@ -391,6 +397,20 @@ export function BuiltInModelManager({
                       Retry
                     </Button>
                   )}
+                  {isIncomplete && !modelIsDownloading && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="min-w-[100px]"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        downloadModel(model.name);
+                      }}
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      Resume
+                    </Button>
+                  )}
                   {/* Corrupted - Show both Retry and Delete buttons */}
                   {isCorrupted && !modelIsDownloading && (
                     <>
@@ -437,12 +457,14 @@ export function BuiltInModelManager({
                 {model.description && (
                   <p className="mb-1">{model.description}</p>
                 )}
-                {(isError || isCorrupted) && (
+                {(isError || isCorrupted || isIncomplete) && (
                   <p className="mb-1 text-xs text-red-600">
                     {isError && typeof model.status === 'object' && 'Error' in model.status
                       ? (model.status as any).Error
                       : isCorrupted
                       ? 'File is corrupted. Retry download or delete.'
+                      : isIncomplete
+                      ? 'Download was interrupted. Resume to continue from the saved partial file.'
                       : 'An error occurred'}
                   </p>
                 )}

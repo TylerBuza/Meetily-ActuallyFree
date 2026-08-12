@@ -307,7 +307,7 @@ export function useDownloadProgressToast() {
         totalMb: getDownloadTotalMb(total_mb, model),
         speedMbps: speed_mbps ?? 0,
         unitLabel: 'MiB',
-        status: status === 'completed' || progress >= 100
+        status: status === 'completed'
           ? 'completed'
           : status === 'cancelled'
             ? 'cancelled'

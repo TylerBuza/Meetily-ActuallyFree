@@ -14,6 +14,7 @@ export type BuiltInModelStatus =
   | { type: 'not_downloaded' }
   | { type: 'downloading', progress: number }
   | { type: 'available' }
+  | { type: 'incomplete', file_size: number, expected_size: number }
   | { type: 'corrupted', file_size: number, expected_min_size: number }
   | { type: 'error', Error: string };
 
@@ -43,6 +44,7 @@ export function getStatusColor(status: BuiltInModelStatus): string {
     case 'available': return 'green';
     case 'downloading': return 'blue';
     case 'not_downloaded': return 'gray';
+    case 'incomplete': return 'amber';
     case 'corrupted': return 'red';
     case 'error': return 'red';
     default: return 'gray';
@@ -54,6 +56,7 @@ export function getStatusLabel(status: BuiltInModelStatus): string {
     case 'available': return 'Available';
     case 'downloading': return `Downloading ${status.progress}%`;
     case 'not_downloaded': return 'Not Downloaded';
+    case 'incomplete': return 'Incomplete';
     case 'corrupted': return 'Corrupted';
     case 'error': return 'Error';
     default: return 'Unknown';

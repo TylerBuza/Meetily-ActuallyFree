@@ -16,6 +16,7 @@ pub struct SpeechSegment {
 /// Processes audio in 30ms chunks but returns complete speech segments
 pub struct ContinuousVadProcessor {
     session: VadSession,
+    config: VadConfig,
     chunk_size: usize,
     sample_rate: u32,
     buffer: Vec<f32>,
@@ -23,12 +24,79 @@ pub struct ContinuousVadProcessor {
     current_speech: Vec<f32>,
     in_speech: bool,
     processed_samples: usize,
+    session_start_sample: usize,
     speech_start_sample: usize,
     // State tracking for smart logging
     last_logged_state: bool,
 }
 
 impl ContinuousVadProcessor {
+    /// Whether speech has started but has not yet crossed the redemption-time
+    /// silence boundary. Live capture uses this to advance only an unfinished
+    /// utterance when an audio backend suppresses exact-zero callbacks.
+    pub fn has_active_speech(&self) -> bool {
+        self.in_speech
+    }
+
+    /// Close the current live utterance at the last audio timestamp without
+    /// synthesizing samples. Used when a capture backend suppresses callbacks
+    /// throughout silence, so wall time can trigger finalization without moving
+    /// the recording-relative audio clock or duplicating later gap padding.
+    pub fn finalize_active_speech(&mut self) -> Option<SpeechSegment> {
+        if !self.in_speech || self.current_speech.is_empty() {
+            return None;
+        }
+        let start_ms = (self.speech_start_sample as f64 / 16000.0) * 1000.0;
+        let end_ms = (self.processed_samples as f64 / 16000.0) * 1000.0;
+        self.in_speech = false;
+        self.last_logged_state = false;
+        // Silero's reset intentionally retains session_audio. Recreate the
+        // session so repeated callback-silence finalizations stay O(utterance)
+        // in memory, then offset its future relative timestamps onto the
+        // continuous meeting timeline.
+        match VadSession::new(self.config) {
+            Ok(session) => {
+                self.session = session;
+                self.session_start_sample = self.processed_samples;
+            }
+            Err(error) => {
+                warn!("Failed to recreate VAD session after forced finalization: {error:?}");
+                self.session.reset();
+            }
+        }
+        let samples = std::mem::take(&mut self.current_speech);
+        Some(SpeechSegment {
+            samples,
+            start_timestamp_ms: start_ms,
+            end_timestamp_ms: end_ms,
+            confidence: 0.8,
+        })
+    }
+
+    /// Move an inactive processor to an absolute recording-relative position.
+    /// The mixer calls this after dropping a callback-free gap instead of
+    /// allocating seconds or minutes of synthetic silence.
+    pub fn advance_inactive_timeline_to(&mut self, timestamp_seconds: f64) {
+        if self.in_speech {
+            return;
+        }
+        let target_sample = (timestamp_seconds.max(0.0) * 16000.0).round() as usize;
+        if target_sample <= self.processed_samples {
+            return;
+        }
+        match VadSession::new(self.config) {
+            Ok(session) => self.session = session,
+            Err(error) => {
+                warn!("Failed to recreate VAD session after timeline discontinuity: {error:?}");
+                self.session.reset();
+            }
+        }
+        self.buffer.clear();
+        self.current_speech.clear();
+        self.processed_samples = target_sample;
+        self.session_start_sample = target_sample;
+    }
+
     pub fn new(input_sample_rate: u32, redemption_time_ms: u32) -> Result<Self> {
         Self::new_with_thresholds(input_sample_rate, redemption_time_ms, 0.50, 0.35)
     }
@@ -79,6 +147,7 @@ impl ContinuousVadProcessor {
 
         Ok(Self {
             session,
+            config,
             chunk_size: vad_chunk_size,
             sample_rate: input_sample_rate, // Store input rate for resampling ratio in resample_to_16k()
             buffer: Vec::with_capacity(vad_chunk_size * 2),
@@ -86,6 +155,7 @@ impl ContinuousVadProcessor {
             current_speech: Vec::new(),
             in_speech: false,
             processed_samples: 0,
+            session_start_sample: 0,
             speech_start_sample: 0,
             // Initialize state tracking
             last_logged_state: false,
@@ -247,10 +317,14 @@ impl ContinuousVadProcessor {
                     }
                     self.in_speech = true;
                     // Use 16000 (VAD processing rate) since processed_samples counts 16kHz samples
-                    self.speech_start_sample = self.processed_samples + (timestamp_ms * 16000 / 1000);
+                    self.speech_start_sample =
+                        self.session_start_sample + (timestamp_ms * 16000 / 1000);
                     self.current_speech.clear();
                 }
                 VadTransition::SpeechEnd { start_timestamp_ms, end_timestamp_ms, samples } => {
+                    let session_offset_ms = self.session_start_sample * 1000 / 16000;
+                    let start_timestamp_ms = start_timestamp_ms + session_offset_ms;
+                    let end_timestamp_ms = end_timestamp_ms + session_offset_ms;
                     // Only log if we were previously in speech state
                     if self.last_logged_state {
                         debug!("VAD: Speech ended at {}ms (duration: {}ms)", end_timestamp_ms, end_timestamp_ms - start_timestamp_ms);
@@ -592,6 +666,87 @@ mod tests {
 
         // Should find speech segments
         assert!(all_segments.len() >= 1, "Expected at least 1 speech segment");
+    }
+
+    #[test]
+    fn test_vad_silence_ticks_finalize_without_followup_speech() {
+        let mut processor = ContinuousVadProcessor::new_with_thresholds(
+            16000,
+            800,
+            0.20,
+            0.10,
+        )
+        .expect("Failed to create processor");
+        let speech = generate_test_audio_with_speech(2.0, 16000);
+        let mut segments = processor.process_audio(&speech).expect("Speech processing failed");
+
+        // Some capture backends stop calling us for exact-zero silence. Feeding
+        // real-time silence ticks must close the utterance without waiting for
+        // another speaker to produce the next callback.
+        for _ in 0..30 {
+            segments.extend(
+                processor
+                    .process_audio(&vec![0.0; 800])
+                    .expect("Silence tick failed"),
+            );
+            if !segments.is_empty() {
+                break;
+            }
+        }
+
+        assert!(!segments.is_empty(), "Expected silence ticks to finalize speech");
+        assert!(!processor.has_active_speech());
+    }
+
+    #[test]
+    fn test_force_finalize_does_not_advance_audio_timeline() {
+        let mut processor = ContinuousVadProcessor::new_with_thresholds(
+            16000,
+            800,
+            0.20,
+            0.10,
+        )
+        .expect("Failed to create processor");
+        let speech = generate_test_audio_with_speech(2.0, 16000);
+        processor.process_audio(&speech).expect("Speech processing failed");
+        let segment = processor
+            .finalize_active_speech()
+            .expect("Expected active utterance");
+
+        assert!(segment.end_timestamp_ms <= 2100.0);
+        assert!(segment.end_timestamp_ms > segment.start_timestamp_ms);
+        assert!(!processor.has_active_speech());
+        assert_eq!(processor.session.session_audio_samples(), 0);
+        assert!(
+            processor
+                .process_audio(&vec![0.0; 16000])
+                .expect("post-finalize silence")
+                .is_empty(),
+            "Reset Silero state must not emit the force-finalized utterance again"
+        );
+    }
+
+    #[test]
+    fn test_inactive_timeline_advance_preserves_callback_gap() {
+        let mut processor = ContinuousVadProcessor::new_with_thresholds(
+            16000,
+            800,
+            0.20,
+            0.10,
+        )
+        .expect("Failed to create processor");
+        processor
+            .process_audio(&vec![0.0; 16000])
+            .expect("initial silence");
+        processor.advance_inactive_timeline_to(10.0);
+        let speech = generate_test_audio_with_speech(2.0, 16000);
+        processor.process_audio(&speech).expect("later speech");
+        let segment = processor
+            .finalize_active_speech()
+            .expect("Expected later utterance");
+
+        assert!(segment.start_timestamp_ms >= 10_000.0);
+        assert!(segment.end_timestamp_ms > segment.start_timestamp_ms);
     }
 
     #[test]

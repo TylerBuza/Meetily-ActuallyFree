@@ -100,7 +100,13 @@ cargo test --release --features cuda %~2 -- --nocapture --test-threads=1
 exit /b %errorlevel%
 
 :bundle
-echo [bundle] pnpm run tauri:build:cuda
+echo [bundle] Build CUDA app, NSIS overall-progress plugin, then Tauri bundle
+cd /d "%ROOT%src-tauri"
+cargo build --release -p meetily --bin meetily --no-default-features --features cuda,custom-protocol
+if errorlevel 1 exit /b %errorlevel%
+cd /d "%ROOT%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\build-nsis-progress-plugin.ps1" -ProgressMainBinary "..\target\release\meetily.exe"
+if errorlevel 1 exit /b %errorlevel%
 cd /d "%ROOT%"
 call pnpm run tauri:build:cuda
 exit /b %errorlevel%

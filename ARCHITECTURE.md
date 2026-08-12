@@ -78,6 +78,12 @@ levels come from Rust.
 
 - Live VAD redemption is 800 ms. Offline retranscription uses 2,000 ms because
   it has no live-latency constraint.
+- Some capture backends suppress callbacks throughout exact-zero silence. Live
+  inactivity is tracked per source; after 800 ms Rust force-finalizes only that
+  source's active utterance without synthesizing audio. It then replaces the
+  Silero session to release internal history and offsets the fresh session's
+  timestamps onto the continuous meeting timeline. Do not use wall-time-sized
+  silence buffers or one shared mic/system activity clock.
 - Every window, including exact zero-filled padding, must handle the segments
   returned by `ContinuousVadProcessor`. Speech-end commonly arrives during the
   trailing silent window; discarding that return drops the whole utterance.
@@ -485,6 +491,11 @@ stock MUI header font metrics so title/subtitle rectangles do not overlap at
 scaled DPI, and show a monotonic overall percentage in the header. The update
 progress color matches the blue native bootstrapper; setup-only pages and all
 hardware/runtime decisions remain shared with the normal installer.
+`nsis-progress/MeetilyProgress.cpp` subclasses NSIS's current-operation label on
+the UI thread, preserves its per-file text, and maps that file percentage through
+the build-generated uncompressed-size table to drive a separate overall bar and
+header percentage. Build it before every Tauri NSIS bundle; the install thread is
+blocked inside large `File` opcodes, so script timers cannot provide this signal.
 Every install/update rewrites uninstall-key `DisplayVersion`, then broadcasts a
 shell/settings change notification. Without that notification, an Installed
 Apps window left open during an update can continue showing the previous
@@ -526,6 +537,11 @@ step's progress bar. After the user continues, active transfers appear as a
 compact top-right indicator that expands on hover or keyboard focus; it must not
 reserve space or shift later onboarding pages. Completion and errors use short
 bottom-right Sonner notifications.
+
+Built-in summary models use exact published byte sizes. Smaller files are
+`Incomplete`, retained, and resumed with a validated HTTP `Content-Range`; only
+an exact-size file with valid GGUF magic becomes `Available`. Progress reaching
+100 is not completion until validation succeeds and Rust emits `completed`.
 
 ### Release rules
 

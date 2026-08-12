@@ -655,6 +655,16 @@ export function useSummaryGeneration({
               return false;
             }
 
+            if (status.type === 'incomplete') {
+              setSummaryStatus('idle');
+              toast.info('Built-in AI model download incomplete', {
+                description: `${selectedModel} has a saved partial download. Resume it in model settings.`,
+                duration: 7000,
+              });
+              onOpenModelSettings?.();
+              return false;
+            }
+
             if (status.type === 'corrupted' || status.type === 'error') {
               setSummaryStatus('idle');
               const errorDesc = status.type === 'error'

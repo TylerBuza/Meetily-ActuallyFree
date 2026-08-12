@@ -1,8 +1,9 @@
 // Model manager for built-in AI models - handles downloads and lifecycle
 // Follows the same pattern as whisper_engine/whisper_engine.rs for consistency
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -11,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::{AsyncWriteExt, BufWriter};
-use tokio::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
 use tokio::time::timeout;
 
 use super::models::{get_available_models, get_model_by_name};
@@ -68,6 +69,9 @@ pub enum ModelStatus {
     /// Model is downloaded and ready to use
     Available,
 
+    /// A resumable partial download exists on disk.
+    Incomplete { file_size: u64, expected_size: u64 },
+
     /// Model file is corrupted and needs redownload
     Corrupted { file_size: u64, expected_min_size: u64 },
 
@@ -107,6 +111,11 @@ pub struct ModelInfo {
 // Model Manager
 // ============================================================================
 
+struct DownloadControl {
+    cancelled: AtomicBool,
+    notify: Notify,
+}
+
 pub struct ModelManager {
     /// Directory where models are stored
     models_dir: PathBuf,
@@ -114,11 +123,8 @@ pub struct ModelManager {
     /// Currently available models with their status
     available_models: Arc<RwLock<HashMap<String, ModelInfo>>>,
 
-    /// Active downloads (model names)
-    active_downloads: Arc<RwLock<HashSet<String>>>,
-
-    /// Cancellation flag for current download
-    cancel_download_flag: Arc<RwLock<Option<String>>>,
+    /// One owner and cancellation signal per active model download.
+    download_controls: Arc<RwLock<HashMap<String, Arc<DownloadControl>>>>,
 }
 
 impl ModelManager {
@@ -155,8 +161,7 @@ impl ModelManager {
         Ok(Self {
             models_dir,
             available_models: Arc::new(RwLock::new(HashMap::new())),
-            active_downloads: Arc::new(RwLock::new(HashSet::new())),
-            cancel_download_flag: Arc::new(RwLock::new(None)),
+            download_controls: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -195,8 +200,7 @@ impl ModelManager {
             );
 
             let is_actively_downloading = {
-                let active = self.active_downloads.read().await;
-                active.contains(&model_def.name)
+                self.download_controls.read().await.contains_key(&model_def.name)
             };
 
             // If actively downloading, preserve existing status from memory
@@ -221,23 +225,43 @@ impl ModelManager {
                 // Check if file size matches expected size (basic validation)
                 match fs::metadata(&model_path).await {
                     Ok(metadata) => {
-                        let file_size_mb = metadata.len() / (1024 * 1024);
+                        let file_size_bytes = metadata.len();
+                        let file_size_mb = file_size_bytes / (1024 * 1024);
 
-                        // Allow 10% variance for file size check
                         let expected_min = (model_def.size_mb as f64 * 0.9) as u64;
-                        let expected_max = (model_def.size_mb as f64 * 1.1) as u64;
 
                         log::info!(
-                            "Model '{}': found {} MB (expected {}-{} MB)",
+                            "Model '{}': found {} bytes (expected exactly {} bytes)",
                             model_def.name,
-                            file_size_mb,
-                            expected_min,
-                            expected_max
+                            file_size_bytes,
+                            model_def.size_bytes
                         );
 
-                        if file_size_mb >= expected_min && file_size_mb <= expected_max {
-                            log::info!("Model '{}': AVAILABLE", model_def.name);
-                            ModelStatus::Available
+                        if file_size_bytes == model_def.size_bytes {
+                            match self.validate_gguf_file(&model_path).await {
+                                Ok(()) => {
+                                    log::info!("Model '{}': AVAILABLE", model_def.name);
+                                    ModelStatus::Available
+                                }
+                                Err(error) => {
+                                    log::warn!("Model '{}': CORRUPTED ({})", model_def.name, error);
+                                    ModelStatus::Corrupted {
+                                        file_size: file_size_mb,
+                                        expected_min_size: model_def.size_mb,
+                                    }
+                                }
+                            }
+                        } else if file_size_bytes < model_def.size_bytes {
+                            log::info!(
+                                "Model '{}': INCOMPLETE ({} MB of approximately {} MB); download can resume",
+                                model_def.name,
+                                file_size_mb,
+                                model_def.size_mb
+                            );
+                            ModelStatus::Incomplete {
+                                file_size: file_size_mb,
+                                expected_size: model_def.size_mb,
+                            }
                         } else {
                             log::warn!(
                                 "Model '{}': CORRUPTED (size mismatch: {} MB, expected {} MB)",
@@ -351,30 +375,29 @@ impl ModelManager {
     ) -> Result<()> {
         log::info!("Starting download for model: {}", model_name);
 
-        // Check if already downloading
+        // Reserve atomically. A read-then-write check lets two simultaneous UI
+        // invokes both pass before either inserts its reservation.
+        let control = Arc::new(DownloadControl {
+            cancelled: AtomicBool::new(false),
+            notify: Notify::new(),
+        });
         {
-            let active = self.active_downloads.read().await;
-            if active.contains(model_name) {
+            let mut controls = self.download_controls.write().await;
+            if controls.contains_key(model_name) {
                 log::warn!("Download already in progress for model: {}", model_name);
                 return Err(anyhow!("Download already in progress"));
             }
+            controls.insert(model_name.to_string(), control.clone());
         }
 
         // Get model definition
-        let model_def = get_model_by_name(model_name)
-            .ok_or_else(|| anyhow!("Unknown model: {}", model_name))?;
-
-        // Add to active downloads
-        {
-            let mut active = self.active_downloads.write().await;
-            active.insert(model_name.to_string());
-        }
-
-        // Clear cancellation flag
-        {
-            let mut cancel_flag = self.cancel_download_flag.write().await;
-            *cancel_flag = None;
-        }
+        let model_def = match get_model_by_name(model_name) {
+            Some(model) => model,
+            None => {
+                self.release_download(model_name, &control).await;
+                return Err(anyhow!("Unknown model: {}", model_name));
+            }
+        };
 
         // Update status to downloading
         {
@@ -390,29 +413,33 @@ impl ModelManager {
         if file_path.exists() {
             if let Ok(metadata) = fs::metadata(&file_path).await {
                 let file_size_mb = metadata.len() / (1024 * 1024);
-                let expected_min = (model_def.size_mb as f64 * 0.9) as u64;
-                let expected_max = (model_def.size_mb as f64 * 1.1) as u64;
 
-                if file_size_mb >= expected_min && file_size_mb <= expected_max {
+                if metadata.len() == model_def.size_bytes
+                    && self.validate_gguf_file(&file_path).await.is_ok()
+                {
                     log::info!(
                         "Model '{}' already exists and is valid ({} MB), skipping download",
                         model_name,
                         file_size_mb
                     );
 
-                    // Update status to available
-                    {
-                        let mut models = self.available_models.write().await;
-                        if let Some(model_info) = models.get_mut(model_name) {
-                            model_info.status = ModelStatus::Available;
-                        }
+                    let mut controls = self.download_controls.write().await;
+                    if control.cancelled.load(Ordering::Acquire) {
+                        drop(controls);
+                        self.finish_cancelled_download(
+                            model_name,
+                            &control,
+                            &file_path,
+                            model_def.size_mb,
+                        )
+                        .await;
+                        return Err(anyhow!("CANCELLED: Download cancelled by user"));
                     }
-
-                    // Remove from active downloads
-                    {
-                        let mut active = self.active_downloads.write().await;
-                        active.remove(model_name);
+                    let mut models = self.available_models.write().await;
+                    if let Some(model_info) = models.get_mut(model_name) {
+                        model_info.status = ModelStatus::Available;
                     }
+                    controls.remove(model_name);
 
                     // Report 100% progress
                     if let Some(ref callback) = progress_callback {
@@ -421,14 +448,14 @@ impl ModelManager {
                     }
 
                     return Ok(());
-                } else if file_size_mb > expected_max {
+                } else if metadata.len() >= model_def.size_bytes {
                     // File is LARGER than expected - possibly corrupted or wrong file
                     // Delete and re-download in this case
                     log::warn!(
-                        "Model '{}' exists but is too large ({} MB, expected max {} MB), deleting and re-downloading",
+                        "Model '{}' exists but is too large ({} MB, expected exactly {} bytes), deleting and re-downloading",
                         model_name,
                         file_size_mb,
-                        expected_max
+                        model_def.size_bytes
                     );
                     if let Err(e) = fs::remove_file(&file_path).await {
                         log::warn!("Failed to delete oversized model file: {}", e);
@@ -437,10 +464,10 @@ impl ModelManager {
                     // File is SMALLER than expected - likely partial download
                     // DON'T DELETE - let resume logic handle it
                     log::info!(
-                        "Model '{}' exists but is incomplete ({} MB, expected min {} MB), will resume download",
+                        "Model '{}' exists but is incomplete ({} MB of approximately {} MB), will resume download",
                         model_name,
                         file_size_mb,
-                        expected_min
+                        model_def.size_mb
                     );
                     // Continue to download/resume logic below
                 }
@@ -452,7 +479,10 @@ impl ModelManager {
 
         // Create models directory if needed
         if !self.models_dir.exists() {
-            fs::create_dir_all(&self.models_dir).await?;
+            if let Err(error) = fs::create_dir_all(&self.models_dir).await {
+                self.fail_download(model_name, &control, format!("Failed to create models directory: {}", error)).await;
+                return Err(error.into());
+            }
         }
 
         // Check for existing partial download to resume
@@ -466,13 +496,19 @@ impl ModelManager {
         };
 
         // Download the file with optimized client settings
-        let client = Client::builder()
+        let client = match Client::builder()
             .tcp_nodelay(true) // Disable Nagle's algorithm for faster streaming
             .pool_max_idle_per_host(1) // Keep connection alive
             .timeout(Duration::from_secs(3600)) // 1 hour timeout for large files
             .connect_timeout(Duration::from_secs(30))
             .build()
-            .map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
+        {
+            Ok(client) => client,
+            Err(error) => {
+                self.fail_download(model_name, &control, format!("Failed to create HTTP client: {}", error)).await;
+                return Err(anyhow!("Failed to create HTTP client: {}", error));
+            }
+        };
 
         // Build request with Range header if resuming
         let mut request = client.get(&model_def.download_url);
@@ -485,13 +521,39 @@ impl ModelManager {
             request = request.header("Range", format!("bytes={}-", existing_size));
         }
 
-        let response = request
-            .send()
-            .await
-            .map_err(|e| anyhow!("Failed to start download: {}", e))?;
+        let response_result = tokio::select! {
+            _ = control.notify.notified() => {
+                self.finish_cancelled_download(model_name, &control, &file_path, model_def.size_mb).await;
+                return Err(anyhow!("CANCELLED: Download cancelled by user"));
+            }
+            response = request.send() => response,
+        };
+        let response = match response_result {
+            Ok(response) => response,
+            Err(error) => {
+                self.fail_download(model_name, &control, format!("Failed to start download: {}", error)).await;
+                return Err(anyhow!("Failed to start download: {}", error));
+            }
+        };
 
         // Check response status - 200 OK (full download) or 206 Partial Content (resume)
         let (total_size, resuming) = if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+            let content_range = response
+                .headers()
+                .get(reqwest::header::CONTENT_RANGE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default();
+            let expected_prefix = format!("bytes {}-", existing_size);
+            let expected_total = format!("/{}", model_def.size_bytes);
+            if !content_range.starts_with(&expected_prefix) || !content_range.ends_with(&expected_total) {
+                self.fail_download(
+                    model_name,
+                    &control,
+                    format!("Server returned unexpected resume range: {}", content_range),
+                )
+                .await;
+                return Err(anyhow!("Server returned unexpected resume range: {}", content_range));
+            }
             // Server supports resume - total size = existing + remaining
             let remaining = response.content_length().unwrap_or(0);
             log::info!("Server supports resume, {} MB remaining", remaining / (1024 * 1024));
@@ -503,25 +565,28 @@ impl ModelManager {
             }
             (response.content_length().unwrap_or(0), false)
         } else {
-            let mut active = self.active_downloads.write().await;
-            active.remove(model_name);
+            self.fail_download(model_name, &control, format!("Download failed with status: {}", response.status())).await;
             return Err(anyhow!("Download failed with status: {}", response.status()));
         };
 
         log::info!("Total size: {} MB", total_size / (1024 * 1024));
 
         // Open file for append if resuming, or create new
-        let file = if resuming {
+        let file_result = if resuming {
             OpenOptions::new()
                 .write(true)
                 .append(true)
                 .open(&file_path)
                 .await
-                .map_err(|e| anyhow!("Failed to open file for append: {}", e))?
         } else {
-            fs::File::create(&file_path)
-                .await
-                .map_err(|e| anyhow!("Failed to create file: {}", e))?
+            fs::File::create(&file_path).await
+        };
+        let file = match file_result {
+            Ok(file) => file,
+            Err(error) => {
+                self.fail_download(model_name, &control, format!("Failed to open model file: {}", error)).await;
+                return Err(anyhow!("Failed to open model file: {}", error));
+            }
         };
 
         // Use 8MB buffer to reduce disk I/O syscalls (major performance improvement)
@@ -555,25 +620,14 @@ impl ModelManager {
         loop {
             // Check for cancellation
             {
-                let cancel_flag = self.cancel_download_flag.read().await;
-                if cancel_flag.as_ref() == Some(&model_name.to_string()) {
+                if control.cancelled.load(Ordering::Acquire) {
                     log::info!("Download cancelled for model: {}", model_name);
 
                     // Flush and keep partial file for resume on next attempt
                     let _ = writer.flush().await;
                     drop(writer);
 
-                    // Remove from active downloads
-                    let mut active = self.active_downloads.write().await;
-                    active.remove(model_name);
-
-                    // Update status
-                    {
-                        let mut models = self.available_models.write().await;
-                        if let Some(model_info) = models.get_mut(model_name) {
-                            model_info.status = ModelStatus::NotDownloaded;
-                        }
-                    }
+                    self.finish_cancelled_download(model_name, &control, &file_path, model_def.size_mb).await;
 
                     // Use special marker prefix to distinguish cancellation from other errors
                     return Err(anyhow!("CANCELLED: Download cancelled by user"));
@@ -581,7 +635,10 @@ impl ModelManager {
             }
 
             // Add per-chunk timeout (30 seconds) to detect stalled connections
-            let next_result = timeout(Duration::from_secs(30), stream.next()).await;
+            let next_result = tokio::select! {
+                _ = control.notify.notified() => continue,
+                result = timeout(Duration::from_secs(30), stream.next()) => result,
+            };
 
             let chunk = match next_result {
                 // Timeout - no data received for 30 seconds
@@ -589,17 +646,7 @@ impl ModelManager {
                     log::warn!("Download timeout for {}: no data received for 30 seconds", model_name);
                     let _ = writer.flush().await;
 
-                    // Cleanup: Remove from active downloads
-                    let mut active = self.active_downloads.write().await;
-                    active.remove(model_name);
-
-                    // Set model status to Error (NOT NotDownloaded) so UI can show retry button
-                    {
-                        let mut models = self.available_models.write().await;
-                        if let Some(model_info) = models.get_mut(model_name) {
-                            model_info.status = ModelStatus::Error("Download timeout - No data received for 30 seconds".to_string());
-                        }
-                    }
+                    self.fail_download(model_name, &control, "Download timeout - No data received for 30 seconds".to_string()).await;
 
                     return Err(anyhow!("Download timeout - No data received for 30 seconds"));
                 },
@@ -614,10 +661,6 @@ impl ModelManager {
                             log::error!("Download error for {}: {:?}", model_name, e);
                             let _ = writer.flush().await;
 
-                            // Cleanup: Remove from active downloads
-                            let mut active = self.active_downloads.write().await;
-                            active.remove(model_name);
-
                             // Categorize error for user-friendly message
                             let error_msg = if e.is_timeout() {
                                 "Connection timeout - Check your internet"
@@ -629,13 +672,7 @@ impl ModelManager {
                                 "Download error"
                             };
 
-                            // Set model status to Error (NOT NotDownloaded) so UI can show retry button
-                            {
-                                let mut models = self.available_models.write().await;
-                                if let Some(model_info) = models.get_mut(model_name) {
-                                    model_info.status = ModelStatus::Error(error_msg.to_string());
-                                }
-                            }
+                            self.fail_download(model_name, &control, error_msg.to_string()).await;
 
                             return Err(anyhow!("{}: {}", error_msg, e));
                         }
@@ -643,10 +680,10 @@ impl ModelManager {
                 }
             };
             let chunk_len = chunk.len() as u64;
-            writer
-                .write_all(&chunk)
-                .await
-                .map_err(|e| anyhow!("Error writing to file: {}", e))?;
+            if let Err(error) = writer.write_all(&chunk).await {
+                self.fail_download(model_name, &control, format!("Error writing model file: {}", error)).await;
+                return Err(anyhow!("Error writing to file: {}", error));
+            }
 
             downloaded += chunk_len;
             bytes_since_last_report += chunk_len;
@@ -707,8 +744,43 @@ impl ModelManager {
             }
         }
 
-        writer.flush().await?;
+        if let Err(error) = writer.flush().await {
+            self.fail_download(model_name, &control, format!("Failed to flush model file: {}", error)).await;
+            return Err(error.into());
+        }
         drop(writer);
+
+        let final_size = match fs::metadata(&file_path).await {
+            Ok(metadata) => metadata.len(),
+            Err(error) => {
+                self.fail_download(model_name, &control, format!("Failed to inspect downloaded model: {}", error)).await;
+                return Err(error.into());
+            }
+        };
+        if final_size != model_def.size_bytes || (total_size > 0 && final_size != total_size) {
+            let final_size_mb = final_size / (1024 * 1024);
+            log::warn!(
+                "Download ended before model '{}' was complete: {} MB of approximately {} MB",
+                model_name,
+                final_size_mb,
+                model_def.size_mb
+            );
+            {
+                let mut models = self.available_models.write().await;
+                if let Some(model_info) = models.get_mut(model_name) {
+                    model_info.status = ModelStatus::Incomplete {
+                        file_size: final_size_mb,
+                        expected_size: model_def.size_mb,
+                    };
+                }
+            }
+            self.release_download(model_name, &control).await;
+            return Err(anyhow!(
+                "Download incomplete: received {} MB of approximately {} MB; retry to resume",
+                final_size_mb,
+                model_def.size_mb
+            ));
+        }
 
         log::info!("Download completed for model: {}", model_name);
 
@@ -723,8 +795,10 @@ impl ModelManager {
             callback(DownloadProgress::new(total_size, total_size, 0.0));
         }
 
-        // Small delay to ensure UI receives 100% event
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        if control.cancelled.load(Ordering::Acquire) {
+            self.finish_cancelled_download(model_name, &control, &file_path, model_def.size_mb).await;
+            return Err(anyhow!("CANCELLED: Download cancelled by user"));
+        }
 
         if let Err(e) = self.validate_gguf_file(&file_path).await {
             log::error!("Downloaded file failed validation: {}", e);
@@ -740,27 +814,25 @@ impl ModelManager {
                 }
             }
 
-            // Remove from active downloads
-            let mut active = self.active_downloads.write().await;
-            active.remove(model_name);
+            self.release_download(model_name, &control).await;
 
             return Err(anyhow!("File validation failed: {}", e));
         }
 
-        // Update status to available
-        {
-            let mut models = self.available_models.write().await;
-            if let Some(model_info) = models.get_mut(model_name) {
-                model_info.status = ModelStatus::Available;
-                model_info.path = file_path.clone();
-            }
+        // Commit completion while ownership is still held. Cancellation is
+        // either observed here or rejected after the control is removed.
+        let mut controls = self.download_controls.write().await;
+        if control.cancelled.load(Ordering::Acquire) {
+            drop(controls);
+            self.finish_cancelled_download(model_name, &control, &file_path, model_def.size_mb).await;
+            return Err(anyhow!("CANCELLED: Download cancelled by user"));
         }
-
-        // Remove from active downloads
-        {
-            let mut active = self.active_downloads.write().await;
-            active.remove(model_name);
+        let mut models = self.available_models.write().await;
+        if let Some(model_info) = models.get_mut(model_name) {
+            model_info.status = ModelStatus::Available;
+            model_info.path = file_path.clone();
         }
+        controls.remove(model_name);
 
         Ok(())
     }
@@ -788,29 +860,80 @@ impl ModelManager {
         }
     }
 
+    async fn release_download(&self, model_name: &str, control: &Arc<DownloadControl>) {
+        let mut controls = self.download_controls.write().await;
+        if controls
+            .get(model_name)
+            .is_some_and(|current| Arc::ptr_eq(current, control))
+        {
+            controls.remove(model_name);
+        }
+    }
+
+    async fn fail_download(
+        &self,
+        model_name: &str,
+        control: &Arc<DownloadControl>,
+        message: String,
+    ) {
+        let mut models = self.available_models.write().await;
+        if let Some(model_info) = models.get_mut(model_name) {
+            model_info.status = ModelStatus::Error(message);
+        }
+        drop(models);
+        self.release_download(model_name, control).await;
+    }
+
+    async fn finish_cancelled_download(
+        &self,
+        model_name: &str,
+        control: &Arc<DownloadControl>,
+        file_path: &PathBuf,
+        expected_size: u64,
+    ) {
+        let partial_size = fs::metadata(file_path).await.map(|m| m.len()).unwrap_or(0);
+        let mut models = self.available_models.write().await;
+        if let Some(model_info) = models.get_mut(model_name) {
+            model_info.status = if partial_size > 0 {
+                ModelStatus::Incomplete {
+                    file_size: partial_size / (1024 * 1024),
+                    expected_size,
+                }
+            } else {
+                ModelStatus::NotDownloaded
+            };
+        }
+        drop(models);
+        self.release_download(model_name, control).await;
+    }
+
     /// Cancel an ongoing download
     pub async fn cancel_download(&self, model_name: &str) -> Result<()> {
         log::info!("Cancelling download for model: {}", model_name);
 
-        // Set cancellation flag - download loop will detect this and handle cleanup
-        {
-            let mut cancel_flag = self.cancel_download_flag.write().await;
-            *cancel_flag = Some(model_name.to_string());
-        }
+        let control = self
+            .download_controls
+            .read()
+            .await
+            .get(model_name)
+            .cloned()
+            .ok_or_else(|| anyhow!("No download in progress for model: {}", model_name))?;
+        control.cancelled.store(true, Ordering::Release);
+        control.notify.notify_one();
 
-        // Note: active_downloads cleanup is handled by the download loop when it detects
-        // the cancellation flag. This avoids double-removal race condition.
-
-        // Update status immediately for UI responsiveness
-        {
-            let mut models = self.available_models.write().await;
-            if let Some(model_info) = models.get_mut(model_name) {
-                model_info.status = ModelStatus::NotDownloaded;
+        timeout(Duration::from_secs(5), async {
+            while self
+                .download_controls
+                .read()
+                .await
+                .get(model_name)
+                .is_some_and(|current| Arc::ptr_eq(current, &control))
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
-        }
-
-        // Brief delay to let download loop detect cancellation
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        })
+        .await
+        .map_err(|_| anyhow!("Timed out cancelling model download"))?;
 
         Ok(())
     }
@@ -843,5 +966,43 @@ impl ModelManager {
     /// Get models directory path
     pub fn get_models_directory(&self) -> PathBuf {
         self.models_dir.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn scan_marks_partial_model_incomplete_and_exact_model_available() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manager = ModelManager::new_with_models_dir(Some(temp.path().to_path_buf()))
+            .expect("manager");
+        let model = get_model_by_name("qwen3.5:2b").expect("model");
+        let path = temp.path().join(&model.gguf_file);
+
+        let partial = fs::File::create(&path).await.expect("partial file");
+        partial.set_len(123_456).await.expect("partial size");
+        manager.init().await.expect("partial scan");
+        assert!(matches!(
+            manager.get_model_info(&model.name).await.unwrap().status,
+            ModelStatus::Incomplete { .. }
+        ));
+
+        let mut exact = fs::OpenOptions::new().write(true).open(&path).await.expect("exact file");
+        exact.set_len(model.size_bytes).await.expect("exact invalid size");
+        manager.scan_models().await.expect("invalid exact scan");
+        assert!(matches!(
+            manager.get_model_info(&model.name).await.unwrap().status,
+            ModelStatus::Corrupted { .. }
+        ));
+
+        exact.write_all(b"GGUF").await.expect("GGUF magic");
+        exact.set_len(model.size_bytes).await.expect("exact size");
+        manager.scan_models().await.expect("exact scan");
+        assert_eq!(
+            manager.get_model_info(&model.name).await.unwrap().status,
+            ModelStatus::Available
+        );
     }
 }

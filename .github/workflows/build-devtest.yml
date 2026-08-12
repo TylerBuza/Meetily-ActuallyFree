@@ -369,6 +369,16 @@ jobs:
           echo "Copied llama-helper to frontend/src-tauri/binaries/llama-helper-${{ matrix.target }}${EXT}"
           ls -la frontend/src-tauri/binaries/
 
+      - name: Build Windows NSIS overall-progress plugin
+        if: contains(matrix.platform, 'windows')
+        shell: pwsh
+        run: |
+          $profileFlag = if ("${{ matrix.args }}" -match "--debug") { $null } else { "--release" }
+          $profile = if ($profileFlag) { "release" } else { "debug" }
+          cargo build $profileFlag -p meetily --bin meetily --no-default-features --features vulkan,custom-protocol
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "frontend/scripts/build-nsis-progress-plugin.ps1" -ProgressMainBinary "target/$profile/meetily.exe"
+
       # Build step (with code signing)
       - name: Build Tauri app (with code signing)
         if: github.event.inputs.sign-build == 'true'

@@ -153,6 +153,15 @@ export function SummaryGeneratorButtonGroup({
         return;
       }
 
+      if (status.type === 'incomplete') {
+        toast.info('Model download incomplete', {
+          description: `${selectedModel} has a saved partial download. Resume it in model settings.`,
+          duration: 7000,
+        });
+        setSettingsDialogOpen(true);
+        return;
+      }
+
       if (status.type === 'corrupted') {
         toast.error('Model file corrupted', {
           description: `${selectedModel} file is corrupted. Please delete and re-download.`,

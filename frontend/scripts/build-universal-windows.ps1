@@ -212,6 +212,9 @@ foreach ($binary in Get-ChildItem $variants -Filter "*.exe") {
 # Bundle once with CPU as the safe main executable. The post-install hook
 # replaces it with the selected signed variant and keeps meetily.exe canonical.
 $env:CARGO_TARGET_DIR = $cpuTarget
+& (Join-Path $PSScriptRoot "build-nsis-progress-plugin.ps1") `
+  -ProgressMainBinary (Join-Path $cpuTarget "release\meetily.exe")
+if ($LASTEXITCODE -ne 0) { throw "NSIS overall-progress plugin build failed" }
 Push-Location $frontend
 try {
   & node "node_modules\@tauri-apps\cli\tauri.js" build --config "src-tauri\tauri.updater.conf.json" -- --no-default-features --features custom-protocol
@@ -256,7 +259,7 @@ if ($LASTEXITCODE -ne 0) { throw "Frameless installer signing failed" }
 $signature = (Get-Content $updaterSignatureOutput -Raw).Trim()
 $latest = [ordered]@{
   version = $appVersion
-  notes = "Global search and people profiles with private person Q&A, native save-dialog exports, reliable compact recording and post-call summaries, removable speaker names, and consistent Windows shell identity."
+  notes = "Overall byte-weighted updater progress, timely live transcript finalization after silence, and resumable partial AI model downloads with accurate status reporting."
   pub_date = [DateTime]::UtcNow.ToString("o")
   platforms = [ordered]@{
     "windows-x86_64" = [ordered]@{

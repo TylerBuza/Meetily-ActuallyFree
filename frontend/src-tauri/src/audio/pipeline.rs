@@ -109,7 +109,7 @@ impl AudioMixerRingBuffer {
         self.system_enabled = system_enabled;
     }
 
-    fn add_samples(&mut self, device_type: DeviceType, mut samples: Vec<f32>, timestamp: f64) {
+    fn add_samples(&mut self, device_type: DeviceType, mut samples: Vec<f32>, timestamp: f64) -> Option<f64> {
         // Log buffer health periodically for diagnostics
         static mut SAMPLE_COUNTER: u64 = 0;
         unsafe {
@@ -127,9 +127,10 @@ impl AudioMixerRingBuffer {
         let current_len = match device_type {
             DeviceType::Microphone => self.mic_buffer.len(),
             DeviceType::System => self.system_buffer.len(),
-            DeviceType::Mixed => return,
+            DeviceType::Mixed => return None,
         };
         let buffered_end = self.output_samples + current_len;
+        let mut discontinuity_start = None;
         if chunk_start.saturating_sub(buffered_end) > self.max_buffer_size {
             warn!("Audio timeline discontinuity detected; resetting source alignment");
             self.mic_buffer.clear();
@@ -137,12 +138,13 @@ impl AudioMixerRingBuffer {
             self.timeline_origin = Some(start);
             self.output_samples = 0;
             chunk_start = 0;
+            discontinuity_start = Some(start);
         }
 
         let buffer = match device_type {
             DeviceType::Microphone => &mut self.mic_buffer,
             DeviceType::System => &mut self.system_buffer,
-            DeviceType::Mixed => return,
+            DeviceType::Mixed => return None,
         };
 
         let buffered_end = self.output_samples + buffer.len();
@@ -151,7 +153,7 @@ impl AudioMixerRingBuffer {
         } else if chunk_start < buffered_end {
             let overlap = buffered_end - chunk_start;
             if overlap >= samples.len() {
-                return;
+                return discontinuity_start;
             }
             samples.drain(..overlap);
         }
@@ -177,6 +179,7 @@ impl AudioMixerRingBuffer {
         while self.system_buffer.len() > self.max_buffer_size {
             self.system_buffer.pop_front();
         }
+        discontinuity_start
     }
 
     fn can_mix(&self) -> bool {
@@ -842,6 +845,8 @@ pub struct AudioPipeline {
     level_sender: Option<mpsc::UnboundedSender<AudioLevels>>,
     last_mic_level_emit: std::time::Instant,
     last_sys_level_emit: std::time::Instant,
+    last_mic_input: std::time::Instant,
+    last_system_input: std::time::Instant,
 }
 
 impl AudioPipeline {
@@ -921,6 +926,34 @@ impl AudioPipeline {
             level_sender: None,
             last_mic_level_emit: std::time::Instant::now(),
             last_sys_level_emit: std::time::Instant::now(),
+            last_mic_input: std::time::Instant::now(),
+            last_system_input: std::time::Instant::now(),
+        }
+    }
+
+    fn finalize_inactive_speech(&mut self, now: std::time::Instant) {
+        if self.state.is_paused() {
+            return;
+        }
+        let redemption = std::time::Duration::from_millis(800);
+        let mut completed = Vec::new();
+        if now.duration_since(self.last_mic_input) >= redemption {
+            if let Some(segment) = self.mic_vad.finalize_active_speech() {
+                completed.push((DeviceType::Microphone, segment));
+            }
+        }
+        if now.duration_since(self.last_system_input) >= redemption {
+            if let Some(segment) = self.system_vad.finalize_active_speech() {
+                completed.push((DeviceType::System, segment));
+            }
+        }
+        for (device_type, segment) in completed {
+            Self::enqueue_source_speech(
+                vec![segment],
+                device_type,
+                &self.transcription_sender,
+                &mut self.chunk_id_counter,
+            );
         }
     }
 
@@ -996,6 +1029,13 @@ impl AudioPipeline {
                 self.receiver.recv()
             ).await {
                 Ok(Some(chunk)) => {
+                    let now = std::time::Instant::now();
+                    self.finalize_inactive_speech(now);
+                    match chunk.device_type {
+                        DeviceType::Microphone => self.last_mic_input = now,
+                        DeviceType::System => self.last_system_input = now,
+                        DeviceType::Mixed => {}
+                    }
                     // PERFORMANCE: Check for flush signal (special chunk with ID >= u64::MAX - 10)
                     // Multiple flush signals may be sent to ensure processing
                     if chunk.chunk_id >= u64::MAX - 10 {
@@ -1062,11 +1102,30 @@ impl AudioPipeline {
                     if let Some((mic_active, system_active)) = self.state.active_capture_sources() {
                         self.ring_buffer.set_enabled(mic_active, system_active);
                     }
-                    self.ring_buffer.add_samples(
+                    let discontinuity_start = self.ring_buffer.add_samples(
                         chunk.device_type.clone(),
                         chunk.data,
                         chunk.timestamp,
                     );
+                    if let Some(start_seconds) = discontinuity_start {
+                        let mut completed = Vec::new();
+                        if let Some(segment) = self.mic_vad.finalize_active_speech() {
+                            completed.push((DeviceType::Microphone, segment));
+                        }
+                        if let Some(segment) = self.system_vad.finalize_active_speech() {
+                            completed.push((DeviceType::System, segment));
+                        }
+                        for (device_type, segment) in completed {
+                            Self::enqueue_source_speech(
+                                vec![segment],
+                                device_type,
+                                &self.transcription_sender,
+                                &mut self.chunk_id_counter,
+                            );
+                        }
+                        self.mic_vad.advance_inactive_timeline_to(start_seconds);
+                        self.system_vad.advance_inactive_timeline_to(start_seconds);
+                    }
 
                     // STEP 2: Mix audio in fixed windows when both streams have sufficient data
                     while self.ring_buffer.can_mix() {
@@ -1129,7 +1188,12 @@ impl AudioPipeline {
                     break;
                 }
                 Err(_) => {
-                    // Timeout - just continue, VAD handles all segmentation
+                    // WASAPI and some other backends can omit exact-zero
+                    // callbacks. Finalize after the calibrated live redemption
+                    // period, but never during Pause and never synthesize audio:
+                    // wall time decides *when* to emit, while VAD audio time
+                    // remains recording-relative and pause-aware.
+                    self.finalize_inactive_speech(std::time::Instant::now());
                     continue;
                 }
             }

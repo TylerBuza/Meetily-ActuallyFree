@@ -31,12 +31,17 @@ ManifestDPIAwareness PerMonitorV2
 ${StrCase}
 ${StrLoc}
 
+!define MEETILY_PROGRESS_MESSAGE 0x84D1
+
 ; The frameless bootstrapper passes a unique token and polls this per-user key.
 ; The native NSIS progress control supplies continuous progress when available;
 ; these milestones keep status truthful even while a runtime installer owns the
 ; foreground work and the NSIS bar is temporarily stationary.
 !macro MeetilyReportProgress Percent
   StrCpy $MeetilyReportedProgress ${Percent}
+  ${If} $UpdateMode = 1
+    SendMessage $HWNDPARENT ${MEETILY_PROGRESS_MESSAGE} ${Percent} 0
+  ${EndIf}
   ${If} $MeetilyProgressToken != ""
     WriteRegDWORD HKCU "Software\meetily\InstallerProgress\$MeetilyProgressToken" "Percent" ${Percent}
   ${EndIf}
@@ -67,6 +72,9 @@ ${StrLoc}
 !define OUTFILE "{{out_file}}"
 !define ARCH "{{arch}}"
 !define ADDITIONALPLUGINSPATH "{{additional_plugins_path}}"
+!if /FileExists "${NSISDIR}\Plugins\x86-unicode\MeetilyProgress.dll"
+  !define MEETILY_HAS_PROGRESS_PLUGIN
+!endif
 !define ALLOWDOWNGRADES "{{allow_downgrades}}"
 !define DISPLAYLANGUAGESELECTOR "{{display_language_selector}}"
 !define INSTALLWEBVIEW2MODE "{{install_webview2_mode}}"
@@ -453,9 +461,22 @@ Function MeetilyDarkenInstFiles
   IntCmp $R1 0 +2 0 0
     ShowWindow $R1 ${SW_HIDE}
 
-  StrCpy $MeetilyDisplayedProgress 0
-  Call MeetilyRefreshInstallProgress
-  nsDialogs::CreateTimer MeetilyRefreshInstallProgress 150
+  ${If} $UpdateMode = 1
+    ; The install thread blocks inside large File opcodes. This native UI-thread
+    ; observer converts each current-file extraction percentage into byte-
+    ; weighted overall progress and leaves status control 1006 unchanged.
+    !ifdef MEETILY_HAS_PROGRESS_PLUGIN
+      MeetilyProgress::Start
+    !else
+      StrCpy $MeetilyDisplayedProgress 0
+      Call MeetilyRefreshInstallProgress
+      nsDialogs::CreateTimer MeetilyRefreshInstallProgress 150
+    !endif
+  ${Else}
+    StrCpy $MeetilyDisplayedProgress 0
+    Call MeetilyRefreshInstallProgress
+    nsDialogs::CreateTimer MeetilyRefreshInstallProgress 150
+  ${EndIf}
 
   ; There is nowhere to navigate while files are being installed. Keep only
   ; Cancel visible, then reveal Next once .onInstSuccess runs.
@@ -478,6 +499,11 @@ Function MeetilyRefreshInstallProgress
   ${If} $MeetilyInstallProgress == ""
     Goto meetily_progress_done
   ${EndIf}
+  !ifdef MEETILY_HAS_PROGRESS_PLUGIN
+    ${If} $UpdateMode = 1
+      Goto meetily_progress_done
+    ${EndIf}
+  !endif
 
   SendMessage $MeetilyInstallProgress ${PBM_GETRANGE} 1 0 $R1
   SendMessage $MeetilyInstallProgress ${PBM_GETRANGE} 0 0 $R2

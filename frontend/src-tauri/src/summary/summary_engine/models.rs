@@ -145,6 +145,9 @@ pub struct ModelDef {
     /// File size in MiB. The field name is kept for API compatibility.
     pub size_mb: u64,
 
+    /// Exact bytes published by the first-party/HuggingFace artifact.
+    pub size_bytes: u64,
+
     /// Context window size in tokens (configurable per model!)
     /// This is used for chunking in processor.rs
     pub context_size: u32,
@@ -171,6 +174,7 @@ pub fn get_available_models() -> Vec<ModelDef> {
             template: "qwen3.5_nonthinking".to_string(),
             download_url: "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf".to_string(),
             size_mb: 1221,
+            size_bytes: 1_280_835_840,
             context_size: 32768,
             layer_count: 24,
             sampling: SamplingParams::qwen35_summary(vec!["<|im_end|>".to_string()]),
@@ -184,6 +188,7 @@ pub fn get_available_models() -> Vec<ModelDef> {
             template: "qwen3.5_nonthinking".to_string(),
             download_url: "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf".to_string(),
             size_mb: 2614,
+            size_bytes: 2_740_937_888,
             context_size: 32768,
             layer_count: 32,
             sampling: SamplingParams::qwen35_summary(vec!["<|im_end|>".to_string()]),
@@ -197,6 +202,7 @@ pub fn get_available_models() -> Vec<ModelDef> {
             template: "gemma3".to_string(),
             download_url: "https://huggingface.co/bartowski/google_gemma-3-4b-it-GGUF/resolve/main/google_gemma-3-4b-it-Q4_K_M.gguf".to_string(),
             size_mb: 2374,
+            size_bytes: 2_489_758_112,
             context_size: 32768,
             layer_count: 35,
             sampling: SamplingParams::gemma3_instruct(vec!["<end_of_turn>".to_string()]),
@@ -210,6 +216,7 @@ pub fn get_available_models() -> Vec<ModelDef> {
             template: "gemma3".to_string(),
             download_url: "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/main/google_gemma-3-1b-it-Q8_0.gguf".to_string(),
             size_mb: 1019,
+            size_bytes: 1_069_306_624,
             context_size: 32768,
             layer_count: 26,
             sampling: SamplingParams::gemma3_instruct(vec!["<end_of_turn>".to_string()]),

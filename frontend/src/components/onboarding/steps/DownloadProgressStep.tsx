@@ -278,8 +278,10 @@ export function DownloadProgressStep() {
           error: status === 'error' ? error : undefined,
         }));
 
-        if (status === 'completed' || progress >= 100) {
+        if (status === 'completed') {
           setSummaryModelDownloaded(true);
+        } else if (status === 'error') {
+          setSummaryModelDownloaded(false);
         }
       }
     });
