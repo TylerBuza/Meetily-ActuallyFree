@@ -105,12 +105,12 @@ export function TranscriptButtonGroup({
   }, [meetingId, isDiarizing, onRefetchTranscripts]);
 
   return (
-    <div className="flex w-max max-w-full shrink-0 items-center justify-end">
+    <div className="flex w-max min-w-full shrink-0 items-center justify-end">
       <ButtonGroup className="shrink-0">
         <Button
           variant="outline"
           size="sm"
-          className="h-8 w-8 shrink-0 px-0 sm:h-9 sm:w-auto sm:px-3"
+          className="transcript-action-button h-9 w-9 shrink-0 px-0"
           onClick={() => {
             Analytics.trackButtonClick('copy_transcript', 'meeting_details');
             onCopyTranscript();
@@ -119,14 +119,14 @@ export function TranscriptButtonGroup({
           title={transcriptCount === 0 ? 'No transcript available' : 'Copy Transcript'}
         >
           <Copy size={16} />
-          <span className="ml-1.5 hidden xl:inline">Copy</span>
+          <span className="transcript-action-label">Copy</span>
         </Button>
 
         {onOpenExport && (
           <Button
             variant="outline"
             size="sm"
-            className="h-8 w-8 shrink-0 px-0 sm:h-9 sm:w-auto sm:px-3"
+            className="transcript-action-button h-9 w-9 shrink-0 px-0"
             onClick={() => {
               Analytics.trackButtonClick('open_meeting_export', 'meeting_details');
               onOpenExport();
@@ -135,14 +135,14 @@ export function TranscriptButtonGroup({
             title={transcriptCount === 0 ? 'No meeting content available' : 'Export meeting'}
           >
             <Download size={16} />
-            <span className="ml-1.5 hidden xl:inline">Export</span>
+            <span className="transcript-action-label">Export</span>
           </Button>
         )}
 
         <Button
           size="sm"
           variant="outline"
-          className="h-8 w-8 shrink-0 px-0 sm:h-9 sm:w-auto sm:px-3"
+          className="transcript-action-button h-9 w-9 shrink-0 px-0"
           onClick={() => {
             Analytics.trackButtonClick('open_recording_folder', 'meeting_details');
             onOpenMeetingFolder();
@@ -150,14 +150,14 @@ export function TranscriptButtonGroup({
           title="Open Recording Folder"
         >
           <FolderOpen size={16} />
-          <span className="ml-1.5 hidden xl:inline">Recording</span>
+          <span className="transcript-action-label">Recording</span>
         </Button>
 
         {diarizeAvailable && meetingId && (
           <Button
             size="sm"
             variant="outline"
-            className="h-8 w-8 shrink-0 px-0 sm:h-9 sm:w-auto sm:px-3"
+            className="transcript-action-button h-9 w-9 shrink-0 px-0"
             onClick={() => {
               setExpectedSpeakers('');
               setShowSpeakerDialog(true);
@@ -174,7 +174,7 @@ export function TranscriptButtonGroup({
             ) : (
               <Users size={16} />
             )}
-            <span className="ml-1.5 hidden xl:inline">{isDiarizing ? 'Working…' : 'Speakers'}</span>
+            <span className="transcript-action-label">{isDiarizing ? 'Working…' : 'Speakers'}</span>
           </Button>
         )}
 
@@ -182,7 +182,7 @@ export function TranscriptButtonGroup({
           <Button
             size="sm"
             variant="outline"
-            className="h-8 w-8 shrink-0 border-blue-500/30 bg-blue-500/10 px-0 text-blue-300 hover:bg-blue-500/20 sm:h-9 sm:w-auto sm:px-3"
+            className="transcript-action-button h-9 w-9 shrink-0 border-blue-500/30 bg-blue-500/10 px-0 text-blue-300 hover:bg-blue-500/20"
             onClick={() => {
               Analytics.trackButtonClick('enhance_transcript', 'meeting_details');
               setShowRetranscribeDialog(true);
@@ -190,7 +190,7 @@ export function TranscriptButtonGroup({
             title="Retranscribe to enhance your recorded audio"
           >
             <RefreshCw size={16} />
-            <span className="ml-1.5 hidden xl:inline">Enhance</span>
+            <span className="transcript-action-label">Enhance</span>
           </Button>
         )}
       </ButtonGroup>

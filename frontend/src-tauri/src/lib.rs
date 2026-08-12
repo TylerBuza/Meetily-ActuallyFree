@@ -448,6 +448,11 @@ pub fn run() {
         }));
     }
 
+    // Set the unpackaged Windows app identity before Tauri creates any HWNDs.
+    // The taskbar and installer shortcuts use this same AUMID.
+    #[cfg(windows)]
+    notifications::native_windows::ensure_app_identity();
+
     let mut builder = tauri::Builder::default();
 
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
@@ -467,6 +472,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(whisper_engine::parallel_commands::ParallelProcessorState::new())
@@ -477,13 +483,6 @@ pub fn run() {
         .manage(summary::summary_engine::ModelManagerState(Arc::new(tokio::sync::Mutex::new(None))))
         .setup(|_app| {
             log::info!("Application setup complete");
-
-            // Windows: register our AppUserModelID + icon and bind this process
-            // to it so system toasts are attributed to "Meetily - Actually Free"
-            // (with our logo) instead of "Windows PowerShell". See
-            // notifications::native_windows for the full rationale.
-            #[cfg(windows)]
-            notifications::native_windows::ensure_app_identity();
 
             // Initialize system tray
             if let Err(e) = tray::create_tray(_app.handle()) {
@@ -601,27 +600,13 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Minimizing the main window mid-recording switches to the compact
-            // bar automatically - minimizing means 'get out of my way', and the
-            // bar is how a recording stays visible while doing that.
-            if let tauri::WindowEvent::Resized(_) = event {
-                if window.label() == "main"
-                    && window.is_minimized().unwrap_or(false)
-                    && crate::audio::recording_commands::is_recording_active()
-                {
-                    let app = window.app_handle().clone();
-                    tauri::async_runtime::spawn(async move {
-                        let _ = crate::minibar::enter_compact_mode(app, None).await;
-                    });
-                }
-            }
             // Minimizing the main window mid-recording shows the compact bar,
             // so the recording never becomes invisible. (Minimize arrives as a
             // Resized event; is_minimized() distinguishes it.)
             if let tauri::WindowEvent::Resized(_) = event {
                 if window.label() == "main"
                     && window.is_minimized().unwrap_or(false)
-                    && audio::recording_commands::is_recording_now()
+                    && audio::recording_commands::is_recording_active()
                 {
                     let app = window.app_handle().clone();
                     tauri::async_runtime::spawn(async move {
@@ -755,6 +740,9 @@ pub fn run() {
             groq::groq::get_groq_models,
             api::api_get_meetings,
             api::api_search_transcripts,
+            database::repositories::person::api_global_search,
+            database::repositories::person::api_get_person_profile,
+            database::repositories::person::api_update_person_notes,
             meeting_detection::get_meeting_detection_settings,
             meeting_detection::set_meeting_detection_settings,
             meeting_detection::start_meeting_detection,
@@ -813,6 +801,7 @@ pub fn run() {
             summary::template_commands::api_delete_custom_template,
             summary::template_commands::api_is_custom_template,
             live_assistant::ask_live_assistant,
+            live_assistant::ask_person,
             live_assistant::ollama_embed,
             // Built-in AI commands
             summary::summary_engine::commands::builtin_ai_list_models,

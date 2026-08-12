@@ -23,7 +23,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 
-import { useCallback, useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Play, Pause, Square, Mic, Volume2, AlertCircle, X, Minimize2 } from 'lucide-react';
 import { LiveAudioVisualizer } from './LiveAudioVisualizer';
 import { ProcessRequest, SummaryResponse } from '@/types/summary';
@@ -147,25 +147,6 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
     checkTauri();
   }, []);
 
-  // Holds the stop handler, which is defined further down. The compact-bar
-  // listener below is registered once on mount and would otherwise capture a
-  // stale closure (or force the listener to re-subscribe on every render).
-  const handleStopRecordingRef = useRef<null | (() => void)>(null);
-
-  // Stop requested from the compact recording bar. That window intentionally
-  // doesn't implement stopping itself — saving audio, persisting transcripts,
-  // summarising and navigating all live here, and duplicating that sequence
-  // would be two implementations to keep in step.
-  useEffect(() => {
-    const unlisten = listen('minibar-stop-requested', () => {
-      console.log('[RecordingControls] stop requested from compact bar');
-      handleStopRecordingRef.current?.();
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, []);
-
   const handleStartRecording = useCallback(async () => {
     if (isStarting || isValidatingModel) return;
     console.log('Starting recording...');
@@ -253,7 +234,9 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       setIsProcessing(false);
       // Track successful transcription
       Analytics.trackTranscriptionSuccess();
-      onRecordingStop(true);
+      // Native stop emits one main-window-only completion event. The global
+      // post-processing provider handles transcript drain/save/navigation for
+      // every stop origin, so do not start a second frontend owner here.
     } catch (error) {
       console.error('Failed to stop recording:', error);
       if (error instanceof Error) {
@@ -296,11 +279,6 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
     // Immediately trigger the stop action
     await stopRecordingAction();
   }, [isRecording, isStarting, isStopping, stopRecordingAction, onStopInitiated]);
-
-  // Keep the ref pointing at the current handler for the compact-bar listener.
-  useEffect(() => {
-    handleStopRecordingRef.current = handleStopRecording;
-  }, [handleStopRecording]);
 
   const handlePauseRecording = useCallback(async () => {
     if (!isRecording || isPaused || isPausing) return;

@@ -4,7 +4,7 @@
  * Primary left navigation sidebar.
  *
  * Layout (top → bottom): brand ("Meetily · Actually Free", see Logo.tsx),
- * a "Search" field (⌘K), a teal "New Recording" action, a "RECENT MEETINGS"
+ * a global-search trigger (Ctrl/Cmd+K), a teal "New Recording" action, a "RECENT MEETINGS"
  * list (dot + title + date-subtitle from `created_at`, with a "View all
  * library" toggle capped by RECENT_LIMIT), and a Settings-only footer.
  *
@@ -19,8 +19,8 @@
  *  - Default state is expanded (isCollapsed=false in SidebarProvider).
  */
 
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { ShieldCheck, ChevronDown, ChevronRight, File, FileText, AudioLines, ArrowRight, Settings, ChevronLeftCircle, ChevronRightCircle, Calendar, StickyNote, Home, LayoutDashboard, Trash2, Mic, Square, Plus, Search, Pencil, NotebookPen, SearchIcon, X, Upload } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { ChevronDown, ChevronRight, FileText, AudioLines, ArrowRight, Settings, ChevronLeftCircle, ChevronRightCircle, Calendar, Trash2, Mic, Square, Plus, Search, Pencil, NotebookPen, Upload } from 'lucide-react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useSidebar } from './SidebarProvider';
 import type { CurrentMeeting } from '@/components/Sidebar/SidebarProvider';
@@ -46,8 +46,6 @@ import { VisuallyHidden } from "@/components/ui/visually-hidden"
 import { MessageToast } from '../MessageToast';
 import Logo from '../Logo';
 import { ComplianceNotification } from '../ComplianceNotification';
-import { Input } from '../ui/input';
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '../ui/input-group';
 
 interface SidebarItem {
   id: string;
@@ -104,9 +102,6 @@ const Sidebar: React.FC = () => {
     isCollapsed,
     toggleCollapse,
     handleRecordingToggle,
-    searchTranscripts,
-    searchResults,
-    isSearching,
     meetings,
     setMeetings,
     serverAddress
@@ -117,7 +112,6 @@ const Sidebar: React.FC = () => {
   const { openImportDialog } = useImportDialog();
   const { betaFeatures } = useConfig();
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['meetings']));
-  const [searchQuery, setSearchQuery] = useState<string>('');
   const [showModelSettings, setShowModelSettings] = useState(false);
   const [modelConfig, setModelConfig] = useState<ModelConfig>({
     provider: 'ollama',
@@ -302,85 +296,7 @@ const Sidebar: React.FC = () => {
     }
   };
 
-  // Handle search input changes
-  const handleSearchChange = useCallback(async (value: string) => {
-    setSearchQuery(value);
-
-    // If search query is empty, just return to normal view
-    if (!value.trim()) return;
-
-    // Search through transcripts
-    await searchTranscripts(value);
-
-    // Make sure the meetings folder is expanded when searching
-    if (!expandedFolders.has('meetings')) {
-      const newExpanded = new Set(expandedFolders);
-      newExpanded.add('meetings');
-      setExpandedFolders(newExpanded);
-    }
-  }, [expandedFolders, searchTranscripts]);
-
-  // Combine search results with sidebar items
-  const filteredSidebarItems = useMemo(() => {
-    if (!searchQuery.trim()) return sidebarItems;
-
-    // If we have search results, highlight matching meetings
-    if (searchResults.length > 0) {
-      // Get the IDs of meetings that matched in transcripts
-      const matchedMeetingIds = new Set(searchResults.map(result => result.id));
-
-      return sidebarItems
-        .map(folder => {
-          // Always include folders in the results
-          if (folder.type === 'folder') {
-            if (!folder.children) return folder;
-
-            // Filter children based on search results or title match
-            const filteredChildren = folder.children.filter(item => {
-              // Include if the meeting ID is in our search results
-              if (matchedMeetingIds.has(item.id)) return true;
-
-              // Or if the title matches the search query
-              return item.title.toLowerCase().includes(searchQuery.toLowerCase());
-            });
-
-            return {
-              ...folder,
-              children: filteredChildren
-            };
-          }
-
-          // For non-folder items, check if they match the search
-          return (matchedMeetingIds.has(folder.id) ||
-            folder.title.toLowerCase().includes(searchQuery.toLowerCase()))
-            ? folder : undefined;
-        })
-        .filter((item): item is SidebarItem => item !== undefined); // Type-safe filter
-    } else {
-      // Fall back to title-only filtering if no transcript results
-      return sidebarItems
-        .map(folder => {
-          // Always include folders in the results
-          if (folder.type === 'folder') {
-            if (!folder.children) return folder;
-
-            // Filter children based on search query
-            const filteredChildren = folder.children.filter(item =>
-              item.title.toLowerCase().includes(searchQuery.toLowerCase())
-            );
-
-            return {
-              ...folder,
-              children: filteredChildren
-            };
-          }
-
-          // For non-folder items, check if they match the search
-          return folder.title.toLowerCase().includes(searchQuery.toLowerCase()) ? folder : undefined;
-        })
-        .filter((item): item is SidebarItem => item !== undefined); // Type-safe filter
-    }
-  }, [sidebarItems, searchQuery, searchResults, expandedFolders]);
+  const openGlobalSearch = () => window.dispatchEvent(new CustomEvent('open-global-search'));
 
 
   const handleDelete = async (itemId: string) => {
@@ -430,7 +346,7 @@ const Sidebar: React.FC = () => {
   // shift-click can select the contiguous range between two clicks.
   const orderedMeetingIds = useMemo(() => {
     const ids: string[] = [];
-    for (const folder of filteredSidebarItems) {
+    for (const folder of sidebarItems) {
       if (folder.type === 'folder' && folder.children) {
         for (const child of folder.children) {
           if (child.type === 'file' && child.id.includes('-') && !child.id.startsWith('intro-call')) {
@@ -440,7 +356,7 @@ const Sidebar: React.FC = () => {
       }
     }
     return ids;
-  }, [filteredSidebarItems]);
+  }, [sidebarItems]);
 
   const clearSelection = () => {
     setSelectedIds(new Set());
@@ -582,7 +498,6 @@ const Sidebar: React.FC = () => {
   const renderCollapsedIcons = () => {
     if (!isCollapsed) return null;
 
-    const isHomePage = pathname === '/';
     const isMeetingPage = pathname?.includes('/meeting-details');
     const isSettingsPage = pathname === '/settings';
 
@@ -591,6 +506,21 @@ const Sidebar: React.FC = () => {
         <div className="flex h-full flex-col items-center">
           <div className="flex flex-col items-center space-y-4 mt-4">
             <Logo isCollapsed={isCollapsed} />
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={openGlobalSearch}
+                  className="rounded-lg p-2 text-[var(--af-text-2)] transition-colors hover:bg-[var(--af-hover)] hover:text-[var(--af-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--af-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--af-bg)]"
+                  aria-label="Search everything"
+                >
+                  <Search className="h-5 w-5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                <p>Search everything (Ctrl+K)</p>
+              </TooltipContent>
+            </Tooltip>
 
             {/* New Recording */}
             <Tooltip>
@@ -671,23 +601,13 @@ const Sidebar: React.FC = () => {
     );
   };
 
-  // Find matching transcript snippet for a meeting item
-  const findMatchingSnippet = (itemId: string) => {
-    if (!searchQuery.trim() || !searchResults.length) return null;
-    return searchResults.find(result => result.id === itemId);
-  };
-
   const renderItem = (item: SidebarItem, depth = 0) => {
     const isExpanded = expandedFolders.has(item.id);
     // Keep meeting rows tight to the left so more of the title is visible.
-    const paddingLeft = item.type === 'file' ? `${depth * 8 + 8}px` : `${depth * 12 + 12}px`;
+    const paddingLeft = item.type === 'file' ? `${Math.max(6, depth * 4 + 2)}px` : `${depth * 12 + 12}px`;
     const isActive = item.type === 'file' && currentMeeting?.id === item.id;
     const isMeetingItem = item.id.includes('-') && !item.id.startsWith('intro-call');
     const isSelected = selectedIds.has(item.id);
-
-    // Check if this item has a matching transcript snippet
-    const matchingResult = isMeetingItem ? findMatchingSnippet(item.id) : null;
-    const hasTranscriptMatch = !!matchingResult;
 
     if (isCollapsed) return null;
 
@@ -698,7 +618,7 @@ const Sidebar: React.FC = () => {
             ? 'p-3 text-lg font-semibold h-10 mx-3 mt-3 rounded-lg'
             : `px-2.5 py-2 my-0.5 rounded-lg text-sm ${isSelected ? 'bg-[var(--af-panel-2)] text-[var(--af-text)] ring-1 ring-[var(--af-accent)]/50' :
               isActive ? 'bg-[var(--af-panel-2)] text-[var(--af-text)] font-medium' :
-                hasTranscriptMatch ? 'bg-yellow-50' : 'hover:bg-[var(--af-hover)]'
+                'hover:bg-[var(--af-hover)]'
             } cursor-pointer`
             }`}
           style={item.type === 'folder' && depth === 0 ? {} : { paddingLeft }}
@@ -736,16 +656,13 @@ const Sidebar: React.FC = () => {
                   <ChevronRight className="w-4 h-4 text-gray-500" />
                 )}
               </div>
-              {searchQuery && item.id === 'meetings' && isSearching && (
-                <span className="ml-2 text-xs text-blue-500 animate-pulse">Searching...</span>
-              )}
             </>
           ) : (
             (() => {
               const meetingDate = isMeetingItem ? parseMeetingDate(item) : null;
               const durationLabel = isMeetingItem ? formatDurationShort(item.durationSeconds) : '';
               return (
-                <div className="flex w-full min-w-0 items-start gap-2">
+                <div className="relative flex w-full min-w-0 items-start gap-1.5">
                   {isMeetingItem ? (
                     <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center ${isActive ? 'text-[var(--af-accent)]' : 'text-[var(--af-text-3)]'}`}>
                       {isActive ? <AudioLines className="h-3.5 w-3.5" /> : <FileText className="h-3.5 w-3.5" />}
@@ -756,7 +673,7 @@ const Sidebar: React.FC = () => {
                     </span>
                   )}
 
-                  <div className="min-w-0 flex-1 pr-0.5">
+                  <div className="min-w-0 flex-1">
                     <div
                       className="truncate text-[13px] leading-snug"
                       title={item.title}
@@ -770,15 +687,10 @@ const Sidebar: React.FC = () => {
                         {durationLabel && <span className="shrink-0 tabular-nums">{durationLabel}</span>}
                       </div>
                     )}
-                    {hasTranscriptMatch && (
-                      <div className="mt-1 line-clamp-2 rounded border border-yellow-100 bg-yellow-50 p-1.5 text-xs text-gray-500">
-                        <span className="font-medium text-yellow-600">Match:</span> {matchingResult.matchContext}
-                      </div>
-                    )}
                   </div>
 
                   {isMeetingItem && (
-                    <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                    <div className="absolute right-0 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-[var(--af-panel)] p-0.5 opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -842,23 +754,14 @@ const Sidebar: React.FC = () => {
                 <Logo isCollapsed={isCollapsed} />
               </div>
 
-              <div className="relative">
-                <InputGroup>
-                  <InputGroupInput placeholder='Search' value={searchQuery}
-                    onChange={(e) => handleSearchChange(e.target.value)}
-                  />
-                  <InputGroupAddon>
-                    <SearchIcon />
-                  </InputGroupAddon>
-                  {searchQuery && (
-                    <InputGroupAddon align={'inline-end'}>
-                      <InputGroupButton onClick={() => handleSearchChange('')}>
-                        <X />
-                      </InputGroupButton>
-                    </InputGroupAddon>
-                  )}
-                </InputGroup>
-              </div>
+              <button
+                onClick={openGlobalSearch}
+                className="flex h-9 w-full items-center gap-2 rounded-lg border border-[var(--af-border)] bg-[var(--af-panel)] px-3 text-left text-sm text-[var(--af-text-3)] shadow-sm hover:border-[var(--af-border-strong)] hover:bg-[var(--af-panel-2)] hover:text-[var(--af-text-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--af-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--af-bg)]"
+              >
+                <Search className="h-4 w-4 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">Search everything</span>
+                <kbd className="shrink-0 rounded border border-[var(--af-border-strong)] bg-[var(--af-panel-2)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--af-text-3)]">Ctrl K</kbd>
+              </button>
 
               <button
                 onClick={handleRecordingToggle}
@@ -889,15 +792,12 @@ const Sidebar: React.FC = () => {
             {/* Meetings folder header - fixed */}
             {!isCollapsed && (
               <div className="flex-shrink-0">
-                {filteredSidebarItems.filter(item => item.type === 'folder').map(item => (
+                {sidebarItems.filter(item => item.type === 'folder').map(item => (
                   <div
                     key={item.id}
                     className="flex items-center px-4 pt-5 pb-2 text-xs font-semibold uppercase tracking-wider text-[var(--af-text-3)]"
                   >
                     <span>{item.title}</span>
-                    {searchQuery && item.id === 'meetings' && isSearching && (
-                      <span className="ml-2 normal-case tracking-normal text-blue-500 animate-pulse">Searching...</span>
-                    )}
                   </div>
                 ))}
               </div>
@@ -922,15 +822,15 @@ const Sidebar: React.FC = () => {
             {/* Scrollable meeting items */}
             {!isCollapsed && (
               <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0 px-1">
-                {filteredSidebarItems
+                {sidebarItems
                   .filter(item => item.type === 'folder' && expandedFolders.has(item.id) && item.children)
                   .map(item => {
                     const children = item.children!;
-                    const showAll = showAllMeetings || searchQuery.trim().length > 0;
+                    const showAll = showAllMeetings;
                     const shown = showAll ? children : children.slice(0, RECENT_LIMIT);
                     const hasMore = children.length > RECENT_LIMIT;
                     return (
-                      <div key={`${item.id}-children`} className="mx-3">
+                      <div key={`${item.id}-children`} className="mx-1">
                         {shown.map(child => renderItem(child, 1))}
                         {item.id === 'meetings' && hasMore && (
                           <button

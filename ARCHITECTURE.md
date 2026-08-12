@@ -91,6 +91,30 @@ levels come from Rust.
 - Transcript-only sessions still write their final segment vector even when
   audio auto-save is disabled.
 
+### Compact recording bar ownership
+
+The floating bar is a separate `minibar` webview, so it cannot share React
+recording state with `main`. Rust owns its lifecycle in `src-tauri/src/minibar.rs`:
+
+- `MINIBAR_LIFECYCLE` serializes create/destroy transitions because Windows can
+  report one minimize through more than one observer.
+- A new bar is built hidden; Rust hides `main` before showing the bar so both
+  control surfaces never flash onscreen together.
+- `recording_commands::stop_recording_inner` is the only native stop owner and
+  the only source of `recording-stop-complete`. It destroys the bar immediately
+  after claiming `IS_STOPPING`; tray and frontend code must not emit a second
+  completion event.
+- Only Stop originating in the minibar restores the main window it hid. A tray
+  or already-visible main-window stop must not steal focus.
+- The minibar polls Rust `RecordingState.active_duration` every 500 ms rather
+  than incrementing a webview-local timer. This keeps it aligned across startup
+  delay, duplicate minimize events, and pauses. `recording_duration` is only a
+  compatibility fallback.
+
+Do not restore cross-webview stop-request events, elapsed-time reseeding, or a
+frontend close fallback. Those mechanisms caused zombie bars, frozen
+`Finishing` states, timer resets, and duplicate post-processing.
+
 ---
 
 ## 3. Where things are stored (portable design)
@@ -242,6 +266,45 @@ identity. Blue is excluded from remote colors: Speaker 1 is purple, Speaker 2
 emerald, followed by amber, pink, and cyan. Dot and text colors share one index
 function, and normalized identity is also used when adjacent turns merge.
 
+### Global search and durable people
+
+`GlobalSearchDialog.tsx` is the single global search surface. The expanded
+sidebar field, collapsed Search icon, and `Ctrl/Cmd+K` dispatch/open that same
+dialog; the old sidebar-only meeting filter has been removed. It invokes
+`api_global_search`, which returns typed `person`, `meeting`, `transcript`, and
+`summary` rows. Summary matching parses only user-visible markdown/BlockNote/
+legacy content, never raw JSON or hidden `english_cache`. `/person?id=...` is a
+query-driven static route because local SQLite people cannot be known during a
+Next static export.
+
+The migration `20260811000000_add_people.sql` adds:
+
+```text
+people(id, display_name, normalized_name, notes, created_at, updated_at)
+person_speakers(person_id, meeting_id, speaker_label)
+```
+
+Identity is explicit through `person_speakers`; never infer one person from
+`Speaker N`, capture-source placeholders (`mic`, `system`, etc.), `Guest`, `You`,
+or combined overlap labels. Existing custom labels are backfilled and exact
+normalized names auto-link across meetings. A meeting-local rename must split a
+shared profile when the new name is not already a known person; it must not
+silently rename that person in every other meeting. Removing a name deletes the
+mapping and restores the lowest available `Speaker N` label. Blank Save and the
+explicit **Remove name** action share this operation.
+
+Retranscription replaces transcript rows, so it also deletes that meeting's
+person mappings and prunes orphan people in the same transaction. Meeting
+deletion performs the same explicit cleanup even if SQLite foreign-key
+enforcement differs across legacy databases.
+
+Person Q&A is loaded in Rust by `ask_person`; React never supplies its own
+corpus. Context contains only the person's mapped messages plus user-visible
+summaries for those meetings, is capped conservatively at about 24,000
+characters, treats source text as untrusted, and asks for meeting/date/time
+citations. Cloud model selections receive that selected context, which the
+profile UI discloses; local providers keep it on-device.
+
 ### Automatic post-call pipeline
 
 `source=recording` transfers control to `PostCallProcessingDialog.tsx`:
@@ -273,6 +336,13 @@ React page. Both success-toast and delayed navigation paths must preserve
 `source=recording`. Completed meeting IDs are recorded in `sessionStorage` to
 prevent React remount duplication.
 
+Post-call summary start uses two levels of ownership: a module-level in-flight
+promise deduplicates React remounts/StrictMode while setup is running, and
+`post-call-summary-started:<meeting>` is persisted only after
+`api_process_transcript` returns a valid process ID. Preflight, model, transcript
+fetch, or invoke failures clear the provisional claim so retry remains possible.
+Do not mark summary start before backend acceptance.
+
 If audio saving was disabled or retained audio is unavailable, enhancement and
 diarization are impossible. The error state offers **Use live transcript**, which
 refetches the saved live rows, unblocks the sequence, and summarizes those rows
@@ -287,6 +357,12 @@ stale database value. Meeting export owns content selection first (transcript,
 summary, or both) and format selection second. It always fetches all transcript
 rows from SQLite, and summary export must support markdown, BlockNote
 `summary_json`, and legacy section representations.
+
+File export is native-owned after format selection. `exportSummary.ts` creates
+PDF/DOCX/text bytes, opens `@tauri-apps/plugin-dialog` Save, then writes only the
+user-selected path through `@tauri-apps/plugin-fs`; cancellation is silent.
+Clipboard export remains immediate. Do not restore browser Blob/anchor downloads,
+which bypass the requested destination and behave inconsistently in a webview.
 
 ---
 
@@ -512,3 +588,10 @@ generated `icon.*` family. Do not introduce a second `app_icon.*` family: that
 previous duplication allowed the tray/app and installer to silently use
 different brands. The README intentionally renders `icon-source.png` from the
 repository so GitHub uses the same canonical art.
+
+On Windows, `com.meetily.ai` is also the single shell identity: it is Tauri's
+bundle identifier, the installer shortcut AUMID, and the explicit process AUMID
+set before any windows are created. Setup and updater runs recreate Start Menu
+shortcuts (and any existing desktop shortcut) with `meetily.exe,0` as the
+explicit icon source, then call `SHChangeNotify`; application startup must not
+replace those installer-owned shortcuts with PNG-backed WScript shortcuts.

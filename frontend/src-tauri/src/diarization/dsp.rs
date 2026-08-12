@@ -36,12 +36,22 @@ pub fn read_wav(path: &Path) -> Result<(Vec<f32>, u32)> {
 
     while pos + 8 <= bytes.len() {
         let id = &bytes[pos..pos + 4];
-        let sz = u32::from_le_bytes([bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7]]) as usize;
+        let sz = u32::from_le_bytes([
+            bytes[pos + 4],
+            bytes[pos + 5],
+            bytes[pos + 6],
+            bytes[pos + 7],
+        ]) as usize;
         let body = pos + 8;
         if id == b"fmt " && body + 16 <= bytes.len() {
             let audio_format = u16::from_le_bytes([bytes[body], bytes[body + 1]]);
             let channels = u16::from_le_bytes([bytes[body + 2], bytes[body + 3]]);
-            let sample_rate = u32::from_le_bytes([bytes[body + 4], bytes[body + 5], bytes[body + 6], bytes[body + 7]]);
+            let sample_rate = u32::from_le_bytes([
+                bytes[body + 4],
+                bytes[body + 5],
+                bytes[body + 6],
+                bytes[body + 7],
+            ]);
             let bits = u16::from_le_bytes([bytes[body + 14], bytes[body + 15]]);
             fmt = Some((audio_format, channels, sample_rate, bits));
         } else if id == b"data" {

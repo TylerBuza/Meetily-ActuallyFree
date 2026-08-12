@@ -46,7 +46,7 @@ interface TranscriptPanelProps {
   meetingId?: string;
   meetingFolderPath?: string | null;
   onRefetchTranscripts?: () => Promise<void>;
-  onSpeakerRenamed?: (rename: { from: string; to: string; count: number }) => void;
+  onSpeakerRenamed?: (rename: { from: string; to: string; count: number; removedName: boolean }) => void;
 }
 
 function fmtDate(d: Date): string {
@@ -134,14 +134,14 @@ export function TranscriptPanel({
         )}
       </div>
 
-      {/* "Transcript" tab + actions — wrap/scroll on narrow columns so buttons
-          never spill into the AI Summary panel. */}
-      <div className="mt-4 flex min-w-0 flex-wrap items-center gap-2 border-b border-[var(--af-border)] px-4 sm:mt-5 sm:gap-3 sm:px-6 lg:px-8">
+      {/* The action container owns its responsive breakpoint, since this column
+          can be narrow even when the overall window is wide. */}
+      <div className="mt-4 flex min-w-0 items-center gap-2 border-b border-[var(--af-border)] px-4 sm:mt-5 sm:gap-3 sm:px-6 lg:px-8">
         <span className="relative -mb-px shrink-0 py-2 text-sm font-medium text-[var(--af-accent)]">
           Transcript
           <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-[var(--af-accent)]" />
         </span>
-        <div className="ml-auto min-w-0 max-w-full overflow-x-auto pb-1 no-scrollbar">
+        <div className="transcript-actions-container ml-auto min-w-0 flex-1 overflow-x-auto overscroll-x-contain py-1 no-scrollbar">
           <TranscriptButtonGroup
             transcriptCount={usePagination ? (totalCount ?? convertedSegments.length) : (transcripts?.length || 0)}
             onCopyTranscript={onCopyTranscript}

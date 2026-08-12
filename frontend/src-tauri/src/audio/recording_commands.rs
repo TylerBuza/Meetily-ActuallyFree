@@ -52,10 +52,18 @@ pub fn is_recording_active() -> bool {
     IS_RECORDING.load(Ordering::SeqCst)
 }
 
-/// Synchronous recording check for Rust-side callers (e.g. the window-minimize
-/// handler that decides whether to show the compact bar).
-pub fn is_recording_now() -> bool {
-    IS_RECORDING.load(Ordering::SeqCst)
+/// Rechecked by the minibar lifecycle after acquiring its own serialization
+/// lock. The minimize callback may have observed recording=true before native
+/// shutdown claimed IS_STOPPING.
+pub fn can_enter_compact_mode() -> bool {
+    compact_mode_allowed(
+        IS_RECORDING.load(Ordering::SeqCst),
+        IS_STOPPING.load(Ordering::SeqCst),
+    )
+}
+
+fn compact_mode_allowed(is_recording: bool, is_stopping: bool) -> bool {
+    is_recording && !is_stopping
 }
 
 // Global recording manager and transcription task to keep them alive during recording
@@ -588,7 +596,24 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
 /// Stop recording with optimized graceful shutdown ensuring NO transcript chunks are lost
 pub async fn stop_recording<R: Runtime>(
     app: AppHandle<R>,
+    args: RecordingArgs,
+) -> Result<StopOutcome, String> {
+    stop_recording_inner(app, args, false).await
+}
+
+/// Compact Stop restores the main window that compact mode hid; all other stop
+/// origins leave main-window visibility untouched.
+pub async fn stop_recording_from_compact<R: Runtime>(
+    app: AppHandle<R>,
+    args: RecordingArgs,
+) -> Result<StopOutcome, String> {
+    stop_recording_inner(app, args, true).await
+}
+
+async fn stop_recording_inner<R: Runtime>(
+    app: AppHandle<R>,
     _args: RecordingArgs,
+    restore_main: bool,
 ) -> Result<StopOutcome, String> {
     info!(
         "ðŸ›‘ Starting optimized recording shutdown - ensuring ALL transcript chunks are preserved"
@@ -609,12 +634,9 @@ pub async fn stop_recording<R: Runtime>(
     }
     let _stop_guard = StopGuard;
 
-    // The compact bar has no shared React recording context. Close it as soon
-    // as this call owns shutdown so its local timer and controls cannot remain
-    // active or issue a second Stop while finalization is running.
-    if app.get_webview_window("minibar").is_some() {
-        let _ = crate::minibar::exit_compact_mode(app.clone()).await;
-    }
+    // Rust owns teardown. This is independent of webview event delivery and is
+    // serialized against duplicate/queued minimize callbacks.
+    crate::minibar::close_for_recording_stop(&app, restore_main);
 
     // Emit shutdown progress to frontend
     let _ = app.emit(
@@ -1001,36 +1023,52 @@ pub async fn stop_recording<R: Runtime>(
         }),
     );
 
-    // Emit final stop event with folder_path and meeting_name for frontend to save
-    app.emit(
+    // Recovery metadata remains an app-wide informational event for
+    // TranscriptContext's IndexedDB crash record. Final persistence does not
+    // depend on receiving this event; the targeted completion below carries the
+    // same fields atomically with the post-processing signal.
+    let _ = app.emit(
         "recording-stopped",
         serde_json::json!({
             "message": "Recording stopped - frontend will save after all transcripts received",
             "folder_path": folder_path_str,
             "meeting_name": meeting_name_str
         }),
-    )
-    .map_err(|e| e.to_string())?;
+    );
 
     // Update tray menu to reflect stopped state
     crate::tray::update_tray_menu(&app);
 
-    // Tear down the compact bar on every stop path. The bar is its own webview
-    // and closes itself by listening for `recording-stopped`, but cross-window
-    // event delivery to that dynamically-created window is unreliable, leaving a
-    // "zombie" bar still counting after the recording ended. Rust owns the
-    // windows, so close it here directly — this covers stops from the bar, the
-    // main window and the tray alike. Only acts when the bar is actually up, so
-    // a normal main-window stop doesn't steal focus.
-    {
-        use tauri::Manager;
-        if app.get_webview_window("minibar").is_some() {
-            let _ = crate::minibar::exit_compact_mode(app.clone()).await;
-        }
+    // Every stop origin uses this one completion signal. Metadata travels in the
+    // same main-window-only event so frontend persistence cannot race a separate
+    // broadcast (the minibar mounts the same React providers in another webview).
+    if let Err(error) = app.emit_to(
+        "main",
+        "recording-stop-complete",
+        serde_json::json!({
+            "call_api": true,
+            "folder_path": folder_path_str,
+            "meeting_name": meeting_name_str
+        }),
+    ) {
+        warn!("Failed to notify main window of recording completion: {}", error);
     }
 
     info!("ðŸŽ‰ Recording stopped successfully with ZERO transcript chunks lost");
     Ok(StopOutcome::Completed)
+}
+
+#[cfg(test)]
+mod compact_mode_tests {
+    use super::compact_mode_allowed;
+
+    #[test]
+    fn compact_mode_requires_an_active_non_stopping_recording() {
+        assert!(compact_mode_allowed(true, false));
+        assert!(!compact_mode_allowed(false, false));
+        assert!(!compact_mode_allowed(true, true));
+        assert!(!compact_mode_allowed(false, true));
+    }
 }
 
 /// Check if recording is active

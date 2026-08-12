@@ -25,6 +25,7 @@ import { RecordingPostProcessingProvider } from '@/contexts/RecordingPostProcess
 import { ImportAudioDialog, ImportDropOverlay } from '@/components/ImportAudio'
 import { ImportDialogProvider } from '@/contexts/ImportDialogContext'
 import { isAudioExtension, getAudioFormatsDisplayList } from '@/constants/audioFormats'
+import GlobalSearchDialog from '@/components/GlobalSearchDialog'
 
 
 const sourceSans3 = Source_Sans_3({
@@ -318,6 +319,7 @@ export default function RootLayout({
                     <UpdateCheckProvider>
                       <SidebarProvider>
                         <TooltipProvider>
+                          {onboardingCompleted && !showOnboarding && <GlobalSearchDialog />}
                           <RecordingPostProcessingProvider>
                             <ImportDialogProvider onOpen={handleOpenImportDialog}>
                               {/* Download progress toast provider - listens for background downloads */}

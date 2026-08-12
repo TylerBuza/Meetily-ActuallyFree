@@ -288,5 +288,8 @@ pub fn assign_speaker(samples: &[f32], mic_dominant: bool) -> Option<LiveSpeaker
         user.map(|u| u + 1)
     );
 
-    Some(LiveSpeaker { index: speaker, is_user })
+    Some(LiveSpeaker {
+        index: speaker,
+        is_user,
+    })
 }

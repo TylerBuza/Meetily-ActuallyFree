@@ -125,3 +125,40 @@ export interface TranscriptSegmentData {
    */
   speaker?: string;
 }
+
+export type GlobalSearchResultKind = 'person' | 'meeting' | 'transcript' | 'summary';
+
+export interface GlobalSearchResult {
+  kind: GlobalSearchResultKind;
+  id: string;
+  meetingId?: string;
+  personId?: string;
+  transcriptId?: string;
+  title: string;
+  snippet: string;
+  timestamp?: string;
+  speaker?: string;
+  audioStartTime?: number;
+  meetingCount?: number;
+}
+
+export interface PersonProfileMeeting {
+  meetingId: string;
+  title: string;
+  createdAt: string;
+  messageCount: number;
+  speakingSeconds: number;
+  excerpt?: string;
+}
+
+export interface PersonProfile {
+  id: string;
+  displayName: string;
+  notes?: string;
+  meetingCount: number;
+  messageCount: number;
+  totalSpeakingSeconds: number;
+  firstSeenAt?: string;
+  lastSeenAt?: string;
+  meetings: PersonProfileMeeting[];
+}

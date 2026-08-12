@@ -1202,10 +1202,9 @@ Section Install
     WriteRegStr SHCTX "${UNINSTKEY}" "HelpLink" "${HOMEPAGE}"
   !endif
 
-  ; DisplayVersion is rewritten above on every update. Notify Explorer and
-  ; Settings so an Installed Apps page that was already open does not keep
-  ; showing the previous version from its process-local cache.
-  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0x0000, p 0, p 0)'
+  ; DisplayVersion is rewritten above on every update. Notify Settings so an
+  ; Installed Apps page that was already open does not keep the previous
+  ; version from its process-local cache.
   Push $9
   System::Call 'user32::SendMessageTimeoutW(p 0xffff, i 0x001A, p 0, w "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall", i 0x0002, i 2000, *p .r9)'
   Pop $9
@@ -1219,8 +1218,10 @@ Section Install
   ; because finish page will be skipped
   ${If} $PassiveMode = 1
   ${OrIf} ${Silent}
+  ${OrIf} $UpdateMode = 1
     Call CreateOrUpdateDesktopShortcut
   ${EndIf}
+
   !insertmacro MeetilyReportProgress 78
 
   !ifmacrodef NSIS_HOOK_POSTINSTALL
@@ -1252,6 +1253,11 @@ SectionEnd
 
 Function .onInstSuccess
   nsDialogs::KillTimer MeetilyRefreshInstallProgress
+
+  ; All shortcut choices are final now, including the interactive finish-page
+  ; desktop option. Refresh Explorer/Search without resetting the icon cache.
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0x0000, p 0, p 0)'
+
   ; Check for `/R` flag only in silent and passive installers because
   ; GUI installer has a toggle for the user to (re)start the app
   ${If} $PassiveMode = 1
@@ -1433,66 +1439,39 @@ Function un.SkipIfPassive
 FunctionEnd
 
 Function CreateOrUpdateStartMenuShortcut
-  ; We used to use product name as MAINBINARYNAME
-  ; migrate old shortcuts to target the new MAINBINARYNAME
-  StrCpy $R0 0
-
-  !insertmacro IsShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\$OldMainBinaryName"
-  Pop $0
-  ${If} $0 = 1
-    !insertmacro SetShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
-    StrCpy $R0 1
-  ${EndIf}
-
-  !insertmacro IsShortcutTarget "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\$OldMainBinaryName"
-  Pop $0
-  ${If} $0 = 1
-    !insertmacro SetShortcutTarget "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
-    StrCpy $R0 1
-  ${EndIf}
-
-  ${If} $R0 = 1
-    Return
-  ${EndIf}
-
-  ; Skip creating shortcut if in update mode or no shortcut mode
-  ; but always create if migrating from wix
+  ; Updates deliberately recreate the shortcut. CreateShortcut records an
+  ; explicit executable icon/index, while SetLnkAppUserModelId uses BUNDLEID;
+  ; together these keep Search and taskbar identity stable across replacement.
   ${If} $WixMode = 0
-    ${If} $UpdateMode = 1
-    ${OrIf} $NoShortcutMode = 1
+    ${If} $NoShortcutMode = 1
       Return
     ${EndIf}
   ${EndIf}
 
   !if "${STARTMENUFOLDER}" != ""
     CreateDirectory "$SMPROGRAMS\$AppStartMenuFolder"
-    CreateShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    CreateShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe" 0 SW_SHOWNORMAL "" "${PRODUCTNAME}"
     !insertmacro SetLnkAppUserModelId "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
   !else
-    CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    CreateShortcut "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe" 0 SW_SHOWNORMAL "" "${PRODUCTNAME}"
     !insertmacro SetLnkAppUserModelId "$SMPROGRAMS\${PRODUCTNAME}.lnk"
   !endif
 FunctionEnd
 
 Function CreateOrUpdateDesktopShortcut
-  ; We used to use product name as MAINBINARYNAME
-  ; migrate old shortcuts to target the new MAINBINARYNAME
-  !insertmacro IsShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\$OldMainBinaryName"
-  Pop $0
-  ${If} $0 = 1
-    !insertmacro SetShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
-    Return
-  ${EndIf}
-
-  ; Skip creating shortcut if in update mode or no shortcut mode
-  ; but always create if migrating from wix
   ${If} $WixMode = 0
-    ${If} $UpdateMode = 1
-    ${OrIf} $NoShortcutMode = 1
+    ${If} $NoShortcutMode = 1
       Return
     ${EndIf}
   ${EndIf}
 
-  CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+  ; An update refreshes an existing desktop shortcut but does not create one
+  ; for users who left the setup option unchecked.
+  ${If} $UpdateMode = 1
+  ${AndIfNot} ${FileExists} "$DESKTOP\${PRODUCTNAME}.lnk"
+    Return
+  ${EndIf}
+
+  CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe" "" "$INSTDIR\${MAINBINARYNAME}.exe" 0 SW_SHOWNORMAL "" "${PRODUCTNAME}"
   !insertmacro SetLnkAppUserModelId "$DESKTOP\${PRODUCTNAME}.lnk"
 FunctionEnd

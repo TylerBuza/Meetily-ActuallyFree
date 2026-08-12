@@ -308,7 +308,8 @@ export function useCopyOperations({
         return;
       }
       const baseName = String(meetingTitle || meeting?.title || 'summary');
-      await exportSummaryAs(format, md, baseName);
+      const saved = await exportSummaryAs(format, md, baseName);
+      if (!saved) return;
       toast.success(`Summary exported as ${format.toUpperCase()}`);
       try {
         await Analytics.trackFeatureUsed(`export_summary_${format}`);
@@ -347,7 +348,8 @@ export function useCopyOperations({
         await navigator.clipboard.writeText(markdown);
         toast.success(`${content === 'both' ? 'Transcript and summary' : content} copied to clipboard`);
       } else {
-        await exportSummaryAs(format, markdown, baseName);
+        const saved = await exportSummaryAs(format, markdown, baseName);
+        if (!saved) return false;
         toast.success(`Meeting exported as ${format.toUpperCase()}`);
       }
 

@@ -478,36 +478,43 @@ pub async fn download_diarization_models<R: tauri::Runtime>(
 /// themselves by naming them "You", which the UI renders with their display
 /// name.
 ///
-/// Returns the number of segments relabelled.
+/// A blank `to` removes the assigned identity, deletes its person mapping, and
+/// restores the lowest available meeting-local `Speaker N` label. The returned
+/// label is authoritative for transcript refresh and summary regeneration.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingSpeakerRenameResult {
+    pub speaker: String,
+    pub count: u64,
+    pub removed_name: bool,
+}
+
 #[tauri::command]
 pub async fn rename_meeting_speaker(
     state: tauri::State<'_, crate::state::AppState>,
     meeting_id: String,
     from: String,
     to: String,
-) -> Result<u64, String> {
+) -> Result<MeetingSpeakerRenameResult, String> {
     let _operation_guard = operation_guard().await;
-    let to = to.trim();
-    if to.is_empty() {
-        return Err("Speaker name cannot be empty".to_string());
-    }
 
-    let result = sqlx::query(
-        "UPDATE transcripts SET speaker = ? WHERE meeting_id = ? AND speaker = ?",
+    let outcome = crate::database::repositories::person::PeopleRepository::rename_meeting_speaker(
+        state.db_manager.pool(),
+        &meeting_id,
+        &from,
+        &to,
     )
-    .bind(to)
-    .bind(&meeting_id)
-    .bind(&from)
-    .execute(state.db_manager.pool())
     .await
     .map_err(|e| format!("Failed to rename speaker: {}", e))?;
-
-    let n = result.rows_affected();
     log::info!(
         "🧑‍🤝‍🧑 Renamed speaker '{}' → '{}' across {} segments of meeting {}",
-        from, to, n, meeting_id
+        from, outcome.speaker, outcome.count, meeting_id
     );
-    Ok(n)
+    Ok(MeetingSpeakerRenameResult {
+        speaker: outcome.speaker,
+        count: outcome.count,
+        removed_name: outcome.removed_name,
+    })
 }
 
 /// Run diarization on a recording and return speaker-labeled time segments.

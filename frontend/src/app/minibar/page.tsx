@@ -12,9 +12,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import { Mic, Monitor, Pause, Play, Square, Maximize2 } from 'lucide-react';
 import { LiveAudioVisualizer } from '@/components/LiveAudioVisualizer';
+import { recordingService } from '@/services/recordingService';
 
 function formatElapsed(totalSeconds: number): string {
   const h = Math.floor(totalSeconds / 3600);
@@ -36,52 +36,35 @@ export default function MiniBarPage() {
     return () => document.documentElement.classList.remove('minibar-window');
   }, []);
 
-  // Seed the timer from the recording position passed on the URL, so the bar
-  // continues the meeting rather than counting from zero.
+  // Rust's RecordingState uses a monotonic Instant. Reading that duration keeps
+  // this separate webview aligned through creation delays, pauses, and duplicate
+  // minimize events instead of accumulating drift in a local +1 counter.
   useEffect(() => {
-    const seed = Number(new URLSearchParams(window.location.search).get('elapsed') || 0);
-    setElapsed(Number.isFinite(seed) ? seed : 0);
-
-    const onSync = (e: Event) => {
-      const detail = (e as CustomEvent<{ elapsed?: number }>).detail;
-      if (typeof detail?.elapsed === 'number') setElapsed(detail.elapsed);
+    let mounted = true;
+    const syncFromNative = async () => {
+      try {
+        const state = await recordingService.getRecordingState();
+        if (!mounted) return;
+        const duration = state.active_duration ?? state.recording_duration;
+        if (duration !== null) {
+          setElapsed(Math.max(0, Math.floor(duration)));
+        }
+        setIsPaused(state.is_paused);
+      } catch (error) {
+        console.error('Compact bar: failed to sync recording state', error);
+      }
     };
-    window.addEventListener('minibar-sync', onSync);
-    return () => window.removeEventListener('minibar-sync', onSync);
-  }, []);
-
-  useEffect(() => {
-    if (isPaused || isStopping) return;
-    const id = setInterval(() => setElapsed((v) => v + 1), 1000);
-    return () => clearInterval(id);
-  }, [isPaused, isStopping]);
-
-  // The bar does not own the stop sequence, so it can't know when the meeting
-  // has finished saving. It listens for the Rust stop events (broadcast to
-  // every window) and only then tears itself down. This is what actually stops
-  // the timer and closes the bar — regardless of whether the stop was triggered
-  // here, from the tray, or by the main window. `recording-stopped` fires from
-  // the stop command itself; `recording-stop-complete` is the tray's follow-up.
-  useEffect(() => {
-    const beginStopping = () => setIsStopping(true);
-    const close = () => {
-      setIsStopping(true);
-      invoke('exit_compact_mode').catch((e) => console.error(e));
-    };
-    const unlistenStopping = listen('recording-shutdown-progress', beginStopping);
-    const unlistenStopped = listen('recording-stopped', close);
-    const unlistenComplete = listen('recording-stop-complete', close);
+    void syncFromNative();
+    const id = window.setInterval(syncFromNative, 500);
     return () => {
-      unlistenStopping.then((fn) => fn());
-      unlistenStopped.then((fn) => fn());
-      unlistenComplete.then((fn) => fn());
+      mounted = false;
+      window.clearInterval(id);
     };
   }, []);
 
   const togglePause = useCallback(async () => {
     try {
       await invoke(isPaused ? 'resume_recording' : 'pause_recording');
-      setIsPaused((v) => !v);
     } catch (e) {
       console.error('Compact bar: pause/resume failed', e);
     }
@@ -92,30 +75,18 @@ export default function MiniBarPage() {
   }, []);
 
   const stop = useCallback(async () => {
-    // Drive the stop through Rust rather than emitting to the main window:
-    // cross-window frontend events to/from this separate bar webview are
-    // unreliable and used to leave the bar counting after the recording ended.
-    // `stop_recording_from_minibar` stops the recording (which tears down this
-    // bar) and signals the main window to save + navigate, mirroring the tray.
+    // Rust closes this native window as soon as it claims shutdown. Do not wait
+    // for a frontend event from another webview to remove the bar.
     setIsStopping(true);
     try {
       const didStop = await invoke<boolean>('stop_recording_from_minibar');
       if (!didStop) {
-        // Another surface already owns shutdown, or recording already ended.
-        // Either way this detached window has no useful state left to show.
-        await invoke('exit_compact_mode');
-        return;
+        console.log('Compact bar: native shutdown was already owned');
       }
     } catch (e) {
       console.error('Compact bar: stop failed', e);
       setIsStopping(false);
-      return;
     }
-    // Safety net: if Rust didn't already close the bar (e.g. recording was
-    // already stopped elsewhere), don't leave it stuck on "Finishing…".
-    setTimeout(() => {
-      invoke('exit_compact_mode').catch((e) => console.error(e));
-    }, 6000);
   }, []);
 
   return (

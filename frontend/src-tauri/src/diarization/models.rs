@@ -17,13 +17,13 @@ use super::dsp::{self, NUM_MEL_BINS};
 /// pyannote segmentation-3.0 powerset class → active local speaker indices.
 /// 3 speakers, max 2 simultaneous → 7 classes.
 const POWERSET: [&[usize]; 7] = [
-    &[],        // 0: silence
-    &[0],       // 1
-    &[1],       // 2
-    &[2],       // 3
-    &[0, 1],    // 4
-    &[0, 2],    // 5
-    &[1, 2],    // 6
+    &[],     // 0: silence
+    &[0],    // 1
+    &[1],    // 2
+    &[2],    // 3
+    &[0, 1], // 4
+    &[0, 2], // 5
+    &[1, 2], // 6
 ];
 pub const MAX_LOCAL_SPEAKERS: usize = 3;
 
@@ -31,11 +31,11 @@ pub struct DiarizationModels {
     segmentation: Session,
     embedding: Session,
     // x-vector transform (VBx front-end): out = normalize(lda^T (emb - mean1) - mean2)
-    mean1: Vec<f32>,      // (256,)
-    lda: Vec<f32>,        // (256*128,) row-major
-    mean2: Vec<f32>,      // (128,)
-    lda_in: usize,        // 256
-    lda_out: usize,       // 128
+    mean1: Vec<f32>, // (256,)
+    lda: Vec<f32>,   // (256*128,) row-major
+    mean2: Vec<f32>, // (128,)
+    lda_in: usize,   // 256
+    lda_out: usize,  // 128
 }
 
 impl DiarizationModels {
@@ -72,7 +72,10 @@ impl DiarizationModels {
 
         log::info!(
             "🧑‍🤝‍🧑 Diarization models loaded (lda {}x{}, mean1 {}, mean2 {})",
-            lda_in, lda_out, mean1.len(), mean2.len()
+            lda_in,
+            lda_out,
+            mean1.len(),
+            mean2.len()
         );
 
         Ok(Self {
@@ -237,8 +240,8 @@ fn parse_npy(bytes: &[u8]) -> Result<(Vec<f32>, Vec<usize>)> {
     }
 
     // shape tuple
-    let shape_str = extract_between(header, "'shape':", ")")
-        .ok_or_else(|| anyhow!("npy: no shape"))?;
+    let shape_str =
+        extract_between(header, "'shape':", ")").ok_or_else(|| anyhow!("npy: no shape"))?;
     let shape: Vec<usize> = shape_str
         .trim()
         .trim_start_matches('(')

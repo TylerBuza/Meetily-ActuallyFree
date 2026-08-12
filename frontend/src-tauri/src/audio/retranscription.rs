@@ -471,6 +471,13 @@ async fn run_retranscription<R: Runtime>(
         .await
         .map_err(|e| anyhow!("Failed to start transaction: {}", e))?;
 
+    crate::database::repositories::person::clear_meeting_speaker_mappings(
+        &mut tx,
+        &meeting_id,
+    )
+    .await
+    .map_err(|e| anyhow!("Failed to clear person speaker mappings: {}", e))?;
+
     sqlx::query("DELETE FROM transcripts WHERE meeting_id = ?")
         .bind(&meeting_id)
         .execute(&mut *tx)

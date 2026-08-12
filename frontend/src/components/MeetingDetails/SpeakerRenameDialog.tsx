@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
-import { UserRound } from 'lucide-react';
+import { Unlink, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 
@@ -13,8 +13,18 @@ interface SpeakerRenameDialogProps {
   speaker: string | null;
   meetingId?: string;
   onOpenChange: (open: boolean) => void;
-  /** Called after a successful rename so the transcript can refresh. */
-  onRenamed?: (rename: { from: string; to: string; count: number }) => Promise<void> | void;
+  /** Called after a successful rename/removal so transcript and summary state can refresh. */
+  onRenamed?: (rename: { from: string; to: string; count: number; removedName: boolean }) => Promise<void> | void;
+}
+
+interface SpeakerRenameResult {
+  speaker: string;
+  count: number;
+  removedName: boolean;
+}
+
+function isGeneratedSpeakerLabel(value: string | null): boolean {
+  return !!value && /^speaker \d+$/i.test(value.trim());
 }
 
 /**
@@ -26,7 +36,9 @@ interface SpeakerRenameDialogProps {
  * "Speaker 2" ever is.
  *
  * Naming someone "You" marks them as the local user; the transcript then renders
- * that with the display name from Settings.
+ * that with the display name from Settings. Custom names create/link a durable
+ * cross-meeting person. Blank Save and Remove name reverse only this meeting's
+ * assignment and ask Rust for a collision-free generated `Speaker N` label.
  */
 export function SpeakerRenameDialog({
   open,
@@ -45,27 +57,41 @@ export function SpeakerRenameDialog({
     }
   }, []);
 
-  // Start from the existing label each time the dialog opens.
+  const canRemoveName = !!speaker && !isGeneratedSpeakerLabel(speaker);
+
+  // Start from an assigned name; generated labels remain an empty name field.
   useEffect(() => {
-    if (open) setName(speaker && !/^speaker \d+$/i.test(speaker) ? speaker : '');
-  }, [open, speaker]);
+    if (open) setName(canRemoveName ? speaker ?? '' : '');
+  }, [canRemoveName, open, speaker]);
 
   const submit = async (value: string) => {
     const next = value.trim();
-    if (!meetingId || !speaker || !next || saving) return;
+    if (!meetingId || !speaker || (!next && !canRemoveName) || saving) return;
 
     setSaving(true);
     try {
-      const count = await invoke<number>('rename_meeting_speaker', {
+      const result = await invoke<SpeakerRenameResult>('rename_meeting_speaker', {
         meetingId,
         from: speaker,
         to: next,
       });
-      toast.success(`Renamed to ${next === 'You' && userName ? `${userName} (You)` : next}`, {
-        description: `${count} transcript ${count === 1 ? 'segment' : 'segments'} updated.`,
-      });
+      if (result.removedName) {
+        toast.success('Name removed', {
+          description: `${result.speaker} is now meeting-local and no longer linked to a person. ${result.count} transcript ${result.count === 1 ? 'segment' : 'segments'} updated.`,
+        });
+      } else {
+        const displayName = result.speaker === 'You' && userName ? `${userName} (You)` : result.speaker;
+        toast.success(`Renamed to ${displayName}`, {
+          description: `${result.count} transcript ${result.count === 1 ? 'segment' : 'segments'} updated.`,
+        });
+      }
       onOpenChange(false);
-       await onRenamed?.({ from: speaker, to: next, count });
+      await onRenamed?.({
+        from: speaker,
+        to: result.speaker,
+        count: result.count,
+        removedName: result.removedName,
+      });
     } catch (e) {
       toast.error('Rename failed', {
         description: e instanceof Error ? e.message : String(e),
@@ -85,7 +111,8 @@ export function SpeakerRenameDialog({
 
         <div className="mt-2 space-y-3">
           <p className="text-sm text-gray-500">
-            Renames every line spoken by <strong>{speaker}</strong> in this meeting.
+            Changes every line spoken by <strong>{speaker}</strong> in this meeting.
+            Clear the field and save to remove an assigned name.
           </p>
 
           <input
@@ -114,6 +141,18 @@ export function SpeakerRenameDialog({
             <UserRound size={15} />
             This is me{userName ? ` — ${userName}` : ''}
           </button>
+
+          {canRemoveName && (
+            <button
+              type="button"
+              onClick={() => submit('')}
+              disabled={saving}
+              className="flex w-full items-center gap-2 rounded-md border border-red-500/30 px-3 py-2 text-left text-sm text-red-500 transition-colors hover:border-red-500/60 hover:bg-red-500/10"
+            >
+              <Unlink size={15} />
+              Remove name
+            </button>
+          )}
         </div>
 
         <div className="mt-4 flex justify-end gap-2">
@@ -123,10 +162,10 @@ export function SpeakerRenameDialog({
           <Button
             size="sm"
             className="bg-blue-600 text-white hover:bg-blue-700"
-            disabled={!name.trim() || saving}
+            disabled={(!name.trim() && !canRemoveName) || saving}
             onClick={() => submit(name)}
           >
-            {saving ? 'Saving…' : 'Rename'}
+            {saving ? 'Saving…' : name.trim() ? 'Rename' : 'Remove name'}
           </Button>
         </div>
       </DialogContent>

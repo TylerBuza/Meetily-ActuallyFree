@@ -20,7 +20,6 @@ import {
   Sparkles,
   Copy,
   RefreshCw,
-  ThumbsUp,
   Plus,
   Circle,
   CheckCircle2,
@@ -377,7 +376,6 @@ export function InsightTabs({
               <div className="mt-4 flex items-center gap-2">
                 <ToolbarButton icon={<Copy size={14} />} onClick={() => { void onCopySummary?.(); toast.success('Summary copied'); }}>Copy</ToolbarButton>
                 <ToolbarButton icon={<RefreshCw size={14} />} onClick={() => void onRegenerate?.()}>Regenerate</ToolbarButton>
-                <ToolbarButton className="ml-auto" icon={<ThumbsUp size={14} />} onClick={() => toast.success('Thanks for the feedback')}>Good summary</ToolbarButton>
               </div>
             </>
           )}

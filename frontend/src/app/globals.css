@@ -388,6 +388,36 @@ html.dark {
   box-shadow: 0 0 0 3px rgba(74, 139, 255, 0.12) !important;
 }
 
+/* Command inputs draw focus on their wrapper. Suppressing the nested input's
+   global ring avoids a second blue rectangle inside the control. */
+.dark [cmdk-input-wrapper] [cmdk-input]:focus,
+.dark [cmdk-input-wrapper] [cmdk-input]:focus-visible {
+  border-color: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* Transcript actions respond to the transcript column rather than the viewport.
+   A wide window can still have a narrow transcript beside the summary panel. */
+.transcript-actions-container {
+  container-type: inline-size;
+}
+
+.transcript-action-label {
+  display: none;
+}
+
+@container (min-width: 390px) {
+  .transcript-action-button {
+    width: auto;
+    padding-inline: 0.75rem;
+  }
+
+  .transcript-action-label {
+    display: inline;
+  }
+}
+
 /* Scrollbars. Default Windows scrollbars are bright and heavy, and this app is
    mostly long scrolling surfaces (transcripts, summaries), so they're a
    constant visual distraction if left alone. */

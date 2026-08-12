@@ -29,7 +29,7 @@ interface SummaryGeneratorButtonGroupProps {
   modelConfig: ModelConfig;
   setModelConfig: (config: ModelConfig | ((prev: ModelConfig) => ModelConfig)) => void;
   onSaveModelConfig: (config?: ModelConfig) => Promise<void>;
-  onGenerateSummary: (customPrompt: string) => Promise<void>;
+  onGenerateSummary: (customPrompt: string) => Promise<boolean>;
   onRequestRegenerate?: () => void;
   onStopGeneration: () => void;
   customPrompt: string;

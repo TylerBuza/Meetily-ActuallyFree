@@ -73,57 +73,8 @@ export function useRecordingStop(
   // Guard to prevent duplicate/concurrent stop calls (e.g., from UI and tray simultaneously)
   const stopInProgressRef = useRef(false);
 
-  // Promise to track recording-stopped event data (fixes race condition with recording-stop-complete)
-  const recordingStoppedDataRef = useRef<Promise<void> | null>(null);
-
-  // Set up recording-stopped listener for meeting navigation
-  useEffect(() => {
-    let unlistenFn: (() => void) | undefined;
-
-    const setupRecordingStoppedListener = async () => {
-      try {
-        console.log('Setting up recording-stopped listener for navigation...');
-        unlistenFn = await listen<{
-          message: string;
-          folder_path?: string;
-          meeting_name?: string;
-        }>('recording-stopped', async (event) => {
-          // Create promise that resolves when sessionStorage is set (prevents race condition)
-          recordingStoppedDataRef.current = (async () => {
-            const { folder_path, meeting_name } = event.payload;
-
-            // Store folder_path and meeting_name for later use in handleRecordingStop
-            if (folder_path) {
-              sessionStorage.setItem('last_recording_folder_path', folder_path);
-            }
-            if (meeting_name) {
-              sessionStorage.setItem('last_recording_meeting_name', meeting_name);
-            }
-          })();
-
-        });
-        console.log('Recording stopped listener setup complete');
-      } catch (error) {
-        console.error('Failed to setup recording stopped listener:', error);
-      }
-    };
-
-    setupRecordingStoppedListener();
-
-    return () => {
-      console.log('Cleaning up recording stopped listener...');
-      if (unlistenFn) {
-        unlistenFn();
-      }
-    };
-  }, [router]);
-
   // Main recording stop handler
   const handleRecordingStop = useCallback(async (isCallApi: boolean) => {
-    if (recordingStoppedDataRef.current) {
-      await recordingStoppedDataRef.current;
-    }
-
     // Guard: prevent duplicate/concurrent stop calls
     if (stopInProgressRef.current) {
       return;
@@ -287,7 +238,7 @@ export function useRecordingStop(
         // Get fresh transcript state (ALL transcripts including late ones)
         const freshTranscripts = [...transcriptsRef.current];
 
-        // Get folder_path and meeting_name from recording-stopped event
+        // Get folder_path and meeting_name from the atomic completion payload.
         const folderPath = sessionStorage.getItem('last_recording_folder_path');
         const savedMeetingName = sessionStorage.getItem('last_recording_meeting_name');
 
@@ -374,19 +325,6 @@ export function useRecordingStop(
 
           // Mark as completed
           setStatus(RecordingStatus.COMPLETED);
-
-          // Show success toast with navigation option
-          toast.success('Recording saved successfully!', {
-            description: `${freshTranscripts.length} transcript segments saved.`,
-            action: {
-              label: 'View Meeting',
-              onClick: () => {
-                router.push(`/meeting-details?id=${meetingId}&source=recording`);
-                Analytics.trackButtonClick('view_meeting_from_toast', 'recording_complete');
-              }
-            },
-            duration: 10000,
-          });
 
           // Auto-navigate after a short delay with source parameter
           setTimeout(() => {

@@ -22,6 +22,10 @@ import { PostCallProcessingDialog } from '@/components/MeetingDetails/PostCallPr
 import { MeetingExportDialog } from '@/components/MeetingDetails/MeetingExportDialog';
 import { SummaryRegenerationDialog } from '@/components/MeetingDetails/SummaryRegenerationDialog';
 
+// Page remounts join the same backend-start attempt. Only accepted attempts are
+// persisted in sessionStorage below; failed preflight attempts remain retryable.
+const autoSummaryInFlight = new Map<string, Promise<boolean>>();
+
 export default function PageContent({
   meeting,
   summaryData,
@@ -67,7 +71,7 @@ export default function PageContent({
   const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
   const [isRecording] = useState(false);
   const [summaryResponse] = useState<SummaryResponse | null>(null);
-  const [postCallProcessingComplete, setPostCallProcessingComplete] = useState(false);
+  const [postCallProcessingCompletedMeetingId, setPostCallProcessingCompletedMeetingId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [regenerationRequest, setRegenerationRequest] = useState<{
     open: boolean;
@@ -166,38 +170,62 @@ export default function PageContent({
     Analytics.trackPageView('meeting_details');
   }, []);
 
-  useEffect(() => {
-    setPostCallProcessingComplete(false);
-  }, [meeting.id]);
-
   // Auto-generate summary when flag is set
   useEffect(() => {
-    let cancelled = false;
-
     const autoGenerate = async () => {
       if (
         shouldAutoGenerate &&
         meetingData.transcripts.length > 0 &&
-        (!isPostCallRecording || postCallProcessingComplete) &&
-        !cancelled
+        (!isPostCallRecording || postCallProcessingCompletedMeetingId === meeting.id)
       ) {
+        if (isPostCallRecording) {
+          const summaryStartKey = `post-call-summary-started:${meeting.id}`;
+          if (sessionStorage.getItem(summaryStartKey)) {
+            onAutoGenerateComplete?.();
+            return;
+          }
+
+          let attempt = autoSummaryInFlight.get(meeting.id);
+          if (!attempt) {
+            console.log(`ðŸ¤– Auto-generating summary with ${modelConfig.provider}/${modelConfig.model}...`);
+            attempt = summaryGeneration.handleGenerateSummary('');
+            autoSummaryInFlight.set(meeting.id, attempt);
+          }
+
+          let accepted = false;
+          try {
+            accepted = await attempt;
+          } finally {
+            if (autoSummaryInFlight.get(meeting.id) === attempt) {
+              autoSummaryInFlight.delete(meeting.id);
+            }
+          }
+
+          if (accepted) {
+            sessionStorage.setItem(summaryStartKey, 'started');
+            onAutoGenerateComplete?.();
+          }
+          return;
+        }
+
         console.log(`ðŸ¤– Auto-generating summary with ${modelConfig.provider}/${modelConfig.model}...`);
         await summaryGeneration.handleGenerateSummary('');
-
-        // Notify parent that auto-generation is complete (only if not cancelled)
-        if (onAutoGenerateComplete && !cancelled) {
-          onAutoGenerateComplete();
-        }
+        onAutoGenerateComplete?.();
       }
     };
 
-    autoGenerate();
-
-    // Cleanup: cancel if component unmounts or meeting changes
-    return () => {
-      cancelled = true;
-    };
-  }, [shouldAutoGenerate, meeting.id, isPostCallRecording, postCallProcessingComplete]);
+    void autoGenerate();
+  }, [
+    shouldAutoGenerate,
+    meeting.id,
+    meetingData.transcripts.length,
+    isPostCallRecording,
+    postCallProcessingCompletedMeetingId,
+    modelConfig.provider,
+    modelConfig.model,
+    summaryGeneration.handleGenerateSummary,
+    onAutoGenerateComplete,
+  ]);
 
   return (
     <motion.div
@@ -215,11 +243,13 @@ export default function PageContent({
           onPromptChange={setCustomPrompt}
           onCopyTranscript={copyOperations.handleCopyTranscript}
           onOpenExport={() => setExportOpen(true)}
-          onSpeakerRenamed={({ to }) => {
+          onSpeakerRenamed={({ from, to, removedName }) => {
             if (!meetingData.aiSummary) return;
             setRegenerationRequest({
               open: true,
-              initialContext: `Use the updated speaker name "${to}" and the other speaker labels from the transcript when writing the summary.`,
+              initialContext: removedName
+                ? `The person name "${from}" was removed. Use the restored meeting-local label "${to}" and do not associate it with a person profile.`
+                : `Use the updated speaker name "${to}" and the other speaker labels from the transcript when writing the summary.`,
               speakerNamesChanged: true,
             });
           }}
@@ -309,7 +339,7 @@ export default function PageContent({
         meetingId={meeting.id}
         meetingFolderPath={meeting.folder_path}
         onRefetchTranscripts={onRefetchTranscripts}
-        onComplete={() => setPostCallProcessingComplete(true)}
+        onComplete={() => setPostCallProcessingCompletedMeetingId(meeting.id)}
       />
     </motion.div>
   );

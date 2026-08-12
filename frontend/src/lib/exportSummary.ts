@@ -1,27 +1,19 @@
 /**
- * Summary export helpers: Markdown, PDF, DOCX.
+ * Native meeting export pipeline.
  *
- * Uses in-browser Blob downloads (the same approach the app already uses for Markdown),
- * so no extra Tauri fs/dialog permissions are required. Given a Markdown string, each
- * exporter produces a file and triggers a download.
+ * The webview creates format bytes, but the OS Save dialog owns destination
+ * selection and grants the fs plugin access to that exact path. This avoids
+ * browser-download behavior, which cannot reliably honor a requested folder in
+ * a Tauri webview. Clipboard export is intentionally handled by the caller.
  */
 
 import { Document, Packer, Paragraph, HeadingLevel, TextRun } from 'docx';
 import { jsPDF } from 'jspdf';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeFile } from '@tauri-apps/plugin-fs';
 
 function sanitizeFilename(name: string): string {
   return (name || 'summary').replace(/[^\w\-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80) || 'summary';
-}
-
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
 }
 
 /** Split a markdown line into bold/plain runs based on **bold** markers. */
@@ -39,13 +31,8 @@ function parseInlineRuns(line: string): { text: string; bold: boolean }[] {
   return runs.length ? runs : [{ text: line, bold: false }];
 }
 
-// ---------- Markdown ----------
-export function exportMarkdown(markdown: string, baseName: string) {
-  downloadBlob(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }), `${sanitizeFilename(baseName)}.md`);
-}
-
 // ---------- DOCX ----------
-export async function exportDocx(markdown: string, baseName: string) {
+async function createDocx(markdown: string): Promise<Uint8Array> {
   const lines = markdown.replace(/\r\n/g, '\n').split('\n');
   const paragraphs: Paragraph[] = [];
 
@@ -84,11 +71,11 @@ export async function exportDocx(markdown: string, baseName: string) {
 
   const doc = new Document({ sections: [{ children: paragraphs }] });
   const blob = await Packer.toBlob(doc);
-  downloadBlob(blob, `${sanitizeFilename(baseName)}.docx`);
+  return new Uint8Array(await blob.arrayBuffer());
 }
 
 // ---------- PDF ----------
-export function exportPdf(markdown: string, baseName: string) {
+function createPdf(markdown: string): Uint8Array {
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const marginX = 48;
   const marginTop = 56;
@@ -137,7 +124,7 @@ export function exportPdf(markdown: string, baseName: string) {
     writeWrapped(line.replace(/\*\*/g, ''), 11, false, 4);
   }
 
-  doc.save(`${sanitizeFilename(baseName)}.pdf`);
+  return new Uint8Array(doc.output('arraybuffer'));
 }
 
 // ---------- Plain text ----------
@@ -153,12 +140,8 @@ export function markdownToPlainText(markdown: string): string {
     .trim();
 }
 
-export function exportTxt(markdown: string, baseName: string) {
-  downloadBlob(new Blob([markdownToPlainText(markdown)], { type: 'text/plain;charset=utf-8' }), `${sanitizeFilename(baseName)}.txt`);
-}
-
 // ---------- JSON ----------
-export function exportJson(markdown: string, baseName: string) {
+function createJson(markdown: string, baseName: string): string {
   const payload = {
     app: 'Meetily - Actually Free',
     title: baseName,
@@ -166,15 +149,44 @@ export function exportJson(markdown: string, baseName: string) {
     markdown,
     text: markdownToPlainText(markdown),
   };
-  downloadBlob(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' }), `${sanitizeFilename(baseName)}.json`);
+  return JSON.stringify(payload, null, 2);
 }
 
 export type ExportFormat = 'markdown' | 'pdf' | 'docx' | 'json' | 'txt';
 
-export async function exportSummaryAs(format: ExportFormat, markdown: string, baseName: string) {
-  if (format === 'markdown') return exportMarkdown(markdown, baseName);
-  if (format === 'pdf') return exportPdf(markdown, baseName);
-  if (format === 'docx') return exportDocx(markdown, baseName);
-  if (format === 'json') return exportJson(markdown, baseName);
-  if (format === 'txt') return exportTxt(markdown, baseName);
+const FORMAT_DETAILS: Record<ExportFormat, { extension: string; label: string }> = {
+  markdown: { extension: 'md', label: 'Markdown' },
+  pdf: { extension: 'pdf', label: 'PDF' },
+  docx: { extension: 'docx', label: 'Word document' },
+  json: { extension: 'json', label: 'JSON' },
+  txt: { extension: 'txt', label: 'Text' },
+};
+
+export async function exportSummaryAs(
+  format: ExportFormat,
+  markdown: string,
+  baseName: string,
+): Promise<boolean> {
+  const details = FORMAT_DETAILS[format];
+  // The native picker owns the destination and grants that selected path to
+  // the fs plugin; the webview only creates bytes and never starts a download.
+  const destination = await save({
+    defaultPath: `${sanitizeFilename(baseName)}.${details.extension}`,
+    filters: [{ name: details.label, extensions: [details.extension] }],
+  });
+  if (!destination) return false;
+  const outputPath = destination.toLowerCase().endsWith(`.${details.extension}`)
+    ? destination
+    : `${destination}.${details.extension}`;
+
+  const encoder = new TextEncoder();
+  let bytes: Uint8Array;
+  if (format === 'pdf') bytes = createPdf(markdown);
+  else if (format === 'docx') bytes = await createDocx(markdown);
+  else if (format === 'txt') bytes = encoder.encode(markdownToPlainText(markdown));
+  else if (format === 'json') bytes = encoder.encode(createJson(markdown, baseName));
+  else bytes = encoder.encode(markdown);
+
+  await writeFile(outputPath, bytes);
+  return true;
 }

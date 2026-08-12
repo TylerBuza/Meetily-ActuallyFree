@@ -247,6 +247,13 @@ async fn delete_meeting_with_transaction(
     }
 
     // Delete from related tables in proper order
+    // Do not rely on SQLite FK enforcement: portable/legacy databases may have
+    // opened connections before foreign_keys was enabled.
+    sqlx::query("DELETE FROM person_speakers WHERE meeting_id = ?")
+        .bind(meeting_id)
+        .execute(&mut *transaction)
+        .await?;
+
     // 1. Delete from transcript_chunks
     sqlx::query("DELETE FROM transcript_chunks WHERE meeting_id = ?")
         .bind(meeting_id)
@@ -270,6 +277,13 @@ async fn delete_meeting_with_transaction(
         .bind(meeting_id)
         .execute(&mut *transaction)
         .await?;
+
+    sqlx::query(
+        "DELETE FROM people WHERE NOT EXISTS \
+         (SELECT 1 FROM person_speakers ps WHERE ps.person_id = people.id)",
+    )
+    .execute(&mut *transaction)
+    .await?;
 
     Ok(result.rows_affected() > 0)
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { useRecordingStop } from '@/hooks/useRecordingStop';
 
@@ -26,20 +26,50 @@ export function RecordingPostProcessingProvider({ children }: { children: React.
   const {
     handleRecordingStop,
   } = useRecordingStop(setIsRecording, setIsRecordingDisabled);
+  const handleRecordingStopRef = useRef(handleRecordingStop);
+
+  // Keep the native listener mounted for the provider's full lifetime. The stop
+  // handler closes over live recording state and can change every render, but a
+  // one-shot Tauri event must never fall into an unsubscribe/resubscribe gap.
+  useEffect(() => {
+    handleRecordingStopRef.current = handleRecordingStop;
+  });
 
   useEffect(() => {
     let unlistenFn: (() => void) | undefined;
+    let disposed = false;
 
     const setupListener = async () => {
       try {
         // Listen for recording-stop-complete event from Rust
-        unlistenFn = await listen<boolean>('recording-stop-complete', (event) => {
+        const unlisten = await listen<{
+          call_api: boolean;
+          folder_path?: string | null;
+          meeting_name?: string | null;
+        }>('recording-stop-complete', (event) => {
           console.log('[RecordingPostProcessing] Received recording-stop-complete event:', event.payload);
 
-          // Call the post-processing handler
-          // event.payload is the callApi boolean (true for normal stops)
-          handleRecordingStop(event.payload);
+          const { call_api, folder_path, meeting_name } = event.payload;
+          if (folder_path) {
+            sessionStorage.setItem('last_recording_folder_path', folder_path);
+          } else {
+            sessionStorage.removeItem('last_recording_folder_path');
+          }
+          if (meeting_name) {
+            sessionStorage.setItem('last_recording_meeting_name', meeting_name);
+          } else {
+            sessionStorage.removeItem('last_recording_meeting_name');
+          }
+          void handleRecordingStopRef.current(call_api);
         });
+
+        // StrictMode can clean up an effect before the asynchronous registration
+        // resolves. Dispose that late listener rather than leaking a duplicate.
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlistenFn = unlisten;
 
         console.log('[RecordingPostProcessing] Event listener set up successfully');
       } catch (error) {
@@ -50,12 +80,13 @@ export function RecordingPostProcessingProvider({ children }: { children: React.
     setupListener();
 
     return () => {
+      disposed = true;
       if (unlistenFn) {
         console.log('[RecordingPostProcessing] Cleaning up event listener');
         unlistenFn();
       }
     };
-  }, [handleRecordingStop]);
+  }, []);
 
   return <>{children}</>;
 }

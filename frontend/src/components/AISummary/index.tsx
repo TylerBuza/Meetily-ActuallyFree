@@ -592,19 +592,6 @@ export const AISummary = ({ summary, status, error, onSummaryChange, onRegenerat
     return markdown;
   };
 
-  const handleExport = () => {
-    const markdown = convertToMarkdown();
-    const blob = new Blob([markdown], { type: 'text/markdown' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${currentSummary.title || 'ai-summary'}.md`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
   const renderErrorState = () => (
     <div className="w-full p-4 bg-red-50 border border-red-200 rounded-lg">
       <div className="flex items-center mb-2">

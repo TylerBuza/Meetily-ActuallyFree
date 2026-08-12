@@ -169,9 +169,10 @@ export function useSummaryGeneration({
     transcriptTexts?: string[];
     customPrompt?: string;
     isRegeneration?: boolean;
-  }) => {
+  }): Promise<boolean> => {
     setSummaryStatus(isRegeneration ? 'regenerating' : 'processing');
     setSummaryError(null);
+    let backendAccepted = false;
 
     try {
       if (!transcriptText.trim()) {
@@ -219,9 +220,13 @@ export function useSummaryGeneration({
         customPrompt: customPrompt,
         templateId: selectedTemplate,
         summaryLanguage,
-      }) as any;
+      }) as { process_id?: unknown };
 
       const process_id = result.process_id;
+      if (typeof process_id !== 'string' || !process_id.trim()) {
+        throw new Error('Summary backend did not accept the generation request.');
+      }
+      backendAccepted = true;
       console.log('Process ID:', process_id);
 
       // Start global polling via context
@@ -430,6 +435,7 @@ export function useSummaryGeneration({
           }
         }
       });
+      return true;
     } catch (error) {
       console.error(`Failed to ${isRegeneration ? 'regenerate' : 'generate'} summary:`, error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -448,6 +454,7 @@ export function useSummaryGeneration({
         undefined,
         errorMessage
       );
+      return backendAccepted;
     }
   }, [
     meeting.id,
@@ -518,12 +525,12 @@ export function useSummaryGeneration({
   }, []);
 
   // Public API: Generate summary from transcripts
-  const handleGenerateSummary = useCallback(async (customPrompt: string = '') => {
+  const handleGenerateSummary = useCallback(async (customPrompt: string = ''): Promise<boolean> => {
     // Check if model config is still loading
     if (isModelConfigLoading) {
       console.log('⏳ Model configuration is still loading, please wait...');
       toast.info('Loading model configuration, please wait...');
-      return;
+      return false;
     }
 
     // Flip the UI into "Generating…" immediately — before the (slow) transcript
@@ -541,7 +548,7 @@ export function useSummaryGeneration({
       console.log(error_msg);
       setSummaryStatus('idle');
       toast.error(error_msg);
-      return;
+      return false;
     }
 
     console.log(`✅ Proceeding with ${allTranscripts.length} transcripts`);
@@ -564,7 +571,7 @@ export function useSummaryGeneration({
             'No Ollama models found. Please download gemma3:1b from Model Settings.',
             { duration: 5000 }
           );
-          return;
+          return false;
         }
       } catch (error) {
         console.error('Error checking Ollama models:', error);
@@ -591,7 +598,7 @@ export function useSummaryGeneration({
             { duration: 5000 }
           );
         }
-        return;
+        return false;
       }
     }
 
@@ -609,7 +616,7 @@ export function useSummaryGeneration({
           if (onOpenModelSettings) {
             onOpenModelSettings();
           }
-          return;
+          return false;
         }
 
         // Check model readiness with filesystem refresh
@@ -633,7 +640,7 @@ export function useSummaryGeneration({
                 description: `${selectedModel} is downloading (${status.progress}%). Please wait until download completes.`,
                 duration: 5000,
               });
-              return;
+              return false;
             }
 
             if (status.type === 'not_downloaded') {
@@ -645,7 +652,7 @@ export function useSummaryGeneration({
               if (onOpenModelSettings) {
                 onOpenModelSettings();
               }
-              return;
+              return false;
             }
 
             if (status.type === 'corrupted' || status.type === 'error') {
@@ -660,7 +667,7 @@ export function useSummaryGeneration({
               if (onOpenModelSettings) {
                 onOpenModelSettings();
               }
-              return;
+              return false;
             }
           }
 
@@ -673,7 +680,7 @@ export function useSummaryGeneration({
           if (onOpenModelSettings) {
             onOpenModelSettings();
           }
-          return;
+          return false;
         }
 
         // Model is ready, continue to backend call
@@ -684,13 +691,13 @@ export function useSummaryGeneration({
           description: error instanceof Error ? error.message : String(error),
           duration: 5000,
         });
-        return;
+        return false;
       }
     }
 
     const summaryPayload = buildSummaryTranscriptPayload(allTranscripts);
 
-    await processSummary({
+    return processSummary({
       ...summaryPayload,
       customPrompt,
     });

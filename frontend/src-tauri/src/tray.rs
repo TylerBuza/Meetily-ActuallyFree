@@ -1,5 +1,4 @@
 use tauri::{
-    Emitter,
     menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem},
     tray::TrayIconBuilder,
     AppHandle, Manager, Runtime,
@@ -99,12 +98,6 @@ fn toggle_recording_handler<R: Runtime>(app: &AppHandle<R>) {
             match stop_result {
                 Ok(crate::audio::recording_commands::StopOutcome::Completed) => {
                     log::info!("Tray toggle: Recording stopped successfully");
-
-                    // Trigger frontend post-processing via event (works from any page)
-                    // (SQLite save, navigation, analytics)
-                    if let Err(e) = app_clone.emit("recording-stop-complete", true) {
-                        log::error!("Tray toggle: Failed to emit recording-stop-complete event: {}", e);
-                    }
                 }
                 Ok(crate::audio::recording_commands::StopOutcome::AlreadyStopping) => {
                     log::info!("Tray toggle: Recording stop is already in progress");
@@ -195,12 +188,6 @@ fn stop_recording_handler<R: Runtime>(app: &AppHandle<R>) {
         match stop_result {
             Ok(crate::audio::recording_commands::StopOutcome::Completed) => {
                 log::info!("Tray: Recording stopped successfully");
-
-                // Trigger frontend post-processing via event (works from any page)
-                // (SQLite save, navigation, analytics)
-                if let Err(e) = app_clone.emit("recording-stop-complete", true) {
-                    log::error!("Tray: Failed to emit recording-stop-complete event: {}", e);
-                }
             }
             Ok(crate::audio::recording_commands::StopOutcome::AlreadyStopping) => {
                 log::info!("Tray: Recording stop is already in progress");

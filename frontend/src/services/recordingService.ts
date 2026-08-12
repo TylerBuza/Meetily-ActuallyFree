@@ -14,6 +14,8 @@ export interface RecordingState {
   is_active: boolean;
   recording_duration: number | null;
   active_duration: number | null;
+  total_pause_duration: number;
+  current_pause_duration: number | null;
 }
 
 export interface RecordingStoppedPayload {

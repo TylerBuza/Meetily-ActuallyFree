@@ -115,9 +115,11 @@ pub async fn download_models<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
         let url = format!("{}/{}", RELEASE_BASE, name);
         log::info!("⬇️ Downloading {} …", name);
 
-        let response = client.get(&url).send().await.map_err(|e| {
-            anyhow!("Failed to start download for {}: {}", name, e)
-        })?;
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| anyhow!("Failed to start download for {}: {}", name, e))?;
         if !response.status().is_success() {
             return Err(anyhow!(
                 "Download of {} failed with status {}",

@@ -33,6 +33,7 @@ function MeetingDetailsContent() {
   const [shouldAutoGenerate, setShouldAutoGenerate] = useState<boolean>(false);
   const [hasCheckedAutoGen, setHasCheckedAutoGen] = useState<boolean>(false);
   const [summaryLoaded, setSummaryLoaded] = useState<boolean>(false);
+  const autoGenerationSetupMeetingRef = useRef<string | null>(null);
 
   // Use pagination hook for efficient transcript loading
   const {
@@ -64,7 +65,8 @@ function MeetingDetailsContent() {
 
   // Set up auto-generation - respects DB as source of truth
   const setupAutoGeneration = useCallback(async () => {
-    if (hasCheckedAutoGen) return; // Only check once
+    if (hasCheckedAutoGen || autoGenerationSetupMeetingRef.current === meetingId) return;
+    autoGenerationSetupMeetingRef.current = meetingId;
 
     // Only auto-generate if navigated from recording
     if (source !== 'recording') {
@@ -120,7 +122,7 @@ function MeetingDetailsContent() {
     }
 
     setHasCheckedAutoGen(true);
-  }, [hasCheckedAutoGen, checkForGemmaModel, source, isAutoSummary, setModelConfig]);
+  }, [hasCheckedAutoGen, meetingId, checkForGemmaModel, source, isAutoSummary, setModelConfig]);
 
   // Sync meeting metadata from pagination hook to meeting details state
   useEffect(() => {
@@ -176,6 +178,7 @@ function MeetingDetailsContent() {
     setHasCheckedAutoGen(false);
     setShouldAutoGenerate(false);
     setSummaryLoaded(false);
+    autoGenerationSetupMeetingRef.current = null;
   }, [meetingId]);
 
   // Cleanup: stop polling only when leaving this meeting / unmounting.
