@@ -253,7 +253,7 @@ impl RecordingManager {
         }
 
         // Drain the microphone worker while the pipeline still accepts chunks.
-        if let Err(e) = self.stream_manager.stop_streams() {
+        if let Err(e) = self.stream_manager.stop_streams().await {
             error!("Error stopping audio streams: {}", e);
         }
         self.state.stop_recording();
@@ -280,7 +280,7 @@ impl RecordingManager {
         }
 
         // Drain accepted microphone blocks before disabling pipeline input.
-        if let Err(e) = self.stream_manager.stop_streams() {
+        if let Err(e) = self.stream_manager.stop_streams().await {
             error!("Error stopping audio streams: {}", e);
             errors.push(format!("Failed to stop audio streams: {}", e));
         }
@@ -340,7 +340,7 @@ impl RecordingManager {
         info!("Recording duration before stop: {:?}s", recording_duration);
 
         // Drain the microphone worker before disabling pipeline input.
-        if let Err(e) = self.stream_manager.stop_streams() {
+        if let Err(e) = self.stream_manager.stop_streams().await {
             error!("Error stopping audio streams: {}", e);
         }
         self.state.stop_recording();
@@ -504,7 +504,7 @@ impl RecordingManager {
             self.state.stop_recording();
 
             // Stop audio streams
-            if let Err(e) = self.stream_manager.stop_streams() {
+            if let Err(e) = self.stream_manager.stop_streams().await {
                 error!("Error stopping audio streams during cleanup: {}", e);
             }
 
@@ -557,7 +557,7 @@ impl RecordingManager {
                     let system_device = self.state.get_system_device();
 
                     // Restart streams with new microphone
-                    self.stream_manager.stop_streams()?;
+                    self.stream_manager.stop_streams().await?;
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
                     self.stream_manager.start_streams(Some(device_arc.clone()), system_device, None).await?;
@@ -571,7 +571,7 @@ impl RecordingManager {
                     let microphone_device = self.state.get_microphone_device();
 
                     // Restart streams with new system audio
-                    self.stream_manager.stop_streams()?;
+                    self.stream_manager.stop_streams().await?;
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
                     self.stream_manager.start_streams(microphone_device, Some(device_arc.clone()), None).await?;
