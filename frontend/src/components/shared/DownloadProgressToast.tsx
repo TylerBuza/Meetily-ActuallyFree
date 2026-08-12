@@ -226,7 +226,7 @@ export function useDownloadProgressToast() {
         speedMbps: speed_mbps ?? 0,
         status: status === 'cancelled'
           ? 'cancelled'
-          : status === 'completed' || progress >= 100
+          : status === 'completed'
           ? 'completed'
           : 'downloading',
       };

@@ -158,7 +158,7 @@ void DrawChrome(HDC dc) {
 void DrawCapability(HDC dc, int left, const wchar_t* title, const wchar_t* detail) {
   Text(dc, title, {left, 177, left + 176, 207}, g_heading_font, 0xeaf1fb,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-  Text(dc, detail, {left + 8, 210, left + 168, 250}, g_small_font, 0x8fa4c0,
+  Text(dc, detail, {left + 8, 207, left + 168, 258}, g_small_font, 0x8fa4c0,
        DT_CENTER | DT_WORDBREAK | DT_VCENTER);
 }
 

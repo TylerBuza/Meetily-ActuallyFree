@@ -184,8 +184,8 @@ export class ParakeetAPI {
     await invoke('parakeet_download_model', { modelName });
   }
 
-  static async cancelDownload(modelName: string): Promise<void> {
-    await invoke('parakeet_cancel_download', { modelName });
+  static async cancelDownload(modelName: string): Promise<boolean> {
+    return await invoke('parakeet_cancel_download', { modelName });
   }
 
   static async deleteCorruptedModel(modelName: string): Promise<string> {

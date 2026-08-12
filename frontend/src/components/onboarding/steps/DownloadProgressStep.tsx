@@ -85,14 +85,15 @@ export function DownloadProgressStep() {
       // Progress events will update state
     } catch (error) {
       console.error('[DownloadProgressStep] Retry failed:', error);
+      const message = String(error);
       setParakeetState((prev) => ({
         ...prev,
         status: 'error',
-        error: error instanceof Error ? error.message : 'Retry failed',
+        error: message,
       }));
 
       toast.error('Download retry failed', {
-        description: 'Please check your connection and try again.',
+        description: message,
       });
     } finally {
       // Allow retry again after 2 seconds
@@ -208,14 +209,18 @@ export function DownloadProgressStep() {
       if (modelName === PARAKEET_MODEL) {
         setParakeetState((prev) => ({
           ...prev,
-          status: status === 'completed' ? 'completed' : 'downloading',
+          status: status === 'completed'
+            ? 'completed'
+            : status === 'cancelled'
+              ? 'waiting'
+              : 'downloading',
           progress,
           downloadedMb: downloaded_mb ?? prev.downloadedMb,
           totalMb: total_mb ?? prev.totalMb,
           speedMbps: speed_mbps ?? prev.speedMbps,
         }));
 
-        if (status === 'completed' || progress >= 100) {
+        if (status === 'completed') {
           setParakeetDownloaded(true);
         }
       }

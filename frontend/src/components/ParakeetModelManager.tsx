@@ -81,10 +81,25 @@ export function ParakeetModelManager({
       console.log('[ParakeetModelManager] Setting up event listeners...');
 
       // Download progress with throttling
-      unlistenProgress = await listen<{ modelName: string; progress: number }>(
+      unlistenProgress = await listen<{ modelName: string; progress: number; status?: string }>(
         'parakeet-model-download-progress',
         (event) => {
-          const { modelName, progress } = event.payload;
+          const { modelName, progress, status } = event.payload;
+          if (status === 'cancelled') {
+            setModels(prevModels =>
+              prevModels.map(model =>
+                model.name === modelName
+                  ? { ...model, status: 'Missing' as ModelStatus }
+                  : model
+              )
+            );
+            setDownloadingModels(prev => {
+              const next = new Set(prev);
+              next.delete(modelName);
+              return next;
+            });
+            return;
+          }
           const now = Date.now();
           const throttleData = progressThrottleRef.current.get(modelName);
 
@@ -212,7 +227,8 @@ export function ParakeetModelManager({
     const displayName = displayInfo?.friendlyName || modelName;
 
     try {
-      await ParakeetAPI.cancelDownload(modelName);
+      const cancelled = await ParakeetAPI.cancelDownload(modelName);
+      if (!cancelled) return;
 
       setDownloadingModels(prev => {
         const newSet = new Set(prev);
@@ -274,7 +290,7 @@ export function ParakeetModelManager({
         return newSet;
       });
 
-      const errorMessage = err instanceof Error ? err.message : 'Download failed';
+      const errorMessage = String(err);
       setModels(prev =>
         prev.map(model =>
           model.name === modelName ? { ...model, status: { Error: errorMessage } } : model

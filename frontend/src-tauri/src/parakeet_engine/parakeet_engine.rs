@@ -4,17 +4,19 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::fs;
 use tokio::io::{AsyncWriteExt, BufWriter};
-use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tokio::time::timeout;
+
+pub(crate) const DOWNLOAD_CANCELLED_MESSAGE: &str = "Download cancelled by user";
 
 /// Quantization type for Parakeet models
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum QuantizationType {
-    FP32,   // Full precision
-    Int8,   // 8-bit integer quantization (faster)
+    FP32, // Full precision
+    Int8, // 8-bit integer quantization (faster)
 }
 
 impl Default for QuantizationType {
@@ -28,9 +30,14 @@ impl Default for QuantizationType {
 pub enum ModelStatus {
     Available,
     Missing,
-    Downloading { progress: u8 },
+    Downloading {
+        progress: u8,
+    },
     Error(String),
-    Corrupted { file_size: u64, expected_min_size: u64 },
+    Corrupted {
+        file_size: u64,
+        expected_min_size: u64,
+    },
 }
 
 /// Detailed download progress info (MB-based with speed)
@@ -75,7 +82,7 @@ pub struct ModelInfo {
     pub path: PathBuf,
     pub size_mb: u32,
     pub quantization: QuantizationType,
-    pub speed: String,     // Performance description
+    pub speed: String, // Performance description
     pub status: ModelStatus,
     pub description: String,
 }
@@ -95,7 +102,9 @@ impl std::fmt::Display for ParakeetEngineError {
         match self {
             ParakeetEngineError::ModelNotLoaded => write!(f, "No Parakeet model loaded"),
             ParakeetEngineError::ModelNotFound(name) => write!(f, "Model '{}' not found", name),
-            ParakeetEngineError::TranscriptionFailed(err) => write!(f, "Transcription failed: {}", err),
+            ParakeetEngineError::TranscriptionFailed(err) => {
+                write!(f, "Transcription failed: {}", err)
+            }
             ParakeetEngineError::DownloadFailed(err) => write!(f, "Download failed: {}", err),
             ParakeetEngineError::IoError(err) => write!(f, "IO error: {}", err),
             ParakeetEngineError::Other(err) => write!(f, "Error: {}", err),
@@ -116,12 +125,56 @@ pub struct ParakeetEngine {
     current_model: Arc<RwLock<Option<ParakeetModel>>>,
     current_model_name: Arc<RwLock<Option<String>>>,
     pub(crate) available_models: Arc<RwLock<HashMap<String, ModelInfo>>>,
-    cancel_download_flag: Arc<RwLock<Option<String>>>, // Model name being cancelled
+    cancel_downloads: Arc<RwLock<HashSet<String>>>,
+    completed_cancellations: Arc<RwLock<HashSet<String>>>,
     // Active downloads tracking to prevent concurrent downloads
     pub(crate) active_downloads: Arc<RwLock<HashSet<String>>>, // Set of models currently being downloaded
 }
 
 impl ParakeetEngine {
+    fn download_base_urls(model_name: &str) -> Vec<&'static str> {
+        if model_name.contains("-v2-") {
+            vec!["https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main"]
+        } else {
+            vec![
+                "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main",
+                "https://github.com/TylerBuza/Meetily-ActuallyFree/releases/download/parakeet-tdt-0.6b-v3-onnx",
+            ]
+        }
+    }
+
+    fn download_file_sizes(
+        model_name: &str,
+        quantization: &QuantizationType,
+    ) -> HashMap<&'static str, u64> {
+        match quantization {
+            QuantizationType::Int8 if model_name.contains("-v2-") => [
+                ("encoder-model.int8.onnx", 652_184_014),
+                ("decoder_joint-model.int8.onnx", 8_998_286),
+                ("nemo128.onnx", 139_764),
+                ("vocab.txt", 9_384),
+            ]
+            .into_iter()
+            .collect(),
+            QuantizationType::Int8 => [
+                ("encoder-model.int8.onnx", 652_183_999),
+                ("decoder_joint-model.int8.onnx", 18_202_004),
+                ("nemo128.onnx", 139_764),
+                ("vocab.txt", 93_939),
+            ]
+            .into_iter()
+            .collect(),
+            QuantizationType::FP32 => [
+                ("encoder-model.onnx", 41_800_000 + 2_440_000_000),
+                ("decoder_joint-model.onnx", 72_500_000),
+                ("nemo128.onnx", 140_000),
+                ("vocab.txt", 93_900),
+            ]
+            .into_iter()
+            .collect(),
+        }
+    }
+
     /// Create a new Parakeet engine with optional custom models directory
     pub fn new_with_models_dir(models_dir: Option<PathBuf>) -> Result<Self> {
         let models_dir = if let Some(dir) = models_dir {
@@ -140,7 +193,10 @@ impl ParakeetEngine {
             }
         };
 
-        log::info!("ParakeetEngine using models directory: {}", models_dir.display());
+        log::info!(
+            "ParakeetEngine using models directory: {}",
+            models_dir.display()
+        );
 
         // Create directory if it doesn't exist
         if !models_dir.exists() {
@@ -152,7 +208,8 @@ impl ParakeetEngine {
             current_model: Arc::new(RwLock::new(None)),
             current_model_name: Arc::new(RwLock::new(None)),
             available_models: Arc::new(RwLock::new(HashMap::new())),
-            cancel_download_flag: Arc::new(RwLock::new(None)),
+            cancel_downloads: Arc::new(RwLock::new(HashSet::new())),
+            completed_cancellations: Arc::new(RwLock::new(HashSet::new())),
             // Initialize active downloads tracking
             active_downloads: Arc::new(RwLock::new(HashSet::new())),
         })
@@ -167,8 +224,20 @@ impl ParakeetEngine {
         // Model name format: parakeet-tdt-0.6b-v{version}-{quantization}
         // Sizes match actual download sizes (encoder + decoder + preprocessor + vocab)
         let model_configs = [
-            ("parakeet-tdt-0.6b-v3-int8", 670, QuantizationType::Int8, "Ultra Fast (v3)", "Real time on M4 Max, latest version with int8 quantization"),
-            ("parakeet-tdt-0.6b-v2-int8", 661, QuantizationType::Int8, "Fast (v2)", "Previous version with int8 quantization, good balance of speed and accuracy"),
+            (
+                "parakeet-tdt-0.6b-v3-int8",
+                670,
+                QuantizationType::Int8,
+                "Ultra Fast (v3)",
+                "Real time on M4 Max, latest version with int8 quantization",
+            ),
+            (
+                "parakeet-tdt-0.6b-v2-int8",
+                661,
+                QuantizationType::Int8,
+                "Fast (v2)",
+                "Previous version with int8 quantization, good balance of speed and accuracy",
+            ),
         ];
 
         // Get active downloads to override status
@@ -200,9 +269,9 @@ impl ParakeetEngine {
                     ],
                 };
 
-                let all_files_exist = required_files.iter().all(|file| {
-                    model_path.join(file).exists()
-                });
+                let all_files_exist = required_files
+                    .iter()
+                    .all(|file| model_path.join(file).exists());
 
                 if all_files_exist {
                     // Validate model by checking file sizes
@@ -274,26 +343,32 @@ impl ParakeetEngine {
             return Err(anyhow!("Preprocessor (nemo128.onnx) not found"));
         }
 
-        // Define minimum file sizes (90% of expected to allow some variance)
-        // These are critical to catch partial downloads that would crash on load
-        let expected_sizes: Vec<(&str, u64)> = if is_int8 {
-            vec![
-                ("encoder-model.int8.onnx", 580_000_000),    // ~652 MB, min 580 MB (89%)
-                ("decoder_joint-model.int8.onnx", 8_000_000), // ~18 MB, min 8 MB
-                ("nemo128.onnx", 100_000),                    // ~140 KB, min 100 KB
-                ("vocab.txt", 5_000),                         // ~94 KB, min 5 KB
-            ]
+        // Published model sizes prevent truncated files from being treated as
+        // loadable models. Keep minimum checks only for legacy FP32 exports.
+        let model_name = model_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let exact_sizes = if is_int8 {
+            Some(Self::download_file_sizes(
+                model_name,
+                &QuantizationType::Int8,
+            ))
+        } else {
+            None
+        };
+        let expected_sizes: Vec<(&str, u64)> = if let Some(ref sizes) = exact_sizes {
+            sizes.iter().map(|(name, size)| (*name, *size)).collect()
         } else {
             vec![
-                ("encoder-model.onnx", 2_200_000_000),        // ~2.44 GB, min 2.2 GB
-                ("decoder_joint-model.onnx", 65_000_000),     // ~72 MB, min 65 MB
-                ("nemo128.onnx", 100_000),                    // ~140 KB, min 100 KB
-                ("vocab.txt", 5_000),                         // ~94 KB, min 5 KB
+                ("encoder-model.onnx", 2_200_000_000), // ~2.44 GB, min 2.2 GB
+                ("decoder_joint-model.onnx", 65_000_000), // ~72 MB, min 65 MB
+                ("nemo128.onnx", 100_000),             // ~140 KB, min 100 KB
+                ("vocab.txt", 5_000),                  // ~94 KB, min 5 KB
             ]
         };
 
-        // Validate each file exists AND has sufficient size
-        for (filename, min_size) in expected_sizes {
+        for (filename, expected_size) in expected_sizes {
             let file_path = model_dir.join(filename);
             if !file_path.exists() {
                 return Err(anyhow!("{} not found", filename));
@@ -302,12 +377,14 @@ impl ParakeetEngine {
             match std::fs::metadata(&file_path) {
                 Ok(metadata) => {
                     let actual_size = metadata.len();
-                    if actual_size < min_size {
+                    let valid_size = exact_sizes.is_some() && actual_size == expected_size
+                        || exact_sizes.is_none() && actual_size >= expected_size;
+                    if !valid_size {
                         return Err(anyhow!(
-                            "{} is incomplete: {} bytes (expected at least {} bytes)",
+                            "{} has {} bytes (expected {})",
                             filename,
                             actual_size,
-                            min_size
+                            expected_size
                         ));
                     }
                 }
@@ -318,53 +395,6 @@ impl ParakeetEngine {
         }
 
         Ok(())
-    }
-
-    /// Clean incomplete model directory before download
-    /// Removes all files if directory exists but model is not Available
-    async fn clean_incomplete_model_directory(&self, model_dir: &PathBuf) -> Result<()> {
-        if !model_dir.exists() {
-            return Ok(()); // Nothing to clean
-        }
-
-        // Validate the directory
-        match self.validate_model_directory(model_dir).await {
-            Ok(_) => {
-                log::info!("Model directory is valid, no cleanup needed");
-                return Ok(());
-            }
-            Err(validation_error) => {
-                log::warn!(
-                    "Model directory exists but is invalid: {}. Cleaning up...",
-                    validation_error
-                );
-
-                // List and remove all files in the directory
-                let mut entries = fs::read_dir(model_dir).await
-                    .map_err(|e| anyhow!("Failed to read model directory: {}", e))?;
-
-                let mut removed_count = 0;
-                while let Some(entry) = entries.next_entry().await
-                    .map_err(|e| anyhow!("Failed to read directory entry: {}", e))?
-                {
-                    let path = entry.path();
-                    if path.is_file() {
-                        match fs::remove_file(&path).await {
-                            Ok(_) => {
-                                log::info!("Removed incomplete file: {:?}", path.file_name());
-                                removed_count += 1;
-                            }
-                            Err(e) => {
-                                log::warn!("Failed to remove file {:?}: {}", path, e);
-                            }
-                        }
-                    }
-                }
-
-                log::info!("Cleaned {} incomplete files from model directory", removed_count);
-                Ok(())
-            }
-        }
     }
 
     /// Load a Parakeet model
@@ -379,12 +409,19 @@ impl ParakeetEngine {
                 // Check if this model is already loaded
                 if let Some(current_model) = self.current_model_name.read().await.as_ref() {
                     if current_model == model_name {
-                        log::info!("Parakeet model {} is already loaded, skipping reload", model_name);
+                        log::info!(
+                            "Parakeet model {} is already loaded, skipping reload",
+                            model_name
+                        );
                         return Ok(());
                     }
 
                     // Unload current model before loading new one
-                    log::info!("Unloading current Parakeet model '{}' before loading '{}'", current_model, model_name);
+                    log::info!(
+                        "Unloading current Parakeet model '{}' before loading '{}'",
+                        current_model,
+                        model_name
+                    );
                     self.unload_model().await;
                 }
 
@@ -406,18 +443,18 @@ impl ParakeetEngine {
                 );
                 Ok(())
             }
-            ModelStatus::Missing => {
-                Err(anyhow!("Parakeet model {} is not downloaded", model_name))
-            }
-            ModelStatus::Downloading { .. } => {
-                Err(anyhow!("Parakeet model {} is currently downloading", model_name))
-            }
+            ModelStatus::Missing => Err(anyhow!("Parakeet model {} is not downloaded", model_name)),
+            ModelStatus::Downloading { .. } => Err(anyhow!(
+                "Parakeet model {} is currently downloading",
+                model_name
+            )),
             ModelStatus::Error(ref err) => {
                 Err(anyhow!("Parakeet model {} has error: {}", model_name, err))
             }
-            ModelStatus::Corrupted { .. } => {
-                Err(anyhow!("Parakeet model {} is corrupted and cannot be loaded", model_name))
-            }
+            ModelStatus::Corrupted { .. } => Err(anyhow!(
+                "Parakeet model {} is corrupted and cannot be loaded",
+                model_name
+            )),
         }
     }
 
@@ -484,9 +521,14 @@ impl ParakeetEngine {
             models.get(model_name).cloned()
         };
 
-        let model_info = model_info.ok_or_else(|| anyhow!("Parakeet model '{}' not found", model_name))?;
+        let model_info =
+            model_info.ok_or_else(|| anyhow!("Parakeet model '{}' not found", model_name))?;
 
-        log::info!("Parakeet model '{}' has status: {:?}", model_name, model_info.status);
+        log::info!(
+            "Parakeet model '{}' has status: {:?}",
+            model_name,
+            model_info.status
+        );
 
         // Allow deletion of corrupted or available models
         match &model_info.status {
@@ -527,11 +569,13 @@ impl ParakeetEngine {
         progress_callback: Option<Box<dyn Fn(u8) + Send>>,
     ) -> Result<()> {
         // Wrap simple callback to use detailed version
-        let detailed_callback: Option<Box<dyn Fn(DownloadProgress) + Send>> =
-            progress_callback.map(|cb| {
-                Box::new(move |p: DownloadProgress| cb(p.percent)) as Box<dyn Fn(DownloadProgress) + Send>
+        let detailed_callback: Option<Box<dyn Fn(DownloadProgress) + Send>> = progress_callback
+            .map(|cb| {
+                Box::new(move |p: DownloadProgress| cb(p.percent))
+                    as Box<dyn Fn(DownloadProgress) + Send>
             });
-        self.download_model_detailed(model_name, detailed_callback).await
+        self.download_model_detailed(model_name, detailed_callback)
+            .await
     }
 
     /// Download a Parakeet model with detailed progress (MB/speed/resume support)
@@ -542,36 +586,58 @@ impl ParakeetEngine {
     ) -> Result<()> {
         log::info!("Starting download for Parakeet model: {}", model_name);
 
-        // Check if download is already in progress for this model
-        {
-            let active = self.active_downloads.read().await;
-            if active.contains(model_name) {
-                log::warn!("Download already in progress for Parakeet model: {}", model_name);
-                return Err(anyhow!("Download already in progress for model: {}", model_name));
-            }
-        }
-
-        // Add to active downloads
         {
             let mut active = self.active_downloads.write().await;
-            active.insert(model_name.to_string());
+            if !active.insert(model_name.to_string()) {
+                log::warn!(
+                    "Download already in progress for Parakeet model: {}",
+                    model_name
+                );
+                return Err(anyhow!(
+                    "Download already in progress for model: {}",
+                    model_name
+                ));
+            }
         }
+        self.cancel_downloads.write().await.remove(model_name);
+        self.completed_cancellations.write().await.remove(model_name);
 
-        // Clear any previous cancellation flag for this model
-        {
-            let mut cancel_flag = self.cancel_download_flag.write().await;
-            *cancel_flag = None;
+        let result = self
+            .download_model_detailed_reserved(model_name, progress_callback)
+            .await;
+        if let Err(error) = &result {
+            let mut models = self.available_models.write().await;
+            if let Some(model) = models.get_mut(model_name) {
+                model.status = if error.to_string() == DOWNLOAD_CANCELLED_MESSAGE {
+                    ModelStatus::Missing
+                } else {
+                    ModelStatus::Error(error.to_string())
+                };
+            }
         }
+        if result.as_ref().is_err_and(|error| error.to_string() == DOWNLOAD_CANCELLED_MESSAGE) {
+            self.completed_cancellations
+                .write()
+                .await
+                .insert(model_name.to_string());
+        } else {
+            self.active_downloads.write().await.remove(model_name);
+            self.cancel_downloads.write().await.remove(model_name);
+        }
+        result
+    }
 
+    async fn download_model_detailed_reserved(
+        &self,
+        model_name: &str,
+        progress_callback: Option<Box<dyn Fn(DownloadProgress) + Send>>,
+    ) -> Result<()> {
         // Get model info
         let model_info = {
             let models = self.available_models.read().await;
             match models.get(model_name).cloned() {
                 Some(info) => info,
                 None => {
-                    // Remove from active downloads on error
-                    let mut active = self.active_downloads.write().await;
-                    active.remove(model_name);
                     return Err(anyhow!("Model {} not found", model_name));
                 }
             }
@@ -585,18 +651,10 @@ impl ParakeetEngine {
             }
         }
 
-        // Model download sources (version-specific).
-        //
-        // v2 comes from the upstream community ONNX export on HuggingFace.
-        // v3 is mirrored on this fork's own GitHub release so the app is
-        // self-sufficient and doesn't rely on (or bill) any third party's
-        // hosting. Parakeet TDT is NVIDIA's model, CC-BY-4.0.
-        let base_url = if model_name.contains("-v2-") {
-            "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main"
-        } else {
-            // Default to v3 for v3 models
-            "https://github.com/TylerBuza/Meetily-ActuallyFree/releases/download/parakeet-tdt-0.6b-v3-onnx"
-        };
+        // Both v3 sources contain the same compatible ONNX export. Prefer the
+        // established Hugging Face repository and fail over to this fork's
+        // release assets when one CDN is temporarily unavailable.
+        let base_urls = Self::download_base_urls(model_name);
 
         // Determine which files to download based on quantization
         let files_to_download = match model_info.quantization {
@@ -618,66 +676,26 @@ impl ParakeetEngine {
         let model_dir = &model_info.path;
         if !model_dir.exists() {
             if let Err(e) = fs::create_dir_all(model_dir).await {
-                // Remove from active downloads on error
-                let mut active = self.active_downloads.write().await;
-                active.remove(model_name);
                 return Err(anyhow!("Failed to create model directory: {}", e));
             }
         }
 
-        // Clean up incomplete downloads before starting
-        log::info!("Checking for incomplete model files to clean up...");
-        if let Err(e) = self.clean_incomplete_model_directory(model_dir).await {
-            log::warn!("Failed to clean incomplete model directory: {}", e);
-            // Continue anyway - we'll handle errors during download
-        }
-
         // Optimized HTTP client for large file downloads
         let client = reqwest::Client::builder()
-            .tcp_nodelay(true)              // Disable Nagle's algorithm for better streaming
-            .pool_max_idle_per_host(1)      // Keep connection alive
-            .timeout(Duration::from_secs(3600))  // 1 hour timeout for large files
+            .tcp_nodelay(true) // Disable Nagle's algorithm for better streaming
+            .pool_max_idle_per_host(1) // Keep connection alive
+            .timeout(Duration::from_secs(3600)) // 1 hour timeout for large files
             .connect_timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
 
         let total_files = files_to_download.len();
 
-        // Calculate total download size for weighted progress
-        // Note: These are approximate sizes based on HuggingFace repo inspection
-        let file_sizes: std::collections::HashMap<&str, u64> = match model_info.quantization {
-            QuantizationType::Int8 => {
-                if model_name.contains("-v2-") {
-                    // V2 model sizes
-                    [
-                        ("encoder-model.int8.onnx", 652_000_000u64),       // 652 MB
-                        ("decoder_joint-model.int8.onnx", 9_000_000u64),   // 9 MB
-                        ("nemo128.onnx", 140_000u64),                      // 140 KB
-                        ("vocab.txt", 9_380u64),                           // 9.38 KB
-                    ].iter().cloned().collect()
-                } else {
-                    // V3 model sizes (default)
-                    [
-                        ("encoder-model.int8.onnx", 652_000_000u64),       // 652 MB
-                        ("decoder_joint-model.int8.onnx", 18_200_000u64),  // 18.2 MB
-                        ("nemo128.onnx", 140_000u64),                      // 140 KB
-                        ("vocab.txt", 93_900u64),                          // 93.9 KB
-                    ].iter().cloned().collect()
-                }
-            }
-            QuantizationType::FP32 => {
-                // FP32 model sizes (encoder has .onnx + .onnx.data)
-                [
-                    ("encoder-model.onnx", 41_800_000u64 + 2_440_000_000u64), // 41.8 MB + 2.44 GB
-                    ("decoder_joint-model.onnx", 72_500_000u64),               // 72.5 MB
-                    ("nemo128.onnx", 140_000u64),                              // 140 KB
-                    ("vocab.txt", 93_900u64),                                  // 93.9 KB
-                ].iter().cloned().collect()
-            }
-        };
+        let file_sizes = Self::download_file_sizes(model_name, &model_info.quantization);
 
         // Calculate total expected download size
-        let total_size_bytes: u64 = files_to_download.iter()
+        let total_size_bytes: u64 = files_to_download
+            .iter()
             .filter_map(|f| file_sizes.get(*f))
             .copied()
             .sum();
@@ -692,7 +710,9 @@ impl ParakeetEngine {
                     let expected_size = file_sizes.get(*filename).copied().unwrap_or(0);
                     // Count all existing bytes (complete files capped at expected size, partial as-is)
                     // This ensures progress starts from where we left off
-                    already_downloaded += file_size.min(expected_size);
+                    if file_size <= expected_size {
+                        already_downloaded += file_size;
+                    }
                 }
             }
         }
@@ -713,7 +733,6 @@ impl ParakeetEngine {
         );
 
         for (index, filename) in files_to_download.iter().enumerate() {
-            let file_url = format!("{}/{}", base_url, filename);
             let file_path = model_dir.join(filename);
 
             // Check for existing partial file to resume
@@ -725,9 +744,7 @@ impl ParakeetEngine {
 
             let expected_size = file_sizes.get(*filename).copied().unwrap_or(0);
 
-            // Skip if file is already complete (with 1% tolerance for size variations)
-            let size_tolerance = (expected_size as f64 * 0.99) as u64;
-            if existing_size >= size_tolerance && expected_size > 0 {
+            if existing_size == expected_size && expected_size > 0 {
                 log::info!(
                     "Skipping complete file: {} ({:.2} MB, expected: {:.2} MB)",
                     filename,
@@ -737,278 +754,225 @@ impl ParakeetEngine {
                 continue;
             }
 
-            log::info!("Downloading file {}/{}: {} (resuming from {} bytes)", index + 1, total_files, filename, existing_size);
-
-            // Build request with optional Range header for resume
-            let mut request = client.get(&file_url);
-            if existing_size > 0 {
-                request = request.header("Range", format!("bytes={}-", existing_size));
-                log::info!("Resuming download from byte {}", existing_size);
+            if existing_size > expected_size {
+                fs::remove_file(&file_path)
+                    .await
+                    .map_err(|e| anyhow!("Failed to remove oversized {}: {}", filename, e))?;
             }
+            log::info!(
+                "Downloading file {}/{}: {} (resuming from {} bytes)",
+                index + 1,
+                total_files,
+                filename,
+                existing_size.min(expected_size)
+            );
 
-            let mut response = request.send().await
-                .map_err(|e| {
-                    anyhow!("Failed to start download for {}: {}", filename, e)
-                })?;
-
-            // Handle response status
-            let (file_total_size, resuming) = if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
-                // Server supports resume, get remaining size
-                let remaining = response.content_length().unwrap_or(0);
-                log::info!("Server supports resume, remaining: {} bytes", remaining);
-                (existing_size + remaining, true)
-            } else if response.status().is_success() {
-                // Fresh download or server doesn't support resume
-                if existing_size > 0 {
-                    log::warn!("Server doesn't support resume for {}, starting fresh download", filename);
+            let mut source_errors = Vec::new();
+            let mut completed = false;
+            for base_url in &base_urls {
+                if self.cancel_downloads.read().await.contains(model_name) {
+                    return Err(anyhow!(DOWNLOAD_CANCELLED_MESSAGE));
                 }
-                (response.content_length().unwrap_or(0), false)
-            } else if response.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
-                // 416: Range not satisfiable - file complete or invalid range
-                log::warn!("Server returned 416 Range Not Satisfiable for {}", filename);
-
-                let size_tolerance = (expected_size as f64 * 0.99) as u64;
-                if existing_size >= size_tolerance && expected_size > 0 {
-                    // File is complete - skip it
-                    log::info!("File {} complete ({} bytes). Skipping.", filename, existing_size);
-                    continue;
-                } else {
-                    // File incomplete but server won't accept range - delete and retry
-                    log::warn!(
-                        "File {} incomplete ({}/{} bytes). Deleting and retrying.",
-                        filename, existing_size, expected_size
-                    );
-
-                    if let Err(e) = fs::remove_file(&file_path).await {
-                        let mut active = self.active_downloads.write().await;
-                        active.remove(model_name);
-                        return Err(anyhow!("Failed to delete incomplete file {}: {}", filename, e));
-                    }
-
-                    // Retry without Range header
-                    log::info!("Retrying {} without resume", filename);
-                    response = client.get(&file_url).send().await
-                        .map_err(|e| anyhow!("Retry failed for {}: {}", filename, e))?;
-
-                    if !response.status().is_success() {
-                        let mut active = self.active_downloads.write().await;
-                        active.remove(model_name);
-                        return Err(anyhow!("Retry failed for {} with status: {}", filename, response.status()));
-                    }
-
-                    (response.content_length().unwrap_or(0), false)
-                }
-            } else {
-                // Other errors
-                let mut active = self.active_downloads.write().await;
-                active.remove(model_name);
-                return Err(anyhow!("Download failed for {} with status: {}", filename, response.status()));
-            };
-
-            // Open file for writing (append if resuming, create new if not)
-            let file = if resuming {
-                fs::OpenOptions::new()
-                    .append(true)
-                    .open(&file_path)
+                let resume_size = fs::metadata(&file_path)
                     .await
-                    .map_err(|e| anyhow!("Failed to open file for resume {}: {}", filename, e))?
-            } else {
-                fs::File::create(&file_path)
-                    .await
-                    .map_err(|e| anyhow!("Failed to create file {}: {}", filename, e))?
-            };
-
-            // Use buffered writer for better I/O performance (8MB buffer)
-            let mut writer = BufWriter::with_capacity(8 * 1024 * 1024, file);
-
-            // Stream download
-            use futures_util::StreamExt;
-            let mut stream = response.bytes_stream();
-            let mut file_downloaded = if resuming { existing_size } else { 0u64 };
-
-            loop {
-                // Check for cancellation before processing chunk
-                {
-                    let cancel_flag = self.cancel_download_flag.read().await;
-                    if cancel_flag.as_ref() == Some(&model_name.to_string()) {
-                        log::info!("Download cancelled for {}", model_name);
-                        // Flush and keep partial file for resume on next attempt
-                        let _ = writer.flush().await;
-                        drop(writer);
-                        // Remove from active downloads on cancellation
-                        let mut active = self.active_downloads.write().await;
-                        active.remove(model_name);
-                        return Err(anyhow!("Download cancelled by user"));
-                    }
+                    .map(|metadata| metadata.len())
+                    .unwrap_or(0);
+                if resume_size == expected_size {
+                    completed = true;
+                    break;
                 }
 
-                // Add per-chunk timeout (30 seconds) to detect stalled connections
-                let next_result = timeout(Duration::from_secs(30), stream.next()).await;
-
-                let chunk = match next_result {
-                    // Timeout - no data received for 30 seconds
+                let file_url = format!("{}/{}", base_url, filename);
+                let mut request = client.get(&file_url);
+                if resume_size > 0 {
+                    request = request.header("Range", format!("bytes={}-", resume_size));
+                }
+                let response = match timeout(Duration::from_secs(30), request.send()).await {
+                    Ok(Ok(candidate)) if candidate.status().is_success() => candidate,
+                    Ok(Ok(candidate)) => {
+                        source_errors.push(format!("{} returned {}", base_url, candidate.status()));
+                        continue;
+                    }
+                    Ok(Err(error)) => {
+                        source_errors.push(format!("{}: {}", base_url, error));
+                        continue;
+                    }
                     Err(_) => {
-                        log::warn!("Download timeout for {}: no data received for 30 seconds", model_name);
-                        let _ = writer.flush().await;
-
-                        // Remove from active downloads
-                        {
-                            let mut active = self.active_downloads.write().await;
-                            active.remove(model_name);
-                        }
-
-                        // Update model status to Missing so retry can work
-                        {
-                            let mut models = self.available_models.write().await;
-                            if let Some(model) = models.get_mut(model_name) {
-                                model.status = ModelStatus::Missing;
-                            }
-                        }
-
-                        return Err(anyhow!("Download timeout - No data received for 30 seconds"));
-                    },
-                    // Stream ended
-                    Ok(None) => break,
-                    // Got chunk result
-                    Ok(Some(chunk_result)) => {
-                        match chunk_result {
-                            Ok(c) => c,
-                            // Detect error type for better user feedback
-                            Err(e) => {
-                                log::error!("Download error for {}: {:?}", model_name, e);
-                                let _ = writer.flush().await;
-
-                                // Remove from active downloads
-                                {
-                                    let mut active = self.active_downloads.write().await;
-                                    active.remove(model_name);
-                                }
-
-                                // Update model status to Missing so retry can work
-                                {
-                                    let mut models = self.available_models.write().await;
-                                    if let Some(model) = models.get_mut(model_name) {
-                                        model.status = ModelStatus::Missing;
-                                    }
-                                }
-
-                                let error_msg = if e.is_timeout() {
-                                    "Connection timeout - Check your internet"
-                                } else if e.is_connect() {
-                                    "Connection failed - Check your internet"
-                                } else if e.is_body() {
-                                    "Stream interrupted - Network unstable"
-                                } else {
-                                    "Download error"
-                                };
-
-                                return Err(anyhow!("{}: {}", error_msg, e));
-                            }
-                        }
+                        source_errors.push(format!("{} timed out waiting for response headers", base_url));
+                        continue;
                     }
                 };
 
-                if let Err(e) = writer.write_all(&chunk).await {
-                    // Remove from active downloads on error
-                    {
-                        let mut active = self.active_downloads.write().await;
-                        active.remove(model_name);
-                    }
-
-                    // Update model status to Missing so retry can work
-                    {
-                        let mut models = self.available_models.write().await;
-                        if let Some(model) = models.get_mut(model_name) {
-                            model.status = ModelStatus::Missing;
+                let (file_total_size, resuming) =
+                    if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+                        let content_range = response
+                            .headers()
+                            .get(reqwest::header::CONTENT_RANGE)
+                            .and_then(|value| value.to_str().ok())
+                            .unwrap_or_default();
+                        let expected_prefix = format!("bytes {}-", resume_size);
+                        let expected_suffix = format!("/{}", expected_size);
+                        let remaining = response.content_length().unwrap_or(0);
+                        if !content_range.starts_with(&expected_prefix)
+                            || !content_range.ends_with(&expected_suffix)
+                            || resume_size + remaining != expected_size
+                        {
+                            source_errors.push(format!(
+                                "{} returned unexpected resume range {}",
+                                base_url, content_range
+                            ));
+                            continue;
                         }
-                    }
-
-                    return Err(anyhow!("Failed to write chunk to file: {}", e));
-                }
-
-                let chunk_len = chunk.len() as u64;
-                file_downloaded += chunk_len;
-                total_downloaded += chunk_len;
-                bytes_since_last_report += chunk_len;
-
-                // Calculate weighted overall progress based on total bytes downloaded
-                let overall_progress = if total_size_bytes > 0 {
-                    ((total_downloaded as f64 / total_size_bytes as f64) * 100.0).min(99.0) as u8
-                } else {
-                    // Fallback to per-file progress if total size unknown
-                    ((index as f64 + (file_downloaded as f64 / file_total_size.max(1) as f64)) / total_files as f64 * 100.0) as u8
-                };
-
-                // Report every 1% progress change OR every 500ms for smooth UI updates
-                let elapsed_since_report = last_report_time.elapsed();
-                let progress_changed = overall_progress > last_reported_progress;
-                let time_threshold = elapsed_since_report >= Duration::from_millis(500);
-                let is_complete = file_downloaded >= file_total_size;
-
-                let should_report = progress_changed || time_threshold || is_complete;
-
-                if should_report {
-                    // Calculate download speed
-                    let speed_mbps = if elapsed_since_report.as_secs_f64() >= 0.1 {
-                        (bytes_since_last_report as f64 / (1024.0 * 1024.0)) / elapsed_since_report.as_secs_f64()
+                        (resume_size + remaining, resume_size > 0)
                     } else {
-                        // Fallback to overall average speed
-                        let total_elapsed = download_start_time.elapsed().as_secs_f64();
-                        if total_elapsed > 0.0 {
-                            ((total_downloaded - already_downloaded) as f64 / (1024.0 * 1024.0)) / total_elapsed
-                        } else {
-                            0.0
+                        let reported_size = response.content_length().unwrap_or(0);
+                        if reported_size != expected_size {
+                            source_errors.push(format!(
+                                "{} reports {} bytes, expected {}",
+                                base_url, reported_size, expected_size
+                            ));
+                            continue;
                         }
+                        (reported_size, false)
                     };
 
-                    last_reported_progress = overall_progress;
-                    last_report_time = Instant::now();
-                    bytes_since_last_report = 0;
+                log::info!("Downloading {} from {}", filename, base_url);
+                let file = if resuming {
+                    fs::OpenOptions::new()
+                        .append(true)
+                        .open(&file_path)
+                        .await
+                        .map_err(|e| {
+                            anyhow!("Failed to open file for resume {}: {}", filename, e)
+                        })?
+                } else {
+                    total_downloaded = total_downloaded.saturating_sub(resume_size);
+                    fs::File::create(&file_path)
+                        .await
+                        .map_err(|e| anyhow!("Failed to create file {}: {}", filename, e))?
+                };
+                let mut writer = BufWriter::with_capacity(8 * 1024 * 1024, file);
+                use futures_util::StreamExt;
+                let mut stream = response.bytes_stream();
+                let mut file_downloaded = if resuming { resume_size } else { 0 };
+                let mut transfer_error = None;
 
-                    // Create detailed progress and report
-                    let progress = DownloadProgress::new(total_downloaded, total_size_bytes, speed_mbps);
-                    if let Some(ref callback) = progress_callback {
-                        callback(progress);
+                loop {
+                    if self.cancel_downloads.read().await.contains(model_name) {
+                        let _ = writer.flush().await;
+                        return Err(anyhow!(DOWNLOAD_CANCELLED_MESSAGE));
                     }
 
-                    // Update model status
+                    let chunk = match timeout(Duration::from_secs(30), stream.next()).await {
+                        Err(_) => {
+                            transfer_error = Some("no data received for 30 seconds".to_string());
+                            break;
+                        }
+                        Ok(None) => break,
+                        Ok(Some(Err(error))) => {
+                            transfer_error = Some(error.to_string());
+                            break;
+                        }
+                        Ok(Some(Ok(chunk))) => chunk,
+                    };
+
+                    writer
+                        .write_all(&chunk)
+                        .await
+                        .map_err(|e| anyhow!("Failed to write chunk to file: {}", e))?;
+                    let chunk_len = chunk.len() as u64;
+                    file_downloaded += chunk_len;
+                    total_downloaded += chunk_len;
+                    bytes_since_last_report += chunk_len;
+
+                    let overall_progress = if total_size_bytes > 0 {
+                        ((total_downloaded as f64 / total_size_bytes as f64) * 100.0).min(99.0)
+                            as u8
+                    } else {
+                        ((index as f64 + (file_downloaded as f64 / file_total_size.max(1) as f64))
+                            / total_files as f64
+                            * 100.0) as u8
+                    };
+                    let elapsed_since_report = last_report_time.elapsed();
+                    if overall_progress > last_reported_progress
+                        || elapsed_since_report >= Duration::from_millis(500)
+                        || file_downloaded >= file_total_size
                     {
-                        let mut models = self.available_models.write().await;
-                        if let Some(model) = models.get_mut(model_name) {
-                            model.status = ModelStatus::Downloading { progress: overall_progress };
+                        let speed_mbps = if elapsed_since_report.as_secs_f64() >= 0.1 {
+                            (bytes_since_last_report as f64 / (1024.0 * 1024.0))
+                                / elapsed_since_report.as_secs_f64()
+                        } else {
+                            0.0
+                        };
+                        last_reported_progress = overall_progress;
+                        last_report_time = Instant::now();
+                        bytes_since_last_report = 0;
+                        if let Some(ref callback) = progress_callback {
+                            callback(DownloadProgress::new(
+                                total_downloaded,
+                                total_size_bytes,
+                                speed_mbps,
+                            ));
+                        }
+                        if let Some(model) = self.available_models.write().await.get_mut(model_name)
+                        {
+                            model.status = ModelStatus::Downloading {
+                                progress: overall_progress,
+                            };
                         }
                     }
                 }
+
+                writer
+                    .flush()
+                    .await
+                    .map_err(|e| anyhow!("Failed to flush file {}: {}", filename, e))?;
+                let final_size = fs::metadata(&file_path)
+                    .await
+                    .map_err(|e| anyhow!("Failed to inspect {}: {}", filename, e))?
+                    .len();
+                if final_size == expected_size {
+                    completed = true;
+                    break;
+                }
+                source_errors.push(format!(
+                    "{} stopped at {} of {} bytes{}",
+                    base_url,
+                    final_size,
+                    expected_size,
+                    transfer_error
+                        .map(|error| format!(": {}", error))
+                        .unwrap_or_default()
+                ));
             }
 
-            // Flush the buffered writer
-            if let Err(e) = writer.flush().await {
-                // Remove from active downloads on error
-                {
-                    let mut active = self.active_downloads.write().await;
-                    active.remove(model_name);
-                }
-
-                // Update model status to Missing so retry can work
-                {
-                    let mut models = self.available_models.write().await;
-                    if let Some(model) = models.get_mut(model_name) {
-                        model.status = ModelStatus::Missing;
-                    }
-                }
-
-                return Err(anyhow!("Failed to flush file {}: {}", filename, e));
+            if self.cancel_downloads.read().await.contains(model_name) {
+                return Err(anyhow!(DOWNLOAD_CANCELLED_MESSAGE));
+            }
+            if !completed {
+                return Err(anyhow!(
+                    "Could not download {} from any available source. Check your connection, VPN, firewall, or proxy, then retry. Details: {}",
+                    filename,
+                    source_errors.join("; ")
+                ));
             }
 
             log::info!(
                 "Completed download: {} ({:.2} MB, overall progress: {:.1}%)",
                 filename,
-                file_downloaded as f64 / 1_048_576.0,
+                expected_size as f64 / 1_048_576.0,
                 (total_downloaded as f64 / total_size_bytes as f64) * 100.0
             );
         }
 
-        // Report 100% progress with final speed
+        if self.cancel_downloads.read().await.contains(model_name) {
+            return Err(anyhow!(DOWNLOAD_CANCELLED_MESSAGE));
+        }
+        self.validate_model_directory(model_dir)
+            .await
+            .map_err(|error| anyhow!("Downloaded Parakeet model failed validation: {}", error))?;
+
+        // Report 100% only after every file passes exact validation.
         let total_elapsed = download_start_time.elapsed().as_secs_f64();
         let final_speed = if total_elapsed > 0.0 {
             ((total_downloaded - already_downloaded) as f64 / (1024.0 * 1024.0)) / total_elapsed
@@ -1029,20 +993,6 @@ impl ParakeetEngine {
             }
         }
 
-        // Remove from active downloads on completion
-        {
-            let mut active = self.active_downloads.write().await;
-            active.remove(model_name);
-        }
-
-        // Clear cancellation flag on successful completion
-        {
-            let mut cancel_flag = self.cancel_download_flag.write().await;
-            if cancel_flag.as_ref() == Some(&model_name.to_string()) {
-                *cancel_flag = None;
-            }
-        }
-
         log::info!("Download completed for Parakeet model: {}", model_name);
         Ok(())
     }
@@ -1051,38 +1001,122 @@ impl ParakeetEngine {
     pub async fn cancel_download(&self, model_name: &str) -> Result<()> {
         log::info!("Cancelling download for Parakeet model: {}", model_name);
 
-        // Set cancellation flag to interrupt the download loop
-        {
-            let mut cancel_flag = self.cancel_download_flag.write().await;
-            *cancel_flag = Some(model_name.to_string());
+        if !self.active_downloads.read().await.contains(model_name) {
+            return Err(anyhow!("No download in progress for model: {}", model_name));
         }
+        self.cancel_downloads
+            .write()
+            .await
+            .insert(model_name.to_string());
 
-        // Remove from active downloads
-        {
-            let mut active = self.active_downloads.write().await;
-            active.remove(model_name);
-        }
-
-        // Update model status to Missing (so it can be retried)
-        {
-            let mut models = self.available_models.write().await;
-            if let Some(model) = models.get_mut(model_name) {
-                model.status = ModelStatus::Missing;
-            }
-        }
-
-        // Clean up partially downloaded files
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await; // Brief delay to let download loop exit
-
-        let model_path = self.models_dir.join(model_name);
-        if model_path.exists() {
-            if let Err(e) = fs::remove_dir_all(&model_path).await {
-                log::warn!("Failed to clean up cancelled download directory: {}", e);
-            } else {
-                log::info!("Cleaned up cancelled download directory: {}", model_path.display());
-            }
-        }
+        // The worker flushes and retains partial files so a later attempt can
+        // resume instead of redownloading hundreds of megabytes.
 
         Ok(())
+    }
+
+    pub(crate) async fn cancellation_completed(&self, model_name: &str) -> bool {
+        self.completed_cancellations.read().await.contains(model_name)
+    }
+
+    pub(crate) async fn release_cancelled_download(&self, model_name: &str) {
+        self.completed_cancellations.write().await.remove(model_name);
+        self.cancel_downloads.write().await.remove(model_name);
+        self.active_downloads.write().await.remove(model_name);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn v3_download_prefers_hugging_face_with_github_fallback() {
+        assert_eq!(
+            ParakeetEngine::download_base_urls("parakeet-tdt-0.6b-v3-int8"),
+            vec![
+                "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main",
+                "https://github.com/TylerBuza/Meetily-ActuallyFree/releases/download/parakeet-tdt-0.6b-v3-onnx",
+            ]
+        );
+    }
+
+    #[test]
+    fn published_int8_sizes_are_exact() {
+        assert_eq!(
+            ParakeetEngine::download_file_sizes(
+                "parakeet-tdt-0.6b-v2-int8",
+                &QuantizationType::Int8,
+            )["encoder-model.int8.onnx"],
+            652_184_014,
+        );
+        assert_eq!(
+            ParakeetEngine::download_file_sizes(
+                "parakeet-tdt-0.6b-v3-int8",
+                &QuantizationType::Int8,
+            )["decoder_joint-model.int8.onnx"],
+            18_202_004,
+        );
+    }
+
+    #[tokio::test]
+    async fn v3_validation_requires_exact_published_sizes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let model_dir = temp.path().join("parakeet-tdt-0.6b-v3-int8");
+        fs::create_dir_all(&model_dir)
+            .await
+            .expect("model directory");
+        for (name, size) in [
+            ("encoder-model.int8.onnx", 652_183_999),
+            ("decoder_joint-model.int8.onnx", 18_202_004),
+            ("nemo128.onnx", 139_764),
+            ("vocab.txt", 93_939),
+        ] {
+            let file = fs::File::create(model_dir.join(name))
+                .await
+                .expect("model file");
+            file.set_len(size).await.expect("model size");
+        }
+
+        let engine =
+            ParakeetEngine::new_with_models_dir(Some(temp.path().to_path_buf())).expect("engine");
+        engine
+            .validate_model_directory(&model_dir)
+            .await
+            .expect("exact model");
+
+        let encoder = fs::OpenOptions::new()
+            .write(true)
+            .open(model_dir.join("encoder-model.int8.onnx"))
+            .await
+            .expect("encoder");
+        encoder
+            .set_len(652_183_998)
+            .await
+            .expect("truncate encoder");
+        assert!(engine.validate_model_directory(&model_dir).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn download_published_v3_model() {
+        if std::env::var_os("PARAKEET_DOWNLOAD_TEST").is_none() {
+            return;
+        }
+        let temp = tempfile::tempdir().expect("tempdir");
+        let engine = ParakeetEngine::new_with_models_dir(Some(temp.path().to_path_buf()))
+            .expect("engine");
+        engine.discover_models().await.expect("discover models");
+        engine
+            .download_model_detailed("parakeet-tdt-0.6b-v3-int8", None)
+            .await
+            .expect("download model");
+        let model_dir = temp
+            .path()
+            .join("parakeet")
+            .join("parakeet-tdt-0.6b-v3-int8");
+        engine
+            .validate_model_directory(&model_dir)
+            .await
+            .expect("validate model");
     }
 }
