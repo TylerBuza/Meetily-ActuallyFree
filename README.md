@@ -18,29 +18,27 @@ Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on it
 
 | Feature | Meetily Community | Meetily PRO (Paywalled) | Meetily - Actually Free |
 | --- | :---: | :---: | :---: |
-| Free to use | ✅ | ❌ | ✅ |
-| Open-source MIT license | ✅ | ❌ | ✅ |
 | Live recording and local transcription | ✅ | ✅ | ✅ |
 | Local and BYOK cloud summaries | ✅ | ✅ | ✅ |
 | Create custom summary templates | ❌ | ✅ | ✅ |
-| Advanced PDF and DOCX exports | ❌ | ✅ | ✅ |
-| Automatic meeting detection | ❌ | ✅ | ✅ |
-| Speaker identification | ❌ | ✅ | ✅ |
-| Chat with meetings | ❌ | ✅ | ✅ |
 | Automatic meeting joining | ❌ | ✅ | ❌ |
-| Calendar integration | ❌ | ✅ | ❌ |
-| Team self-hosted deployment | ❌ | ✅ | ❌ |
-| Compliance audit trails | ❌ | ✅ | ❌ |
+| Advanced PDF and DOCX exports | ❌ | ✅ | ✅ |
 | Separate mic and system recordings | ❌ | ❌ | ✅ |
+| Calendar integration | ❌ | ✅ | ❌ |
+| Speaker identification | ❌ | ✅ | ✅ |
 | Live mic and system meters | ❌ | ❌ | ✅ |
+| Team self-hosted deployment | ❌ | ✅ | ❌ |
+| Automatic meeting detection | ❌ | ✅ | ✅ |
 | Floating recording controls | ❌ | ❌ | ✅ |
+| Compliance audit trails | ❌ | ✅ | ❌ |
+| Chat with meetings | ❌ | ✅ | ✅ |
 | Search and people profiles | ❌ | ❌ | ✅ |
 | Dark mode | ❌ | ❌ | ✅ |
-| Windows GPU acceleration | ✅ | ✅ | ✅ |
-| One setup that automatically selects CUDA, Vulkan, or CPU | ❌ | ❌ | ✅ |
+| Windows GPU acceleration | ❌ | ✅ | ✅ |
+| Automatic GPU setup | ❌ | ❌ | ✅ |
 | No analytics transmission or license checks | ❌ | ❌ | ✅ |
 
-Community is free and MIT licensed; the published PRO comparison lists a commercial license at $10/user/month billed annually. Community includes limited built-in templates and Markdown export, while this fork supports user-created templates plus PDF, DOCX, Markdown, text, and JSON. This fork independently implements the matching capabilities above without an account, subscription, or license key, but does not claim the PRO-only services marked unavailable here.
+Community includes limited built-in templates and Markdown export, while this fork supports user-created templates plus PDF, DOCX, Markdown, text, and JSON. This fork independently implements the matching capabilities above without an account, subscription, or license key, but does not claim the PRO-only services marked unavailable here.
 
 ## Highlights
 
