@@ -25,6 +25,12 @@ Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on it
 | Automatic meeting detection | ❌ | ✅ | ✅ |
 | Speaker identification | ❌ | ✅ | ✅ |
 | Chat with meetings | ❌ | ✅ | ✅ |
+| Enhanced proprietary transcription models | ❌ | ✅ | ❌ |
+| Automatic meeting joining | ❌ | ✅ | ❌ |
+| Calendar integration | ❌ | ✅ | ❌ |
+| Team self-hosted deployment | ❌ | ✅ | ❌ |
+| Compliance audit trails | ❌ | ✅ | ❌ |
+| Priority support | ❌ | ✅ | ❌ |
 | Separate mic and system recordings | ❌ | ❌ | ✅ |
 | Live mic and system meters | ❌ | ❌ | ✅ |
 | Floating recording controls | ❌ | ❌ | ✅ |
@@ -33,7 +39,7 @@ Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on it
 | One Windows setup for CUDA, Vulkan, and CPU | ❌ | ❌ | ✅ |
 | No analytics transmission or license checks | ❌ | ❌ | ✅ |
 
-Community includes Markdown export; this fork additionally exports PDF, DOCX, text, and JSON. PRO lists speaker identification and meeting chat as coming soon. This fork independently implements the matching capabilities above without an account, subscription, or license key.
+Community includes Markdown export; this fork additionally exports PDF, DOCX, text, and JSON. PRO lists speaker identification and meeting chat as coming soon. This fork independently implements the matching capabilities above without an account, subscription, or license key, but does not claim the PRO-only services marked unavailable here.
 
 ## Highlights
 
