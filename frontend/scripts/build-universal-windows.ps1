@@ -259,7 +259,7 @@ if ($LASTEXITCODE -ne 0) { throw "Frameless installer signing failed" }
 $signature = (Get-Content $updaterSignatureOutput -Raw).Trim()
 $latest = [ordered]@{
   version = $appVersion
-  notes = "Fixes clipped installer text and makes Parakeet model setup resumable, validated, and resilient across Hugging Face and GitHub mirrors."
+  notes = "Preserves You and remote speaker identity through enhanced retranscription, including overlapping speech, while retaining the installer and resilient model-download fixes."
   pub_date = [DateTime]::UtcNow.ToString("o")
   platforms = [ordered]@{
     "windows-x86_64" = [ordered]@{

@@ -325,6 +325,17 @@ save live meeting and retained tracks
   -> summarize fresh SQLite transcript rows
 ```
 
+Enhanced retranscription must carry retained-track provenance into every new
+row: mic speech starts as `You`, system speech starts as `Guest`, and mixed-only
+fallback speech remains unlabeled. The later dual-track diarization pass may
+refine `Guest` to `Speaker N`, but it must not erase the deterministic mic
+identity when segmentation finds only part of a short utterance. When source
+speech overlaps, canonical combined labels begin with `You` (for example,
+`You + Speaker 1`) so user styling and identity normalization remain stable.
+These hints are trusted only when that diarization run actually used both
+retained source tracks; legacy mixed recordings must still rely on clustering
+and voiceprint evidence.
+
 Do not start automatic diarization without the user's explicit Auto-detect
 choice, or generate a summary before this sequence. The count-prompt X skips
 only retranscription: it keeps the live rows, still runs the selected exact or

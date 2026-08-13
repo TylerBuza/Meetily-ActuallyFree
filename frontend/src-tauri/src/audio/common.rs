@@ -254,6 +254,7 @@ pub(crate) fn write_transcripts_json(folder: &Path, segments: &[TranscriptSegmen
                 "audio_start_time": s.audio_start_time,
                 "audio_end_time": s.audio_end_time,
                 "duration": s.duration,
+                "speaker": s.speaker,
                 "sequence_id": i
             })
         }).collect::<Vec<_>>()
@@ -401,5 +402,27 @@ mod tests {
 
         acquired_rx.await.unwrap();
         waiter.await.unwrap();
+    }
+
+    #[test]
+    fn transcript_json_preserves_speaker_hint() {
+        let dir = tempfile::tempdir().unwrap();
+        let segments = vec![TranscriptSegment {
+            id: "mic-row".to_string(),
+            text: "Hello one two three".to_string(),
+            timestamp: "2026-08-12T22:59:36Z".to_string(),
+            audio_start_time: Some(14.97),
+            audio_end_time: Some(18.88),
+            duration: Some(3.91),
+            speaker: Some("You".to_string()),
+        }];
+
+        write_transcripts_json(dir.path(), &segments).unwrap();
+        let json: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.path().join("transcripts.json")).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(json["segments"][0]["speaker"], "You");
     }
 }

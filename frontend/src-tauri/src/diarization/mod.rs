@@ -628,6 +628,39 @@ fn find_meeting_audio(folder_path: Option<String>, meeting_title: Option<&str>) 
     newest_audio_in(&crate::paths::install_data_root())
 }
 
+fn apply_source_track_hint(
+    existing: Option<&str>,
+    used_source_tracks: bool,
+    allow_remote_hint: bool,
+    labels: &mut Vec<String>,
+) {
+    if !used_source_tracks {
+        return;
+    }
+    match existing {
+        Some(speaker) if speaker.eq_ignore_ascii_case("you") => {
+            labels.retain(|label| !label.eq_ignore_ascii_case("you"));
+            labels.insert(0, "You".to_string());
+        }
+        Some(speaker) if allow_remote_hint && speaker.eq_ignore_ascii_case("guest") => {
+            let has_remote = labels.iter().any(|label| {
+                !label.eq_ignore_ascii_case("you") && !label.eq_ignore_ascii_case("guest")
+            });
+            if !has_remote && !labels.iter().any(|label| label.eq_ignore_ascii_case("guest")) {
+                labels.push("Guest".to_string());
+            }
+        }
+        _ => {}
+    }
+    if let Some(position) = labels
+        .iter()
+        .position(|label| label.eq_ignore_ascii_case("you"))
+    {
+        let user = labels.remove(position);
+        labels.insert(0, user);
+    }
+}
+
 /// Decode any supported audio container to a temporary 16 kHz mono WAV using
 /// the bundled ffmpeg. Returns the original path unchanged if it's already WAV.
 fn ensure_wav(path: &Path) -> Result<(PathBuf, bool)> {
@@ -725,7 +758,7 @@ pub async fn diarize_meeting(
     // only the system track needs remote-speaker clustering. Older meetings
     // fall back to the mixed recording + enrolled voiceprint.
     let voiceprint_source = meeting_id.clone();
-    let result = tokio::task::spawn_blocking(move || -> Result<DiarizationResult> {
+    let (result, used_source_tracks) = tokio::task::spawn_blocking(move || -> Result<(DiarizationResult, bool)> {
         let parent = source.parent().map(Path::to_path_buf);
         let mic_source = parent.as_ref().map(|p| p.join("mic.mp4"));
         let system_source = parent.as_ref().map(|p| p.join("system.mp4"));
@@ -838,7 +871,7 @@ pub async fn diarize_meeting(
                 if system_temp {
                     let _ = std::fs::remove_file(&system_wav);
                 }
-                return dual_result;
+                return dual_result.map(|result| (result, true));
             }
         }
 
@@ -847,7 +880,7 @@ pub async fn diarize_meeting(
         if is_temp {
             let _ = std::fs::remove_file(&wav);
         }
-        out
+        out.map(|result| (result, false))
     })
     .await
     .map_err(|e| format!("Diarization task failed: {}", e))?
@@ -902,6 +935,7 @@ pub async fn diarize_meeting(
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(spk, _)| spk)
     };
+    let allow_remote_source_hint = num_speakers != Some(1);
 
     if let Some(u) = user_speaker {
         log::info!("🧑‍🤝‍🧑 Speaker {} identified as the local user", u + 1);
@@ -995,7 +1029,14 @@ pub async fn diarize_meeting(
                 .take(3)
                 .map(|(spk, _)| speaker_label(spk))
                 .collect();
+            apply_source_track_hint(
+                existing.as_deref(),
+                used_source_tracks,
+                allow_remote_source_hint,
+                &mut labels,
+            );
             labels.dedup();
+            labels.truncate(3);
             let label = labels.join(" + ");
             if label.is_empty() {
                 continue;
@@ -1003,7 +1044,19 @@ pub async fn diarize_meeting(
             updates.push((id.clone(), Some(label.clone())));
             assignments.push((id, label));
         } else {
-            updates.push((id, None));
+            let source_hint = existing
+                .as_deref()
+                .filter(|speaker| {
+                    used_source_tracks
+                        && (speaker.eq_ignore_ascii_case("you")
+                            || (allow_remote_source_hint
+                                && speaker.eq_ignore_ascii_case("guest")))
+                })
+                .map(str::to_string);
+            if let Some(ref label) = source_hint {
+                assignments.push((id.clone(), label.clone()));
+            }
+            updates.push((id, source_hint));
         }
     }
     let mut tx = pool
@@ -1149,6 +1202,46 @@ fn collect_turns(models: &mut DiarizationModels, samples: &[f32]) -> Result<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dual_track_user_hint_survives_missing_mic_segmentation() {
+        let mut labels = vec!["Speaker 1".to_string()];
+        apply_source_track_hint(Some("You"), true, true, &mut labels);
+
+        assert_eq!(labels, vec!["You", "Speaker 1"]);
+    }
+
+    #[test]
+    fn remote_hint_keeps_user_overlap_when_remote_segmentation_misses() {
+        let mut labels = vec!["You".to_string()];
+        apply_source_track_hint(Some("Guest"), true, true, &mut labels);
+
+        assert_eq!(labels, vec!["You", "Guest"]);
+    }
+
+    #[test]
+    fn dual_track_overlap_keeps_you_first_after_remote_clustering() {
+        let mut labels = vec!["Speaker 1".to_string(), "You".to_string()];
+        apply_source_track_hint(Some("Guest"), true, true, &mut labels);
+
+        assert_eq!(labels, vec!["You", "Speaker 1"]);
+    }
+
+    #[test]
+    fn mixed_recording_does_not_trust_source_hint() {
+        let mut labels = vec!["Speaker 1".to_string()];
+        apply_source_track_hint(Some("You"), false, true, &mut labels);
+
+        assert_eq!(labels, vec!["Speaker 1"]);
+    }
+
+    #[test]
+    fn explicit_solo_count_suppresses_remote_source_hint() {
+        let mut labels = vec!["You".to_string()];
+        apply_source_track_hint(Some("Guest"), true, false, &mut labels);
+
+        assert_eq!(labels, vec!["You"]);
+    }
 
     /// Headless evaluation of the diarization pipeline against a real
     /// recording. Skipped unless both env vars are set, e.g.:

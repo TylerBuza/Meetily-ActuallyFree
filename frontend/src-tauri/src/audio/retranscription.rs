@@ -166,6 +166,7 @@ fn find_audio_file(folder: &Path) -> Result<PathBuf> {
 struct RetranscriptionSource {
     path: PathBuf,
     label: &'static str,
+    speaker_hint: Option<&'static str>,
     positive_threshold: f32,
     negative_threshold: f32,
 }
@@ -179,12 +180,14 @@ fn find_retranscription_sources(folder: &Path, fallback: &Path) -> Vec<Retranscr
         sources.push(RetranscriptionSource {
             path: mic_path,
             label: "microphone",
+            speaker_hint: Some("You"),
             positive_threshold: 0.20,
             negative_threshold: 0.10,
         });
         sources.push(RetranscriptionSource {
             path: system_path,
             label: "system audio",
+            speaker_hint: Some("Guest"),
             positive_threshold: 0.50,
             negative_threshold: 0.35,
         });
@@ -193,12 +196,25 @@ fn find_retranscription_sources(folder: &Path, fallback: &Path) -> Vec<Retranscr
         sources.push(RetranscriptionSource {
             path: fallback.to_path_buf(),
             label: "mixed audio",
+            speaker_hint: None,
             positive_threshold: 0.50,
             negative_threshold: 0.35,
         });
     }
 
     sources
+}
+
+fn create_source_labeled_segments(
+    transcripts: &[(String, f64, f64)],
+    speaker_hints: &[Option<&str>],
+) -> Vec<crate::api::TranscriptSegment> {
+    debug_assert_eq!(transcripts.len(), speaker_hints.len());
+    let mut segments = create_transcript_segments(transcripts);
+    for (segment, speaker_hint) in segments.iter_mut().zip(speaker_hints) {
+        segment.speaker = speaker_hint.map(str::to_string);
+    }
+    segments
 }
 
 /// Internal function to run retranscription
@@ -257,6 +273,9 @@ async fn run_retranscription<R: Runtime>(
         let app_for_vad = app.clone();
         let meeting_id_for_vad = meeting_id.clone();
         let source_label = source.label;
+        let speaker_hint = source.speaker_hint;
+        let positive_threshold = source.positive_threshold;
+        let negative_threshold = source.negative_threshold;
         let source_progress_span = 20.0 / source_count as f32;
         let source_progress_start = 5.0
             + source_index as f32 * source_progress_span
@@ -267,8 +286,8 @@ async fn run_retranscription<R: Runtime>(
             get_speech_chunks_with_thresholds_and_progress(
                 &audio_samples,
                 VAD_REDEMPTION_TIME_MS,
-                source.positive_threshold,
-                source.negative_threshold,
+                positive_threshold,
+                negative_threshold,
                 |vad_progress, segments_found| {
                     emit_progress(
                         &app_for_vad,
@@ -291,12 +310,16 @@ async fn run_retranscription<R: Runtime>(
         .map_err(|e| anyhow!("VAD processing failed for {}: {}", source_label, e))?;
 
         info!("VAD detected {} {} segments", source_segments.len(), source_label);
-        speech_segments.append(&mut source_segments);
+        speech_segments.extend(
+            source_segments
+                .drain(..)
+                .map(|segment| (segment, speaker_hint)),
+        );
     }
 
     speech_segments.sort_by(|a, b| {
-        a.start_timestamp_ms
-            .partial_cmp(&b.start_timestamp_ms)
+        a.0.start_timestamp_ms
+            .partial_cmp(&b.0.start_timestamp_ms)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
@@ -306,7 +329,7 @@ async fn run_retranscription<R: Runtime>(
     // Diagnostic: log segment duration distribution
     if !speech_segments.is_empty() {
         let durations_ms: Vec<f64> = speech_segments.iter()
-            .map(|s| s.end_timestamp_ms - s.start_timestamp_ms)
+            .map(|(s, _)| s.end_timestamp_ms - s.start_timestamp_ms)
             .collect();
         let total_speech_ms: f64 = durations_ms.iter().sum();
         let avg_duration = total_speech_ms / durations_ms.len() as f64;
@@ -319,10 +342,10 @@ async fn run_retranscription<R: Runtime>(
             (total_speech_ms / 1000.0 / duration_seconds) * 100.0
         );
         // Log first 10 segments for detailed inspection
-        for (i, seg) in speech_segments.iter().take(10).enumerate() {
+        for (i, (seg, speaker_hint)) in speech_segments.iter().take(10).enumerate() {
             let dur = seg.end_timestamp_ms - seg.start_timestamp_ms;
-            debug!("  Segment {}: {:.0}ms-{:.0}ms ({:.0}ms, {} samples)",
-                i, seg.start_timestamp_ms, seg.end_timestamp_ms, dur, seg.samples.len());
+            debug!("  Segment {}: {:.0}ms-{:.0}ms ({:.0}ms, {} samples, {:?})",
+                i, seg.start_timestamp_ms, seg.end_timestamp_ms, dur, seg.samples.len(), speaker_hint);
         }
         if total_segments > 10 {
             debug!("  ... and {} more segments", total_segments - 10);
@@ -353,8 +376,8 @@ async fn run_retranscription<R: Runtime>(
     // for the lowest-energy window near the target split point and cut there.
     const MAX_SEGMENT_SAMPLES: usize = 25 * 16000; // 25 seconds at 16kHz
 
-    let mut processable_segments: Vec<crate::audio::vad::SpeechSegment> = Vec::new();
-    for segment in &speech_segments {
+    let mut processable_segments: Vec<(crate::audio::vad::SpeechSegment, Option<&'static str>)> = Vec::new();
+    for (segment, speaker_hint) in &speech_segments {
         if segment.samples.len() > MAX_SEGMENT_SAMPLES {
             debug!(
                 "Splitting large segment ({:.0}ms, {} samples) at silence boundaries",
@@ -364,9 +387,13 @@ async fn run_retranscription<R: Runtime>(
 
             let sub_segments = split_segment_at_silence(segment, MAX_SEGMENT_SAMPLES);
             debug!("Split into {} sub-segments", sub_segments.len());
-            processable_segments.extend(sub_segments);
+            processable_segments.extend(
+                sub_segments
+                    .into_iter()
+                    .map(|segment| (segment, *speaker_hint)),
+            );
         } else {
-            processable_segments.push(segment.clone());
+            processable_segments.push((segment.clone(), *speaker_hint));
         }
     }
 
@@ -375,9 +402,10 @@ async fn run_retranscription<R: Runtime>(
 
     // Process each speech segment with progress updates
     let mut all_transcripts: Vec<(String, f64, f64)> = Vec::new(); // (text, start_ms, end_ms)
+    let mut speaker_hints: Vec<Option<&'static str>> = Vec::new();
     let mut total_confidence = 0.0f32;
 
-    for (i, segment) in processable_segments.iter().enumerate() {
+    for (i, (segment, speaker_hint)) in processable_segments.iter().enumerate() {
         // Check for cancellation before each segment
         if RETRANSCRIPTION_CANCELLED.load(Ordering::SeqCst) {
             return Err(anyhow!("Retranscription cancelled"));
@@ -431,6 +459,7 @@ async fn run_retranscription<R: Runtime>(
                 if trimmed.len() > 80 { let mut end = 80; while !trimmed.is_char_boundary(end) { end -= 1; } &trimmed[..end] } else { trimmed }
             );
             all_transcripts.push((text, segment.start_timestamp_ms, segment.end_timestamp_ms));
+            speaker_hints.push(*speaker_hint);
             total_confidence += conf;
         } else {
             debug!("Segment {}/{}: {:.1}s — empty transcription", i + 1, processable_count, segment_duration_sec);
@@ -457,7 +486,7 @@ async fn run_retranscription<R: Runtime>(
     emit_progress(&app, &meeting_id, "saving", 80, "Saving transcripts...");
 
     // Create transcript segments with proper timestamps from VAD
-    let segments = create_transcript_segments(&all_transcripts);
+    let segments = create_source_labeled_segments(&all_transcripts, &speaker_hints);
 
     // Save to database
     let app_state = app
@@ -486,8 +515,8 @@ async fn run_retranscription<R: Runtime>(
 
     for segment in &segments {
         sqlx::query(
-            "INSERT INTO transcripts (id, meeting_id, transcript, timestamp, audio_start_time, audio_end_time, duration)
-             VALUES (?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO transcripts (id, meeting_id, transcript, timestamp, audio_start_time, audio_end_time, duration, speaker)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&segment.id)
         .bind(&meeting_id)
@@ -496,6 +525,7 @@ async fn run_retranscription<R: Runtime>(
         .bind(segment.audio_start_time)
         .bind(segment.audio_end_time)
         .bind(segment.duration)
+        .bind(&segment.speaker)
         .execute(&mut *tx)
         .await
         .map_err(|e| anyhow!("Failed to insert transcript: {}", e))?;
@@ -992,6 +1022,45 @@ mod tests {
         std::fs::write(dir.path().join("audio.mp4"), b"fake").unwrap();
         let found = find_audio_file(dir.path()).unwrap();
         assert_eq!(found.file_name().unwrap(), "audio.mp4");
+    }
+
+    #[test]
+    fn dual_track_sources_preserve_deterministic_speaker_hints() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("mic.mp4"), b"mic").unwrap();
+        std::fs::write(dir.path().join("system.mp4"), b"system").unwrap();
+        let fallback = dir.path().join("audio.mp4");
+        let sources = find_retranscription_sources(dir.path(), &fallback);
+
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].speaker_hint, Some("You"));
+        assert_eq!(sources[1].speaker_hint, Some("Guest"));
+    }
+
+    #[test]
+    fn mixed_source_has_no_speaker_hint() {
+        let dir = tempfile::tempdir().unwrap();
+        let fallback = dir.path().join("audio.mp4");
+        let sources = find_retranscription_sources(dir.path(), &fallback);
+
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].speaker_hint, None);
+    }
+
+    #[test]
+    fn source_hints_stay_aligned_with_successful_transcripts() {
+        let transcripts = vec![
+            ("Hello one two three".to_string(), 14_970.0, 18_880.0),
+            ("Remote speech".to_string(), 16_770.0, 26_980.0),
+        ];
+        let segments = create_source_labeled_segments(
+            &transcripts,
+            &[Some("You"), Some("Guest")],
+        );
+
+        assert_eq!(segments[0].speaker.as_deref(), Some("You"));
+        assert_eq!(segments[1].speaker.as_deref(), Some("Guest"));
+        assert_eq!(segments[0].audio_start_time, Some(14.97));
     }
 
     #[test]
