@@ -14,17 +14,17 @@ This fork also goes beyond removing feature restrictions. It adds speaker identi
 
 Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on its project page (verified August 2026).
 
-**Legend:** ✅ Included · 🔒 Paid PRO feature · ❌ Not included
+**Legend:** ✅ Included · ❌ Not included
 
 | Feature | Meetily Community | Meetily PRO (Paywalled) | Meetily - Actually Free |
 | --- | :---: | :---: | :---: |
 | Live recording and local transcription | ✅ | ✅ | ✅ |
 | Local and BYOK cloud summaries | ✅ | ✅ | ✅ |
-| Custom summary templates | ❌ | 🔒 | ✅ |
-| Advanced PDF and DOCX exports | ❌ | 🔒 | ✅ |
-| Automatic meeting detection | ❌ | 🔒 | ✅ |
-| Speaker identification | ❌ | 🔒 | ✅ |
-| Chat with meetings | ❌ | 🔒 | ✅ |
+| Custom summary templates | ❌ | ✅ | ✅ |
+| Advanced PDF and DOCX exports | ❌ | ✅ | ✅ |
+| Automatic meeting detection | ❌ | ✅ | ✅ |
+| Speaker identification | ❌ | ✅ | ✅ |
+| Chat with meetings | ❌ | ✅ | ✅ |
 | Separate mic and system recordings | ❌ | ❌ | ✅ |
 | Live mic and system meters | ❌ | ❌ | ✅ |
 | Floating recording controls | ❌ | ❌ | ✅ |
