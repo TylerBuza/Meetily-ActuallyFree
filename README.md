@@ -38,8 +38,6 @@ Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on it
 | Automatic GPU setup | ❌ | ❌ | ✅ |
 | No analytics transmission or license checks | ❌ | ❌ | ✅ |
 
-Community includes limited built-in templates and Markdown export, while this fork supports user-created templates plus PDF, DOCX, Markdown, text, and JSON. This fork independently implements the matching capabilities above without an account, subscription, or license key, but does not claim the PRO-only services marked unavailable here.
-
 ## Highlights
 
 - **Speaker-aware transcripts:** mic speech stays `You`; remote voices become `Speaker N`; overlap can render as `You + Speaker 1`.
