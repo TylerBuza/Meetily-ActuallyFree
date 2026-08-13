@@ -26,7 +26,7 @@ Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on it
 | Separate mic and system recordings | ❌ | ❌ | ✅ |
 | Calendar integration | ❌ | ✅ | ❌ |
 | Speaker identification | ❌ | ✅ | ✅ |
-| Live mic and system meters | ❌ | ❌ | ✅ |
+| Live mic and system audio visualizations | ❌ | ❌ | ✅ |
 | Team self-hosted deployment | ❌ | ✅ | ❌ |
 | Automatic meeting detection | ❌ | ✅ | ✅ |
 | Floating recording controls | ❌ | ❌ | ✅ |
