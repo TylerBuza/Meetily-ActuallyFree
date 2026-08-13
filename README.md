@@ -14,7 +14,7 @@ This fork also goes beyond removing feature restrictions. It adds speaker identi
 
 Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on its project page (verified August 2026).
 
-**Legend:** ✅ Included · 🔒 Paid PRO feature · ⚠️ Limited · ❌ Not included · ➖ Not publicly listed
+**Legend:** ✅ Included · 🔒 Paid PRO feature · ⚠️ Limited · ❌ Not included · ↔️ Same as Community
 
 | Feature | Meetily Community | Meetily PRO (Paywalled) | Meetily - Actually Free |
 | --- | :---: | :---: | :---: |
@@ -25,13 +25,13 @@ Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on it
 | Automatic meeting detection | ❌ Not included | 🔒 Detect and join | ✅ Local meeting-app alerts |
 | Speaker identification | ❌ Not included | 🔒 Announced as coming soon | ✅ Local `You` and speaker labels |
 | Chat with meetings | ❌ Not included | 🔒 Announced as coming soon | ✅ Transcript-grounded Q&A |
-| Separate mic and system recordings | ❌ Mixed recording only | ➖ Not publicly listed | ✅ Separate tracks plus mixed playback |
-| Live mic and system meters | ⚠️ Setup test only | ➖ Not publicly listed | ✅ Visible throughout recording |
-| Compact recording controls | ❌ Full window only | ➖ Not publicly listed | ✅ Floating bar with timer and controls |
-| Search and people profiles | ❌ Not included | ➖ Not publicly listed | ✅ Meetings, transcripts, summaries, and people |
-| Dark mode | ❌ Light interface | ➖ Not publicly listed | ✅ Redesigned dark and light themes |
-| Windows GPU installation | ⚠️ Separate backend choices | ➖ Not publicly listed | ✅ One setup selects CUDA, Vulkan, or CPU |
-| Usage telemetry | ⚠️ Optional, off by default | ➖ Not publicly listed | ✅ Disabled; no analytics events sent |
+| Separate mic and system recordings | ❌ Mixed recording only | ↔️ Same as Community | ✅ Separate tracks plus mixed playback |
+| Live mic and system meters | ⚠️ Setup test only | ↔️ Same as Community | ✅ Visible throughout recording |
+| Compact recording controls | ❌ Full window only | ↔️ Same as Community | ✅ Floating bar with timer and controls |
+| Search and people profiles | ❌ Not included | ↔️ Same as Community | ✅ Meetings, transcripts, summaries, and people |
+| Dark mode | ❌ Light interface | ↔️ Same as Community | ✅ Redesigned dark and light themes |
+| Windows GPU installation | ⚠️ Separate backend choices | ↔️ Same as Community | ✅ One setup selects CUDA, Vulkan, or CPU |
+| Usage telemetry | ⚠️ Optional, off by default | ↔️ Same as Community | ✅ Disabled; no analytics events sent |
 
 This fork independently implements the matching PRO capabilities above and makes them available without an account, subscription, or license key. It does not claim PRO features that are not implemented here, such as calendar integration, team self-hosting, compliance audit trails, or priority support.
 
