@@ -14,17 +14,28 @@ This fork also goes beyond removing feature restrictions. It adds speaker identi
 
 Compared with the free upstream Meetily Community `v0.4.0` release (verified August 2026).
 
-Both apps already include live recording, local transcription, AI summaries, cloud provider support, and in-app updates. Here is what this fork adds for everyday use:
+Both apps already include live recording, local transcription, AI summaries, cloud provider support, and in-app updates.
+
+### PRO Features, Included Free Here
+
+Upstream lists these as Meetily PRO advantages over Community. This fork provides its own local implementations with no subscription or license key:
 
 | Feature | Meetily Community | Meetily - Actually Free |
 | --- | :---: | :---: |
-| Know who said what | No speaker separation | **`You`, `Speaker 1`, and overlap labels** |
+| Custom summary templates | **PRO paywall** | **Included free** |
+| Advanced exports | **PRO paywall**; Community has Markdown | **PDF, DOCX, Markdown, text, and JSON** |
+| Automatic meeting detection | **PRO paywall** | **Included free with local app alerts** |
+| Speaker identification | **PRO paywall / listed as coming soon** | **`You`, `Speaker 1`, and overlap labels** |
+| Chat with meetings | **PRO paywall / listed as coming soon** | **Included free with transcript-grounded Q&A** |
+
+### More Improvements In This Fork
+
+| Feature | Meetily Community | Meetily - Actually Free |
+| --- | :---: | :---: |
 | Microphone and computer audio | One mixed recording | **Separate source tracks plus mixed playback** |
 | Audio activity while recording | Setup test only | **Live mic and system meters** |
 | Compact recording controls | Full window | **Floating bar with timer and controls** |
-| Meeting detection | Reserved for PRO | **Alerts you when Zoom, Teams, or another meeting app starts** |
 | Appearance | Light interface | **Redesigned dark and light themes** |
-| Advanced exports | Reserved for PRO; Markdown only in Community | **PDF, DOCX, Markdown, text, and JSON** |
 | Find past information | Browse meeting history | **Search meetings, transcripts, summaries, and people** |
 | People profiles | Not included | **Profiles, speaker naming, and person Q&A** |
 | Windows installation | Separate backend choices | **One setup picks CUDA, Vulkan, or CPU** |
