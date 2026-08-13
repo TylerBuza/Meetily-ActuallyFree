@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>A Windows-focused fork of Meetily with local speaker identity, people profiles, automatic meeting detection, dark mode, advanced exports, and a universal GPU installer included.</strong>
+  <strong>A Windows-focused fork of Meetily with local speaker identity, split mic/system audio, live source meters, a floating recording bar, people profiles, automatic meeting detection, dark mode, advanced exports, and a universal GPU installer included.</strong>
 </p>
 
 <p align="center">
@@ -29,7 +29,10 @@ Both free desktop apps include real-time recording and local transcription, opti
 | Windows, macOS, and Linux support | Yes | Windows release |
 | Speaker distinction and local diarization | Marketed as planned for PRO | **Included free** |
 | Deterministic local-user label from retained mic audio | Not present | **`You` + overlap labels** |
-| Separate aligned mic/system recordings | Mixed playback recording | **`audio.mp4`, `mic.mp4`, `system.mp4`** |
+| Mic/system audio separation | Mixed playback recording | **Independent capture, VAD, transcription, and retained tracks** |
+| Retained recording tracks | Mixed playback recording | **`audio.mp4`, `mic.mp4`, `system.mp4`** |
+| Live mic/system visualization while recording | Device-test meters | **Separate pre-mix source meters** |
+| Floating recording controls | Not present | **Frameless always-available minibar** |
 | Automatic meeting-app detection | Marketed as PRO | **Included free, fully on-device** |
 | Dark mode and redesigned interface | Light interface | **Overhauled dark-first theme with light mode** |
 | Advanced PDF/DOCX/text/JSON exports | Marketed as PRO; Community exports Markdown | **Included with native Save dialogs** |
@@ -44,6 +47,9 @@ Upstream provides the open-source foundation: local processing, live transcripti
 ## Highlights
 
 - **Speaker-aware transcripts:** mic speech stays `You`; remote voices become `Speaker N`; overlap can render as `You + Speaker 1`.
+- **Split audio pipeline:** microphone and system audio are VAD-processed and transcribed independently, while aligned source tracks are retained beside the mixed playback file.
+- **Live source visualization:** separate mic and system meters show pre-mix activity throughout recording.
+- **Floating recording bar:** shrink the main window into a compact minibar with a synchronized timer and pause, resume, stop, and restore controls.
 - **Automatic meeting detection:** watches locally for Zoom, Teams, Slack, Webex, and other meeting apps, then prompts you to start recording.
 - **Overhauled interface:** a cohesive dark-first theme across recording, transcripts, summaries, people, and settings, with light mode available.
 - **Universal Windows setup:** one installer selects NVIDIA CUDA, Vulkan, or CPU and packages required runtimes.
