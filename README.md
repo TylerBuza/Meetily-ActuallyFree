@@ -18,9 +18,11 @@ Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on it
 
 | Feature | Meetily Community | Meetily PRO (Paywalled) | Meetily - Actually Free |
 | --- | :---: | :---: | :---: |
+| Free to use | ✅ | ❌ | ✅ |
+| Open-source MIT license | ✅ | ❌ | ✅ |
 | Live recording and local transcription | ✅ | ✅ | ✅ |
 | Local and BYOK cloud summaries | ✅ | ✅ | ✅ |
-| Custom summary templates | ❌ | ✅ | ✅ |
+| Create custom summary templates | ❌ | ✅ | ✅ |
 | Advanced PDF and DOCX exports | ❌ | ✅ | ✅ |
 | Automatic meeting detection | ❌ | ✅ | ✅ |
 | Speaker identification | ❌ | ✅ | ✅ |
@@ -34,10 +36,11 @@ Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on it
 | Floating recording controls | ❌ | ❌ | ✅ |
 | Search and people profiles | ❌ | ❌ | ✅ |
 | Dark mode | ❌ | ❌ | ✅ |
-| One Windows setup for CUDA, Vulkan, and CPU | ❌ | ❌ | ✅ |
+| Windows GPU acceleration | ✅ | ✅ | ✅ |
+| One setup that automatically selects CUDA, Vulkan, or CPU | ❌ | ❌ | ✅ |
 | No analytics transmission or license checks | ❌ | ❌ | ✅ |
 
-Community includes Markdown export; this fork additionally exports PDF, DOCX, text, and JSON. PRO lists speaker identification and meeting chat as coming soon. This fork independently implements the matching capabilities above without an account, subscription, or license key, but does not claim the PRO-only services marked unavailable here.
+Community is free and MIT licensed; the published PRO comparison lists a commercial license at $10/user/month billed annually. Community includes limited built-in templates and Markdown export, while this fork supports user-created templates plus PDF, DOCX, Markdown, text, and JSON. This fork independently implements the matching capabilities above without an account, subscription, or license key, but does not claim the PRO-only services marked unavailable here.
 
 ## Highlights
 
