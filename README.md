@@ -32,7 +32,7 @@ Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on it
 | Floating recording controls | ❌ | ❌ | ✅ |
 | Compliance audit trails | ❌ | ✅ | ❌ |
 | Chat with meetings | ❌ | ✅ | ✅ |
-| Search and people profiles | ❌ | ❌ | ✅ |
+| Speaker profiles | ❌ | ❌ | ✅ |
 | Dark mode | ❌ | ❌ | ✅ |
 | Windows GPU acceleration | ❌ | ✅ | ✅ |
 | Automatic GPU setup | ❌ | ❌ | ✅ |
