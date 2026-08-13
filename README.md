@@ -31,7 +31,7 @@ Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on it
 | Search and people profiles | ❌ Not included | ↔️ Same as Community | ✅ Meetings, transcripts, summaries, and people |
 | Dark mode | ❌ Light interface | ↔️ Same as Community | ✅ Redesigned dark and light themes |
 | Windows GPU installation | ⚠️ Separate backend choices | ↔️ Same as Community | ✅ One setup selects CUDA, Vulkan, or CPU |
-| Usage telemetry | ⚠️ Optional, off by default | ↔️ Same as Community | ✅ Disabled; no analytics events sent |
+| Analytics and license checks | ⚠️ Optional analytics, off by default | 🔒 Requires PRO license verification | ✅ No analytics transmission or license checks |
 
 This fork independently implements the matching PRO capabilities above and makes them available without an account, subscription, or license key. It does not claim PRO features that are not implemented here, such as calendar integration, team self-hosting, compliance audit trails, or priority support.
 
