@@ -20,27 +20,25 @@ Built from the open-source [Meetily Community Edition](https://github.com/Zackri
 
 ## Fork Comparison
 
-Compared with upstream Meetily Community `v0.4.0` (verified August 2026).
+Compared with the free upstream Meetily Community `v0.4.0` release (verified August 2026).
 
-Both free desktop apps include real-time recording and local transcription, optional bring-your-own-key cloud summaries through Claude, OpenAI, Groq, and OpenRouter, and in-app updates. The features below are the additions that distinguish this fork:
+Both apps already include live recording, local transcription, AI summaries, cloud provider support, and in-app updates. Here is what this fork adds for everyday use:
 
-| Area | Meetily Community | Meetily - Actually Free |
+| Feature | Meetily Community | Meetily - Actually Free |
 | --- | :---: | :---: |
-| Windows, macOS, and Linux support | Yes | Windows release |
-| Speaker distinction and local diarization | Marketed as planned for PRO | **Included free** |
-| Deterministic local-user label from retained mic audio | Not present | **`You` + overlap labels** |
-| Mic/system audio separation | Mixed playback recording | **Independent capture, VAD, transcription, and retained tracks** |
-| Retained recording tracks | Mixed playback recording | **`audio.mp4`, `mic.mp4`, `system.mp4`** |
-| Live mic/system visualization while recording | Device-test meters | **Separate pre-mix source meters** |
-| Floating recording controls | Not present | **Frameless always-available minibar** |
-| Automatic meeting-app detection | Marketed as PRO | **Included free, fully on-device** |
-| Dark mode and redesigned interface | Light interface | **Overhauled dark-first theme with light mode** |
-| Advanced PDF/DOCX/text/JSON exports | Marketed as PRO; Community exports Markdown | **Included with native Save dialogs** |
-| Global title/transcript/summary/person search | Not present | **Included** |
-| User/people profiles and grounded person Q&A | Not present | **Included** |
-| One Windows installer for CUDA, Vulkan, and CPU | Separate build/backend choices | **Automatic selection in one setup** |
-| App-managed portable data layout | Standard OS app-data layout | **Install-local when writable** |
-| Telemetry and usage analytics | Optional, off by default | **Disabled; no analytics events are sent** |
+| Know who said what | No speaker separation | **`You`, `Speaker 1`, and overlap labels** |
+| Microphone and computer audio | One mixed recording | **Separate source tracks plus mixed playback** |
+| Audio activity while recording | Setup test only | **Live mic and system meters** |
+| Compact recording controls | Full window | **Floating bar with timer and controls** |
+| Meeting detection | Reserved for PRO | **Local prompts for Zoom, Teams, and more** |
+| Appearance | Light interface | **Redesigned dark and light themes** |
+| Export formats | Markdown | **PDF, DOCX, Markdown, text, and JSON** |
+| Find past information | Browse meeting history | **Search meetings, transcripts, summaries, and people** |
+| People profiles | Not included | **Profiles, speaker naming, and person Q&A** |
+| Windows installation | Separate backend choices | **One setup picks CUDA, Vulkan, or CPU** |
+| Data storage | Standard app-data folder | **Portable install-local data when possible** |
+| Usage telemetry | Optional and off by default | **Disabled; no analytics events are sent** |
+| Supported releases | Windows, macOS, and Linux | **Windows 10/11** |
 
 Upstream provides the open-source foundation: local processing, live transcription, professional audio mixing, summaries, cloud providers, import and enhance, GPU acceleration, recovery checkpoints, and in-app updates. This fork adds free speaker identity, meeting detection, a dark-first interface, search/people workflows, advanced exports, portability, a simpler Windows installation experience, and reliability fixes.
 
