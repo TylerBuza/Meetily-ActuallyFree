@@ -4,19 +4,11 @@
   <img src="frontend/src-tauri/icon-source.png" alt="Meetily - Actually Free logo" width="240" />
 </p>
 
-<p align="center">
-  <strong>A Windows-focused fork of Meetily with local speaker identity, split mic/system audio, live source meters, a floating recording bar, people profiles, automatic meeting detection, dark mode, advanced exports, and a universal GPU installer included.</strong>
-</p>
+An entirely free, fully unlocked fork of [Meetily](https://github.com/Zackriya-Solutions/meetily). Every feature is available without an account, subscription, license key, trial, or paid tier.
 
-<p align="center">
-  <a href="https://github.com/TylerBuza/Meetily-ActuallyFree/releases/latest"><strong>Download for Windows</strong></a>
-  ·
-  <a href="https://github.com/TylerBuza/Meetily-ActuallyFree/releases">Release notes</a>
-  ·
-  <a href="PRIVACY_POLICY.md">Privacy</a>
-</p>
+[Download the latest Windows release](https://github.com/TylerBuza/Meetily-ActuallyFree/releases/latest)
 
-Built from the open-source [Meetily Community Edition](https://github.com/Zackriya-Solutions/meetily), with a different Windows distribution and additional local meeting workflows.
+This fork also goes beyond removing feature restrictions. It adds speaker identity, separate mic and system audio, automatic meeting detection, people profiles, richer exports, a redesigned interface, a universal Windows installer, and numerous recording and reliability improvements.
 
 ## Fork Comparison
 
