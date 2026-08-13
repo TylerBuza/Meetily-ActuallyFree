@@ -14,26 +14,26 @@ This fork also goes beyond removing feature restrictions. It adds speaker identi
 
 Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on its project page (verified August 2026).
 
-**Legend:** ✅ Included · 🔒 Paid PRO feature · ⚠️ Limited · ❌ Not included · ↔️ Same as Community
+**Legend:** ✅ Included · 🔒 Paid PRO feature · ❌ Not included
 
 | Feature | Meetily Community | Meetily PRO (Paywalled) | Meetily - Actually Free |
 | --- | :---: | :---: | :---: |
-| Live recording and local transcription | ✅ Included | ✅ Included | ✅ Included |
-| Local and BYOK cloud summaries | ✅ Included | ✅ Included | ✅ Included |
-| Custom summary templates | ❌ Not included | 🔒 Paid | ✅ Included free |
-| Advanced exports | ⚠️ Markdown only | 🔒 PDF, DOCX, and Markdown | ✅ PDF, DOCX, Markdown, text, and JSON |
-| Automatic meeting detection | ❌ Not included | 🔒 Detect and join | ✅ Local meeting-app alerts |
-| Speaker identification | ❌ Not included | 🔒 Announced as coming soon | ✅ Local `You` and speaker labels |
-| Chat with meetings | ❌ Not included | 🔒 Announced as coming soon | ✅ Transcript-grounded Q&A |
-| Separate mic and system recordings | ❌ Mixed recording only | ↔️ Same as Community | ✅ Separate tracks plus mixed playback |
-| Live mic and system meters | ⚠️ Setup test only | ↔️ Same as Community | ✅ Visible throughout recording |
-| Compact recording controls | ❌ Full window only | ↔️ Same as Community | ✅ Floating bar with timer and controls |
-| Search and people profiles | ❌ Not included | ↔️ Same as Community | ✅ Meetings, transcripts, summaries, and people |
-| Dark mode | ❌ Light interface | ↔️ Same as Community | ✅ Redesigned dark and light themes |
-| Windows GPU installation | ⚠️ Separate backend choices | ↔️ Same as Community | ✅ One setup selects CUDA, Vulkan, or CPU |
-| Analytics and license checks | ⚠️ Optional analytics, off by default | ↔️ Same as Community | ✅ No analytics transmission or license checks |
+| Live recording and local transcription | ✅ | ✅ | ✅ |
+| Local and BYOK cloud summaries | ✅ | ✅ | ✅ |
+| Custom summary templates | ❌ | 🔒 | ✅ |
+| Advanced PDF and DOCX exports | ❌ | 🔒 | ✅ |
+| Automatic meeting detection | ❌ | 🔒 | ✅ |
+| Speaker identification | ❌ | 🔒 | ✅ |
+| Chat with meetings | ❌ | 🔒 | ✅ |
+| Separate mic and system recordings | ❌ | ❌ | ✅ |
+| Live mic and system meters | ❌ | ❌ | ✅ |
+| Floating recording controls | ❌ | ❌ | ✅ |
+| Search and people profiles | ❌ | ❌ | ✅ |
+| Dark mode | ❌ | ❌ | ✅ |
+| One Windows setup for CUDA, Vulkan, and CPU | ❌ | ❌ | ✅ |
+| No analytics transmission or license checks | ❌ | ❌ | ✅ |
 
-This fork independently implements the matching PRO capabilities above and makes them available without an account, subscription, or license key. It does not claim PRO features that are not implemented here, such as calendar integration, team self-hosting, compliance audit trails, or priority support.
+Community includes Markdown export; this fork additionally exports PDF, DOCX, text, and JSON. PRO lists speaker identification and meeting chat as coming soon. This fork independently implements the matching capabilities above without an account, subscription, or license key.
 
 ## Highlights
 
