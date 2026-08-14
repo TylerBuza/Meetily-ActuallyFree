@@ -156,10 +156,12 @@ pub async fn load_recording_preferences<R: Runtime>(
                 info!("Loaded recording preferences from store");
                 // Update macOS backend to current value if needed
                 #[cfg(target_os = "macos")]
-                {
+                let p = {
+                    let mut p = p;
                     let backend = crate::audio::capture::get_current_backend();
                     p.system_audio_backend = Some(backend.to_string());
-                }
+                    p
+                };
                 p
             }
             Err(e) => {
