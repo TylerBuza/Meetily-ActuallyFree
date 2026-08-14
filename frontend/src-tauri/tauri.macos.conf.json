@@ -1,0 +1,17 @@
+{
+    "bundle": {
+        "targets": [
+            "dmg"
+        ],
+        "createUpdaterArtifacts": false,
+        "resources": [
+            "templates/*.json",
+            "resources/diarization/*"
+        ],
+        "macOS": {
+            "entitlements": "entitlements.plist",
+            "hardenedRuntime": true,
+            "minimumSystemVersion": "13.0"
+        }
+    }
+}
