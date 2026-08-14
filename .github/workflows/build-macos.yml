@@ -171,14 +171,25 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ steps.release.outputs.version }}
+          SIGNED: ${{ inputs.sign-and-notarize }}
         run: |
           set -euo pipefail
           BUNDLE_DIR="target/$TARGET/release/bundle"
-          APP_PATH=$(find "$BUNDLE_DIR/macos" -maxdepth 1 -name "*.app" -type d -print -quit)
           DMG_PATH=$(find "$BUNDLE_DIR/dmg" -maxdepth 1 -name "*.dmg" -type f -print -quit)
 
-          if [[ -z "$APP_PATH" || -z "$DMG_PATH" ]]; then
-            echo "The expected app bundle or DMG was not produced."
+          if [[ -z "$DMG_PATH" ]]; then
+            echo "The expected DMG was not produced."
+            exit 1
+          fi
+
+          MOUNT_POINT="$RUNNER_TEMP/meetily-dmg"
+          mkdir -p "$MOUNT_POINT"
+          hdiutil attach "$DMG_PATH" -nobrowse -readonly -mountpoint "$MOUNT_POINT"
+          trap 'hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1 || true' EXIT
+
+          APP_PATH=$(find "$MOUNT_POINT" -maxdepth 1 -name "*.app" -type d -print -quit)
+          if [[ -z "$APP_PATH" ]]; then
+            echo "The DMG does not contain an app bundle."
             exit 1
           fi
 
@@ -200,6 +211,12 @@ jobs:
           done
 
           codesign --verify --deep --strict "$APP_PATH"
+          if [[ "$SIGNED" == "true" ]]; then
+            spctl --assess --type execute --verbose "$APP_PATH"
+          fi
+
+          hdiutil detach "$MOUNT_POINT"
+          trap - EXIT
 
           mkdir -p dist
           OUTPUT_DMG="dist/Meetily-Actually-Free_${VERSION}_aarch64.dmg"
@@ -210,13 +227,6 @@ jobs:
           )
 
           echo "dmg=$OUTPUT_DMG" >> "$GITHUB_OUTPUT"
-          echo "app=$APP_PATH" >> "$GITHUB_OUTPUT"
-
-      - name: Verify notarization
-        if: ${{ inputs.sign-and-notarize }}
-        env:
-          APP_PATH: ${{ steps.artifact.outputs.app }}
-        run: spctl --assess --type execute --verbose "$APP_PATH"
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
