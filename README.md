@@ -75,8 +75,8 @@ M1 and newer Macs running macOS 13 Ventura or later are supported. The DMG is no
 
 | Data | Location |
 | --- | --- |
-| Database, settings, and models | Install-local when writable; OS app-data fallback otherwise |
-| Recordings | The user's `Music/meetily-recordings/<meeting>` folder |
+| Database, settings, and models | Windows/Linux: install-local when writable; macOS: `~/Library/Application Support/Meetily` |
+| Recordings | Windows: `Music/meetily-recordings`; macOS: `Movies/meetily-recordings` |
 | Playback and retained tracks | `audio.mp4`, `mic.mp4`, `system.mp4` |
 
 ## Build

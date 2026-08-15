@@ -215,8 +215,55 @@ jobs:
             spctl --assess --type execute --verbose "$APP_PATH"
           fi
 
+          INSTALLED_APP="$RUNNER_TEMP/Applications/$(basename "$APP_PATH")"
+          mkdir -p "$RUNNER_TEMP/Applications"
+          ditto "$APP_PATH" "$INSTALLED_APP"
+
           hdiutil detach "$MOUNT_POINT"
           trap - EXIT
+
+          APP_BINARY="$INSTALLED_APP/Contents/MacOS/meetily"
+          LOG_PATH="$RUNNER_TEMP/meetily-launch.log"
+          RUST_BACKTRACE=1 RUST_LOG=info "$APP_BINARY" >"$LOG_PATH" 2>&1 &
+          APP_PID=$!
+
+          cleanup_app() {
+            if kill -0 "$APP_PID" >/dev/null 2>&1; then
+              kill -TERM "$APP_PID" >/dev/null 2>&1 || true
+              sleep 2
+              kill -KILL "$APP_PID" >/dev/null 2>&1 || true
+            fi
+            wait "$APP_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup_app EXIT
+
+          sleep 20
+          if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
+            wait "$APP_PID" || STATUS=$?
+            cat "$LOG_PATH"
+            echo "Meetily exited during startup with status ${STATUS:-0}."
+            exit 1
+          fi
+
+          for milestone in \
+            "Application setup complete" \
+            "Fresh database initialized successfully" \
+            "Successfully persisted onboarding status to disk" \
+            "Hardware acceleration support: enabled"; do
+            if ! grep -q "$milestone" "$LOG_PATH"; then
+              cat "$LOG_PATH"
+              echo "Missing startup milestone: $milestone"
+              exit 1
+            fi
+          done
+
+          cleanup_app
+          trap - EXIT
+
+          DATA_ROOT="$HOME/Library/Application Support/Meetily"
+          test -f "$DATA_ROOT/meeting_minutes.sqlite"
+          test ! -e "$INSTALLED_APP/Contents/MacOS/data"
+          codesign --verify --deep --strict "$INSTALLED_APP"
 
           mkdir -p dist
           OUTPUT_DMG="dist/Meetily-Actually-Free_${VERSION}_aarch64.dmg"
@@ -235,6 +282,7 @@ jobs:
           path: |
             dist/*.dmg
             dist/SHA256SUMS-macos.txt
+            ${{ runner.temp }}/meetily-launch.log
           if-no-files-found: error
           retention-days: 30
 

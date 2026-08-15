@@ -141,7 +141,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -f "$MEETILY_APP_PATH/Contents/MacOS/data/meeting_minutes.sqlite"
+          test -f "$HOME/Library/Application Support/Meetily/meeting_minutes.sqlite"
+          test ! -e "$MEETILY_APP_PATH/Contents/MacOS/data"
           codesign --verify --deep --strict --verbose=2 "$MEETILY_APP_PATH" 2>&1 \
             | tee -a "$RUNNER_TEMP/meetily-metadata.log"
 

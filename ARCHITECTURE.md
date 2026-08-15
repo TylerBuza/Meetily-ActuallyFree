@@ -123,18 +123,19 @@ frontend close fallback. Those mechanisms caused zombie bars, frozen
 
 ---
 
-## 3. Where things are stored (portable design)
+## 3. Where things are stored
 
-This fork is **portable**: everything it manages lives under the install
-directory, not scattered across `%APPDATA%` / `~/Library`.
+This fork is install-local on Windows and Linux. macOS stores writable data in
+`~/Library/Application Support/Meetily`; writing inside a signed `.app` bundle
+invalidates its signature.
 
 `src-tauri/src/paths.rs` is the single source of truth:
 
 | What | Where |
 |---|---|
-| Database, templates, settings, models | `<exe dir>/data/…` |
-| Bundled diarization models | `<exe dir>/resources/diarization/` |
-| **Audio recordings** | `%USERPROFILE%\Music\meetily-recordings\<meeting>\audio.mp4` (mixed), plus `mic.mp4` / `system.mp4` source tracks |
+| Database, templates, settings, models | Windows/Linux: `<exe dir>/data/…`; macOS: `~/Library/Application Support/Meetily/…` |
+| Bundled diarization models | The platform app bundle's `resources/diarization/` directory |
+| **Audio recordings** | Windows: `%USERPROFILE%\Music\meetily-recordings\<meeting>`; macOS: `~/Movies/meetily-recordings/<meeting>` |
 
 Two gotchas:
 
@@ -144,11 +145,11 @@ Two gotchas:
    `audio.mp4` (mixed playback), `mic.mp4` (local user), and `system.mp4`
    (remote/computer audio). Code that looks for playback must prefer
    `audio.mp4` — see `diarization::find_meeting_audio`.
-2. `paths.rs` falls back to the OS data dir if the install directory isn't
-   writable (e.g. installed under Program Files).
+2. `paths.rs` always uses the OS data directory on macOS. Windows and Linux fall
+   back there if the install directory isn't writable.
 
 A one-time migration (`paths::migrate_legacy_data`) copies data from the old
-`%APPDATA%` location on first run so upgrading users keep their history.
+Tauri app-data location on first run so upgrading users keep their history.
 
 ---
 
