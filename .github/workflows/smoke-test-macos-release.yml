@@ -1,0 +1,145 @@
+name: "Smoke Test - macOS Release"
+
+on:
+  workflow_dispatch:
+    inputs:
+      release-tag:
+        description: "Published macOS release tag"
+        required: true
+        type: string
+        default: "v0.2.5-macos"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    name: Launch Published Apple Silicon App
+    runs-on: macos-14
+    timeout-minutes: 15
+
+    steps:
+      - name: Verify Apple Silicon runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers
+          test "$(uname -m)" = "arm64"
+
+      - name: Download published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release-tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release"
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir "$RUNNER_TEMP/release"
+
+          cd "$RUNNER_TEMP/release"
+          test -f SHA256SUMS-macos.txt
+          shasum -a 256 -c SHA256SUMS-macos.txt
+
+      - name: Install and inspect app
+        env:
+          RELEASE_TAG: ${{ inputs.release-tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_DIR="$RUNNER_TEMP/release"
+          DMG_PATH=$(find "$RELEASE_DIR" -maxdepth 1 -name "*.dmg" -type f -print -quit)
+          test -n "$DMG_PATH"
+          hdiutil verify "$DMG_PATH"
+
+          MOUNT_POINT="$RUNNER_TEMP/meetily-dmg"
+          mkdir -p "$MOUNT_POINT"
+          hdiutil attach "$DMG_PATH" -nobrowse -readonly -mountpoint "$MOUNT_POINT"
+          trap 'hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1 || true' EXIT
+
+          APP_SOURCE=$(find "$MOUNT_POINT" -maxdepth 1 -name "*.app" -type d -print -quit)
+          test -n "$APP_SOURCE"
+          mkdir -p "$RUNNER_TEMP/Applications"
+          APP_PATH="$RUNNER_TEMP/Applications/$(basename "$APP_SOURCE")"
+          ditto "$APP_SOURCE" "$APP_PATH"
+
+          hdiutil detach "$MOUNT_POINT"
+          trap - EXIT
+
+          APP_BINARY="$APP_PATH/Contents/MacOS/meetily"
+          for binary in \
+            "$APP_BINARY" \
+            "$APP_PATH/Contents/MacOS/llama-helper" \
+            "$APP_PATH/Contents/MacOS/ffmpeg"; do
+            test -x "$binary"
+            file "$binary" | tee -a "$RUNNER_TEMP/meetily-metadata.log"
+            file "$binary" | grep -q "arm64"
+          done
+
+          test -f "$APP_PATH/Contents/Resources/templates/standard_meeting.json"
+          test -f "$APP_PATH/Contents/Resources/resources/diarization/segmentation-3.0-fp16.onnx"
+          test -f "$APP_PATH/Contents/Resources/resources/diarization/wespeaker-resnet34-LM.onnx"
+          test -f "$APP_PATH/Contents/Resources/resources/diarization/xvec_transform.npz"
+
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH" 2>&1 \
+            | tee -a "$RUNNER_TEMP/meetily-metadata.log"
+
+          EXPECTED_VERSION="${RELEASE_TAG#v}"
+          EXPECTED_VERSION="${EXPECTED_VERSION%-macos}"
+          BUNDLE_VERSION=$(/usr/libexec/PlistBuddy \
+            -c "Print :CFBundleShortVersionString" \
+            "$APP_PATH/Contents/Info.plist")
+          test "$BUNDLE_VERSION" = "$EXPECTED_VERSION"
+          echo "Bundle version: $BUNDLE_VERSION" | tee -a "$RUNNER_TEMP/meetily-metadata.log"
+          echo "MEETILY_APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+
+      - name: Launch app
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_BINARY="$MEETILY_APP_PATH/Contents/MacOS/meetily"
+          LOG_PATH="$RUNNER_TEMP/meetily-launch.log"
+
+          RUST_BACKTRACE=1 RUST_LOG=info "$APP_BINARY" >"$LOG_PATH" 2>&1 &
+          APP_PID=$!
+
+          cleanup() {
+            if kill -0 "$APP_PID" >/dev/null 2>&1; then
+              kill -TERM "$APP_PID" >/dev/null 2>&1 || true
+              sleep 2
+              kill -KILL "$APP_PID" >/dev/null 2>&1 || true
+            fi
+            wait "$APP_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          sleep 20
+          if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
+            wait "$APP_PID" || STATUS=$?
+            cat "$LOG_PATH"
+            echo "Meetily exited during startup with status ${STATUS:-0}."
+            exit 1
+          fi
+
+          ps -p "$APP_PID" -o pid=,etime=,command=
+          if grep -Eiq \
+            "thread .* panicked|fatal runtime error|dyld: Library not loaded|Abort trap|Segmentation fault" \
+            "$LOG_PATH"; then
+            cat "$LOG_PATH"
+            echo "Meetily logged a fatal startup error."
+            exit 1
+          fi
+
+          echo "Meetily remained running for the 20-second startup smoke test."
+
+      - name: Upload smoke-test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release-smoke-test-logs
+          path: |
+            ${{ runner.temp }}/meetily-metadata.log
+            ${{ runner.temp }}/meetily-launch.log
+          if-no-files-found: warn
+          retention-days: 30
