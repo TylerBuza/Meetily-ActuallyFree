@@ -131,7 +131,19 @@ jobs:
             exit 1
           fi
 
+          grep -q "Application setup complete" "$LOG_PATH"
+          grep -q "Fresh database initialized successfully" "$LOG_PATH"
+          grep -q "Successfully persisted onboarding status to disk" "$LOG_PATH"
+          grep -q "Hardware acceleration support: enabled" "$LOG_PATH"
           echo "Meetily remained running for the 20-second startup smoke test."
+
+      - name: Verify post-launch integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$MEETILY_APP_PATH/Contents/MacOS/data/meeting_minutes.sqlite"
+          codesign --verify --deep --strict --verbose=2 "$MEETILY_APP_PATH" 2>&1 \
+            | tee -a "$RUNNER_TEMP/meetily-metadata.log"
 
       - name: Upload smoke-test logs
         if: always()
