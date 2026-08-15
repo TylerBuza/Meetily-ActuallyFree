@@ -49,6 +49,8 @@ export function AudioTestStep() {
   const active = useRef(true);
   const deviceLoad = useRef(0);
   const meterRun = useRef(0);
+  // Rust owns one process-global monitor. Serialize stop/start transitions so a
+  // stale StrictMode effect, retest, or device change cannot stop its successor.
   const meterTransition = useRef<Promise<void>>(Promise.resolve());
   const micNameRef = useRef('');
   const sysNameRef = useRef('');

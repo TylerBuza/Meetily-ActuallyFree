@@ -1,0 +1,174 @@
+name: "Publish - macOS Apple Silicon"
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate-run-id:
+        description: "Successful Build - macOS Apple Silicon run ID"
+        required: true
+        type: string
+
+concurrency:
+  group: macos-apple-silicon-release
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-macos:
+    name: Publish Verified Apple Silicon DMG
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate candidate run
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate-run-id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUN_JSON=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")
+          test "$(jq -r .path <<< "$RUN_JSON")" = ".github/workflows/build-macos.yml"
+          test "$(jq -r .head_branch <<< "$RUN_JSON")" = "main"
+          test "$(jq -r .event <<< "$RUN_JSON")" = "workflow_dispatch"
+          test "$(jq -r .status <<< "$RUN_JSON")" = "completed"
+          test "$(jq -r .conclusion <<< "$RUN_JSON")" = "success"
+
+          echo "commit=$(jq -r .head_sha <<< "$RUN_JSON")" >> "$GITHUB_OUTPUT"
+          echo "url=$(jq -r .html_url <<< "$RUN_JSON")" >> "$GITHUB_OUTPUT"
+
+      - name: Download exact candidate artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate-run-id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p candidate
+          gh run download "$CANDIDATE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir candidate
+
+      - name: Validate artifact identity and checksum
+        id: artifact
+        env:
+          CANDIDATE_COMMIT: ${{ steps.candidate.outputs.commit }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate-run-id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t DMG_FILES < <(find candidate -type f -name "*.dmg")
+          mapfile -t SUM_FILES < <(find candidate -type f -name "SHA256SUMS-macos.txt")
+          mapfile -t META_FILES < <(find candidate -type f -name "macos-build-metadata.json")
+          test "${#DMG_FILES[@]}" -eq 1
+          test "${#SUM_FILES[@]}" -eq 1
+          test "${#META_FILES[@]}" -eq 1
+
+          DMG_PATH="${DMG_FILES[0]}"
+          SUM_PATH="${SUM_FILES[0]}"
+          META_PATH="${META_FILES[0]}"
+          VERSION=$(jq -r .version "$META_PATH")
+          COMMIT=$(jq -r .commit "$META_PATH")
+          RUN_ID=$(jq -r .run_id "$META_PATH")
+          NOTARIZED=$(jq -r .notarized "$META_PATH")
+
+          test "$COMMIT" = "$CANDIDATE_COMMIT"
+          test "$RUN_ID" = "$CANDIDATE_RUN_ID"
+          test "$NOTARIZED" = "true" || test "$NOTARIZED" = "false"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          test "$(basename "$DMG_PATH")" = "Meetily-Actually-Free_${VERSION}_aarch64.dmg"
+          test "$(awk '{print $2}' "$SUM_PATH")" = "$(basename "$DMG_PATH")"
+          test "$(awk '{print $1}' "$SUM_PATH")" = "$(sha256sum "$DMG_PATH" | awk '{print $1}')"
+
+          echo "dmg=$DMG_PATH" >> "$GITHUB_OUTPUT"
+          echo "sum=$SUM_PATH" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}-macos" >> "$GITHUB_OUTPUT"
+          echo "notarized=$NOTARIZED" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse to replace an existing release or tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.artifact.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists. Refusing to replace published assets."
+            exit 1
+          fi
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Tag $RELEASE_TAG already exists. Refusing to retarget it."
+            exit 1
+          fi
+
+      - name: Write release notes
+        env:
+          VERSION: ${{ steps.artifact.outputs.version }}
+          NOTARIZED: ${{ steps.artifact.outputs.notarized }}
+          CANDIDATE_URL: ${{ steps.candidate.outputs.url }}
+        shell: bash
+        run: |
+          {
+            echo "## Meetily - Actually Free for macOS"
+            echo
+            echo "Apple Silicon release for M1 and newer Macs running macOS 14.2 Sonoma or later."
+            echo
+            echo "### Install"
+            echo
+            echo "1. Download the \`aarch64.dmg\` file."
+            echo "2. Open it and drag Meetily - Actually Free to Applications."
+            echo "3. Grant microphone and Audio Capture permissions when prompted."
+            if [[ "$NOTARIZED" != "true" ]]; then
+              echo
+              echo "> This build is not Apple-notarized. macOS may require Control-clicking the app and choosing Open on first launch."
+            fi
+            echo
+            echo "Built and verified by [the candidate workflow run]($CANDIDATE_URL)."
+            echo "The Windows release remains available separately at \`v${VERSION}\`."
+          } > release-notes-macos.md
+
+      - name: Reserve tag at exact candidate commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.artifact.outputs.tag }}
+          TARGET_COMMIT: ${{ steps.candidate.outputs.commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f "ref=refs/tags/$RELEASE_TAG" \
+            -f "sha=$TARGET_COMMIT" >/dev/null
+          ACTUAL_TARGET=$(gh api \
+            "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" \
+            --jq .object.sha)
+          test "$ACTUAL_TARGET" = "$TARGET_COMMIT"
+
+      - name: Publish exact candidate artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.artifact.outputs.tag }}
+          VERSION: ${{ steps.artifact.outputs.version }}
+          DMG_PATH: ${{ steps.artifact.outputs.dmg }}
+          SUM_PATH: ${{ steps.artifact.outputs.sum }}
+          TARGET_COMMIT: ${{ steps.candidate.outputs.commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" \
+            "$DMG_PATH" \
+            "$SUM_PATH" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$TARGET_COMMIT" \
+            --title "Meetily - Actually Free v${VERSION} for macOS" \
+            --notes-file release-notes-macos.md \
+            --latest=false
+          ACTUAL_TARGET=$(gh api \
+            "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" \
+            --jq .object.sha)
+          test "$ACTUAL_TARGET" = "$TARGET_COMMIT"

@@ -19,6 +19,8 @@ const UpdateCheckContext = createContext<UpdateCheckContextType | undefined>(und
 
 export function UpdateCheckProvider({ children }: { children: React.ReactNode }) {
   const platform = usePlatform();
+  // macOS ships as a separate DMG release with no Tauri updater artifact or
+  // latest.json entry. Calling the Windows updater path there is misleading.
   const updatesSupported = platform !== 'macos';
   const [showDialog, setShowDialog] = useState(false);
   const [checkOnMount, setCheckOnMount] = useState(false);

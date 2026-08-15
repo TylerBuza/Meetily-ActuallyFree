@@ -48,6 +48,33 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          assert_macos_compatible() {
+            local binary="$1"
+            local min_os
+            min_os=$(xcrun vtool -arch arm64 -show-build "$binary" 2>/dev/null \
+              | awk '$1 == "minos" { print $2; exit }' || true)
+            if [[ -z "$min_os" ]]; then
+              min_os=$(otool -arch arm64 -l "$binary" | awk '
+                $1 == "cmd" && $2 == "LC_VERSION_MIN_MACOSX" { legacy = 1; next }
+                legacy && $1 == "version" { print $2; exit }
+              ')
+            fi
+            if [[ -z "$min_os" ]]; then
+              echo "Could not determine the Mach-O deployment target: $binary"
+              exit 1
+            fi
+            python3 - "$binary" "$min_os" <<'PY'
+          import sys
+
+          binary, version = sys.argv[1:]
+          parts = tuple(int(part) for part in version.split("."))
+          padded = (parts + (0, 0, 0))[:3]
+          if padded > (14, 2, 0):
+              raise SystemExit(f"{binary} requires macOS {version}, later than 14.2")
+          print(f"{binary}: Mach-O minimum macOS {version}")
+          PY
+          }
+
           RELEASE_DIR="$RUNNER_TEMP/release"
           DMG_PATH=$(find "$RELEASE_DIR" -maxdepth 1 -name "*.dmg" -type f -print -quit)
           test -n "$DMG_PATH"
@@ -75,6 +102,8 @@ jobs:
             test -x "$binary"
             file "$binary" | tee -a "$RUNNER_TEMP/meetily-metadata.log"
             file "$binary" | grep -q "arm64"
+            assert_macos_compatible "$binary" \
+              | tee -a "$RUNNER_TEMP/meetily-metadata.log"
           done
 
           "$APP_PATH/Contents/MacOS/ffmpeg" -version
@@ -83,6 +112,11 @@ jobs:
             -f lavfi -i "anullsrc=r=48000:cl=mono" \
             -t 0.25 -c:a aac -y "$FFMPEG_TEST"
           test -s "$FFMPEG_TEST"
+          FFMPEG_DECODED="$RUNNER_TEMP/ffmpeg-smoke.f32"
+          "$APP_PATH/Contents/MacOS/ffmpeg" \
+            -v error -i "$FFMPEG_TEST" \
+            -f f32le -acodec pcm_f32le -y "$FFMPEG_DECODED"
+          test -s "$FFMPEG_DECODED"
 
           LLAMA_OUTPUT=$(printf '%s\n' '{"type":"ping"}' '{"type":"shutdown"}' \
             | "$APP_PATH/Contents/MacOS/llama-helper")
@@ -90,6 +124,7 @@ jobs:
           grep -q '"type":"pong"' <<< "$LLAMA_OUTPUT"
           grep -q '"type":"goodbye"' <<< "$LLAMA_OUTPUT"
 
+          test -f "$APP_PATH/Contents/Resources/icon.icns"
           test -f "$APP_PATH/Contents/Resources/templates/standard_meeting.json"
           test -f "$APP_PATH/Contents/Resources/resources/diarization/segmentation-3.0-fp16.onnx"
           test -f "$APP_PATH/Contents/Resources/resources/diarization/wespeaker-resnet34-LM.onnx"
@@ -111,7 +146,16 @@ jobs:
 
           ENTITLEMENTS_PATH="$RUNNER_TEMP/meetily-entitlements.plist"
           codesign -d --entitlements :- "$APP_PATH" > "$ENTITLEMENTS_PATH"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input' "$ENTITLEMENTS_PATH")" = "true"
+          python3 - "$ENTITLEMENTS_PATH" <<'PY'
+          import plistlib
+          import sys
+
+          with open(sys.argv[1], "rb") as entitlements_file:
+              actual = plistlib.load(entitlements_file)
+          expected = {"com.apple.security.device.audio-input": True}
+          if actual != expected:
+              raise SystemExit(f"Unexpected entitlements: {actual!r}")
+          PY
           echo "Bundle version: $BUNDLE_VERSION" | tee -a "$RUNNER_TEMP/meetily-metadata.log"
           echo "MEETILY_APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
 

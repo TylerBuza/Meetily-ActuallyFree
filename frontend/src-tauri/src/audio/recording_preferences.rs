@@ -283,6 +283,8 @@ pub async fn discard_recording_folder<R: Runtime>(
         .into_iter()
         .map(|root| root.canonicalize().unwrap_or(root))
         .collect();
+    // Reject equality in a separate pass. A custom root can be nested beneath
+    // the default root and must not pass merely because it is that root's child.
     let is_root = roots_canon.iter().any(|root| path_canon == *root);
     let is_meeting_folder = !is_root && roots_canon.iter().any(|root| path_canon.starts_with(root));
     if !is_meeting_folder {
@@ -388,38 +390,15 @@ pub async fn set_audio_backend(backend: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         use crate::audio::capture::AudioCaptureBackend;
-        use crate::audio::permissions::{
-            check_screen_recording_permission, request_screen_recording_permission,
-        };
 
         let backend_enum = AudioCaptureBackend::from_string(&backend)
             .ok_or_else(|| format!("Invalid backend: {}", backend))?;
 
-        // If switching to Core Audio, log information about Audio Capture permission
+        // Selection cannot prove permission: denied taps can still open and emit
+        // zeros. Onboarding/Recheck owns the up-to-five-second audible probe.
         if backend_enum == AudioCaptureBackend::CoreAudio {
             info!("🔐 Core Audio backend requires Audio Capture permission (macOS 14.2+)");
-            info!("📍 Permission dialog will appear automatically when recording starts");
-
-            // Check if permission is already granted (this is informational only)
-            if !check_screen_recording_permission() {
-                warn!("⚠️  Audio Capture permission may not be granted");
-
-                // Attempt to open System Settings (opens System Settings)
-                if let Err(e) = request_screen_recording_permission() {
-                    error!("Failed to open System Settings: {}", e);
-                }
-
-                return Err(
-                    "Core Audio requires Audio Capture permission. \
-                    The permission dialog will appear when you start recording. \
-                    If already denied, enable it in System Settings → Privacy & Security → Audio Capture, \
-                    then restart the app.".to_string()
-                );
-            }
-
-            info!(
-                "✅ Core Audio backend selected - permission check will occur at recording start"
-            );
+            info!("📍 Onboarding or Recheck verifies the tap while system audio is playing");
         }
 
         info!("Setting audio backend to: {:?}", backend_enum);

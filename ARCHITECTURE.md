@@ -125,15 +125,18 @@ frontend close fallback. Those mechanisms caused zombie bars, frozen
 
 ## 3. Where things are stored
 
-This fork is install-local on Windows and Linux. macOS stores writable data in
-`~/Library/Application Support/Meetily`; writing inside a signed `.app` bundle
-invalidates its signature.
+This fork is install-local on Windows and Linux. On macOS, core writable data is
+under `~/Library/Application Support/Meetily`; Tauri plugin stores use the app
+identifier directory `~/Library/Application Support/com.meetily.ai`. Both are
+outside the signed `.app`, because writing inside that bundle invalidates its
+signature.
 
 `src-tauri/src/paths.rs` is the single source of truth:
 
 | What | Where |
 |---|---|
-| Database, templates, settings, models | Windows/Linux: `<exe dir>/data/…`; macOS: `~/Library/Application Support/Meetily/…` |
+| Database, templates, models, file-backed settings | Windows/Linux: `<exe dir>/data/…`; macOS: `~/Library/Application Support/Meetily/…` |
+| Tauri plugin stores (recording preferences/onboarding) | macOS: `~/Library/Application Support/com.meetily.ai/…` |
 | Bundled diarization models | The platform app bundle's `resources/diarization/` directory |
 | **Audio recordings** | Windows: `%USERPROFILE%\Music\meetily-recordings\<meeting>`; macOS: `~/Movies/meetily-recordings/<meeting>` |
 
@@ -147,6 +150,26 @@ Two gotchas:
    `audio.mp4` — see `diarization::find_meeting_audio`.
 2. `paths.rs` always uses the OS data directory on macOS. Windows and Linux fall
    back there if the install directory isn't writable.
+
+Recording-folder creation is intentionally collision-safe. Sanitized titles are
+not unique, so `audio_processing.rs` creates the directory atomically and adds a
+suffix if it already exists. The configured custom recordings root must flow
+through `RecordingManager` into every saver; falling back to the default root at
+save time makes Settings appear to work while files go elsewhere. The short-take
+discard command canonicalizes paths, rejects every allowed root itself, and only
+deletes descendants of the configured, default, or legacy portable roots. Keep
+the equality rejection separate from descendant checks because roots may be
+nested.
+
+Required mixed-audio failures are not allowed to fail silently. FFmpeg process
+failures, timeouts, and missing mixed outputs propagate through
+`RecordingManager` into the `recording-stop-complete.audio_save_error` payload.
+The frontend keeps the transcript flow running and shows a ten-second error
+toast. Empty or failed optional mic/system tracks are currently logged and
+omitted because either source may remain silent for a whole meeting. Concat
+demuxer list entries use `ffconcat_file_line`; raw absolute paths are unsafe
+because an apostrophe in a custom root or user name terminates FFmpeg's quoted
+path.
 
 A one-time migration (`paths::migrate_legacy_data`) copies data from the old
 Tauri app-data location on first run so upgrading users keep their history.
@@ -623,3 +646,120 @@ set before any windows are created. Setup and updater runs recreate Start Menu
 shortcuts (and any existing desktop shortcut) with `meetily.exe,0` as the
 explicit icon source, then call `SHChangeNotify`; application startup must not
 replace those installer-owned shortcuts with PNG-backed WScript shortcuts.
+
+---
+
+## 9. macOS Apple Silicon capture and releases
+
+The supported macOS target is Apple Silicon on macOS 14.2 Sonoma or later. The
+minimum is not merely a product choice: the native Core Audio process-tap path
+depends on APIs introduced in 14.2. Keep these declarations aligned:
+
+| Declaration | Responsibility |
+|---|---|
+| `frontend/src-tauri/.cargo/config.toml` | Rust linker deployment target |
+| `frontend/src-tauri/tauri.macos.conf.json` | Tauri bundle minimum system version |
+| `.github/workflows/build-macos.yml` | CI `MACOSX_DEPLOYMENT_TARGET` |
+| `README.md` | User-visible support statement |
+
+### Native capture and permission model
+
+Responsibility map:
+
+| File | macOS responsibility |
+|---|---|
+| `audio/capture/core_audio.rs` | Create the global process tap, aggregate device, stream, and audible probe |
+| `audio/permissions.rs` | Preserve legacy IPC names while routing verification to the Core Audio probe |
+| `audio/capture/backend_config.rs` | Expose only implemented backends for the current platform |
+| `components/onboarding/steps/AudioTestStep.tsx` | Serialize the native singleton monitor and guide audible testing |
+| `hooks/usePermissionCheck.ts` | Session-scoped verification state and deduplicated manual Recheck |
+| `audio/recording_preferences.rs` | Custom-root safety and backend metadata returned to the UI |
+| `.github/workflows/build-macos.yml` | Build and verify a candidate without publishing |
+| `.github/workflows/publish-macos.yml` | Promote one exact successful candidate artifact |
+| `.github/workflows/smoke-test-macos-release.yml` | Download and verify the exact public DMG |
+
+macOS uses one implemented system-audio backend: the Core Audio global process
+tap in `audio/capture/core_audio.rs`. `AudioCaptureBackend::available_backends()`
+therefore exposes only Core Audio on macOS. The `ScreenCaptureKit` enum variant
+still exists for cross-platform compatibility and old settings, but it must not
+be offered as a selectable macOS backend.
+
+The global tap follows the current default output route. A listed output-device
+name proves that an output exists; it does not prove Audio Capture authorization,
+and selecting a non-default output name does not retarget the global tap. Route
+changes belong in macOS Sound settings unless a future implementation explicitly
+binds the tap to a selected process/device.
+
+Creating the process tap triggers the OS Audio Capture prompt. A successful tap
+creation is still not enough because a denied tap can produce an all-zero stream.
+`trigger_system_audio_permission_command` starts the real tap for up to five
+seconds and returns early only after receiving an audible sample. UI text must
+ask the user to play audio during that interval. The result is stored in
+`sessionStorage`, not durable app storage: authorization can be revoked between
+launches, so each new app session must not trust an old success forever.
+
+`AudioTestStep` serializes transitions because `start_audio_level_monitoring`
+controls one process-global native monitor. Retests, device changes, React
+StrictMode cleanup, and unmount can overlap asynchronous permission calls. Keep
+the generation checks after every await and keep the transition chain; a stale
+probe must not start or stop the next probe's monitor.
+
+The two required privacy strings are `NSMicrophoneUsageDescription` and
+`NSAudioCaptureUsageDescription` in `Info.plist`. The shipped entitlement file
+contains only the audio-input entitlement currently needed by this build. Do not
+add speculative screen-capture, audio-output, or temporary-exception keys; CI
+parses both files and verifies the packaged values.
+
+### Bundle integrity and writable data
+
+A signed `.app` is immutable at runtime. Writing a database, settings, models,
+or logs beneath `Meetily.app/Contents/MacOS` changes the sealed bundle and makes
+`codesign --verify --deep --strict` fail after first launch. macOS therefore
+uses `~/Library/Application Support/Meetily` for core data,
+`~/Library/Application Support/com.meetily.ai` for Tauri plugin stores, and
+`~/Movies/meetily-recordings` (or the configured root) for recordings. Bundled
+diarization models and sidecars are read-only resources.
+
+The build and published-release smoke tests deliberately launch the installed
+app twice and verify its signature after runtime writes. The first launch covers
+fresh database/onboarding initialization; the second covers reopening existing
+state. Keep both launches and the post-launch signature checks. A build-only
+signature check cannot detect this class of regression.
+
+### Release topology
+
+Windows and macOS do not share a production-release workflow:
+
+- Windows `vX.Y.Z` remains GitHub Latest and owns `latest.json`, the universal
+  setup executable, and the updater engine/signature.
+- macOS `vX.Y.Z-macos` is a separate non-latest release containing the Apple
+  Silicon DMG and checksum. There is no compatible macOS updater artifact or
+  macOS entry in `latest.json`.
+- `UpdateCheckProvider`, tray actions, onboarding update consent, and About must
+  not invoke Tauri's updater on macOS. About links to the GitHub releases page
+  instead.
+- `.github/workflows/build-macos.yml` is the only production Apple Silicon build
+  workflow. It never publishes. The removed generic `release.yml` must not be
+  recreated because it bypassed the platform-specific release invariants.
+- `build-macos.yml` compiles macOS-only Rust, executes both sidecars, validates
+  architecture/metadata/resources, installs the app, launches it twice, and
+  uploads the DMG, checksum, and build-identity metadata as one candidate.
+- `.github/workflows/publish-macos.yml` accepts a successful candidate run ID,
+  validates its workflow/commit/checksum metadata, and promotes those exact
+  bytes. It must not rebuild from mutable `main`.
+- After publishing, run `smoke-test-macos-release.yml` against the exact public
+  tag. This independently downloads and launches what users receive.
+
+Unsigned CI builds are ad-hoc signed and are not notarized. First launch may
+require Control-click and Open. Notarization is enabled only when all Apple
+certificate/account secrets are configured and `sign-and-notarize=true`; never
+claim notarization based on ad-hoc `codesign` success.
+
+The runner has no meaningful microphone, speaker route, Bluetooth device, or
+interactive privacy UI. Native CI proves build, package, sidecar, startup,
+storage, and signature invariants, but a physical Apple Silicon Mac must still
+test microphone input, audible system capture, permission denial/retry, output
+route changes, pause/resume/stop, and the three retained MP4 tracks.
+
+The operational commands, release replacement procedure, CI assertions, and
+physical-device checklist are in `.github/workflows/MACOS_RELEASE.md`.

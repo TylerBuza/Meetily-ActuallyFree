@@ -26,13 +26,16 @@ This document provides a quick overview of all available CI/CD workflows in this
 ---
 
 ### 2. **build-macos.yml** - macOS Standalone Builds
-**Purpose:** Build and test specifically for Apple Silicon (M1/M2/M3)
+**Purpose:** Build and verify a candidate Apple Silicon/macOS 14.2+ DMG
 
 **Key Features:**
 - Apple Developer Certificate signing (optional)
 - Notarization with Apple ID
 - Signature verification
-- macOS-focused optimizations
+- Functional FFmpeg and `llama-helper` checks
+- Bundle architecture, deployment-target, plist, entitlement, and resource checks
+- Installed first-launch and second-launch smoke tests
+- Post-launch signature verification to catch writes inside the app bundle
 
 **Triggers:**
 - Manual dispatch only
@@ -44,7 +47,30 @@ This document provides a quick overview of all available CI/CD workflows in this
 
 **Outputs:**
 - `.dmg` installer
-- `.app` bundle
+- SHA-256 checksum
+- First/second-launch logs
+- Candidate run/commit/signing metadata
+
+This workflow never publishes. Pass its successful run ID to
+`publish-macos.yml`, which promotes the exact candidate bytes rather than
+rebuilding from `main`.
+
+### 2b. **publish-macos.yml** - Exact Candidate Promotion
+
+**Purpose:** Publish a verified candidate as the separate non-latest macOS release
+
+The workflow accepts a successful `build-macos.yml` run ID, downloads its
+artifact, verifies workflow identity, commit metadata, filename, and checksum,
+then creates `vX.Y.Z-macos` at the candidate commit. It refuses to replace an
+existing release and never updates Windows `latest.json`.
+
+### 2c. **smoke-test-macos-release.yml** - Public DMG Verification
+
+**Purpose:** Independently download, install, launch, and verify the public DMG
+
+Run this after every macOS publication. It catches stale or incorrect assets
+that candidate-only validation cannot see. See `MACOS_RELEASE.md` for the full
+candidate, promotion, rollback, and physical-test procedure.
 
 ---
 
@@ -131,9 +157,13 @@ This document provides a quick overview of all available CI/CD workflows in this
 ### 7. Production Releases
 
 Windows and macOS releases are intentionally separate. Use `build-macos.yml`
-with `publish-release` for the non-latest Apple Silicon DMG release. The Windows
-universal installer and updater metadata use the release process documented in
-`ARCHITECTURE.md`; do not combine them through the old generic release path.
+for the candidate and `publish-macos.yml` to promote that run's exact DMG. The
+Windows universal installer and updater metadata use the release process
+documented in `ARCHITECTURE.md`; do not combine them through a generic release
+path.
+
+After publishing macOS, manually run `smoke-test-macos-release.yml` against the
+public tag. It downloads the public DMG rather than reusing build-job files.
 
 ---
 
@@ -196,7 +226,7 @@ universal installer and updater metadata use the release process documented in
 - Full verification
 
 ### "I'm ready to release..."
-- **macOS:** use `build-macos.yml` with `publish-release`
+- **macOS:** build a candidate, then pass its run ID to `publish-macos.yml`
 - **Windows:** follow the universal release process in `ARCHITECTURE.md`
 - Keep the macOS release non-latest so the Windows updater endpoint remains stable
 
@@ -210,6 +240,8 @@ build.yml (reusable)
 
 Standalone (don't use build.yml):
     |-- build-macos.yml
+    |-- publish-macos.yml
+    |-- smoke-test-macos-release.yml
     |-- build-windows.yml
     |-- build-linux.yml
     |-- build-devtest.yml
@@ -224,6 +256,8 @@ Standalone (don't use build.yml):
 |----------|-----------|----------------|-------|-----------|----------|
 | `build-devtest.yml` | All | OFF | Fast | 14 days | Development |
 | `build-macos.yml` | macOS | Optional | Medium | 30 days | macOS dev |
+| `publish-macos.yml` | macOS | Reuses candidate | Fast | N/A | Exact promotion |
+| `smoke-test-macos-release.yml` | macOS | N/A | Fast | Logs: 30 days | Public verification |
 | `build-windows.yml` | Windows | Optional | Medium | 30 days | Windows dev |
 | `build-linux.yml` | Linux | Optional | Medium | 30 days | Linux dev |
 | `build-test.yml` | All | ON | Slow | 30 days | Pre-release |

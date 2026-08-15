@@ -31,7 +31,7 @@ impl AudioCaptureBackend {
     pub fn description(&self) -> &'static str {
         match self {
             AudioCaptureBackend::ScreenCaptureKit => {
-                "Apple's ScreenCaptureKit framework - Higher level API with good compatibility"
+                "Generic system-audio capture backend (historical settings ID)"
             }
             #[cfg(target_os = "macos")]
             AudioCaptureBackend::CoreAudio => {

@@ -1,4 +1,9 @@
-// macOS audio permissions handling
+// macOS audio permissions handling.
+//
+// The `screen_recording` names are legacy IPC/API names. Current macOS capture
+// uses Audio Capture permission and a Core Audio process tap, not screen video.
+// `check_screen_recording_permission` reports platform support only; the audible
+// up-to-five-second probe below is the actual runtime verification.
 use anyhow::Result;
 use log::{info, warn, error};
 
@@ -89,8 +94,9 @@ pub async fn request_screen_recording_permission_command() -> Result<(), String>
         .map_err(|e| e.to_string())
 }
 
-/// Trigger system audio permission request and verify it was granted
-/// Returns Ok(true) only when the started tap receives audible system audio.
+/// Trigger the system-audio permission request and probe functional capture.
+/// Returns Ok(true) only when the started tap receives audible system audio;
+/// false can mean denial, silence, or another capture initialization failure.
 #[cfg(target_os = "macos")]
 pub fn trigger_system_audio_permission() -> Result<bool> {
     info!("🔐 Triggering Audio Capture permission request...");
@@ -130,8 +136,8 @@ pub fn trigger_system_audio_permission() -> Result<bool> {
     Ok(true)
 }
 
-/// Tauri command to trigger system audio permission request
-/// Returns true if permission was granted (stream created), false if denied
+/// Trigger Audio Capture permission and test for audible samples for up to five
+/// seconds. False is not a definitive denial status because silence is identical.
 #[tauri::command]
 pub async fn trigger_system_audio_permission_command() -> Result<bool, String> {
     // Run in blocking task to avoid blocking the async runtime

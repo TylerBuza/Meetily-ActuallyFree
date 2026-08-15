@@ -9,6 +9,8 @@ export interface PermissionStatus {
   error: string | null;
 }
 
+// Audible samples are the only reliable proof that the tap works. Keep this
+// session-scoped so a permission revoked between app launches is not trusted.
 export const MACOS_SYSTEM_AUDIO_VERIFIED_KEY = 'macos_system_audio_verified';
 
 export function usePermissionCheck() {
@@ -68,6 +70,8 @@ export function usePermissionCheck() {
   };
 
   const requestPermissions = () => {
+    // The native probe runs for up to five seconds; deduplicate Recheck clicks
+    // so an older result cannot overwrite a newer permission attempt.
     if (requestInFlight.current) return requestInFlight.current;
 
     const request = (async () => {

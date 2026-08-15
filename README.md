@@ -67,7 +67,7 @@ Windows 10/11 x64 is supported. The installer is unsigned, so SmartScreen may sh
 
 1. Download `Meetily-Actually-Free_0.2.5_aarch64.dmg` from the [macOS release](https://github.com/TylerBuza/Meetily-ActuallyFree/releases/tag/v0.2.5-macos).
 2. Open the DMG and drag **Meetily - Actually Free** to Applications.
-3. Grant microphone and screen/audio capture permissions when prompted.
+3. Grant microphone and Audio Capture permissions when prompted.
 
 M1 and newer Macs running macOS 14.2 Sonoma or later are supported. The DMG is not Apple-notarized, so first launch may require Control-clicking the app and selecting **Open**. Both releases include SHA-256 checksums.
 
@@ -75,7 +75,8 @@ M1 and newer Macs running macOS 14.2 Sonoma or later are supported. The DMG is n
 
 | Data | Location |
 | --- | --- |
-| Database, settings, and models | Windows/Linux: install-local when writable; macOS: `~/Library/Application Support/Meetily` |
+| Database, templates, and models | Windows/Linux: install-local when writable; macOS: `~/Library/Application Support/Meetily` |
+| Recording/onboarding preference stores | macOS: `~/Library/Application Support/com.meetily.ai` |
 | Recordings | Windows: `Music/meetily-recordings`; macOS: `Movies/meetily-recordings` |
 | Playback and retained tracks | `audio.mp4`, `mic.mp4`, `system.mp4` |
 
@@ -107,7 +108,9 @@ pnpm install
 ./scripts/build-macos-apple-silicon.sh
 ```
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for implementation and release details.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for implementation details and the
+[`macOS release runbook`](.github/workflows/MACOS_RELEASE.md) for the native
+candidate, publication, and physical-device checks.
 
 </details>
 
