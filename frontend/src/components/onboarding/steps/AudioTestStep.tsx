@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useOnboarding } from '@/contexts/OnboardingContext';
+import { usePlatform } from '@/hooks/usePlatform';
+import { MACOS_SYSTEM_AUDIO_VERIFIED_KEY } from '@/hooks/usePermissionCheck';
 import { OnboardingContainer } from '../OnboardingContainer';
 import { Mic, Volume2, RefreshCw } from 'lucide-react';
 
@@ -31,6 +33,8 @@ interface AudioLevelUpdate {
  */
 export function AudioTestStep() {
   const { goPrevious, completeOnboarding } = useOnboarding();
+  const platform = usePlatform();
+  const isMacOS = platform === 'macos';
   const [micRms, setMicRms] = useState(0);
   const [sysRms, setSysRms] = useState(0);
   const [micHeard, setMicHeard] = useState(false);
@@ -42,6 +46,10 @@ export function AudioTestStep() {
   const [micName, setMicName] = useState<string>('');
   const [sysName, setSysName] = useState<string>('');
   const monitoring = useRef(false);
+  const active = useRef(true);
+  const deviceLoad = useRef(0);
+  const meterRun = useRef(0);
+  const meterTransition = useRef<Promise<void>>(Promise.resolve());
   const micNameRef = useRef('');
   const sysNameRef = useRef('');
 
@@ -56,48 +64,98 @@ export function AudioTestStep() {
   }, []);
 
   const startMeters = useCallback(
-    async (mic: string, sys: string) => {
-      await stop();
-      setError(null);
-      setMicRms(0);
-      setSysRms(0);
-      setStatus('Opening devices…');
+    (mic: string, sys: string) => {
+      const run = ++meterRun.current;
+      const transition = meterTransition.current.then(async () => {
+        await stop();
+        if (!active.current || run !== meterRun.current) return;
+        setError(null);
+        setMicRms(0);
+        setSysRms(0);
+        setStatus('Opening devices…');
 
-      const deviceNames = [mic, sys].filter((n) => n && n.trim().length > 0);
-      if (deviceNames.length === 0) {
-        setError('No microphone or speakers found. Check Windows sound settings.');
-        setStatus('No devices');
-        return;
-      }
-
-      try {
-        // Ask Windows for mic permission before opening streams
-        try {
-          await invoke('trigger_microphone_permission');
-        } catch {
-          /* non-fatal */
+        const deviceNames = (isMacOS ? [mic] : [mic, sys]).filter(
+          (name) => name && name.trim().length > 0,
+        );
+        if (!mic && !sys) {
+          setError('No microphone or speakers found. Check your system sound settings.');
+          setStatus('No devices');
+          return;
         }
 
-        monitoring.current = true;
-        micNameRef.current = mic;
-        sysNameRef.current = sys;
-        await invoke('start_audio_level_monitoring', { deviceNames });
-        setStatus(`Listening${mic ? ` · ${shortName(mic)}` : ''}`);
-      } catch (e) {
-        monitoring.current = false;
-        const msg = typeof e === 'string' ? e : e instanceof Error ? e.message : String(e);
-        setError(msg || 'Could not start level meters');
-        setStatus('Failed');
-      }
+        try {
+          // Ask the OS for mic permission before opening streams.
+          try {
+            await invoke('trigger_microphone_permission');
+          } catch {
+            /* non-fatal */
+          }
+          if (!active.current || run !== meterRun.current) return;
+
+          if (isMacOS && sys) {
+            setStatus('Testing native system audio… Play a video now.');
+            try {
+              const detected = await invoke<boolean>('trigger_system_audio_permission_command');
+              if (!active.current || run !== meterRun.current) return;
+              window.sessionStorage.setItem(MACOS_SYSTEM_AUDIO_VERIFIED_KEY, String(detected));
+              setSysHeard(detected);
+              setSysRms(detected ? 0.2 : 0);
+              if (!detected) {
+                setError(
+                  'System audio was not detected. Play audio, grant Audio Capture permission if prompted, then click Retest audio.',
+                );
+              }
+            } catch (systemError) {
+              if (!active.current || run !== meterRun.current) return;
+              window.sessionStorage.setItem(MACOS_SYSTEM_AUDIO_VERIFIED_KEY, 'false');
+              const message =
+                typeof systemError === 'string'
+                  ? systemError
+                  : systemError instanceof Error
+                    ? systemError.message
+                    : String(systemError);
+              setError(`Could not test native system audio: ${message}`);
+            }
+          }
+          if (!active.current || run !== meterRun.current) return;
+
+          micNameRef.current = mic;
+          sysNameRef.current = sys;
+          if (deviceNames.length > 0) {
+            monitoring.current = true;
+            await invoke('start_audio_level_monitoring', { deviceNames });
+            if (!active.current || run !== meterRun.current) {
+              await invoke('stop_audio_level_monitoring').catch(() => undefined);
+              monitoring.current = false;
+              return;
+            }
+          }
+          setStatus(
+            isMacOS
+              ? `Listening${mic ? ` · ${shortName(mic)}` : ''} · native system-audio probe complete`
+              : `Listening${mic ? ` · ${shortName(mic)}` : ''}`,
+          );
+        } catch (e) {
+          if (!active.current || run !== meterRun.current) return;
+          monitoring.current = false;
+          const msg = typeof e === 'string' ? e : e instanceof Error ? e.message : String(e);
+          setError(msg || 'Could not start level meters');
+          setStatus('Failed');
+        }
+      });
+      meterTransition.current = transition.catch(() => undefined);
+      return transition;
     },
-    [stop],
+    [isMacOS, stop],
   );
 
   const loadDevicesAndStart = useCallback(async () => {
+    const run = ++deviceLoad.current;
     setError(null);
     setStatus('Finding devices…');
     try {
       const devices = await invoke<AudioDevice[]>('get_audio_devices');
+      if (!active.current || run !== deviceLoad.current) return;
       const inputList = devices.filter((d) => String(d.device_type).toLowerCase() === 'input');
       const outputList = devices.filter((d) => String(d.device_type).toLowerCase() === 'output');
       setInputs(inputList);
@@ -109,13 +167,14 @@ export function AudioTestStep() {
       setSysName(nextSys);
 
       if (!nextMic && !nextSys) {
-        setError('No audio devices detected. Plug in a mic / check Windows privacy → Microphone.');
+        setError('No audio devices detected. Plug in a microphone and check system privacy settings.');
         setStatus('No devices');
         return;
       }
 
       await startMeters(nextMic, nextSys);
     } catch (e) {
+      if (!active.current || run !== deviceLoad.current) return;
       const msg = typeof e === 'string' ? e : e instanceof Error ? e.message : String(e);
       setError(msg || 'Failed to list audio devices');
       setStatus('Failed');
@@ -125,6 +184,7 @@ export function AudioTestStep() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
+    active.current = true;
 
     (async () => {
       try {
@@ -170,6 +230,9 @@ export function AudioTestStep() {
 
     return () => {
       cancelled = true;
+      active.current = false;
+      deviceLoad.current += 1;
+      meterRun.current += 1;
       unlisten?.();
       void stop();
     };
@@ -215,7 +278,11 @@ export function AudioTestStep() {
   return (
     <OnboardingContainer
       title="Test your audio"
-      description="Pick your mic and speakers, then speak / play something. Meters should move."
+      description={
+        isMacOS
+          ? 'Pick your mic and speakers, play something, then use Retest audio to verify native Audio Capture.'
+          : 'Pick your mic and speakers, then speak / play something. Meters should move.'
+      }
       step={5}
       totalSteps={5}
       showNavigation
@@ -289,7 +356,7 @@ export function AudioTestStep() {
             onClick={() => void loadDevicesAndStart()}
             className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--af-border)] px-2.5 py-1.5 text-xs text-[var(--af-text-2)] hover:bg-[var(--af-panel-2)]"
           >
-            <RefreshCw size={12} /> Refresh devices
+            <RefreshCw size={12} /> {isMacOS ? 'Retest audio' : 'Refresh devices'}
           </button>
         </div>
 

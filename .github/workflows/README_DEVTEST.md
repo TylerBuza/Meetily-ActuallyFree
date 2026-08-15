@@ -176,4 +176,4 @@ Key configuration:
 - `build-windows.yml` - Windows-specific builds with signing
 - `build-linux.yml` - Linux-specific builds with signing
 - `build-test.yml` - All platforms with signing (pre-release)
-- `release.yml` - Production release workflow
+- `build-macos.yml` can publish the separate Apple Silicon release; see `ARCHITECTURE.md` for the Windows universal release process

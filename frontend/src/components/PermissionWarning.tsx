@@ -41,12 +41,12 @@ export function PermissionWarning({
     }
   };
 
-  const openScreenRecordingSettings = async () => {
+  const openAudioCaptureSettings = async () => {
     if (isMacOS) {
       try {
-        await invoke('open_system_settings', { preferencePane: 'Privacy_ScreenCapture' });
+        await invoke('open_system_settings', { preferencePane: 'Privacy_AudioCapture' });
       } catch (error) {
-        console.error('Failed to open screen recording settings:', error);
+        console.error('Failed to open Audio Capture settings:', error);
       }
     }
   };
@@ -77,11 +77,11 @@ export function PermissionWarning({
             )}
             {isMacOS && !hasSystemAudio && (
               <button
-                onClick={openScreenRecordingSettings}
+                onClick={openAudioCaptureSettings}
                 className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
               >
                 <Speaker className="h-4 w-4" />
-                Open Screen Recording Settings
+                Open Audio Capture Settings
               </button>
             )}
             <button
@@ -123,9 +123,9 @@ export function PermissionWarning({
                   <div className="space-y-2 text-sm mb-4">
                     <p className="font-medium">To enable system audio on macOS:</p>
                     <ul className="list-disc list-inside ml-2 space-y-1">
-                      <li>Install a virtual audio device (e.g., BlackHole 2ch)</li>
-                      <li>Grant Screen Recording permission to Meetily</li>
-                      <li>Configure your audio routing in Audio MIDI Setup</li>
+                      <li>Grant Audio Capture permission to Meetily</li>
+                      <li>Play audio and use Recheck to verify the native capture tap</li>
+                      <li>Restart Meetily after changing permission if capture remains silent</li>
                     </ul>
                   </div>
                 )}

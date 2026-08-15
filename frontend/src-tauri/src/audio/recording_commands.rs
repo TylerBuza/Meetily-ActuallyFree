@@ -167,18 +167,29 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     let mut manager = RecordingManager::new();
 
     // Load recording preferences to get auto_save AND device preferences
-    let (auto_save, preferred_mic_name, preferred_system_name) =
+    let (auto_save, preferred_mic_name, preferred_system_name, recordings_folder) =
         match super::recording_preferences::load_recording_preferences(&app).await {
             Ok(prefs) => {
                 info!("ðŸ“‹ Loaded recording preferences: auto_save={}, preferred_mic={:?}, preferred_system={:?}",
                       prefs.auto_save, prefs.preferred_mic_device, prefs.preferred_system_device);
-                (prefs.auto_save, prefs.preferred_mic_device, prefs.preferred_system_device)
+                (
+                    prefs.auto_save,
+                    prefs.preferred_mic_device,
+                    prefs.preferred_system_device,
+                    prefs.save_folder,
+                )
             }
             Err(e) => {
                 warn!("Failed to load recording preferences, using defaults: {}", e);
-                (true, None, None)
+                (
+                    true,
+                    None,
+                    None,
+                    super::recording_preferences::get_default_recordings_folder(),
+                )
             }
         };
+    manager.set_recordings_folder(recordings_folder);
 
     // ============================================================================
     // MICROPHONE DEVICE RESOLUTION: Preference â†’ Default â†’ Error
@@ -443,7 +454,9 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
             format!("Invalid microphone device '{}': {}", name, e)
         })?))
     } else {
-        None
+        Some(Arc::new(default_input_device().map_err(|e| {
+            format!("No default microphone device available: {}", e)
+        })?))
     };
 
     let system_device = if let Some(ref name) = system_device_name {
@@ -451,7 +464,13 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
             format!("Invalid system device '{}': {}", name, e)
         })?))
     } else {
-        None
+        match default_output_device() {
+            Ok(device) => Some(Arc::new(device)),
+            Err(e) => {
+                warn!("No default system audio device available: {}", e);
+                None
+            }
+        }
     };
 
     // Async-first approach for custom devices - no more blocking operations!
@@ -461,16 +480,18 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     let mut manager = RecordingManager::new();
 
     // Load recording preferences to check auto_save setting
-    let auto_save = match super::recording_preferences::load_recording_preferences(&app).await {
+    let preferences = match super::recording_preferences::load_recording_preferences(&app).await {
         Ok(prefs) => {
             info!("ðŸ“‹ Loaded recording preferences: auto_save={}", prefs.auto_save);
-            prefs.auto_save
+            prefs
         }
         Err(e) => {
             warn!("Failed to load recording preferences, defaulting to auto_save=true: {}", e);
-            true // Default to saving if preferences can't be loaded
+            super::recording_preferences::RecordingPreferences::default()
         }
     };
+    let auto_save = preferences.auto_save;
+    manager.set_recordings_folder(preferences.save_folder);
 
     // Always ensure a meeting name is set so incremental saver initializes
     let effective_meeting_name = meeting_name.clone().unwrap_or_else(|| {
@@ -957,43 +978,51 @@ async fn stop_recording_inner<R: Runtime>(
     );
 
     // Perform final cleanup with the manager if available
-    let (meeting_folder, meeting_name) = if let Some(mut manager) = manager_for_cleanup {
+    let (meeting_folder, meeting_name, audio_save_error) = if let Some(mut manager) = manager_for_cleanup {
         info!("ðŸ§¹ Performing final cleanup and saving recording data");
 
         // Extract meeting info BEFORE async operations
         let meeting_folder = manager.get_meeting_folder();
         let meeting_name = manager.get_meeting_name();
 
-        match tokio::time::timeout(
+        let audio_save_error = match tokio::time::timeout(
             tokio::time::Duration::from_secs(300), // 5 minutes max for file I/O
             manager.save_recording_only(&app)
         ).await {
             Ok(Ok(_)) => {
                 info!("âœ… Recording data saved successfully during cleanup");
+                None
             }
             Ok(Err(e)) => {
                 warn!(
                     "âš ï¸ Error during recording cleanup (transcripts preserved): {}",
                     e
                 );
-                // Don't fail shutdown - transcripts are already preserved
+                Some(e.to_string())
             }
             Err(_) => {
                 warn!("â±ï¸ File I/O timeout (5 minutes) reached during save, continuing shutdown");
-                // Don't fail shutdown - transcripts are already preserved
+                Some("Audio save timed out after 5 minutes".to_string())
             }
-        }
+        };
 
-        (meeting_folder, meeting_name)
+        (meeting_folder, meeting_name, audio_save_error)
     } else {
         info!("â„¹ï¸ No recording manager available for cleanup");
-        (None, None)
+        (None, None, Some("Recording manager was unavailable during save".to_string()))
     };
 
     // Set recording flag to false
     info!("ðŸ” Setting IS_RECORDING to false");
     IS_RECORDING.store(false, Ordering::SeqCst);
     crate::diarization::online::stop();
+
+    if let Some(error) = &audio_save_error {
+        let _ = app.emit(
+            "recording-error",
+            format!("Recording stopped, but audio could not be saved: {}", error),
+        );
+    }
 
     // Step 4.5: Prepare metadata for frontend (NO database save)
     // NOTE: We do NOT save to database here. The frontend will save after all transcripts are displayed.
@@ -1018,7 +1047,11 @@ async fn stop_recording_inner<R: Runtime>(
         "recording-shutdown-progress",
         serde_json::json!({
             "stage": "complete",
-            "message": "Recording stopped successfully",
+            "message": if audio_save_error.is_some() {
+                "Recording stopped, but audio save failed"
+            } else {
+                "Recording stopped successfully"
+            },
             "progress": 100
         }),
     );
@@ -1032,7 +1065,8 @@ async fn stop_recording_inner<R: Runtime>(
         serde_json::json!({
             "message": "Recording stopped - frontend will save after all transcripts received",
             "folder_path": folder_path_str,
-            "meeting_name": meeting_name_str
+            "meeting_name": meeting_name_str,
+            "audio_save_error": audio_save_error
         }),
     );
 
@@ -1048,7 +1082,8 @@ async fn stop_recording_inner<R: Runtime>(
         serde_json::json!({
             "call_api": true,
             "folder_path": folder_path_str,
-            "meeting_name": meeting_name_str
+            "meeting_name": meeting_name_str,
+            "audio_save_error": audio_save_error
         }),
     ) {
         warn!("Failed to notify main window of recording completion: {}", error);

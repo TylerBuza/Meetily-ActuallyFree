@@ -1,12 +1,15 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Lock, Sparkles, Cpu, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { OnboardingContainer } from '../OnboardingContainer';
 import { useOnboarding } from '@/contexts/OnboardingContext';
+import { usePlatform } from '@/hooks/usePlatform';
 
 export function WelcomeStep() {
   const { goNext } = useOnboarding();
+  const platform = usePlatform();
+  const updatesSupported = platform !== 'macos';
   const [checkUpdates, setCheckUpdates] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -24,6 +27,10 @@ export function WelcomeStep() {
       title: 'Works offline, no cloud required',
     },
   ];
+
+  useEffect(() => {
+    if (!updatesSupported) setCheckUpdates(false);
+  }, [updatesSupported]);
 
   const continueOnboarding = async () => {
     if (checkUpdates === null || saving) return;
@@ -65,7 +72,7 @@ export function WelcomeStep() {
           })}
         </div>
 
-        <div className="w-full max-w-md rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+        {updatesSupported && <div className="w-full max-w-md rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-start gap-3">
             <div className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-gray-100">
               <RefreshCw className="h-3.5 w-3.5 text-gray-700" />
@@ -103,7 +110,7 @@ export function WelcomeStep() {
               No, I&apos;ll check manually
             </button>
           </div>
-        </div>
+        </div>}
 
         {/* CTA Section */}
         <div className="w-full max-w-xs space-y-3">

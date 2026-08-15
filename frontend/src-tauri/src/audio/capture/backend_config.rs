@@ -8,8 +8,7 @@ use log::info;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AudioCaptureBackend {
-    /// ScreenCaptureKit backend (macOS default)
-    /// Uses CPAL with ScreenCaptureKit host for system audio
+    /// Generic CPAL system-audio path used outside macOS.
     ScreenCaptureKit,
 
     /// Core Audio backend (macOS only)
@@ -44,6 +43,7 @@ impl AudioCaptureBackend {
     /// Get backend from string
     pub fn from_string(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
+            #[cfg(not(target_os = "macos"))]
             "screencapturekit" => Some(AudioCaptureBackend::ScreenCaptureKit),
             #[cfg(target_os = "macos")]
             "coreaudio" | "core_audio" => Some(AudioCaptureBackend::CoreAudio),
@@ -64,7 +64,7 @@ impl AudioCaptureBackend {
     pub fn available_backends() -> Vec<Self> {
         #[cfg(target_os = "macos")]
         {
-            vec![AudioCaptureBackend::ScreenCaptureKit, AudioCaptureBackend::CoreAudio]
+            vec![AudioCaptureBackend::CoreAudio]
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -162,6 +162,7 @@ mod tests {
 
     #[test]
     fn test_backend_from_string() {
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(
             AudioCaptureBackend::from_string("screencapturekit"),
             Some(AudioCaptureBackend::ScreenCaptureKit)
@@ -182,10 +183,11 @@ mod tests {
     #[test]
     fn test_available_backends() {
         let backends = AudioCaptureBackend::available_backends();
+        #[cfg(not(target_os = "macos"))]
         assert!(backends.contains(&AudioCaptureBackend::ScreenCaptureKit));
 
         #[cfg(target_os = "macos")]
-        assert!(backends.contains(&AudioCaptureBackend::CoreAudio));
+        assert_eq!(backends, vec![AudioCaptureBackend::CoreAudio]);
     }
 
     #[test]

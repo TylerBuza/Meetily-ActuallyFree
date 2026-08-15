@@ -15,7 +15,7 @@ use super::encode::encode_single_audio; // Correct path to encode module
 pub fn sanitize_filename(name: &str) -> String {
     name.chars()
         .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            '/' | '\\' | ':' | '*' | '?' | '"' | '\'' | '<' | '>' | '|' => '_',
             c if c.is_control() => '_',
             c => c,
         })
@@ -25,7 +25,7 @@ pub fn sanitize_filename(name: &str) -> String {
 }
 
 /// Create a meeting folder with timestamp and return the path
-/// Creates structure: base_path/MeetingName_YYYY-MM-DD_HH-MM/
+/// Creates structure: base_path/MeetingName_YYYY-MM-DD_HH-MM-SS-mmm/
 ///                    ├── .checkpoints/  (for incremental saves, optional)
 ///
 /// # Arguments
@@ -37,13 +37,26 @@ pub fn create_meeting_folder(
     meeting_name: &str,
     create_checkpoints_dir: bool,
 ) -> Result<PathBuf> {
-    let timestamp = Utc::now().format("%Y-%m-%d_%H-%M").to_string();
+    std::fs::create_dir_all(base_path)?;
+    let timestamp = Utc::now().format("%Y-%m-%d_%H-%M-%S-%3f").to_string();
     let sanitized_name = sanitize_filename(meeting_name);
-    let folder_name = format!("{}_{}", sanitized_name, timestamp);
-    let meeting_folder = base_path.join(folder_name);
-
-    // Create main meeting folder
-    std::fs::create_dir_all(&meeting_folder)?;
+    let folder_stem = format!("{}_{}", sanitized_name, timestamp);
+    let meeting_folder = (0..1000)
+        .find_map(|suffix| {
+            let folder_name = if suffix == 0 {
+                folder_stem.clone()
+            } else {
+                format!("{}_{}", folder_stem, suffix)
+            };
+            let candidate = base_path.join(folder_name);
+            match std::fs::create_dir(&candidate) {
+                Ok(()) => Some(Ok(candidate)),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+                Err(error) => Some(Err(error)),
+            }
+        })
+        .transpose()?
+        .ok_or_else(|| anyhow::anyhow!("Could not create a unique meeting folder"))?;
 
     // Only create .checkpoints subdirectory if requested (when auto_save is true)
     if create_checkpoints_dir {
@@ -235,6 +248,22 @@ impl LoudnessNormalizer {
 #[cfg(test)]
 mod loudness_normalizer_tests {
     use super::*;
+
+    #[test]
+    fn meeting_names_remove_concat_sensitive_apostrophes() {
+        assert_eq!(sanitize_filename("O'Brien Review"), "O_Brien Review");
+    }
+
+    #[test]
+    fn meeting_folders_never_reuse_an_existing_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let first = create_meeting_folder(&root.path().to_path_buf(), "Standup", false).unwrap();
+        let second = create_meeting_folder(&root.path().to_path_buf(), "Standup", false).unwrap();
+
+        assert_ne!(first, second);
+        assert!(first.is_dir());
+        assert!(second.is_dir());
+    }
 
     #[test]
     fn normalization_and_user_gain_never_exceed_true_peak_limit() {

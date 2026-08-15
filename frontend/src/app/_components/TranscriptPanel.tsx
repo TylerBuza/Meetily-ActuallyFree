@@ -47,7 +47,7 @@ export function TranscriptPanel({
   const { transcripts, transcriptContainerRef, copyTranscript } = useTranscripts();
   const { transcriptModelConfig } = useConfig();
   const { isRecording, isPaused } = useRecordingState();
-  const { checkPermissions, isChecking, hasSystemAudio, hasMicrophone } = usePermissionCheck();
+  const { requestPermissions, isChecking, hasSystemAudio, hasMicrophone } = usePermissionCheck();
   const isLinux = useIsLinux();
 
   // Convert transcripts to segments for virtualized view
@@ -109,7 +109,7 @@ export function TranscriptPanel({
           <PermissionWarning
             hasMicrophone={hasMicrophone}
             hasSystemAudio={hasSystemAudio}
-            onRecheck={checkPermissions}
+            onRecheck={requestPermissions}
             isRechecking={isChecking}
           />
         </div>

@@ -3,6 +3,7 @@
 import React, { useEffect, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { useRecordingStop } from '@/hooks/useRecordingStop';
+import { toast } from 'sonner';
 
 /**
  * RecordingPostProcessingProvider
@@ -46,10 +47,17 @@ export function RecordingPostProcessingProvider({ children }: { children: React.
           call_api: boolean;
           folder_path?: string | null;
           meeting_name?: string | null;
+          audio_save_error?: string | null;
         }>('recording-stop-complete', (event) => {
           console.log('[RecordingPostProcessing] Received recording-stop-complete event:', event.payload);
 
-          const { call_api, folder_path, meeting_name } = event.payload;
+          const { call_api, folder_path, meeting_name, audio_save_error } = event.payload;
+          if (audio_save_error) {
+            toast.error('Some or all meeting audio could not be saved. The transcript will still be kept.', {
+              description: audio_save_error,
+              duration: 10000,
+            });
+          }
           if (folder_path) {
             sessionStorage.setItem('last_recording_folder_path', folder_path);
           } else {

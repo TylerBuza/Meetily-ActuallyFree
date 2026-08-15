@@ -69,7 +69,7 @@ Windows 10/11 x64 is supported. The installer is unsigned, so SmartScreen may sh
 2. Open the DMG and drag **Meetily - Actually Free** to Applications.
 3. Grant microphone and screen/audio capture permissions when prompted.
 
-M1 and newer Macs running macOS 13 Ventura or later are supported. The DMG is not Apple-notarized, so first launch may require Control-clicking the app and selecting **Open**. Both releases include SHA-256 checksums.
+M1 and newer Macs running macOS 14.2 Sonoma or later are supported. The DMG is not Apple-notarized, so first launch may require Control-clicking the app and selecting **Open**. Both releases include SHA-256 checksums.
 
 ## Local Data
 
@@ -99,7 +99,7 @@ cd frontend
 .\scripts\build-universal-windows.ps1 -AllowUnsigned
 ```
 
-Apple Silicon DMG build on macOS 13 or later:
+Apple Silicon DMG build on macOS 14.2 or later:
 
 ```bash
 cd frontend

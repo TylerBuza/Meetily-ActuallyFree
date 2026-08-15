@@ -6,6 +6,7 @@ import { UpdateInfo } from '@/services/updateService';
 import { UpdateDialog } from './UpdateDialog';
 import { setUpdateDialogCallback, showUpdateNotification } from './UpdateNotification';
 import { invoke } from '@tauri-apps/api/core';
+import { usePlatform } from '@/hooks/usePlatform';
 
 interface UpdateCheckContextType {
   updateInfo: UpdateInfo | null;
@@ -17,6 +18,8 @@ interface UpdateCheckContextType {
 const UpdateCheckContext = createContext<UpdateCheckContextType | undefined>(undefined);
 
 export function UpdateCheckProvider({ children }: { children: React.ReactNode }) {
+  const platform = usePlatform();
+  const updatesSupported = platform !== 'macos';
   const [showDialog, setShowDialog] = useState(false);
   const [checkOnMount, setCheckOnMount] = useState(false);
 
@@ -25,18 +28,30 @@ export function UpdateCheckProvider({ children }: { children: React.ReactNode })
   }, []);
 
   useEffect(() => {
+    if (!updatesSupported) {
+      setCheckOnMount(false);
+      return;
+    }
     invoke<boolean>('get_check_updates_on_launch')
       .then(setCheckOnMount)
       .catch(() => setCheckOnMount(false));
-  }, []);
+  }, [updatesSupported]);
 
   const { updateInfo, isChecking, checkForUpdates } = useUpdateCheck({
-    checkOnMount,
+    checkOnMount: updatesSupported && checkOnMount,
     showNotification: false,
     onUpdateAvailable: (info) => {
       showUpdateNotification(info, handleShowDialog);
     },
   });
+
+  const checkForSupportedUpdates = useCallback(
+    async (force = false) => {
+      if (!updatesSupported) return;
+      await checkForUpdates(force);
+    },
+    [checkForUpdates, updatesSupported],
+  );
 
   useEffect(() => {
     // Register the callback so UpdateNotification can trigger the dialog
@@ -49,20 +64,21 @@ export function UpdateCheckProvider({ children }: { children: React.ReactNode })
   // Listen for tray menu events
   useEffect(() => {
     const handleTrayCheck = () => {
-      checkForUpdates(true); // Force check from tray
+      if (!updatesSupported) return;
+      void checkForSupportedUpdates(true);
       setShowDialog(true);
     };
 
     window.addEventListener('check-updates-from-tray', handleTrayCheck);
     return () => window.removeEventListener('check-updates-from-tray', handleTrayCheck);
-  }, [checkForUpdates]);
+  }, [checkForSupportedUpdates, updatesSupported]);
 
   return (
     <UpdateCheckContext.Provider
       value={{
         updateInfo,
         isChecking,
-        checkForUpdates,
+        checkForUpdates: checkForSupportedUpdates,
         showUpdateDialog: handleShowDialog,
       }}
     >

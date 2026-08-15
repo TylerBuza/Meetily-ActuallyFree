@@ -304,7 +304,7 @@ impl RecordingManager {
             }
             Err(e) => {
                 error!("Failed to save recording: {}", e);
-                // Don't fail the stop operation if saving fails
+                return Err(anyhow::anyhow!(e));
             }
         }
 
@@ -343,7 +343,7 @@ impl RecordingManager {
             }
             Err(e) => {
                 error!("Failed to save recording: {}", e);
-                // Don't fail the stop operation if saving fails
+                return Err(anyhow::anyhow!(e));
             }
         }
 
@@ -434,6 +434,10 @@ impl RecordingManager {
     /// Set the meeting name for this recording session
     pub fn set_meeting_name(&mut self, name: Option<String>) {
         self.recording_saver.set_meeting_name(name);
+    }
+
+    pub fn set_recordings_folder(&mut self, path: std::path::PathBuf) {
+        self.recording_saver.set_recordings_folder(path);
     }
 
     /// Add a structured transcript segment to be saved later

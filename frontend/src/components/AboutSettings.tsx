@@ -48,7 +48,7 @@ export function AboutSettings() {
         <p className="mt-4 text-sm text-gray-600 leading-relaxed">
           A free, open fork of Meetily that unlocks every feature for everyone. It captures,
           transcribes and summarizes your meetings entirely on your own machine — with GPU
-          acceleration, bring-your-own-key cloud models, and a fully portable install.
+          acceleration, bring-your-own-key cloud models, and local-first data ownership.
         </p>
       </div>
 

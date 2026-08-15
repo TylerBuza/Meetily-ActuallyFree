@@ -27,7 +27,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  MACOSX_DEPLOYMENT_TARGET: "13.0"
+  MACOSX_DEPLOYMENT_TARGET: "14.2"
   TARGET: aarch64-apple-darwin
 
 jobs:
@@ -210,6 +210,29 @@ jobs:
             file "$sidecar" | grep -q "arm64"
           done
 
+          "$APP_PATH/Contents/MacOS/ffmpeg" -version
+          FFMPEG_TEST="$RUNNER_TEMP/ffmpeg-smoke.m4a"
+          "$APP_PATH/Contents/MacOS/ffmpeg" \
+            -f lavfi -i "anullsrc=r=48000:cl=mono" \
+            -t 0.25 -c:a aac -y "$FFMPEG_TEST"
+          test -s "$FFMPEG_TEST"
+
+          LLAMA_OUTPUT=$(printf '%s\n' '{"type":"ping"}' '{"type":"shutdown"}' \
+            | "$APP_PATH/Contents/MacOS/llama-helper")
+          echo "$LLAMA_OUTPUT"
+          grep -q '"type":"pong"' <<< "$LLAMA_OUTPUT"
+          grep -q '"type":"goodbye"' <<< "$LLAMA_OUTPUT"
+
+          INFO_PLIST="$APP_PATH/Contents/Info.plist"
+          test -n "$(/usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$INFO_PLIST")"
+          test -n "$(/usr/libexec/PlistBuddy -c 'Print :NSAudioCaptureUsageDescription' "$INFO_PLIST")"
+          MINIMUM_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$INFO_PLIST")
+          test "$MINIMUM_VERSION" = "14.2"
+
+          ENTITLEMENTS_PATH="$RUNNER_TEMP/meetily-entitlements.plist"
+          codesign -d --entitlements :- "$APP_PATH" > "$ENTITLEMENTS_PATH"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input' "$ENTITLEMENTS_PATH")" = "true"
+
           codesign --verify --deep --strict "$APP_PATH"
           if [[ "$SIGNED" == "true" ]]; then
             spctl --assess --type execute --verbose "$APP_PATH"
@@ -265,6 +288,38 @@ jobs:
           test ! -e "$INSTALLED_APP/Contents/MacOS/data"
           codesign --verify --deep --strict "$INSTALLED_APP"
 
+          SECOND_LOG="$RUNNER_TEMP/meetily-second-launch.log"
+          RUST_BACKTRACE=1 RUST_LOG=info "$APP_BINARY" >"$SECOND_LOG" 2>&1 &
+          SECOND_PID=$!
+          cleanup_second() {
+            if kill -0 "$SECOND_PID" >/dev/null 2>&1; then
+              kill -TERM "$SECOND_PID" >/dev/null 2>&1 || true
+              sleep 2
+              kill -KILL "$SECOND_PID" >/dev/null 2>&1 || true
+            fi
+            wait "$SECOND_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup_second EXIT
+          sleep 10
+          if ! kill -0 "$SECOND_PID" >/dev/null 2>&1; then
+            wait "$SECOND_PID" || STATUS=$?
+            cat "$SECOND_LOG"
+            echo "Meetily exited during second launch with status ${STATUS:-0}."
+            exit 1
+          fi
+          if grep -Eiq \
+            "thread .* panicked|fatal runtime error|dyld: Library not loaded|Abort trap|Segmentation fault" \
+            "$SECOND_LOG"; then
+            cat "$SECOND_LOG"
+            echo "Meetily logged a fatal error during second launch."
+            exit 1
+          fi
+          grep -q "Application setup complete" "$SECOND_LOG"
+          grep -q "Database initialized successfully" "$SECOND_LOG"
+          cleanup_second
+          trap - EXIT
+          codesign --verify --deep --strict "$INSTALLED_APP"
+
           mkdir -p dist
           OUTPUT_DMG="dist/Meetily-Actually-Free_${VERSION}_aarch64.dmg"
           cp "$DMG_PATH" "$OUTPUT_DMG"
@@ -283,6 +338,7 @@ jobs:
             dist/*.dmg
             dist/SHA256SUMS-macos.txt
             ${{ runner.temp }}/meetily-launch.log
+            ${{ runner.temp }}/meetily-second-launch.log
           if-no-files-found: error
           retention-days: 30
 
@@ -296,7 +352,7 @@ jobs:
           {
             echo "## Meetily - Actually Free for macOS"
             echo
-            echo "Apple Silicon release for M1 and newer Macs running macOS 13 Ventura or later."
+            echo "Apple Silicon release for M1 and newer Macs running macOS 14.2 Sonoma or later."
             echo
             echo "### Install"
             echo

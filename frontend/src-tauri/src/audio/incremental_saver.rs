@@ -7,6 +7,11 @@ use serde::{Serialize, Deserialize};
 
 use super::ffmpeg::find_ffmpeg_path;
 
+fn ffconcat_file_line(path: &std::path::Path) -> String {
+    let escaped = path.to_string_lossy().replace('\'', "'\\''");
+    format!("file '{}'\n", escaped)
+}
+
 /// Audio data for one track
 #[derive(Clone)]
 struct AudioData {
@@ -195,7 +200,7 @@ impl IncrementalAudioSaver {
 
             // Use absolute path for FFmpeg (required for safe mode)
             let abs_path = checkpoint_path.canonicalize()?;
-            list_content.push_str(&format!("file '{}'\n", abs_path.display()));
+            list_content.push_str(&ffconcat_file_line(&abs_path));
         }
 
         std::fs::write(&list_file, list_content)?;
@@ -299,7 +304,7 @@ fn recover_checkpoint_track(
         let path = path
             .canonicalize()
             .map_err(|e| format!("Failed to canonicalize {}: {e}", path.display()))?;
-        concat_content.push_str(&format!("file '{}'\n", path.display()));
+        concat_content.push_str(&ffconcat_file_line(&path));
     }
     std::fs::write(&concat_file, concat_content)
         .map_err(|e| format!("Failed to write {}: {e}", concat_file.display()))?;
@@ -501,6 +506,12 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
     use super::super::recording_state::DeviceType;
+
+    #[test]
+    fn concat_paths_escape_apostrophes() {
+        let line = ffconcat_file_line(std::path::Path::new("/Users/O'Brien/audio.mp4"));
+        assert_eq!(line, "file '/Users/O'\\''Brien/audio.mp4'\n");
+    }
 
     #[tokio::test]
     async fn test_checkpoint_creation() {

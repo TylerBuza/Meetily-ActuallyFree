@@ -190,12 +190,12 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       } else if (errorMsg.includes('system audio') || errorMsg.includes('speaker') || errorMsg.includes('output')) {
         setDeviceError({
           title: 'System Audio Not Available',
-          message: 'Unable to capture system audio. Please check that:\n• A virtual audio device (like BlackHole) is installed\n• The app has screen recording permissions (macOS)\n• System audio is properly configured'
+          message: 'Unable to capture system audio. On macOS, grant Meetily Audio Capture permission in Privacy & Security, play audio, and try again. On other platforms, verify the selected playback device.'
         });
       } else if (errorMsg.includes('permission')) {
         setDeviceError({
           title: 'Permission Required',
-          message: 'Recording permissions are required. Please:\n• Grant microphone access in System Settings\n• Grant screen recording access for system audio (macOS)\n• Restart the app after granting permissions'
+          message: 'Recording permissions are required. Grant microphone access and, on macOS, Audio Capture access in Privacy & Security. Restart the app after changing permissions.'
         });
       } else {
         setDeviceError({

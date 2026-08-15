@@ -7,9 +7,11 @@ import { updateService, UpdateInfo } from '@/services/updateService';
 import { Button } from './ui/button';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { usePlatform } from '@/hooks/usePlatform';
 
 
 export function About() {
+    const platform = usePlatform();
     const [currentVersion, setCurrentVersion] = useState<string>('0.0.1');
     const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
     const [isChecking, setIsChecking] = useState(false);
@@ -64,25 +66,37 @@ export function About() {
                     Real-time notes and summaries that never leave your machine.
                 </p>
                 <div className="mt-3">
-                    <Button
-                        onClick={handleCheckForUpdates}
-                        disabled={isChecking}
-                        variant="outline"
-                        size="sm"
-                        className="text-xs"
-                    >
-                        {isChecking ? (
-                            <>
-                                <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-                                Checking...
-                            </>
-                        ) : (
-                            <>
-                                <CheckCircle2 className="h-3 w-3 mr-2" />
-                                Check for Updates
-                            </>
-                        )}
-                    </Button>
+                    {platform === 'macos' ? (
+                        <Button
+                            onClick={() => openExternal('https://github.com/TylerBuza/Meetily-ActuallyFree/releases')}
+                            variant="outline"
+                            size="sm"
+                            className="text-xs"
+                        >
+                            <CheckCircle2 className="h-3 w-3 mr-2" />
+                            View macOS Releases
+                        </Button>
+                    ) : (
+                        <Button
+                            onClick={handleCheckForUpdates}
+                            disabled={isChecking}
+                            variant="outline"
+                            size="sm"
+                            className="text-xs"
+                        >
+                            {isChecking ? (
+                                <>
+                                    <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                                    Checking...
+                                </>
+                            ) : (
+                                <>
+                                    <CheckCircle2 className="h-3 w-3 mr-2" />
+                                    Check for Updates
+                                </>
+                            )}
+                        </Button>
+                    )}
                     {updateInfo?.available && (
                         <div className="mt-2 text-xs text-blue-600">
                             Update available: v{updateInfo.version}

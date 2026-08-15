@@ -257,7 +257,10 @@ pub async fn get_default_recordings_folder_path() -> Result<String, String> {
 /// Delete a just-written meeting folder (used when a take is discarded as too short).
 /// Only removes paths under the configured recordings root for safety.
 #[tauri::command]
-pub async fn discard_recording_folder(folder_path: String) -> Result<(), String> {
+pub async fn discard_recording_folder<R: Runtime>(
+    app: AppHandle<R>,
+    folder_path: String,
+) -> Result<(), String> {
     let path = PathBuf::from(&folder_path);
     if folder_path.trim().is_empty() {
         return Ok(());
@@ -266,17 +269,24 @@ pub async fn discard_recording_folder(folder_path: String) -> Result<(), String>
         return Ok(());
     }
 
-    let root = get_default_recordings_folder();
-    let root_canon = root.canonicalize().unwrap_or(root);
     let path_canon = path.canonicalize().map_err(|e| e.to_string())?;
 
-    if !path_canon.starts_with(&root_canon) {
-        // Also allow install-local data root (legacy portable saves).
-        let data = crate::paths::install_data_root();
-        let data_canon = data.canonicalize().unwrap_or(data);
-        if !path_canon.starts_with(&data_canon) {
-            return Err("Refusing to delete path outside recordings folders".into());
-        }
+    let preferences = load_recording_preferences(&app)
+        .await
+        .map_err(|e| format!("Failed to load recording preferences: {e}"))?;
+    let roots = [
+        preferences.save_folder,
+        get_default_recordings_folder(),
+        crate::paths::install_data_root(),
+    ];
+    let roots_canon: Vec<PathBuf> = roots
+        .into_iter()
+        .map(|root| root.canonicalize().unwrap_or(root))
+        .collect();
+    let is_root = roots_canon.iter().any(|root| path_canon == *root);
+    let is_meeting_folder = !is_root && roots_canon.iter().any(|root| path_canon.starts_with(root));
+    if !is_meeting_folder {
+        return Err("Refusing to delete path outside recordings folders".into());
     }
 
     if path_canon.is_dir() {
@@ -387,7 +397,7 @@ pub async fn set_audio_backend(backend: String) -> Result<(), String> {
 
         // If switching to Core Audio, log information about Audio Capture permission
         if backend_enum == AudioCaptureBackend::CoreAudio {
-            info!("🔐 Core Audio backend requires Audio Capture permission (macOS 14.4+)");
+            info!("🔐 Core Audio backend requires Audio Capture permission (macOS 14.2+)");
             info!("📍 Permission dialog will appear automatically when recording starts");
 
             // Check if permission is already granted (this is informational only)
@@ -443,20 +453,14 @@ pub async fn get_audio_backend_info() -> Result<Vec<BackendInfo>, String> {
     {
         use crate::audio::capture::AudioCaptureBackend;
 
-        let backends = vec![
-            BackendInfo {
-                id: AudioCaptureBackend::ScreenCaptureKit.to_string(),
-                name: AudioCaptureBackend::ScreenCaptureKit.name().to_string(),
-                description: AudioCaptureBackend::ScreenCaptureKit
-                    .description()
-                    .to_string(),
-            },
-            BackendInfo {
-                id: AudioCaptureBackend::CoreAudio.to_string(),
-                name: AudioCaptureBackend::CoreAudio.name().to_string(),
-                description: AudioCaptureBackend::CoreAudio.description().to_string(),
-            },
-        ];
+        let backends = AudioCaptureBackend::available_backends()
+            .into_iter()
+            .map(|backend| BackendInfo {
+                id: backend.to_string(),
+                name: backend.name().to_string(),
+                description: backend.description().to_string(),
+            })
+            .collect();
         Ok(backends)
     }
 

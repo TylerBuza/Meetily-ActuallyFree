@@ -2,6 +2,8 @@
 
 #[cfg(target_os = "macos")]
 use std::pin::Pin;
+#[cfg(target_os = "macos")]
+use std::time::{Duration, Instant};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
@@ -57,7 +59,7 @@ impl CoreAudioCapture {
     pub fn new() -> Result<Self> {
         info!("🎙️ CoreAudio: Starting Core Audio capture initialization...");
 
-        // Note: Audio Capture permission (NSAudioCaptureUsageDescription) is required for macOS 14.4+
+        // Audio Capture permission (NSAudioCaptureUsageDescription) is required.
         // The permission dialog is automatically triggered when creating the Core Audio tap.
         // If permission is denied, the tap will return silence (all zeros).
 
@@ -292,6 +294,39 @@ impl CoreAudioCapture {
             waker_state,
             current_sample_rate,
         })
+    }
+
+    /// Start the real tap briefly and report whether audible samples arrive.
+    /// A running all-zero stream is indistinguishable from denied permission,
+    /// so callers should ask the user to play audio while this probe runs.
+    pub fn probe(self, duration: Duration) -> Result<bool> {
+        let mut stream = self.stream()?;
+        let deadline = Instant::now() + duration;
+        let mut sample_count = 0usize;
+        let mut peak = 0.0f32;
+
+        while Instant::now() < deadline {
+            while let Some(sample) = stream.consumer.try_pop() {
+                sample_count += 1;
+                peak = peak.max(sample.abs());
+            }
+
+            if peak > 0.0001 {
+                info!(
+                    "Core Audio probe detected system audio (samples={}, peak={:.6})",
+                    sample_count, peak
+                );
+                return Ok(true);
+            }
+
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        warn!(
+            "Core Audio probe received no audible system audio (samples={}, peak={:.6})",
+            sample_count, peak
+        );
+        Ok(false)
     }
 }
 

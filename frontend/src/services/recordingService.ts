@@ -22,6 +22,7 @@ export interface RecordingStoppedPayload {
   message: string;
   folder_path?: string;
   meeting_name?: string;
+  audio_save_error?: string;
 }
 
 /**
@@ -64,7 +65,7 @@ export class RecordingService {
   /**
    * Start recording with device configuration and meeting name
    * @param micDeviceName - Microphone device name (null for default)
-   * @param systemDeviceName - System audio device name (null for none)
+   * @param systemDeviceName - System audio device name (null for default)
    * @param meetingName - Meeting name/title
    * @returns Promise<void>
    */

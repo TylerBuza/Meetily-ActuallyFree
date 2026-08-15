@@ -77,6 +77,19 @@ jobs:
             file "$binary" | grep -q "arm64"
           done
 
+          "$APP_PATH/Contents/MacOS/ffmpeg" -version
+          FFMPEG_TEST="$RUNNER_TEMP/ffmpeg-smoke.m4a"
+          "$APP_PATH/Contents/MacOS/ffmpeg" \
+            -f lavfi -i "anullsrc=r=48000:cl=mono" \
+            -t 0.25 -c:a aac -y "$FFMPEG_TEST"
+          test -s "$FFMPEG_TEST"
+
+          LLAMA_OUTPUT=$(printf '%s\n' '{"type":"ping"}' '{"type":"shutdown"}' \
+            | "$APP_PATH/Contents/MacOS/llama-helper")
+          echo "$LLAMA_OUTPUT" | tee -a "$RUNNER_TEMP/meetily-metadata.log"
+          grep -q '"type":"pong"' <<< "$LLAMA_OUTPUT"
+          grep -q '"type":"goodbye"' <<< "$LLAMA_OUTPUT"
+
           test -f "$APP_PATH/Contents/Resources/templates/standard_meeting.json"
           test -f "$APP_PATH/Contents/Resources/resources/diarization/segmentation-3.0-fp16.onnx"
           test -f "$APP_PATH/Contents/Resources/resources/diarization/wespeaker-resnet34-LM.onnx"
@@ -91,6 +104,14 @@ jobs:
             -c "Print :CFBundleShortVersionString" \
             "$APP_PATH/Contents/Info.plist")
           test "$BUNDLE_VERSION" = "$EXPECTED_VERSION"
+          test -n "$(/usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$APP_PATH/Contents/Info.plist")"
+          test -n "$(/usr/libexec/PlistBuddy -c 'Print :NSAudioCaptureUsageDescription' "$APP_PATH/Contents/Info.plist")"
+          MINIMUM_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP_PATH/Contents/Info.plist")
+          test "$MINIMUM_VERSION" = "14.2"
+
+          ENTITLEMENTS_PATH="$RUNNER_TEMP/meetily-entitlements.plist"
+          codesign -d --entitlements :- "$APP_PATH" > "$ENTITLEMENTS_PATH"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input' "$ENTITLEMENTS_PATH")" = "true"
           echo "Bundle version: $BUNDLE_VERSION" | tee -a "$RUNNER_TEMP/meetily-metadata.log"
           echo "MEETILY_APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
 
@@ -146,6 +167,47 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$MEETILY_APP_PATH" 2>&1 \
             | tee -a "$RUNNER_TEMP/meetily-metadata.log"
 
+      - name: Launch app again
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_BINARY="$MEETILY_APP_PATH/Contents/MacOS/meetily"
+          LOG_PATH="$RUNNER_TEMP/meetily-second-launch.log"
+          RUST_BACKTRACE=1 RUST_LOG=info "$APP_BINARY" >"$LOG_PATH" 2>&1 &
+          APP_PID=$!
+
+          cleanup() {
+            if kill -0 "$APP_PID" >/dev/null 2>&1; then
+              kill -TERM "$APP_PID" >/dev/null 2>&1 || true
+              sleep 2
+              kill -KILL "$APP_PID" >/dev/null 2>&1 || true
+            fi
+            wait "$APP_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          sleep 10
+          if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
+            wait "$APP_PID" || STATUS=$?
+            cat "$LOG_PATH"
+            echo "Meetily exited during second launch with status ${STATUS:-0}."
+            exit 1
+          fi
+
+          if grep -Eiq \
+            "thread .* panicked|fatal runtime error|dyld: Library not loaded|Abort trap|Segmentation fault" \
+            "$LOG_PATH"; then
+            cat "$LOG_PATH"
+            echo "Meetily logged a fatal error during second launch."
+            exit 1
+          fi
+          grep -q "Application setup complete" "$LOG_PATH"
+          grep -q "Database initialized successfully" "$LOG_PATH"
+          cleanup
+          trap - EXIT
+          codesign --verify --deep --strict --verbose=2 "$MEETILY_APP_PATH"
+          echo "Meetily reopened successfully with its existing database."
+
       - name: Upload smoke-test logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -154,5 +216,6 @@ jobs:
           path: |
             ${{ runner.temp }}/meetily-metadata.log
             ${{ runner.temp }}/meetily-launch.log
+            ${{ runner.temp }}/meetily-second-launch.log
           if-no-files-found: warn
           retention-days: 30

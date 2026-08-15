@@ -122,45 +122,18 @@ This document provides a quick overview of all available CI/CD workflows in this
 **Key Features:**
 - Reusable workflow (called by others)
 - Highly configurable inputs
-- Used by `build-test.yml` and `release.yml`
+- Used by `build-test.yml`
 
 **Not directly triggered** - used as a building block
 
 ---
 
-### 7. **release.yml** - Production Release
-**Purpose:** Create official releases with signed binaries
+### 7. Production Releases
 
-**Key Features:**
-- Signing REQUIRED
-- Creates GitHub Release (draft)
-- Version tags from `tauri.conf.json`
-- Uploads release assets
-- **macOS and Windows only** (Linux excluded from production releases)
-- Auto-generates `latest.json` for Tauri updater
-- **Auto-increment versioning**: If tag exists, auto-increments (e.g., `0.1.1` -> `0.1.1.1` -> `0.1.1.2`, up to `.100`)
-
-**Triggers:**
-- Manual dispatch only
-
-**Use When:**
-- Ready to publish a new version
-- Creating official release artifacts
-
-**Outputs:**
-- GitHub Release (draft)
-- macOS: DMG installer, app.tar.gz (updater), .sig
-- Windows: MSI installer (signed), NSIS installer (signed), .sig files
-- Updater manifest: latest.json
-- Release notes auto-generated
-
-**Version Behavior:**
-- If `v0.1.1` tag doesn't exist: creates `v0.1.1`
-- If `v0.1.1` exists: creates `v0.1.1.1`
-- If `v0.1.1.1` exists: creates `v0.1.1.2`
-- Maximum: `v0.1.1.100` (then update `tauri.conf.json`)
-
-**Note:** Linux builds are not included in releases. Use `build-linux.yml` for Linux testing.
+Windows and macOS releases are intentionally separate. Use `build-macos.yml`
+with `publish-release` for the non-latest Apple Silicon DMG release. The Windows
+universal installer and updater metadata use the release process documented in
+`ARCHITECTURE.md`; do not combine them through the old generic release path.
 
 ---
 
@@ -223,10 +196,9 @@ This document provides a quick overview of all available CI/CD workflows in this
 - Full verification
 
 ### "I'm ready to release..."
-- **Use `release.yml`** (manual dispatch)
-- Creates GitHub Release
-- All platforms, fully signed
-- Production-ready artifacts
+- **macOS:** use `build-macos.yml` with `publish-release`
+- **Windows:** follow the universal release process in `ARCHITECTURE.md`
+- Keep the macOS release non-latest so the Windows updater endpoint remains stable
 
 ---
 
@@ -235,7 +207,6 @@ This document provides a quick overview of all available CI/CD workflows in this
 ```
 build.yml (reusable)
     |-- build-test.yml (calls build.yml)
-    |-- release.yml (calls build.yml)
 
 Standalone (don't use build.yml):
     |-- build-macos.yml
@@ -256,7 +227,6 @@ Standalone (don't use build.yml):
 | `build-windows.yml` | Windows | Optional | Medium | 30 days | Windows dev |
 | `build-linux.yml` | Linux | Optional | Medium | 30 days | Linux dev |
 | `build-test.yml` | All | ON | Slow | 30 days | Pre-release |
-| `release.yml` | macOS + Windows | REQUIRED | Slow | Permanent | Release |
 
 ---
 
