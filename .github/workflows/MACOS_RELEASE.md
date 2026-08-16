@@ -18,7 +18,7 @@ steps.
 | Publication workflow | `publish-macos.yml` |
 | Public artifact test | `smoke-test-macos-release.yml` |
 | Protected environment | `macos-release`, restricted to `main` |
-| Release mutability | Immutable for releases created after August 15, 2026 |
+| Release mutability | Repository immutable releases enabled |
 
 The macOS release is intentionally independent from the Windows setup/updater
 pair. Never upload the DMG to the Windows release through a generic workflow,
@@ -290,8 +290,8 @@ publisher run. Treat the release as unsafe: verify its tag target and
 `macos-release-metadata.json` publish run ID match the failed run, delete that
 release without deleting its reserved tag, and increment the version. Do not
 leave a partially verified release public or reuse its tag.
-The legacy `v0.2.5-macos` release predates immutability and is not a template for
-future replacement behavior.
+The locked `v0.2.5-macos` release predates provenance metadata and the physical
+gate. It is a preview, not a template for future publication or smoke checks.
 
 After successful promotion, confirm that:
 
