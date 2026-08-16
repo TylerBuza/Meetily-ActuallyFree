@@ -59,6 +59,7 @@ jobs:
         with:
           toolchain: 1.97.1
           targets: aarch64-apple-darwin
+          components: rustfmt
 
       - name: Cache Rust builds
         uses: swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
@@ -117,6 +118,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if ! brew list --versions openssl@3 >/dev/null; then
+            brew install openssl@3
+          fi
+          OPENSSL_PREFIX=$(brew --prefix openssl@3)
+          test -f "$OPENSSL_PREFIX/include/openssl/err.h"
+          export OPENSSL_DIR="$OPENSSL_PREFIX"
+          export CMAKE_PREFIX_PATH="$OPENSSL_PREFIX"
+          export CPPFLAGS="-I$OPENSSL_PREFIX/include"
+          export LDFLAGS="-L$OPENSSL_PREFIX/lib"
+          export PKG_CONFIG_PATH="$OPENSSL_PREFIX/lib/pkgconfig"
           cargo build \
             --release \
             --package llama-helper \
