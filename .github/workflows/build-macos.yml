@@ -65,7 +65,7 @@ jobs:
         uses: swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
           workspaces: ". -> target"
-          key: macos-aarch64-release
+          key: macos-aarch64-release-openssl3-v1
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -124,8 +124,11 @@ jobs:
           OPENSSL_PREFIX=$(brew --prefix openssl@3)
           test -f "$OPENSSL_PREFIX/include/openssl/err.h"
           export OPENSSL_DIR="$OPENSSL_PREFIX"
+          export OPENSSL_ROOT_DIR="$OPENSSL_PREFIX"
           export CMAKE_PREFIX_PATH="$OPENSSL_PREFIX"
           export CPPFLAGS="-I$OPENSSL_PREFIX/include"
+          export CFLAGS="-I$OPENSSL_PREFIX/include"
+          export CXXFLAGS="-I$OPENSSL_PREFIX/include"
           export LDFLAGS="-L$OPENSSL_PREFIX/lib"
           export PKG_CONFIG_PATH="$OPENSSL_PREFIX/lib/pkgconfig"
           cargo build \
