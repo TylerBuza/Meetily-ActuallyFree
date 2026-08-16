@@ -176,40 +176,33 @@ impl RecordingSaver {
     ///
     /// # Arguments
     /// * `auto_save` - If true, creates checkpoints and enables saving. If false, audio chunks are discarded.
-    pub fn start_accumulation(&mut self, auto_save: bool) -> mpsc::UnboundedSender<AudioChunk> {
+    pub fn start_accumulation(
+        &mut self,
+        auto_save: bool,
+    ) -> Result<mpsc::UnboundedSender<AudioChunk>> {
         if auto_save {
             info!("Initializing incremental audio saver for recording (auto-save ENABLED)");
         } else {
             info!("Starting recording without audio saving (auto-save DISABLED - transcripts only)");
         }
 
-        // Create channel for receiving audio chunks
+        // Initialization must succeed before any producer can send chunks. If
+        // auto-save is enabled with no saver targets, every chunk is otherwise
+        // accepted by the channel and silently discarded.
+        let name = self
+            .meeting_name
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Meeting name is required before recording starts"))?;
+        self.initialize_meeting_folder(&name, auto_save)?;
+        if auto_save {
+            info!("Successfully initialized meeting folder with checkpoints");
+        } else {
+            info!("Successfully initialized meeting folder (transcripts only)");
+        }
+
+        // Create the channel only after the destination is ready.
         let (sender, receiver) = mpsc::unbounded_channel::<AudioChunk>();
         self.chunk_receiver = Some(receiver);
-
-        // Initialize meeting folder and incremental saver ONLY if auto_save is enabled
-        if auto_save {
-            if let Some(name) = self.meeting_name.clone() {
-                match self.initialize_meeting_folder(&name, true) {
-                    Ok(()) => info!("Successfully initialized meeting folder with checkpoints"),
-                    Err(e) => {
-                        error!("Failed to initialize meeting folder: {}", e);
-                        // Continue anyway - will use fallback flat structure
-                    }
-                }
-            }
-        } else {
-            // When auto_save is false, still create meeting folder for transcripts/metadata
-            // but skip .checkpoints directory
-            if let Some(name) = self.meeting_name.clone() {
-                match self.initialize_meeting_folder(&name, false) {
-                    Ok(()) => info!("Successfully initialized meeting folder (transcripts only)"),
-                    Err(e) => {
-                        error!("Failed to initialize meeting folder: {}", e);
-                    }
-                }
-            }
-        }
 
         // Start accumulation task
         let mixed_saver = self.mixed_saver.clone();
@@ -250,7 +243,7 @@ impl RecordingSaver {
             *is_saving = true;
         }
 
-        sender
+        Ok(sender)
     }
 
     /// Initialize meeting folder structure and metadata
@@ -585,5 +578,18 @@ mod tests {
         let segments = saver.get_transcript_segments();
         assert_eq!(segments.len(), 1);
         assert_eq!(segments[0].text, "updated");
+    }
+
+    #[tokio::test]
+    async fn accumulation_fails_before_accepting_chunks_when_save_root_is_invalid() {
+        let temp = tempfile::tempdir().unwrap();
+        let invalid_root = temp.path().join("not-a-directory");
+        std::fs::write(&invalid_root, b"file").unwrap();
+
+        let mut saver = RecordingSaver::new();
+        saver.set_recordings_folder(invalid_root);
+        saver.set_meeting_name(Some("Test meeting".to_string()));
+
+        assert!(saver.start_accumulation(true).is_err());
     }
 }

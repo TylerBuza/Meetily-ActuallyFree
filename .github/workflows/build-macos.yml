@@ -3,10 +3,6 @@ name: "Build - macOS Apple Silicon"
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: "App version; leave blank to use tauri.conf.json"
-        required: false
-        type: string
       sign-and-notarize:
         description: "Use configured Apple Developer credentials"
         required: true
@@ -28,11 +24,13 @@ env:
 jobs:
   build-macos:
     name: Build Apple Silicon DMG
-    runs-on: macos-14
+    if: ${{ github.ref == 'refs/heads/main' }}
+    environment: macos-release
+    runs-on: macos-15
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -41,36 +39,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CONFIG_VERSION=$(node -p "require('./frontend/src-tauri/tauri.conf.json').version")
-          REQUESTED_VERSION="${{ inputs.version }}"
-          VERSION="${REQUESTED_VERSION:-$CONFIG_VERSION}"
-
-          if [[ "$VERSION" != "$CONFIG_VERSION" ]]; then
-            echo "Requested version $VERSION does not match tauri.conf.json ($CONFIG_VERSION)."
-            exit 1
-          fi
-
+          VERSION=$(node -p "require('./frontend/src-tauri/tauri.conf.json').version")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
         with:
           version: 11.9.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
+          toolchain: 1.97.1
           targets: aarch64-apple-darwin
 
       - name: Cache Rust builds
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
           workspaces: ". -> target"
           key: macos-aarch64-release
@@ -84,13 +75,10 @@ jobs:
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         shell: bash
         run: |
           set -euo pipefail
-          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD; do
             if [[ -z "${!name:-}" ]]; then
               echo "Missing required secret: $name"
               exit 1
@@ -124,9 +112,6 @@ jobs:
           fi
 
           echo "APPLE_SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
-          echo "APPLE_ID=$APPLE_ID" >> "$GITHUB_ENV"
-          echo "APPLE_PASSWORD=$APPLE_PASSWORD" >> "$GITHUB_ENV"
-          echo "APPLE_TEAM_ID=$APPLE_TEAM_ID" >> "$GITHUB_ENV"
 
       - name: Build Apple Silicon llama-helper
         shell: bash
@@ -143,10 +128,29 @@ jobs:
             "frontend/src-tauri/binaries/llama-helper-$TARGET"
           chmod +x "frontend/src-tauri/binaries/llama-helper-$TARGET"
 
-      - name: Build DMG
+      - name: Build unsigned DMG
+        if: ${{ !inputs.sign-and-notarize }}
         working-directory: frontend
         shell: bash
         run: pnpm exec tauri build --target "$TARGET" --bundles dmg
+
+      - name: Build signed and notarized DMG
+        if: ${{ inputs.sign-and-notarize }}
+        working-directory: frontend
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          for name in APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required secret: $name"
+              exit 1
+            fi
+          done
+          pnpm exec tauri build --target "$TARGET" --bundles dmg
 
       - name: Verify Apple Silicon bundle
         id: artifact
@@ -266,7 +270,15 @@ jobs:
 
           codesign --verify --deep --strict "$APP_PATH"
           if [[ "$SIGNED" == "true" ]]; then
+            SIGN_DETAILS=$(codesign -dv --verbose=4 "$APP_PATH" 2>&1)
+            grep -q '^Authority=Developer ID Application:' <<< "$SIGN_DETAILS"
+            grep -Eq '^TeamIdentifier=[A-Z0-9]+$' <<< "$SIGN_DETAILS"
             spctl --assess --type execute --verbose "$APP_PATH"
+            xcrun stapler validate "$APP_PATH"
+            spctl --assess \
+              --type open \
+              --context context:primary-signature \
+              --verbose "$DMG_PATH"
           fi
 
           INSTALLED_APP="$RUNNER_TEMP/Applications/$(basename "$APP_PATH")"
@@ -358,18 +370,28 @@ jobs:
             cd dist
             shasum -a 256 "$(basename "$OUTPUT_DMG")" > SHA256SUMS-macos.txt
           )
+          DMG_SHA256=$(shasum -a 256 "$OUTPUT_DMG" | awk '{print $1}')
           jq -n \
             --arg version "$VERSION" \
             --arg commit "$GITHUB_SHA" \
             --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg dmg_sha256 "$DMG_SHA256" \
             --argjson notarized '${{ inputs.sign-and-notarize }}' \
-            '{version: $version, commit: $commit, run_id: $run_id, notarized: $notarized}' \
+            '{
+              version: $version,
+              commit: $commit,
+              run_id: $run_id,
+              run_attempt: $run_attempt,
+              dmg_sha256: $dmg_sha256,
+              notarized: $notarized
+            }' \
             > dist/macos-build-metadata.json
 
           echo "dmg=$OUTPUT_DMG" >> "$GITHUB_OUTPUT"
 
       - name: Upload workflow artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: meetily-actually-free-${{ steps.release.outputs.version }}-macos-aarch64
           path: |

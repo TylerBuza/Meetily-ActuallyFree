@@ -122,10 +122,36 @@ pub fn get_default_recordings_folder() -> PathBuf {
 
 /// Ensure the recordings directory exists
 pub fn ensure_recordings_directory(path: &PathBuf) -> Result<()> {
-    if !path.exists() {
-        std::fs::create_dir_all(path)?;
-        info!("Created recordings directory: {:?}", path);
+    std::fs::create_dir_all(path)?;
+    if !path.is_dir() {
+        return Err(anyhow::anyhow!(
+            "Recording path is not a directory: {}",
+            path.display()
+        ));
     }
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let probe = path.join(format!(
+        ".meetily-write-test-{}-{nonce}",
+        std::process::id()
+    ));
+    let mut probe_file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .map_err(|error| {
+        anyhow::anyhow!(
+            "Recording directory is not writable ({}): {}",
+            path.display(),
+            error
+        )
+    })?;
+    std::io::Write::write_all(&mut probe_file, b"ok")?;
+    drop(probe_file);
+    std::fs::remove_file(&probe)?;
     Ok(())
 }
 
@@ -188,6 +214,9 @@ pub async fn save_recording_preferences<R: Runtime>(
 ) -> Result<()> {
     let mut preferences = preferences.clone();
     preferences.mic_gain = preferences.mic_gain.clamp(0.5, 3.0);
+    // Validate first so a bad custom path is never persisted and reused on the
+    // next recording startup.
+    ensure_recordings_directory(&preferences.save_folder)?;
     set_mic_gain_runtime(preferences.mic_gain);
 
     info!("Saving recording preferences: save_folder={:?}, auto_save={}, format={}, mic={:?}, system={:?}, mic_gain={:.2}",
@@ -221,9 +250,6 @@ pub async fn save_recording_preferences<R: Runtime>(
             crate::audio::capture::set_current_backend(backend);
         }
     }
-
-    // Ensure the directory exists
-    ensure_recordings_directory(&preferences.save_folder)?;
 
     Ok(())
 }

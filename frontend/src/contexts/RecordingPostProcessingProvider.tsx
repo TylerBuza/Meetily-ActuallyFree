@@ -96,5 +96,29 @@ export function RecordingPostProcessingProvider({ children }: { children: React.
     };
   }, []);
 
+  useEffect(() => {
+    let unlistenFn: (() => void) | undefined;
+    let disposed = false;
+
+    void listen<string>('recording-error', (event) => {
+      toast.error(event.payload || 'Recording stopped because audio capture failed.', {
+        duration: 10000,
+      });
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        unlistenFn = unlisten;
+      }
+    }).catch((error) => {
+      console.error('[RecordingPostProcessing] Failed to listen for recording errors:', error);
+    });
+
+    return () => {
+      disposed = true;
+      unlistenFn?.();
+    };
+  }, []);
+
   return <>{children}</>;
 }

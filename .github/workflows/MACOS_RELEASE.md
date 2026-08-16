@@ -17,6 +17,8 @@ steps.
 | Candidate workflow | `build-macos.yml` |
 | Publication workflow | `publish-macos.yml` |
 | Public artifact test | `smoke-test-macos-release.yml` |
+| Protected environment | `macos-release`, restricted to `main` |
+| Release mutability | Immutable for releases created after August 15, 2026 |
 
 The macOS release is intentionally independent from the Windows setup/updater
 pair. Never upload the DMG to the Windows release through a generic workflow,
@@ -55,6 +57,7 @@ pnpm run build
 .\build-cuda-env.bat check
 .\build-cuda-env.bat test concat_paths_escape_apostrophes
 .\build-cuda-env.bat test meeting_
+.\build-cuda-env.bat test accumulation_fails_before_accepting_chunks
 ```
 
 Then validate workflow syntax from the repository root:
@@ -73,27 +76,107 @@ The candidate workflow is the required native compile and package gate.
 ## Candidate Build
 
 The build workflow is candidate-only and cannot publish. Capture its returned
-run URL and derive the run ID used for promotion:
+run URL and derive the run ID used for promotion. Define this resolver once in
+the PowerShell session used for the release; it polls only runs created at the
+dispatch time and rejects an ambiguous or mismatched run:
 
 ```powershell
-$runUrl = gh workflow run "build-macos.yml" `
-  --repo "TylerBuza/Meetily-ActuallyFree" `
-  --ref "main" `
-  -f "sign-and-notarize=false"
-$runId = ($runUrl.TrimEnd('/') -split '/')[-1]
+function Resolve-DispatchedRun {
+  param(
+    [Parameter(Mandatory)] [string] $Repository,
+    [Parameter(Mandatory)] [string] $Workflow,
+    [Parameter(Mandatory)] [string] $HeadSha,
+    [Parameter(Mandatory)] [DateTimeOffset] $DispatchStarted,
+    [AllowEmptyString()] [string] $RunUrl
+  )
+
+  $runId = $null
+  $urlText = $RunUrl.Trim()
+  $escapedRepository = [Regex]::Escape($Repository)
+  $notBefore = $DispatchStarted.AddSeconds(-1)
+  $runPattern = "^https://github\.com/$escapedRepository/actions/runs/"
+  $runPattern += "([0-9]+)$"
+  if ($urlText -match $runPattern) {
+    $runId = [long]$Matches[1]
+  } else {
+    for ($attempt = 0; $attempt -lt 12 -and $null -eq $runId; $attempt++) {
+      $runsJson = gh run list `
+        --repo $Repository `
+        --workflow $Workflow `
+        --branch main `
+        --event workflow_dispatch `
+        --limit 20 `
+        --json createdAt,databaseId,headSha
+      if ($LASTEXITCODE -ne 0) {
+        throw "Failed to list $Workflow runs"
+      }
+      $runs = $runsJson | ConvertFrom-Json
+      $matchingRuns = @($runs | Where-Object {
+        $_.headSha -eq $HeadSha -and
+        ([DateTimeOffset]$_.createdAt) -ge $notBefore
+      })
+      if ($matchingRuns.Count -gt 1) {
+        throw "Multiple matching $Workflow runs exist; inspect Actions"
+      }
+      if ($matchingRuns.Count -eq 1) {
+        $runId = [long]$matchingRuns[0].databaseId
+      } else {
+        Start-Sleep -Seconds 5
+      }
+    }
+  }
+
+  if ($null -eq $runId) {
+    throw "Could not identify exactly one $Workflow run; inspect Actions manually"
+  }
+  $runJson = gh api "repos/$Repository/actions/runs/$runId"
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to inspect $Workflow run $runId"
+  }
+  $run = $runJson | ConvertFrom-Json
+  if (
+    $run.path -ne ".github/workflows/$Workflow" -or
+    $run.head_branch -ne "main" -or
+    $run.head_sha -ne $HeadSha -or
+    $run.event -ne "workflow_dispatch" -or
+    ([DateTimeOffset]$run.created_at) -lt $notBefore
+  ) {
+    throw "Resolved run $runId does not match the dispatch"
+  }
+  return $run
+}
 ```
 
-Watch that exact candidate:
+Dispatch the candidate and watch the exact resolved run:
 
 ```powershell
+$repo = "TylerBuza/Meetily-ActuallyFree"
+$head = gh api "repos/$repo/git/ref/heads/main" --jq .object.sha
+if ($LASTEXITCODE -ne 0) { throw "Failed to resolve current main" }
+$dispatchStarted = [DateTimeOffset]::UtcNow
+$runUrl = gh workflow run "build-macos.yml" `
+  --repo $repo `
+  --ref "main" `
+  -f "sign-and-notarize=false"
+if ($LASTEXITCODE -ne 0) { throw "Candidate dispatch failed" }
+$run = Resolve-DispatchedRun `
+  -Repository $repo `
+  -Workflow "build-macos.yml" `
+  -HeadSha $head `
+  -DispatchStarted $dispatchStarted `
+  -RunUrl (($runUrl | Out-String).Trim())
+$runId = $run.id
 gh run watch $runId `
-  --repo "TylerBuza/Meetily-ActuallyFree" `
+  --repo $repo `
   --exit-status
+if ($LASTEXITCODE -ne 0) { throw "Candidate run $runId failed" }
 ```
 
 Do not publish unless `Verify Apple Silicon bundle` and artifact upload both
 pass. The uploaded artifact contains the DMG, checksum, first/second-launch
-logs, and `macos-build-metadata.json`, which binds it to the run ID and commit.
+logs, and `macos-build-metadata.json`, which binds it to the run ID, run attempt,
+commit, and DMG digest. Never rerun a candidate after physical testing; a rerun
+is a different candidate even when its commit is unchanged.
 The workflow verifies:
 
 1. The app, FFmpeg, and `llama-helper` are ARM64.
@@ -108,117 +191,113 @@ The workflow verifies:
 10. The same installed app reopens its existing database without fatal logs.
 11. The app still passes strict signature verification after the second launch.
 
-Download the candidate artifact from the Actions run when a physical Mac is
-available. CI launch success does not replace the physical checklist below.
+Download this exact candidate artifact and complete the physical checklist on
+macOS 14.2 before publishing. CI launch success does not replace that gate.
 
 ## Publishing
 
 `publish-macos.yml` downloads the candidate by run ID and publishes those exact
 bytes. It verifies that the source workflow succeeded, the metadata run ID and
-commit agree with GitHub, the run came from the production workflow path on
-`main`, and the checksum matches the DMG. It refuses an existing release or bare
-tag, atomically reserves the tag at the candidate commit, verifies the final tag
-target, and does not rebuild from `main`.
+commit equal the publisher's current `main` commit, the run came from the
+canonical workflow ID/path, exactly one unexpired artifact exists, and the
+checksum matches the DMG. It refuses an existing release or bare tag, atomically
+reserves the tag at the candidate commit, verifies every public asset digest and
+Latest status, and does not rebuild from `main`.
 
-The publisher deliberately does not auto-delete on failure: cleanup after an
-ambiguous network/API failure could delete a release created by another actor.
-A failed run after tag reservation can leave a bare candidate tag. Inspect its
-target before deleting it and retrying or restoring the previous release.
+The publisher uses explicit create-draft, upload, and publish API calls and does
+not auto-delete on failure. Cleanup after an ambiguous network/API failure could
+delete a release created by another actor. A failed run after tag reservation
+can leave a bare tag or draft release. Inspect its target and assets before any
+manual cleanup.
 
-For a new version, promote the successful candidate:
+The publisher requires an explicit attestation that the checklist below passed
+on macOS 14.2 or 14.2.x. Do not set this input based on CI or a newer macOS
+version. The protected environment must contain `MACOS_RELEASE_ADMIN_TOKEN`, a
+fine-grained token limited to this repository with Administration read access.
+The workflow uses it only to verify immutable releases are enabled before it
+reserves a tag. The operator should also perform the same privileged check
+immediately before dispatch:
 
 ```powershell
+$settingsJson = gh api "repos/$repo/immutable-releases"
+if ($LASTEXITCODE -ne 0) {
+  throw "Could not verify immutable releases with Administration read access"
+}
+$immutableSettings = $settingsJson | ConvertFrom-Json
+if ($immutableSettings.enabled -ne $true) {
+  throw "Repository immutable releases are disabled; refusing to publish"
+}
+
+$candidateHead = gh api "repos/$repo/actions/runs/$runId" --jq .head_sha
+if ($LASTEXITCODE -ne 0) { throw "Failed to resolve candidate commit" }
+$head = gh api "repos/$repo/git/ref/heads/main" --jq .object.sha
+if ($LASTEXITCODE -ne 0) { throw "Failed to resolve current main" }
+if ($candidateHead -ne $head) {
+  throw "Candidate is not the current main commit; build and test a new candidate"
+}
+
+# Copy the lowercase SHA-256 produced on the physical test Mac with:
+# shasum -a 256 /path/to/Meetily-Actually-Free_X.Y.Z_aarch64.dmg
+$testedDmgSha256 = "replace-with-the-physically-tested-dmg-sha256"
+if ($testedDmgSha256 -notmatch '^[0-9a-f]{64}$') {
+  throw "A lowercase physical-test DMG SHA-256 is required"
+}
+
+$dispatchStarted = [DateTimeOffset]::UtcNow
 $publishUrl = gh workflow run "publish-macos.yml" `
-  --repo "TylerBuza/Meetily-ActuallyFree" `
+  --repo $repo `
   --ref "main" `
-  -f "candidate-run-id=$runId"
-$publishId = ($publishUrl.TrimEnd('/') -split '/')[-1]
+  -f "candidate-run-id=$runId" `
+  -f "physical-test-attested=true" `
+  -f "physical-test-os=14.2" `
+  -f "physical-test-dmg-sha256=$testedDmgSha256"
+if ($LASTEXITCODE -ne 0) { throw "Publisher dispatch failed" }
+$publishRun = Resolve-DispatchedRun `
+  -Repository $repo `
+  -Workflow "publish-macos.yml" `
+  -HeadSha $head `
+  -DispatchStarted $dispatchStarted `
+  -RunUrl (($publishUrl | Out-String).Trim())
+$publishId = $publishRun.id
 gh run watch $publishId `
-  --repo "TylerBuza/Meetily-ActuallyFree" `
+  --repo $repo `
   --exit-status
+if ($LASTEXITCODE -ne 0) { throw "Publisher run $publishId failed" }
 ```
 
-The publisher refuses to overwrite an existing release. Replacing a tag is
-destructive and should happen only after the candidate passes and replacement is
-explicitly intended. Before deletion, download the old assets and preserve its
-target and release notes so rollback does not depend on GitHub retaining them:
+### Immutable Releases And Rollback
 
-```powershell
-$backup = Join-Path $env:TEMP `
-  ("meetily-old-macos-release-" + [guid]::NewGuid().ToString("N"))
-$utf8 = New-Object System.Text.UTF8Encoding($false)
-New-Item -ItemType Directory $backup | Out-Null
-gh release download "vX.Y.Z-macos" `
-  --repo "TylerBuza/Meetily-ActuallyFree" `
-  --dir $backup
-if ($LASTEXITCODE -ne 0) { throw "Failed to download the existing release" }
-$release = gh release view "vX.Y.Z-macos" `
-  --repo "TylerBuza/Meetily-ActuallyFree" `
-  --json name,body,url `
-  | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0) { throw "Failed to read the existing release" }
-$releaseJson = $release | ConvertTo-Json -Depth 10
-[IO.File]::WriteAllText(
-  (Join-Path $backup "release.json"), $releaseJson, $utf8)
-$oldTarget = gh api `
-  "repos/TylerBuza/Meetily-ActuallyFree/git/ref/tags/vX.Y.Z-macos" `
-  --jq .object.sha
-if ($LASTEXITCODE -ne 0) { throw "Failed to resolve the existing tag" }
-[IO.File]::WriteAllText(
-  (Join-Path $backup "target.txt"), $oldTarget, $utf8)
-$oldDmg = @(Get-ChildItem $backup -Filter "*.dmg" -File)
-$oldSum = Join-Path $backup "SHA256SUMS-macos.txt"
-if ($oldDmg.Count -ne 1 -or !(Test-Path -LiteralPath $oldSum)) {
-  throw "The release backup is incomplete; refusing to delete"
-}
-gh release delete "vX.Y.Z-macos" `
-  --repo "TylerBuza/Meetily-ActuallyFree" `
-  --cleanup-tag `
-  --yes
-```
+Repository release immutability is enabled. The publisher verifies the created
+release reports `immutable=true`; this setting requires repository Administration
+permission and is managed outside `GITHUB_TOKEN`. Immutable release assets and
+the associated tag cannot be changed. Release metadata remains editable, and an
+immutable release can be deleted, but its tag name cannot then be reused. Never
+plan a same-tag rebuild. If a published macOS release is defective:
 
-Then dispatch `publish-macos.yml` with the already successful `$runId`. If
-promotion fails after deletion, recreate the old release from the preserved
-target, body, DMG, and checksum before further work:
+1. Fix the defect and increment the app patch version.
+2. Build and physically test a new candidate.
+3. Publish a new `vX.Y.Z-macos` immutable release.
+4. Update README's macOS link and filename to the new tag.
+5. Run the public smoke test against the new tag.
 
-```powershell
-$release = Get-Content (Join-Path $backup "release.json") | ConvertFrom-Json
-[IO.File]::WriteAllText(
-  (Join-Path $backup "release-notes.md"), $release.body, $utf8)
-$oldTarget = Get-Content (Join-Path $backup "target.txt")
-$oldDmg = (Get-ChildItem $backup -Filter "*.dmg" -File).FullName
-$oldSum = Join-Path $backup "SHA256SUMS-macos.txt"
-$expectedCandidate = gh api `
-  "repos/TylerBuza/Meetily-ActuallyFree/actions/runs/$runId" `
-  --jq .head_sha
-if ($LASTEXITCODE -ne 0) { throw "Failed to resolve the candidate commit" }
-$partialTarget = gh api `
-  "repos/TylerBuza/Meetily-ActuallyFree/git/ref/tags/vX.Y.Z-macos" `
-  --jq .object.sha 2>$null
-if ($LASTEXITCODE -eq 0) {
-  if ($partialTarget -ne $expectedCandidate) {
-    throw "The partial tag is not owned by this candidate; stop and inspect"
-  }
-  gh release delete "vX.Y.Z-macos" `
-    --repo "TylerBuza/Meetily-ActuallyFree" `
-    --cleanup-tag `
-    --yes
-  gh api --method DELETE `
-    "repos/TylerBuza/Meetily-ActuallyFree/git/refs/tags/vX.Y.Z-macos" `
-    2>$null
-}
-gh release create "vX.Y.Z-macos" $oldDmg $oldSum `
-  --repo "TylerBuza/Meetily-ActuallyFree" `
-  --target $oldTarget `
-  --title $release.name `
-  --notes-file (Join-Path $backup "release-notes.md") `
-  --latest=false
-```
+If publication fails after reserving a tag but before creating an immutable
+release, inspect drafts, releases, assets, and the tag. Delete only resources
+whose target and provenance exactly equal the candidate; never delete based on
+a name alone.
+If the workflow fails after a release already exists, do not rerun publication
+or use the public smoke workflow, which intentionally requires a successful
+publisher run. Treat the release as unsafe: verify its tag target and
+`macos-release-metadata.json` publish run ID match the failed run, delete that
+release without deleting its reserved tag, and increment the version. Do not
+leave a partially verified release public or reuse its tag.
+The legacy `v0.2.5-macos` release predates immutability and is not a template for
+future replacement behavior.
 
 After successful promotion, confirm that:
 
 - `vX.Y.Z-macos` targets the intended commit.
-- The DMG and `SHA256SUMS-macos.txt` are present.
+- The canonical DMG, checksum, and `macos-release-metadata.json` are present.
+- GitHub reports the release as immutable and all API asset digests match.
 - The release is not marked Latest.
 - Windows `vX.Y.Z` and `latest.json` are unchanged.
 
@@ -227,24 +306,42 @@ After successful promotion, confirm that:
 Run the independent smoke test after every publication:
 
 ```powershell
+$head = gh api "repos/$repo/git/ref/heads/main" --jq .object.sha
+if ($LASTEXITCODE -ne 0) { throw "Failed to resolve current main" }
+$dispatchStarted = [DateTimeOffset]::UtcNow
 $smokeUrl = gh workflow run "smoke-test-macos-release.yml" `
-  --repo "TylerBuza/Meetily-ActuallyFree" `
+  --repo $repo `
   --ref "main" `
   -f "release-tag=vX.Y.Z-macos"
-$smokeId = ($smokeUrl.TrimEnd('/') -split '/')[-1]
+if ($LASTEXITCODE -ne 0) { throw "Smoke-test dispatch failed" }
+$smokeRun = Resolve-DispatchedRun `
+  -Repository $repo `
+  -Workflow "smoke-test-macos-release.yml" `
+  -HeadSha $head `
+  -DispatchStarted $dispatchStarted `
+  -RunUrl (($smokeUrl | Out-String).Trim())
+$smokeId = $smokeRun.id
 gh run watch $smokeId `
-  --repo "TylerBuza/Meetily-ActuallyFree" `
+  --repo $repo `
   --exit-status
+if ($LASTEXITCODE -ne 0) { throw "Smoke-test run $smokeId failed" }
 ```
 
 This workflow downloads from the public GitHub release. It does not trust the
-candidate job's local files, so it detects an incorrect upload, stale asset, or
-release/tag mismatch.
+candidate job's local files. It requires exactly the three canonical assets,
+binds release metadata to the candidate run attempt, artifact archive, tested
+DMG hash, and tag commit, checks every GitHub asset digest, and rejects a macOS
+Latest release.
 
 ## Optional Notarization
 
-Set `sign-and-notarize=true` only when all required secrets are configured in
-these formats:
+Publication always requires `MACOS_RELEASE_ADMIN_TOKEN` on the
+`macos-release` environment. It must be a fine-grained token limited to this
+repository with read-only Administration permission and is used only for the
+immutable-release preflight.
+
+Set `sign-and-notarize=true` only when these additional environment secrets are
+configured:
 
 - `APPLE_CERTIFICATE`: base64-encoded PKCS#12 (`.p12`) containing the Developer
   ID Application certificate and its private key.
@@ -254,8 +351,9 @@ these formats:
   interactive login password.
 - `APPLE_TEAM_ID`: the Apple Developer team identifier for the certificate.
 
-The candidate workflow imports the certificate into a temporary keychain and
-requires a `Developer ID Application` signing identity before it builds.
+The environment is restricted to `main`. The candidate workflow imports the
+certificate into a temporary keychain, requires a `Developer ID Application`
+identity, and exposes notary credentials only to the Tauri build step.
 
 Ad-hoc signing makes bundle-integrity tests meaningful but does not satisfy
 Gatekeeper notarization. Release notes and README must continue warning users
@@ -263,8 +361,8 @@ about Control-click and Open until the notarized path succeeds.
 
 ## Physical Apple Silicon Checklist
 
-Run these checks on a real M1-or-newer Mac before calling the release fully
-qualified:
+Run these checks on a real M1-or-newer Mac running macOS 14.2 before dispatching
+the publisher:
 
 1. Install the DMG into Applications and complete first-run Gatekeeper flow.
 2. Confirm microphone permission prompts and a live microphone meter.
@@ -277,10 +375,12 @@ qualified:
 7. Pause, resume, minimize to the compact bar, and stop from main, minibar, and
    tray paths without duplicate completion or a stuck monitor.
 8. Verify `audio.mp4`, `mic.mp4`, and `system.mp4` play and remain aligned.
-9. Select a custom recordings root, record there, and discard a short take.
-10. Use a meeting title containing an apostrophe and confirm final FFmpeg merge.
-11. Quit and relaunch; verify existing meetings, settings, models, and database.
-12. After use, verify the installed bundle again:
+9. Run `shasum -a 256` on the tested DMG and preserve the digest for the
+   publisher input. Do not rerun the candidate workflow after this test.
+10. Select a custom recordings root, record there, and discard a short take.
+11. Use a meeting title containing an apostrophe and confirm final FFmpeg merge.
+12. Quit and relaunch; verify existing meetings, settings, models, and database.
+13. After use, verify the installed bundle again:
 
 ```bash
 codesign --verify --deep --strict "/Applications/Meetily - Actually Free.app"

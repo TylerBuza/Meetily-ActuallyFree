@@ -7,6 +7,7 @@ import { AudioBackendSelector } from './AudioBackendSelector';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import Analytics from '@/lib/analytics';
+import { usePlatform } from '@/hooks/usePlatform';
 
 export interface AudioDevice {
   name: string;
@@ -38,6 +39,7 @@ interface DeviceSelectionProps {
 }
 
 export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = false }: DeviceSelectionProps) {
+  const isMacOS = usePlatform() === 'macos';
   const [devices, setDevices] = useState<AudioDevice[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +51,12 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
   // Filter devices by type
   const inputDevices = devices.filter(device => device.device_type === 'Input');
   const outputDevices = devices.filter(device => device.device_type === 'Output');
+
+  useEffect(() => {
+    if (isMacOS && selectedDevices.systemDevice !== null) {
+      onDeviceChange({ ...selectedDevices, systemDevice: null });
+    }
+  }, [isMacOS, onDeviceChange, selectedDevices]);
 
   // Fetch available audio devices
   const fetchDevices = async () => {
@@ -336,16 +344,16 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
           </div>
 
           <Select
-            value={selectedDevices.systemDevice || 'default'}
+            value={isMacOS ? 'default' : selectedDevices.systemDevice || 'default'}
             onValueChange={handleSystemDeviceChange}
-            disabled={disabled}
+            disabled={disabled || isMacOS}
           >
             <SelectTrigger id="system-selection" className="w-full">
               <SelectValue placeholder="Select System Audio" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="default">Default System Audio</SelectItem>
-              {outputDevices.map((device) => (
+              {!isMacOS && outputDevices.map((device) => (
                 <SelectItem
                   key={device.name}
                   value={`${device.name} (${device.device_type.toLowerCase()})`}
@@ -358,6 +366,11 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
 
           {outputDevices.length === 0 && (
             <p className="text-xs text-gray-500">No system audio devices found</p>
+          )}
+          {isMacOS && outputDevices.length > 0 && (
+            <p className="text-xs text-gray-500">
+              macOS captures the current default output. Change the route in System Settings.
+            </p>
           )}
 
           {/* Backend Selection - available on all platforms */}

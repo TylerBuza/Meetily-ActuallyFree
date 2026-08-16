@@ -2,7 +2,9 @@
 
 This document provides a quick overview of all available CI/CD workflows in this repository.
 
-**Note:** All workflows in this repository use **manual triggers only** (`workflow_dispatch`). There are no automatic triggers from push or pull request events.
+**Note:** Standalone workflows are manually dispatched. `build.yml` is a
+reusable `workflow_call` workflow rather than a manual entry point. There are no
+automatic push or pull-request release builds.
 
 ## Workflow Files
 
@@ -49,7 +51,7 @@ This document provides a quick overview of all available CI/CD workflows in this
 - `.dmg` installer
 - SHA-256 checksum
 - First/second-launch logs
-- Candidate run/commit/signing metadata
+- Candidate run/attempt, commit, DMG digest, and signing metadata
 
 This workflow never publishes. Pass its successful run ID to
 `publish-macos.yml`, which promotes the exact candidate bytes rather than
@@ -59,10 +61,13 @@ rebuilding from `main`.
 
 **Purpose:** Publish a verified candidate as the separate non-latest macOS release
 
-The workflow accepts a successful `build-macos.yml` run ID, downloads its
-artifact, verifies workflow identity, commit metadata, filename, and checksum,
-then creates `vX.Y.Z-macos` at the candidate commit. It refuses to replace an
-existing release and never updates Windows `latest.json`.
+The workflow requires physical macOS 14.2 signoff, a protected read-only
+Administration token for an immutable-release preflight, and a successful
+current-main `build-macos.yml` run ID. Before publication it verifies the
+canonical workflow ID, sole artifact/archive digest, run attempt, commit
+metadata, filename, checksum, physical-test DMG digest, and immutable repository
+setting. After publication it verifies immutable status, public asset digests,
+and Latest isolation.
 
 ### 2c. **smoke-test-macos-release.yml** - Public DMG Verification
 
@@ -273,21 +278,33 @@ meetily-{workflow}-{platform}-{target}-{version}
 **Examples:**
 - `meetily-devtest-macOS-aarch64-apple-darwin-0.1.3`
 - `meetily-test-windows-x86_64-pc-windows-msvc-0.1.3`
-- `meetily-macos-aarch64-release-0.1.3`
+- `meetily-actually-free-0.2.5-macos-aarch64`
 
 ---
 
 ## Required Secrets
 
-All workflows require these secrets to be configured:
+Secrets depend on the selected workflow. Unsigned macOS candidates,
+`publish-macos.yml`, and the public smoke test require no Apple credentials.
+
+### macOS Publication
+
+- `MACOS_RELEASE_ADMIN_TOKEN` - Fine-grained token limited to this repository
+  with read-only Administration permission. Store it on the `macos-release`
+  environment so publication can verify immutable releases before tag creation.
 
 ### macOS Signing
+
+Store these as environment secrets on the `macos-release` environment, which is
+restricted to `main`:
+
 - `APPLE_CERTIFICATE` - Developer ID certificate (base64)
 - `APPLE_CERTIFICATE_PASSWORD` - Certificate password
 - `APPLE_ID` - Apple ID email
 - `APPLE_PASSWORD` - App-specific password
 - `APPLE_TEAM_ID` - Team ID
-- `KEYCHAIN_PASSWORD` - Temporary keychain password
+
+The temporary keychain password is generated per run and is not a secret input.
 
 ### Windows Signing (DigiCert)
 - `SM_HOST` - DigiCert host URL
@@ -296,7 +313,7 @@ All workflows require these secrets to be configured:
 - `SM_CLIENT_CERT_PASSWORD` - Client cert password
 - `SM_CODE_SIGNING_CERT_SHA1_HASH` - Certificate hash
 
-### Tauri Updater (All Platforms)
+### Tauri Updater (Windows/Linux release paths)
 - `TAURI_SIGNING_PRIVATE_KEY` - Ed25519 private key
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` - Key password
 

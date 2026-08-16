@@ -75,7 +75,7 @@ impl RecordingManager {
         // CRITICAL FIX: Create recording sender for pre-mixed audio from pipeline
         // Pipeline will mix mic + system audio professionally and send to this channel
         // Pass auto_save to control whether audio checkpoints are created
-        let recording_sender = self.recording_saver.start_accumulation(auto_save);
+        let recording_sender = self.recording_saver.start_accumulation(auto_save)?;
 
         // Start recording state first
         self.state.start_recording()?;
@@ -256,6 +256,7 @@ impl RecordingManager {
     /// Stop streams and force immediate pipeline flush to process all accumulated audio
     pub async fn stop_streams_and_force_flush(&mut self) -> Result<()> {
         info!("🚀 Stopping recording streams with IMMEDIATE pipeline flush");
+        let mut errors = Vec::new();
 
         // CRITICAL: Stop device monitor FIRST to prevent continuous WASAPI polling on Windows
         // This fixes the slow shutdown issue where device enumeration runs for 90+ seconds
@@ -270,17 +271,23 @@ impl RecordingManager {
         // Stop audio streams immediately
         if let Err(e) = self.stream_manager.stop_streams() {
             error!("Error stopping audio streams: {}", e);
+            errors.push(format!("Failed to stop audio streams: {}", e));
         }
 
         // CRITICAL: Force pipeline to flush ALL accumulated audio before stopping
         debug!("💨 Forcing pipeline to flush accumulated audio immediately");
         if let Err(e) = self.pipeline_manager.force_flush_and_stop().await {
             error!("Error during force flush: {}", e);
+            errors.push(format!("Failed to flush the audio pipeline: {}", e));
         }
 
         // CRITICAL: Full cleanup to release all Arc references and resources
         // This ensures microphone is released even if Drop is delayed
         self.state.cleanup();
+
+        if !errors.is_empty() {
+            return Err(anyhow::anyhow!(errors.join("; ")));
+        }
 
         info!("✅ Recording streams stopped with immediate flush completed");
         Ok(())

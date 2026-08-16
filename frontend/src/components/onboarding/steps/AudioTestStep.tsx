@@ -151,6 +151,13 @@ export function AudioTestStep() {
     [isMacOS, stop],
   );
 
+  const queueStop = useCallback(() => {
+    meterRun.current += 1;
+    const transition = meterTransition.current.then(stop, stop);
+    meterTransition.current = transition.catch(() => undefined);
+    return transition;
+  }, [stop]);
+
   const loadDevicesAndStart = useCallback(async () => {
     const run = ++deviceLoad.current;
     setError(null);
@@ -234,11 +241,10 @@ export function AudioTestStep() {
       cancelled = true;
       active.current = false;
       deviceLoad.current += 1;
-      meterRun.current += 1;
       unlisten?.();
-      void stop();
+      void queueStop();
     };
-  }, [loadDevicesAndStart, stop]);
+  }, [loadDevicesAndStart, queueStop]);
 
   const onMicChange = async (name: string) => {
     setMicName(name);
@@ -253,7 +259,7 @@ export function AudioTestStep() {
   };
 
   const finish = async () => {
-    await stop();
+    await queueStop();
     try {
       await completeOnboarding();
       await new Promise((r) => setTimeout(r, 100));
@@ -282,14 +288,14 @@ export function AudioTestStep() {
       title="Test your audio"
       description={
         isMacOS
-          ? 'Pick your mic and speakers, play something, then use Retest audio to verify native Audio Capture.'
+          ? 'Pick your mic, play audio through the current default output, then use Retest audio to verify native Audio Capture.'
           : 'Pick your mic and speakers, then speak / play something. Meters should move.'
       }
       step={5}
       totalSteps={5}
       showNavigation
       onPrevious={async () => {
-        await stop();
+        await queueStop();
         goPrevious();
       }}
       onNext={finish}
@@ -333,7 +339,11 @@ export function AudioTestStep() {
               {sysHeard ? 'Detected ✓' : 'Play a video…'}
             </span>
           </div>
-          {outputs.length > 0 ? (
+          {isMacOS && outputs.length > 0 ? (
+            <p className="text-xs text-[var(--af-text-3)]">
+              Current default output (change it in System Settings)
+            </p>
+          ) : outputs.length > 0 ? (
             <select
               className={selectClass}
               value={sysName}

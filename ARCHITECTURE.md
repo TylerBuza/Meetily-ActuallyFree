@@ -686,9 +686,9 @@ be offered as a selectable macOS backend.
 
 The global tap follows the current default output route. A listed output-device
 name proves that an output exists; it does not prove Audio Capture authorization,
-and selecting a non-default output name does not retarget the global tap. Route
-changes belong in macOS Sound settings unless a future implementation explicitly
-binds the tap to a selected process/device.
+and a non-default output name cannot retarget the global tap. The macOS UI keeps
+this route read-only and directs users to Sound settings. Do not restore a
+selectable output list unless capture actually binds to that route.
 
 Creating the process tap triggers the OS Audio Capture prompt. A successful tap
 creation is still not enough because a denied tap can produce an all-zero stream.
@@ -703,6 +703,18 @@ controls one process-global native monitor. Retests, device changes, React
 StrictMode cleanup, and unmount can overlap asynchronous permission calls. Keep
 the generation checks after every await and keep the transition chain; a stale
 probe must not start or stop the next probe's monitor.
+
+Core Audio can change sample rate when the default route changes. The live
+resampler is configured at stream creation and cannot safely absorb that change,
+so the stream reports a fatal error and uses the command-owned stop/final-save
+path. Unexpected stream completion does the same. Never reduce either condition
+to a log line while the global recording flag remains true.
+
+Recording destination initialization is also part of startup, not a best-effort
+background operation. The custom root is created and write-probed before it is
+persisted; `RecordingSaver` creates its meeting folder/checkpoint savers before
+returning a chunk sender. Otherwise the channel accepts and silently discards
+all audio while the UI appears to record.
 
 The two required privacy strings are `NSMicrophoneUsageDescription` and
 `NSAudioCaptureUsageDescription` in `Info.plist`. The shipped entitlement file
@@ -732,9 +744,9 @@ Windows and macOS do not share a production-release workflow:
 
 - Windows `vX.Y.Z` remains GitHub Latest and owns `latest.json`, the universal
   setup executable, and the updater engine/signature.
-- macOS `vX.Y.Z-macos` is a separate non-latest release containing the Apple
-  Silicon DMG and checksum. There is no compatible macOS updater artifact or
-  macOS entry in `latest.json`.
+- macOS `vX.Y.Z-macos` is a separate immutable, non-latest release containing
+  the Apple Silicon DMG, checksum, and release provenance metadata. There is no
+  compatible macOS updater artifact or macOS entry in `latest.json`.
 - `UpdateCheckProvider`, tray actions, onboarding update consent, and About must
   not invoke Tauri's updater on macOS. About links to the GitHub releases page
   instead.
@@ -745,8 +757,12 @@ Windows and macOS do not share a production-release workflow:
   architecture/metadata/resources, installs the app, launches it twice, and
   uploads the DMG, checksum, and build-identity metadata as one candidate.
 - `.github/workflows/publish-macos.yml` accepts a successful candidate run ID,
-  validates its workflow/commit/checksum metadata, and promotes those exact
-  bytes. It must not rebuild from mutable `main`.
+  requires physical macOS 14.2 signoff and verifies the immutable-release
+  setting with a protected read-only Administration token before reserving the
+  tag. It validates the canonical workflow ID, current `main` commit, sole
+  artifact archive digest, run attempt, checksum, physical-test DMG digest,
+  public API digests, immutable status, and Latest isolation, then promotes those
+  exact bytes. It must not rebuild from mutable `main`.
 - After publishing, run `smoke-test-macos-release.yml` against the exact public
   tag. This independently downloads and launches what users receive.
 
@@ -755,11 +771,14 @@ require Control-click and Open. Notarization is enabled only when all Apple
 certificate/account secrets are configured and `sign-and-notarize=true`; never
 claim notarization based on ad-hoc `codesign` success.
 
-The runner has no meaningful microphone, speaker route, Bluetooth device, or
+CI runs on an explicit Apple Silicon macOS 15 image while retaining and checking
+the 14.2 deployment target. The runner has no meaningful microphone, speaker
+route, Bluetooth device, or
 interactive privacy UI. Native CI proves build, package, sidecar, startup,
 storage, and signature invariants, but a physical Apple Silicon Mac must still
-test microphone input, audible system capture, permission denial/retry, output
-route changes, pause/resume/stop, and the three retained MP4 tracks.
+test on macOS 14.2: microphone input, audible system capture, permission
+denial/retry, output-route changes, pause/resume/stop, and the three retained MP4
+tracks. The publisher's attestation inputs make this a release gate.
 
-The operational commands, release replacement procedure, CI assertions, and
+The operational commands, immutable rollback procedure, CI assertions, and
 physical-device checklist are in `.github/workflows/MACOS_RELEASE.md`.

@@ -54,9 +54,11 @@ impl AudioError {
     /// Check if error is recoverable (can attempt reconnection)
     pub fn is_recoverable(&self) -> bool {
         match self {
-            // Device disconnect is now recoverable - we can attempt reconnection
-            AudioError::DeviceDisconnected => true,
-            AudioError::StreamFailed => true,
+            // Capture stream callbacks are terminal. No live reconnection path
+            // replaces the failed CPAL stream, so waiting for repeats would
+            // leave the UI recording while that source stays silent.
+            AudioError::DeviceDisconnected => false,
+            AudioError::StreamFailed => false,
             AudioError::ProcessingFailed => true,
             AudioError::TranscriptionFailed => true,
             AudioError::ChannelClosed => false,
@@ -327,6 +329,7 @@ impl RecordingState {
 
     pub fn report_error(&self, error: AudioError) {
         let count = self.error_count.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut should_stop = false;
 
         // Track recoverable vs non-recoverable errors separately
         if error.is_recoverable() {
@@ -336,25 +339,28 @@ impl RecordingState {
             // Allow more recoverable errors before stopping
             if recoverable_count >= 10 {
                 log::error!("Too many recoverable errors ({}), stopping recording", recoverable_count);
-                self.stop_recording();
+                should_stop = true;
             }
         } else {
             log::error!("Non-recoverable audio error: {:?}", error);
-            // Stop immediately for non-recoverable errors
-            self.stop_recording();
+            should_stop = true;
         }
 
         *self.last_error.lock().unwrap() = Some(error.clone());
 
-        // Call error callback if set
-        if let Some(callback) = self.error_callback.lock().unwrap().as_ref() {
-            callback(&error);
-        }
-
         // Fallback: stop recording after too many total errors
         if count >= 15 {
             log::error!("Too many total audio errors ({}), stopping recording", count);
+            should_stop = true;
+        }
+
+        if should_stop {
             self.stop_recording();
+            // The callback owns command-level teardown. Do not notify it for a
+            // transient recoverable error that recording can safely survive.
+            if let Some(callback) = self.error_callback.lock().unwrap().as_ref() {
+                callback(&error);
+            }
         }
     }
 

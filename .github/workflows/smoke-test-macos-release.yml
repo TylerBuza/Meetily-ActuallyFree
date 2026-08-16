@@ -7,15 +7,16 @@ on:
         description: "Published macOS release tag"
         required: true
         type: string
-        default: "v0.2.5-macos"
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
   smoke-test:
     name: Launch Published Apple Silicon App
-    runs-on: macos-14
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: macos-15
     timeout-minutes: 15
 
     steps:
@@ -33,14 +34,100 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-macos$ ]]
+          VERSION="${RELEASE_TAG#v}"
+          VERSION="${VERSION%-macos}"
+          DMG_NAME="Meetily-Actually-Free_${VERSION}_aarch64.dmg"
+          SUM_NAME="SHA256SUMS-macos.txt"
+          META_NAME="macos-release-metadata.json"
+
+          RELEASE_JSON=$(gh api \
+            "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")
+          test "$(jq -r .draft <<< "$RELEASE_JSON")" = "false"
+          test "$(jq -r .prerelease <<< "$RELEASE_JSON")" = "false"
+          test "$(jq -r .immutable <<< "$RELEASE_JSON")" = "true"
+          test "$(jq -r '.assets | length' <<< "$RELEASE_JSON")" = "3"
+          for name in "$DMG_NAME" "$SUM_NAME" "$META_NAME"; do
+            test "$(jq -r --arg name "$name" \
+              '[.assets[] | select(.name == $name)] | length' <<< "$RELEASE_JSON")" = "1"
+          done
+
+          LATEST_TAG=$(gh api \
+            "repos/$GITHUB_REPOSITORY/releases/latest" \
+            --jq .tag_name)
+          test "$LATEST_TAG" != "$RELEASE_TAG"
           mkdir -p "$RUNNER_TEMP/release"
           gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
+            --pattern "$DMG_NAME" \
+            --pattern "$SUM_NAME" \
+            --pattern "$META_NAME" \
             --dir "$RUNNER_TEMP/release"
 
           cd "$RUNNER_TEMP/release"
-          test -f SHA256SUMS-macos.txt
-          shasum -a 256 -c SHA256SUMS-macos.txt
+          test "$(wc -l < "$SUM_NAME" | tr -d ' ')" = "1"
+          test "$(awk '{print $2}' "$SUM_NAME")" = "$DMG_NAME"
+          DMG_SHA256=$(shasum -a 256 "$DMG_NAME" | awk '{print $1}')
+          test "$(awk '{print $1}' "$SUM_NAME")" = "$DMG_SHA256"
+
+          TAG_TARGET=$(gh api \
+            "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" \
+            --jq .object.sha)
+          test "$(jq -r .version "$META_NAME")" = "$VERSION"
+          test "$(jq -r .commit "$META_NAME")" = "$TAG_TARGET"
+          test "$(jq -r .dmg_sha256 "$META_NAME")" = "$DMG_SHA256"
+          test "$(jq -r .physical_test_dmg_sha256 "$META_NAME")" = "$DMG_SHA256"
+          PHYSICAL_TEST_OS=$(jq -r .physical_test_os "$META_NAME")
+          [[ "$PHYSICAL_TEST_OS" =~ ^14\.2(\.[0-9]+)?$ ]]
+          CANDIDATE_RUN_ID=$(jq -r .run_id "$META_NAME")
+          CANDIDATE_RUN_ATTEMPT=$(jq -r .run_attempt "$META_NAME")
+          CANDIDATE_JSON=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")
+          test "$(jq -r .path <<< "$CANDIDATE_JSON")" = ".github/workflows/build-macos.yml"
+          test "$(jq -r .head_branch <<< "$CANDIDATE_JSON")" = "main"
+          test "$(jq -r .head_sha <<< "$CANDIDATE_JSON")" = "$TAG_TARGET"
+          test "$(jq -r .run_attempt <<< "$CANDIDATE_JSON")" = \
+            "$CANDIDATE_RUN_ATTEMPT"
+          test "$(jq -r .conclusion <<< "$CANDIDATE_JSON")" = "success"
+
+          CANDIDATE_ARTIFACT_ID=$(jq -r .candidate_artifact_id "$META_NAME")
+          CANDIDATE_ARTIFACT_DIGEST=$(jq -r .candidate_artifact_digest "$META_NAME")
+          ARTIFACT_JSON=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT_ID")
+          test "$(jq -r .expired <<< "$ARTIFACT_JSON")" = "false"
+          test "$(jq -r .digest <<< "$ARTIFACT_JSON")" = \
+            "$CANDIDATE_ARTIFACT_DIGEST"
+          test "$(jq -r .workflow_run.id <<< "$ARTIFACT_JSON")" = \
+            "$CANDIDATE_RUN_ID"
+
+          PUBLISH_RUN_ID=$(jq -r .publish_run_id "$META_NAME")
+          PUBLISH_JSON=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$PUBLISH_RUN_ID")
+          test "$(jq -r .path <<< "$PUBLISH_JSON")" = ".github/workflows/publish-macos.yml"
+          test "$(jq -r .head_branch <<< "$PUBLISH_JSON")" = "main"
+          test "$(jq -r .head_sha <<< "$PUBLISH_JSON")" = "$TAG_TARGET"
+          test "$(jq -r .event <<< "$PUBLISH_JSON")" = "workflow_dispatch"
+          test "$(jq -r .conclusion <<< "$PUBLISH_JSON")" = "success"
+          test "$(jq -r .actor.login <<< "$PUBLISH_JSON")" = \
+            "$(jq -r .physical_test_attested_by "$META_NAME")"
+          EXPECTED_PUBLISH_WORKFLOW_ID=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/publish-macos.yml" \
+            --jq .id)
+          test "$(jq -r .workflow_id <<< "$PUBLISH_JSON")" = \
+            "$EXPECTED_PUBLISH_WORKFLOW_ID"
+
+          verify_asset() {
+            local name="$1"
+            local expected
+            local published
+            expected="sha256:$(sha256sum "$name" | awk '{print $1}')"
+            published=$(jq -r --arg name "$name" \
+              '.assets[] | select(.name == $name) | .digest' <<< "$RELEASE_JSON")
+            test "$published" = "$expected"
+          }
+          verify_asset "$DMG_NAME"
+          verify_asset "$SUM_NAME"
+          verify_asset "$META_NAME"
 
       - name: Install and inspect app
         env:
@@ -254,7 +341,7 @@ jobs:
 
       - name: Upload smoke-test logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: macos-release-smoke-test-logs
           path: |

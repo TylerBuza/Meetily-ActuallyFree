@@ -71,6 +71,11 @@ Windows 10/11 x64 is supported. The installer is unsigned, so SmartScreen may sh
 
 M1 and newer Macs running macOS 14.2 Sonoma or later are supported. The DMG is not Apple-notarized, so first launch may require Control-clicking the app and selecting **Open**. Both releases include SHA-256 checksums.
 
+The current macOS 0.2.5 artifact passed automated Apple Silicon packaging and
+launch checks, but physical macOS 14.2 capture qualification is still pending.
+Treat it as a preview and verify recordings before relying on it for critical
+meetings.
+
 ## Local Data
 
 | Data | Location |

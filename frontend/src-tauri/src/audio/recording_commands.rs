@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::task::JoinHandle;
 
 use super::{
+    get_device_and_config,
     parse_audio_device,
     default_input_device,   // Get default microphone
     default_output_device,  // Get default system audio
@@ -90,6 +91,34 @@ fn spawn_level_forwarder<R: Runtime>(
         }
     });
     tx
+}
+
+fn install_fatal_error_callback<R: Runtime>(
+    manager: &mut RecordingManager,
+    app: &AppHandle<R>,
+) {
+    let app_for_error = app.clone();
+    manager.set_error_callback(move |error| {
+        let _ = app_for_error.emit("recording-error", error.user_message());
+        let app_for_stop = app_for_error.clone();
+        tauri::async_runtime::spawn(async move {
+            // A stream can fail while startup is still installing global state.
+            // Serialize teardown behind startup so final-save never races a
+            // missing manager/listener or a late recording-started event.
+            let _engine_lifecycle_guard =
+                super::common::acquire_engine_lifecycle_lock().await;
+            if IS_RECORDING.load(Ordering::SeqCst) {
+                let _ = stop_recording_inner(
+                    app_for_stop,
+                    RecordingArgs {
+                        save_path: String::new(),
+                    },
+                    true,
+                )
+                .await;
+            }
+        });
+    });
 }
 
 // ============================================================================
@@ -199,8 +228,22 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
             info!("ðŸŽ¤ Attempting to use preferred microphone: '{}'", pref_name);
             match parse_audio_device(&pref_name) {
                 Ok(device) => {
-                    info!("âœ… Using preferred microphone: '{}'", device.name);
-                    Some(Arc::new(device))
+                    match get_device_and_config(&device).await {
+                        Ok(_) => {
+                            info!("âœ… Using preferred microphone: '{}'", device.name);
+                            Some(Arc::new(device))
+                        }
+                        Err(e) => {
+                            warn!("Preferred microphone '{}' is no longer available: {}", pref_name, e);
+                            warn!("Falling back to the current default microphone...");
+                            Some(Arc::new(default_input_device().map_err(|default_err| {
+                                format!(
+                                    "No microphone device available. Preferred device '{}' was not found, and the default microphone is unavailable: {}",
+                                    pref_name, default_err
+                                )
+                            })?))
+                        }
+                    }
                 }
                 Err(e) => {
                     warn!("âš ï¸ Preferred microphone '{}' not available: {}", pref_name, e);
@@ -239,13 +282,42 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     // ============================================================================
     // SYSTEM AUDIO DEVICE RESOLUTION: Preference â†’ Default â†’ None (optional)
     // ============================================================================
+    #[cfg(target_os = "macos")]
+    let system_device = {
+        if let Some(pref_name) = preferred_system_name {
+            warn!(
+                "Ignoring stored macOS output selection '{}'; the Core Audio tap follows the current default output route",
+                pref_name
+            );
+        }
+        match default_output_device() {
+            Ok(device) => {
+                info!("Using current default macOS output route: '{}'", device.name);
+                Some(Arc::new(device))
+            }
+            Err(e) => {
+                warn!("No default system audio output is available: {}", e);
+                None
+            }
+        }
+    };
+
+    #[cfg(not(target_os = "macos"))]
     let system_device = match preferred_system_name {
         Some(pref_name) => {
             info!("ðŸ”Š Attempting to use preferred system audio: '{}'", pref_name);
             match parse_audio_device(&pref_name) {
                 Ok(device) => {
-                    info!("âœ… Using preferred system audio: '{}'", device.name);
-                    Some(Arc::new(device))
+                    match get_device_and_config(&device).await {
+                        Ok(_) => {
+                            info!("âœ… Using preferred system audio: '{}'", device.name);
+                            Some(Arc::new(device))
+                        }
+                        Err(e) => {
+                            warn!("Preferred system audio '{}' is no longer available: {}", pref_name, e);
+                            default_output_device().ok().map(Arc::new)
+                        }
+                    }
                 }
                 Err(e) => {
                     warn!("âš ï¸ Preferred system audio '{}' not available: {}", pref_name, e);
@@ -291,11 +363,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     });
     manager.set_meeting_name(Some(effective_meeting_name));
 
-    // Set up error callback
-    let app_for_error = app.clone();
-    manager.set_error_callback(move |error| {
-        let _ = app_for_error.emit("recording-error", error.user_message());
-    });
+    install_fatal_error_callback(&mut manager, &app);
 
     // Live audio-level meter: forward per-source (mic + system) levels to the UI visualizer
     let level_sender = spawn_level_forwarder(&app);
@@ -315,7 +383,6 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     // Set recording flag and reset speech detection flag
     info!("ðŸ” Setting IS_RECORDING to true and resetting SPEECH_DETECTED_EMITTED");
     IS_RECORDING.store(true, Ordering::SeqCst);
-    drop(engine_lifecycle_guard);
 
     // Live speaker identification: label transcript segments with individual
     // voices as they arrive. Best-effort — if the models aren't installed we
@@ -387,16 +454,19 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     }
 
     // Emit success event
-    app.emit("recording-started", serde_json::json!({
+    if let Err(error) = app.emit("recording-started", serde_json::json!({
         "message": "Recording started successfully with parallel processing",
         "devices": ["Default Microphone", "Default System Audio"],
         "workers": 3
-    })).map_err(|e| e.to_string())?;
+    })) {
+        warn!("Recording started, but the recording-started event failed: {}", error);
+    }
 
     // Update tray menu to reflect recording state
     crate::tray::update_tray_menu(&app);
 
     info!("âœ… Recording started successfully with async-first approach");
+    drop(engine_lifecycle_guard);
 
     Ok(())
 }
@@ -448,22 +518,40 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     }
     info!("âœ… Transcription model validation passed");
 
-    // Parse devices
+    // Resolve devices against the current enumeration. A syntactically valid
+    // persisted name can refer to hardware that has since disconnected.
     let mic_device = if let Some(ref name) = mic_device_name {
-        Some(Arc::new(parse_audio_device(name).map_err(|e| {
-            format!("Invalid microphone device '{}': {}", name, e)
-        })?))
+        let preferred = parse_audio_device(name)
+            .map_err(|e| format!("Invalid microphone device '{}': {}", name, e))?;
+        match get_device_and_config(&preferred).await {
+            Ok(_) => Some(Arc::new(preferred)),
+            Err(error) => {
+                warn!(
+                    "Requested microphone '{}' is unavailable ({}); using the current default",
+                    name, error
+                );
+                Some(Arc::new(default_input_device().map_err(|e| {
+                    format!(
+                        "Requested microphone '{}' is unavailable and no default microphone exists: {}",
+                        name, e
+                    )
+                })?))
+            }
+        }
     } else {
         Some(Arc::new(default_input_device().map_err(|e| {
             format!("No default microphone device available: {}", e)
         })?))
     };
 
-    let system_device = if let Some(ref name) = system_device_name {
-        Some(Arc::new(parse_audio_device(name).map_err(|e| {
-            format!("Invalid system device '{}': {}", name, e)
-        })?))
-    } else {
+    #[cfg(target_os = "macos")]
+    let system_device = {
+        if let Some(name) = system_device_name.as_ref() {
+            warn!(
+                "Ignoring requested macOS output '{}'; Core Audio follows the current default route",
+                name
+            );
+        }
         match default_output_device() {
             Ok(device) => Some(Arc::new(device)),
             Err(e) => {
@@ -471,6 +559,24 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
                 None
             }
         }
+    };
+
+    #[cfg(not(target_os = "macos"))]
+    let system_device = if let Some(ref name) = system_device_name {
+        let preferred = parse_audio_device(name)
+            .map_err(|e| format!("Invalid system device '{}': {}", name, e))?;
+        match get_device_and_config(&preferred).await {
+            Ok(_) => Some(Arc::new(preferred)),
+            Err(error) => {
+                warn!(
+                    "Requested system device '{}' is unavailable ({}); using the current default",
+                    name, error
+                );
+                default_output_device().ok().map(Arc::new)
+            }
+        }
+    } else {
+        default_output_device().ok().map(Arc::new)
     };
 
     // Async-first approach for custom devices - no more blocking operations!
@@ -503,11 +609,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     });
     manager.set_meeting_name(Some(effective_meeting_name));
 
-    // Set up error callback
-    let app_for_error = app.clone();
-    manager.set_error_callback(move |error| {
-        let _ = app_for_error.emit("recording-error", error.user_message());
-    });
+    install_fatal_error_callback(&mut manager, &app);
 
     // Live audio-level meter: forward per-source (mic + system) levels to the UI visualizer
     let level_sender = spawn_level_forwarder(&app);
@@ -527,7 +629,6 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     // Set recording flag and reset speech detection flag
     info!("ðŸ” Setting IS_RECORDING to true and resetting SPEECH_DETECTED_EMITTED");
     IS_RECORDING.store(true, Ordering::SeqCst);
-    drop(engine_lifecycle_guard);
 
     // Live speaker identification: label transcript segments with individual
     // voices as they arrive. Best-effort — if the models aren't installed we
@@ -597,19 +698,22 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     }
 
     // Emit success event
-    app.emit("recording-started", serde_json::json!({
+    if let Err(error) = app.emit("recording-started", serde_json::json!({
         "message": "Recording started with custom devices and parallel processing",
         "devices": [
             mic_device_name.unwrap_or_else(|| "Default Microphone".to_string()),
             system_device_name.unwrap_or_else(|| "Default System Audio".to_string())
         ],
         "workers": 3
-    })).map_err(|e| e.to_string())?;
+    })) {
+        warn!("Recording started, but the recording-started event failed: {}", error);
+    }
 
     // Update tray menu to reflect recording state
     crate::tray::update_tray_menu(&app);
 
     info!("âœ… Recording started with custom devices using async-first approach");
+    drop(engine_lifecycle_guard);
 
     Ok(())
 }
@@ -619,6 +723,7 @@ pub async fn stop_recording<R: Runtime>(
     app: AppHandle<R>,
     args: RecordingArgs,
 ) -> Result<StopOutcome, String> {
+    let _engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
     stop_recording_inner(app, args, false).await
 }
 
@@ -628,6 +733,7 @@ pub async fn stop_recording_from_compact<R: Runtime>(
     app: AppHandle<R>,
     args: RecordingArgs,
 ) -> Result<StopOutcome, String> {
+    let _engine_lifecycle_guard = super::common::acquire_engine_lifecycle_lock().await;
     stop_recording_inner(app, args, true).await
 }
 
@@ -689,15 +795,18 @@ async fn stop_recording_inner<R: Runtime>(
 
     let (stop_result, manager_for_cleanup) = stop_result;
 
-    match stop_result {
+    let stream_stop_error = match stop_result {
         Ok(_) => {
             info!("âœ… Audio streams stopped successfully - no more chunks will be created");
+            None
         }
         Err(e) => {
             error!("âŒ Failed to stop audio streams: {}", e);
-            return Err(format!("Failed to stop audio streams: {}", e));
+            // Continue final-save and global cleanup. Returning here would leave
+            // IS_RECORDING true after the manager had already been removed.
+            Some(format!("Failed to stop audio streams cleanly: {}", e))
         }
-    }
+    };
 
     // Step 2: Signal transcription workers to finish processing ALL queued chunks
     let _ = app.emit(
@@ -978,7 +1087,7 @@ async fn stop_recording_inner<R: Runtime>(
     );
 
     // Perform final cleanup with the manager if available
-    let (meeting_folder, meeting_name, audio_save_error) = if let Some(mut manager) = manager_for_cleanup {
+    let (meeting_folder, meeting_name, save_error) = if let Some(mut manager) = manager_for_cleanup {
         info!("ðŸ§¹ Performing final cleanup and saving recording data");
 
         // Extract meeting info BEFORE async operations
@@ -1012,17 +1121,18 @@ async fn stop_recording_inner<R: Runtime>(
         (None, None, Some("Recording manager was unavailable during save".to_string()))
     };
 
+    let audio_save_error = match (stream_stop_error, save_error) {
+        (Some(stream_error), Some(save_error)) => {
+            Some(format!("{}; {}", stream_error, save_error))
+        }
+        (Some(error), None) | (None, Some(error)) => Some(error),
+        (None, None) => None,
+    };
+
     // Set recording flag to false
     info!("ðŸ” Setting IS_RECORDING to false");
     IS_RECORDING.store(false, Ordering::SeqCst);
     crate::diarization::online::stop();
-
-    if let Some(error) = &audio_save_error {
-        let _ = app.emit(
-            "recording-error",
-            format!("Recording stopped, but audio could not be saved: {}", error),
-        );
-    }
 
     // Step 4.5: Prepare metadata for frontend (NO database save)
     // NOTE: We do NOT save to database here. The frontend will save after all transcripts are displayed.
@@ -1048,7 +1158,7 @@ async fn stop_recording_inner<R: Runtime>(
         serde_json::json!({
             "stage": "complete",
             "message": if audio_save_error.is_some() {
-                "Recording stopped, but audio save failed"
+                "Recording stopped, but audio finalization reported an error"
             } else {
                 "Recording stopped successfully"
             },

@@ -7,7 +7,19 @@ on:
         description: "Successful Build - macOS Apple Silicon run ID"
         required: true
         type: string
-
+      physical-test-attested:
+        description: "I completed the physical Apple Silicon checklist on macOS 14.2"
+        required: true
+        type: boolean
+        default: false
+      physical-test-os:
+        description: "Exact physical test OS version (must be 14.2 or 14.2.x)"
+        required: true
+        type: string
+      physical-test-dmg-sha256:
+        description: "SHA-256 of the exact DMG tested on physical hardware"
+        required: true
+        type: string
 concurrency:
   group: macos-apple-silicon-release
   cancel-in-progress: false
@@ -19,9 +31,37 @@ permissions:
 jobs:
   publish-macos:
     name: Publish Verified Apple Silicon DMG
+    if: ${{ github.ref == 'refs/heads/main' }}
+    environment: macos-release
     runs-on: ubuntu-latest
 
     steps:
+      - name: Require release signoffs
+        env:
+          PHYSICAL_TEST_ATTESTED: ${{ inputs.physical-test-attested }}
+          PHYSICAL_TEST_OS: ${{ inputs.physical-test-os }}
+          PHYSICAL_TEST_DMG_SHA256: ${{ inputs.physical-test-dmg-sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$PHYSICAL_TEST_ATTESTED" = "true"
+          [[ "$PHYSICAL_TEST_OS" =~ ^14\.2(\.[0-9]+)?$ ]]
+          [[ "$PHYSICAL_TEST_DMG_SHA256" =~ ^[0-9A-Fa-f]{64}$ ]]
+
+      - name: Require immutable releases
+        env:
+          GH_TOKEN: ${{ secrets.MACOS_RELEASE_ADMIN_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "MACOS_RELEASE_ADMIN_TOKEN is required"
+            exit 1
+          fi
+          test "$(gh api \
+            "repos/$GITHUB_REPOSITORY/immutable-releases" \
+            --jq .enabled)" = "true"
+
       - name: Validate candidate run
         id: candidate
         env:
@@ -34,30 +74,59 @@ jobs:
             "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")
           test "$(jq -r .path <<< "$RUN_JSON")" = ".github/workflows/build-macos.yml"
           test "$(jq -r .head_branch <<< "$RUN_JSON")" = "main"
+          test "$(jq -r .head_sha <<< "$RUN_JSON")" = "$GITHUB_SHA"
           test "$(jq -r .event <<< "$RUN_JSON")" = "workflow_dispatch"
           test "$(jq -r .status <<< "$RUN_JSON")" = "completed"
           test "$(jq -r .conclusion <<< "$RUN_JSON")" = "success"
+          EXPECTED_WORKFLOW_ID=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/build-macos.yml" \
+            --jq .id)
+          test "$(jq -r .workflow_id <<< "$RUN_JSON")" = "$EXPECTED_WORKFLOW_ID"
+
+          ARTIFACTS_JSON=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/artifacts?per_page=100")
+          test "$(jq -r .total_count <<< "$ARTIFACTS_JSON")" = "1"
+          ARTIFACT_NAME=$(jq -r '.artifacts[0].name' <<< "$ARTIFACTS_JSON")
+          ARTIFACT_ID=$(jq -r '.artifacts[0].id' <<< "$ARTIFACTS_JSON")
+          ARTIFACT_DIGEST=$(jq -r '.artifacts[0].digest' <<< "$ARTIFACTS_JSON")
+          test "$(jq -r '.artifacts[0].expired' <<< "$ARTIFACTS_JSON")" = "false"
+          [[ "$ARTIFACT_NAME" =~ ^meetily-actually-free-[0-9]+\.[0-9]+\.[0-9]+-macos-aarch64$ ]]
+          [[ "$ARTIFACT_ID" =~ ^[0-9]+$ ]]
+          [[ "$ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
 
           echo "commit=$(jq -r .head_sha <<< "$RUN_JSON")" >> "$GITHUB_OUTPUT"
+          echo "run_attempt=$(jq -r .run_attempt <<< "$RUN_JSON")" >> "$GITHUB_OUTPUT"
           echo "url=$(jq -r .html_url <<< "$RUN_JSON")" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+          echo "artifact_id=$ARTIFACT_ID" >> "$GITHUB_OUTPUT"
+          echo "artifact_digest=$ARTIFACT_DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Download exact candidate artifact
         env:
           GH_TOKEN: ${{ github.token }}
-          CANDIDATE_RUN_ID: ${{ inputs.candidate-run-id }}
+          ARTIFACT_ID: ${{ steps.candidate.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ steps.candidate.outputs.artifact_digest }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p candidate
-          gh run download "$CANDIDATE_RUN_ID" \
-            --repo "$GITHUB_REPOSITORY" \
-            --dir candidate
+          gh api \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" \
+            > candidate-artifact.zip
+          test "sha256:$(sha256sum candidate-artifact.zip | awk '{print $1}')" = \
+            "$ARTIFACT_DIGEST"
+          unzip -q candidate-artifact.zip -d candidate
 
       - name: Validate artifact identity and checksum
         id: artifact
         env:
           CANDIDATE_COMMIT: ${{ steps.candidate.outputs.commit }}
           CANDIDATE_RUN_ID: ${{ inputs.candidate-run-id }}
+          CANDIDATE_RUN_ATTEMPT: ${{ steps.candidate.outputs.run_attempt }}
+          CANDIDATE_ARTIFACT_ID: ${{ steps.candidate.outputs.artifact_id }}
+          CANDIDATE_ARTIFACT_DIGEST: ${{ steps.candidate.outputs.artifact_digest }}
+          PHYSICAL_TEST_OS: ${{ inputs.physical-test-os }}
+          PHYSICAL_TEST_DMG_SHA256: ${{ inputs.physical-test-dmg-sha256 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -74,18 +143,44 @@ jobs:
           VERSION=$(jq -r .version "$META_PATH")
           COMMIT=$(jq -r .commit "$META_PATH")
           RUN_ID=$(jq -r .run_id "$META_PATH")
+          RUN_ATTEMPT=$(jq -r .run_attempt "$META_PATH")
+          BUILD_DMG_SHA256=$(jq -r .dmg_sha256 "$META_PATH")
           NOTARIZED=$(jq -r .notarized "$META_PATH")
 
           test "$COMMIT" = "$CANDIDATE_COMMIT"
           test "$RUN_ID" = "$CANDIDATE_RUN_ID"
+          test "$RUN_ATTEMPT" = "$CANDIDATE_RUN_ATTEMPT"
           test "$NOTARIZED" = "true" || test "$NOTARIZED" = "false"
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
           test "$(basename "$DMG_PATH")" = "Meetily-Actually-Free_${VERSION}_aarch64.dmg"
           test "$(awk '{print $2}' "$SUM_PATH")" = "$(basename "$DMG_PATH")"
-          test "$(awk '{print $1}' "$SUM_PATH")" = "$(sha256sum "$DMG_PATH" | awk '{print $1}')"
+          DMG_SHA256=$(sha256sum "$DMG_PATH" | awk '{print $1}')
+          test "$(awk '{print $1}' "$SUM_PATH")" = "$DMG_SHA256"
+          test "$BUILD_DMG_SHA256" = "$DMG_SHA256"
+          test "$(tr '[:upper:]' '[:lower:]' <<< "$PHYSICAL_TEST_DMG_SHA256")" = \
+            "$DMG_SHA256"
+
+          RELEASE_META_PATH="$RUNNER_TEMP/macos-release-metadata.json"
+          jq \
+            --arg physical_test_os "$PHYSICAL_TEST_OS" \
+            --arg physical_test_dmg_sha256 "$DMG_SHA256" \
+            --arg physical_test_attested_by "$GITHUB_ACTOR" \
+            --arg publish_run_id "$GITHUB_RUN_ID" \
+            --arg candidate_artifact_id "$CANDIDATE_ARTIFACT_ID" \
+            --arg candidate_artifact_digest "$CANDIDATE_ARTIFACT_DIGEST" \
+            '. + {
+              physical_test_os: $physical_test_os,
+              physical_test_dmg_sha256: $physical_test_dmg_sha256,
+              physical_test_attested_by: $physical_test_attested_by,
+              publish_run_id: $publish_run_id,
+              candidate_artifact_id: $candidate_artifact_id,
+              candidate_artifact_digest: $candidate_artifact_digest
+            }' \
+            "$META_PATH" > "$RELEASE_META_PATH"
 
           echo "dmg=$DMG_PATH" >> "$GITHUB_OUTPUT"
           echo "sum=$SUM_PATH" >> "$GITHUB_OUTPUT"
+          echo "metadata=$RELEASE_META_PATH" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}-macos" >> "$GITHUB_OUTPUT"
           echo "notarized=$NOTARIZED" >> "$GITHUB_OUTPUT"
@@ -129,7 +224,7 @@ jobs:
             fi
             echo
             echo "Built and verified by [the candidate workflow run]($CANDIDATE_URL)."
-            echo "The Windows release remains available separately at \`v${VERSION}\`."
+            echo "The Windows release remains available separately from GitHub Latest."
           } > release-notes-macos.md
 
       - name: Reserve tag at exact candidate commit
@@ -140,6 +235,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          LIVE_MAIN=$(gh api \
+            "repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
+            --jq .object.sha)
+          test "$LIVE_MAIN" = "$TARGET_COMMIT"
           gh api --method POST \
             "repos/$GITHUB_REPOSITORY/git/refs" \
             -f "ref=refs/tags/$RELEASE_TAG" \
@@ -156,19 +255,70 @@ jobs:
           VERSION: ${{ steps.artifact.outputs.version }}
           DMG_PATH: ${{ steps.artifact.outputs.dmg }}
           SUM_PATH: ${{ steps.artifact.outputs.sum }}
+          META_PATH: ${{ steps.artifact.outputs.metadata }}
           TARGET_COMMIT: ${{ steps.candidate.outputs.commit }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "$RELEASE_TAG" \
-            "$DMG_PATH" \
-            "$SUM_PATH" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$TARGET_COMMIT" \
-            --title "Meetily - Actually Free v${VERSION} for macOS" \
-            --notes-file release-notes-macos.md \
-            --latest=false
+          RELEASE_JSON=$(gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/releases" \
+            -f "tag_name=$RELEASE_TAG" \
+            -f "target_commitish=$TARGET_COMMIT" \
+            -f "name=Meetily - Actually Free v${VERSION} for macOS" \
+            -f "body=$(cat release-notes-macos.md)" \
+            -F draft=true \
+            -F prerelease=false \
+            -f make_latest=false)
+          RELEASE_ID=$(jq -r .id <<< "$RELEASE_JSON")
+          UPLOAD_URL=$(jq -r .upload_url <<< "$RELEASE_JSON" | sed 's/{.*}//')
+          [[ "$RELEASE_ID" =~ ^[0-9]+$ ]]
+          [[ "$UPLOAD_URL" == https://uploads.github.com/* ]]
+
+          upload_asset() {
+            local path="$1"
+            local name
+            name=$(basename "$path")
+            gh api --method POST \
+              -H "Content-Type: application/octet-stream" \
+              "${UPLOAD_URL}?name=${name}" \
+              --input "$path" >/dev/null
+          }
+          upload_asset "$DMG_PATH"
+          upload_asset "$SUM_PATH"
+          upload_asset "$META_PATH"
+
+          gh api --method PATCH \
+            "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false \
+            -f make_latest=false >/dev/null
           ACTUAL_TARGET=$(gh api \
             "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" \
             --jq .object.sha)
           test "$ACTUAL_TARGET" = "$TARGET_COMMIT"
+
+          RELEASE_JSON=$(gh api \
+            "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")
+          test "$(jq -r .draft <<< "$RELEASE_JSON")" = "false"
+          test "$(jq -r .prerelease <<< "$RELEASE_JSON")" = "false"
+          test "$(jq -r .immutable <<< "$RELEASE_JSON")" = "true"
+          test "$(jq -r '.assets | length' <<< "$RELEASE_JSON")" = "3"
+
+          verify_asset() {
+            local path="$1"
+            local name
+            local expected
+            local published
+            name=$(basename "$path")
+            expected="sha256:$(sha256sum "$path" | awk '{print $1}')"
+            published=$(jq -r --arg name "$name" \
+              '.assets[] | select(.name == $name) | .digest' <<< "$RELEASE_JSON")
+            test "$published" = "$expected"
+          }
+          verify_asset "$DMG_PATH"
+          verify_asset "$SUM_PATH"
+          verify_asset "$META_PATH"
+
+          LATEST_TAG=$(gh api \
+            "repos/$GITHUB_REPOSITORY/releases/latest" \
+            --jq .tag_name)
+          test "$LATEST_TAG" != "$RELEASE_TAG"
