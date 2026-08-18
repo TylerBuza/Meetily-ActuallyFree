@@ -205,26 +205,39 @@ jobs:
         env:
           VERSION: ${{ steps.artifact.outputs.version }}
           NOTARIZED: ${{ steps.artifact.outputs.notarized }}
-          CANDIDATE_URL: ${{ steps.candidate.outputs.url }}
         shell: bash
         run: |
           {
-            echo "## Meetily - Actually Free for macOS"
+            echo "## Meetily for macOS"
             echo
-            echo "Apple Silicon release for M1 and newer Macs running macOS 14.2 Sonoma or later."
+            echo "Meetily - Actually Free is a privacy-first meeting assistant with local recording, transcription, and summarization."
+            echo
+            echo "### Requirements"
+            echo
+            echo "- Apple Silicon Mac (M1 or newer)"
+            echo "- macOS 14.2 Sonoma or later"
             echo
             echo "### Install"
             echo
-            echo "1. Download the \`aarch64.dmg\` file."
+            echo "1. Download \`Meetily-Actually-Free_${VERSION}_aarch64.dmg\`."
             echo "2. Open it and drag Meetily - Actually Free to Applications."
-            echo "3. Grant microphone and Audio Capture permissions when prompted."
+            echo "3. Open Meetily from Applications."
             if [[ "$NOTARIZED" != "true" ]]; then
               echo
-              echo "> This build is not Apple-notarized. macOS may require Control-clicking the app and choosing Open on first launch."
+              echo "> **First launch:** This release is not Apple-notarized. Control-click the app in Applications, choose **Open**, then confirm **Open** when macOS prompts you."
             fi
             echo
-            echo "Built and verified by [the candidate workflow run]($CANDIDATE_URL)."
-            echo "The Windows release remains available separately from GitHub Latest."
+            echo "### Permissions"
+            echo
+            echo "Grant **Microphone** and **Audio Capture** access when prompted. Both permissions are required to record your voice and meeting audio."
+            echo
+            echo "### Verify the download"
+            echo
+            echo "The included \`SHA256SUMS-macos.txt\` file contains the SHA-256 checksum for the DMG."
+            echo
+            echo "### Other platforms"
+            echo
+            echo "Windows downloads remain available from the repository's **Latest** release."
           } > release-notes-macos.md
 
       - name: Reserve tag at exact candidate commit
