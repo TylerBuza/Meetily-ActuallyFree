@@ -100,6 +100,8 @@ pub struct RecordingState {
     // Core recording state
     is_recording: AtomicBool,
     is_paused: AtomicBool,
+    microphone_muted: AtomicBool,
+    system_audio_muted: AtomicBool,
     is_reconnecting: AtomicBool,  // NEW: Attempting to reconnect to device
 
     // Audio devices
@@ -138,6 +140,8 @@ impl RecordingState {
         Arc::new(Self {
             is_recording: AtomicBool::new(false),
             is_paused: AtomicBool::new(false),
+            microphone_muted: AtomicBool::new(false),
+            system_audio_muted: AtomicBool::new(false),
             is_reconnecting: AtomicBool::new(false),
             microphone_device: Mutex::new(None),
             system_device: Mutex::new(None),
@@ -161,6 +165,8 @@ impl RecordingState {
     // Recording control
     pub fn start_recording(&self) -> Result<()> {
         self.is_recording.store(true, Ordering::SeqCst);
+        self.microphone_muted.store(false, Ordering::SeqCst);
+        self.system_audio_muted.store(false, Ordering::SeqCst);
         *self.recording_start.lock().unwrap() = Some(Instant::now());
         self.error_count.store(0, Ordering::SeqCst);
         self.recoverable_error_count.store(0, Ordering::SeqCst);
@@ -195,6 +201,8 @@ impl RecordingState {
     pub fn stop_recording(&self) {
         self.is_recording.store(false, Ordering::SeqCst);
         self.is_paused.store(false, Ordering::SeqCst);
+        self.microphone_muted.store(false, Ordering::SeqCst);
+        self.system_audio_muted.store(false, Ordering::SeqCst);
         self.capture_setup_complete.store(false, Ordering::SeqCst);
         self.microphone_capture_active.store(false, Ordering::SeqCst);
         self.system_capture_active.store(false, Ordering::SeqCst);
@@ -250,6 +258,30 @@ impl RecordingState {
 
     pub fn is_paused(&self) -> bool {
         self.is_paused.load(Ordering::SeqCst)
+    }
+
+    pub fn set_microphone_muted(&self, muted: bool) {
+        self.microphone_muted.store(muted, Ordering::SeqCst);
+    }
+
+    pub fn is_microphone_muted(&self) -> bool {
+        self.microphone_muted.load(Ordering::SeqCst)
+    }
+
+    pub fn set_system_audio_muted(&self, muted: bool) {
+        self.system_audio_muted.store(muted, Ordering::SeqCst);
+    }
+
+    pub fn is_system_audio_muted(&self) -> bool {
+        self.system_audio_muted.load(Ordering::SeqCst)
+    }
+
+    pub fn is_audio_source_muted(&self, device_type: &DeviceType) -> bool {
+        match device_type {
+            DeviceType::Microphone => self.is_microphone_muted(),
+            DeviceType::System => self.is_system_audio_muted(),
+            DeviceType::Mixed => false,
+        }
     }
 
     pub fn is_active(&self) -> bool {
@@ -460,6 +492,8 @@ impl Default for RecordingState {
         Self {
             is_recording: AtomicBool::new(false),
             is_paused: AtomicBool::new(false),
+            microphone_muted: AtomicBool::new(false),
+            system_audio_muted: AtomicBool::new(false),
             is_reconnecting: AtomicBool::new(false),
             microphone_device: Mutex::new(None),
             system_device: Mutex::new(None),

@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Mic, Monitor, Pause, Play, Square, Maximize2 } from 'lucide-react';
+import { Mic, MicOff, Monitor, VolumeX, Pause, Play, Square, Maximize2 } from 'lucide-react';
 import { LiveAudioVisualizer } from '@/components/LiveAudioVisualizer';
 import { recordingService } from '@/services/recordingService';
 
@@ -26,6 +26,10 @@ function formatElapsed(totalSeconds: number): string {
 export default function MiniBarPage() {
   const [elapsed, setElapsed] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  const [isMicMuted, setIsMicMuted] = useState(false);
+  const [isChangingMicMute, setIsChangingMicMute] = useState(false);
+  const [isSystemMuted, setIsSystemMuted] = useState(false);
+  const [isChangingSystemMute, setIsChangingSystemMute] = useState(false);
   // Once stopping begins the timer must freeze immediately, even though the
   // bar stays up until the recording is actually finalised (see below).
   const [isStopping, setIsStopping] = useState(false);
@@ -50,6 +54,8 @@ export default function MiniBarPage() {
           setElapsed(Math.max(0, Math.floor(duration)));
         }
         setIsPaused(state.is_paused);
+        setIsMicMuted(state.is_microphone_muted);
+        setIsSystemMuted(state.is_system_audio_muted);
       } catch (error) {
         console.error('Compact bar: failed to sync recording state', error);
       }
@@ -62,6 +68,40 @@ export default function MiniBarPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void recordingService.onSystemAudioMuteChanged(({ muted }) => {
+      if (!disposed) setIsSystemMuted(muted);
+    }).then((stopListening) => {
+      if (disposed) stopListening();
+      else unlisten = stopListening;
+    }).catch((error) => {
+      console.error('Compact bar: failed to listen for system audio mute changes', error);
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void recordingService.onMicrophoneMuteChanged(({ muted }) => {
+      if (!disposed) setIsMicMuted(muted);
+    }).then((stopListening) => {
+      if (disposed) stopListening();
+      else unlisten = stopListening;
+    }).catch((error) => {
+      console.error('Compact bar: failed to listen for microphone mute changes', error);
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   const togglePause = useCallback(async () => {
     try {
       await invoke(isPaused ? 'resume_recording' : 'pause_recording');
@@ -69,6 +109,30 @@ export default function MiniBarPage() {
       console.error('Compact bar: pause/resume failed', e);
     }
   }, [isPaused]);
+
+  const toggleMicMute = useCallback(async () => {
+    if (isChangingMicMute || isChangingSystemMute || isStopping) return;
+    setIsChangingMicMute(true);
+    try {
+      await recordingService.setMicrophoneMuted(!isMicMuted);
+    } catch (error) {
+      console.error('Compact bar: microphone mute failed', error);
+    } finally {
+      setIsChangingMicMute(false);
+    }
+  }, [isChangingMicMute, isChangingSystemMute, isMicMuted, isStopping]);
+
+  const toggleSystemMute = useCallback(async () => {
+    if (isChangingMicMute || isChangingSystemMute || isStopping) return;
+    setIsChangingSystemMute(true);
+    try {
+      await recordingService.setSystemAudioMuted(!isSystemMuted);
+    } catch (error) {
+      console.error('Compact bar: system audio mute failed', error);
+    } finally {
+      setIsChangingSystemMute(false);
+    }
+  }, [isChangingMicMute, isChangingSystemMute, isStopping, isSystemMuted]);
 
   const expand = useCallback(() => {
     invoke('exit_compact_mode').catch((e) => console.error(e));
@@ -125,21 +189,59 @@ export default function MiniBarPage() {
       {/* Live input levels â€” same Rust events the main window listens to. */}
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center gap-2">
-          <Mic size={12} className="shrink-0 text-gray-400" />
-          <span className="w-12 text-[11px] text-gray-400">Mic</span>
-          <LiveAudioVisualizer active={!isPaused && !isStopping} source="mic" bars={14} />
+          {isMicMuted
+            ? <MicOff size={12} className="shrink-0 text-orange-400" />
+            : <Mic size={12} className="shrink-0 text-gray-400" />}
+          <span className={`w-12 text-[11px] ${isMicMuted ? 'text-orange-400' : 'text-gray-400'}`}>
+            {isMicMuted ? 'Muted' : 'Mic'}
+          </span>
+          <LiveAudioVisualizer active={!isPaused && !isStopping && !isMicMuted} source="mic" bars={14} />
         </div>
         <div className="flex items-center gap-2">
-          <Monitor size={12} className="shrink-0 text-gray-400" />
-          <span className="w-12 text-[11px] text-gray-400">System</span>
-          <LiveAudioVisualizer active={!isPaused && !isStopping} source="system" bars={14} />
+          {isSystemMuted
+            ? <VolumeX size={12} className="shrink-0 text-orange-400" />
+            : <Monitor size={12} className="shrink-0 text-gray-400" />}
+          <span className={`w-12 text-[11px] ${isSystemMuted ? 'text-orange-400' : 'text-gray-400'}`}>
+            {isSystemMuted ? 'Muted' : 'System'}
+          </span>
+          <LiveAudioVisualizer active={!isPaused && !isStopping && !isSystemMuted} source="system" bars={14} />
         </div>
       </div>
 
       <div className="ml-auto flex items-center gap-2">
         <button
+          onClick={toggleMicMute}
+          disabled={isStopping || isChangingMicMute || isChangingSystemMute}
+          title={isMicMuted ? 'Unmute microphone' : 'Mute microphone'}
+          aria-pressed={isMicMuted}
+          className={`flex h-10 w-14 flex-col items-center justify-center rounded-full border text-xs transition-colors disabled:opacity-40 ${
+            isMicMuted
+              ? 'border-orange-500/40 bg-orange-500/15 text-orange-300 hover:bg-orange-500/25'
+              : 'border-white/10 bg-white/5 text-gray-300 hover:bg-white/10'
+          }`}
+        >
+          {isMicMuted ? <MicOff size={15} /> : <Mic size={15} />}
+          <span className="mt-0.5 text-[10px]">{isMicMuted ? 'Unmute' : 'Mute'}</span>
+        </button>
+
+        <button
+          onClick={toggleSystemMute}
+          disabled={isStopping || isChangingMicMute || isChangingSystemMute}
+          title={isSystemMuted ? 'Unmute system audio' : 'Mute system audio'}
+          aria-pressed={isSystemMuted}
+          className={`flex h-10 w-14 flex-col items-center justify-center rounded-full border text-xs transition-colors disabled:opacity-40 ${
+            isSystemMuted
+              ? 'border-orange-500/40 bg-orange-500/15 text-orange-300 hover:bg-orange-500/25'
+              : 'border-white/10 bg-white/5 text-gray-300 hover:bg-white/10'
+          }`}
+        >
+          {isSystemMuted ? <VolumeX size={15} /> : <Monitor size={15} />}
+          <span className="mt-0.5 text-[10px]">{isSystemMuted ? 'Unmute' : 'Mute'}</span>
+        </button>
+
+        <button
           onClick={togglePause}
-          disabled={isStopping}
+          disabled={isStopping || isChangingMicMute || isChangingSystemMute}
           title={isPaused ? 'Resume recording' : 'Pause recording'}
           className="flex h-10 w-14 flex-col items-center justify-center rounded-full border border-white/10 bg-white/5 text-xs text-gray-300 transition-colors hover:bg-white/10 disabled:opacity-40"
         >
@@ -149,7 +251,7 @@ export default function MiniBarPage() {
 
         <button
           onClick={stop}
-          disabled={isStopping}
+          disabled={isStopping || isChangingMicMute || isChangingSystemMute}
           title="Stop recording"
           className="flex h-10 w-14 flex-col items-center justify-center rounded-full border border-red-500/30 bg-red-500/15 text-xs text-red-300 transition-colors hover:bg-red-500/25 disabled:opacity-40"
         >
@@ -159,7 +261,7 @@ export default function MiniBarPage() {
 
         <button
           onClick={expand}
-          disabled={isStopping}
+          disabled={isStopping || isChangingMicMute || isChangingSystemMute}
           title="Back to the full window"
           className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-gray-300 transition-colors hover:bg-white/10 disabled:opacity-40"
         >

@@ -11,6 +11,8 @@ import { listen, UnlistenFn } from '@tauri-apps/api/event';
 export interface RecordingState {
   is_recording: boolean;
   is_paused: boolean;
+  is_microphone_muted: boolean;
+  is_system_audio_muted: boolean;
   is_active: boolean;
   recording_duration: number | null;
   active_duration: number | null;
@@ -23,6 +25,10 @@ export interface RecordingStoppedPayload {
   folder_path?: string;
   meeting_name?: string;
   audio_save_error?: string;
+}
+
+export interface AudioMuteChangedPayload {
+  muted: boolean;
 }
 
 /**
@@ -108,6 +114,16 @@ export class RecordingService {
     return invoke('resume_recording');
   }
 
+  /** Mute or unmute only the microphone while system audio continues. */
+  async setMicrophoneMuted(muted: boolean): Promise<boolean> {
+    return invoke<boolean>('set_microphone_muted', { muted });
+  }
+
+  /** Mute or unmute only system audio while microphone capture continues. */
+  async setSystemAudioMuted(muted: boolean): Promise<boolean> {
+    return invoke<boolean>('set_system_audio_muted', { muted });
+  }
+
   // Event Listeners
 
   /**
@@ -146,6 +162,22 @@ export class RecordingService {
    */
   async onRecordingResumed(callback: () => void): Promise<UnlistenFn> {
     return listen('recording-resumed', callback);
+  }
+
+  async onMicrophoneMuteChanged(
+    callback: (payload: AudioMuteChangedPayload) => void
+  ): Promise<UnlistenFn> {
+    return listen<AudioMuteChangedPayload>('microphone-mute-changed', (event) => {
+      callback(event.payload);
+    });
+  }
+
+  async onSystemAudioMuteChanged(
+    callback: (payload: AudioMuteChangedPayload) => void
+  ): Promise<UnlistenFn> {
+    return listen<AudioMuteChangedPayload>('system-audio-mute-changed', (event) => {
+      callback(event.payload);
+    });
   }
 
   /**

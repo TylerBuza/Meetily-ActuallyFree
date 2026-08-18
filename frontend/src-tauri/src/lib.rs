@@ -713,6 +713,8 @@ pub fn run() {
             audio::recording_commands::pause_recording,
             audio::recording_commands::resume_recording,
             audio::recording_commands::is_recording_paused,
+            audio::recording_commands::set_microphone_muted,
+            audio::recording_commands::set_system_audio_muted,
             audio::recording_commands::get_recording_state,
             audio::recording_commands::get_meeting_folder_path,
             // Reload sync commands (retrieve transcript history and meeting name)

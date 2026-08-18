@@ -2,23 +2,19 @@
 //! (b) speech segments for transcription.
 //!
 //! ```text
-//!   mic ──┐                             ┌─▶ recording_sender  (mixed audio → file)
-//!         ├─▶ ring buffer ─▶ mixer ─────┤
-//!   sys ──┘                             └─▶ VAD ─▶ transcription_sender
+//!   mic ─▶ mic VAD ─────────────▶ transcription_sender
+//!      ├▶ mic.mp4
+//!      └─┐
+//!        ├▶ mixer ──────────────▶ audio.mp4
+//!   sys ─┬┘
+//!      ├▶ system VAD ──────────▶ transcription_sender
+//!      └▶ system.mp4
 //! ```
 //!
-//! ## Why mixing happens before transcription
-//! A meeting is a single conversation; transcribing mic and system audio
-//! separately produces two interleaved transcripts that are hard to reconcile.
-//! The mixer aligns both streams in fixed windows and blends them, so the
-//! transcriber sees one coherent conversation.
-//!
-//! ## ⚠️ The cost: source information is destroyed
-//! Once mixed, no single device owns the samples, so the `device_type` on
-//! chunks sent to transcription is a **placeholder** (`Microphone`). Code
-//! downstream must not infer who is speaking from it — an earlier attempt did
-//! and labelled every line "You", including other participants. Speaker
-//! identity comes from diarization (`crate::diarization`).
+//! Mic and system transcription remain separate so source identity survives.
+//! Mixing is only for user-facing playback. Muting either source replaces its
+//! samples with silence before this pipeline; do not drop its chunks, because
+//! retained mic/system tracks must stay aligned.
 //!
 //! ## Live level meters
 //! Because mixing erases the distinction, per-source RMS/peak levels are
@@ -528,12 +524,17 @@ impl AudioCapture {
             return;
         }
 
+        let source_muted_at_capture = self.state.is_audio_source_muted(&self.device_type);
+
         // Convert to mono if needed
         let mut mono_data = if self.channels > 1 {
             audio_to_mono(data, self.channels)
         } else {
             data.to_vec()
         };
+        if source_muted_at_capture {
+            mono_data.fill(0.0);
+        }
 
         // CRITICAL FIX: Resample to 48kHz if device uses different sample rate
         // This fixes Bluetooth devices (like Sony WH-1000XM4) that report 16kHz or 44.1kHz
@@ -714,6 +715,13 @@ impl AudioCapture {
             // cannot reintroduce hard clipping afterward.
         }
 
+        // Check again after stateful DSP so a mute command that arrives while a
+        // callback is being processed cannot leak its tail into VAD or storage.
+        // Keeping the zero-filled chunk preserves mic/system track alignment.
+        if source_muted_at_capture || self.state.is_audio_source_muted(&self.device_type) {
+            mono_data.fill(0.0);
+        }
+
         // Create audio chunk with stream-specific timestamp (get ID first for logging)
         let chunk_id = self.chunk_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
@@ -747,6 +755,10 @@ impl AudioCapture {
 
         // Use global recording timestamp for proper synchronization
         let timestamp = self.state.get_active_recording_duration().unwrap_or(0.0);
+
+        if self.state.is_audio_source_muted(&self.device_type) {
+            mono_data.fill(0.0);
+        }
 
         // RAW AUDIO CHUNK: No gain applied - will be mixed and gained downstream
         // Use 48kHz if we resampled, otherwise use original rate
@@ -1434,6 +1446,7 @@ impl Default for AudioPipelineManager {
 #[cfg(test)]
 mod ring_buffer_tests {
     use super::*;
+    use crate::audio::devices::DeviceType as AudioDeviceType;
 
     #[test]
     fn aligns_late_source_to_recording_clock() {
@@ -1525,5 +1538,51 @@ mod ring_buffer_tests {
             .expect("completed speech should be queued");
         assert!(!segment.data.is_empty());
         assert_eq!(chunk_id, 1);
+    }
+
+    #[test]
+    fn muted_microphone_capture_sends_aligned_silence() {
+        let state = RecordingState::new();
+        state.start_recording().unwrap();
+        state.set_microphone_muted(true);
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        state.set_audio_sender(sender);
+        let device = Arc::new(AudioDevice::new(
+            "Test microphone".to_string(),
+            AudioDeviceType::Input,
+        ));
+        let capture = AudioCapture::new(device, state, 48_000, 1, DeviceType::Microphone, None);
+
+        capture.process_audio_data(&vec![0.5; 1_024]);
+
+        let chunk = receiver
+            .try_recv()
+            .expect("muted mic chunk should be retained");
+        assert_eq!(chunk.data.len(), 1_024);
+        assert!(chunk.data.iter().all(|sample| *sample == 0.0));
+        assert_eq!(chunk.device_type, DeviceType::Microphone);
+    }
+
+    #[test]
+    fn muted_system_capture_sends_aligned_silence() {
+        let state = RecordingState::new();
+        state.start_recording().unwrap();
+        state.set_system_audio_muted(true);
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        state.set_audio_sender(sender);
+        let device = Arc::new(AudioDevice::new(
+            "Test system output".to_string(),
+            AudioDeviceType::Output,
+        ));
+        let capture = AudioCapture::new(device, state, 48_000, 1, DeviceType::System, None);
+
+        capture.process_audio_data(&vec![0.5; 1_024]);
+
+        let chunk = receiver
+            .try_recv()
+            .expect("muted system chunk should be retained");
+        assert_eq!(chunk.data.len(), 1_024);
+        assert!(chunk.data.iter().all(|sample| *sample == 0.0));
+        assert_eq!(chunk.device_type, DeviceType::System);
     }
 }

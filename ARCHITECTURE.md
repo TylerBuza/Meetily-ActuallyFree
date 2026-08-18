@@ -74,6 +74,18 @@ Note: the webview **cannot** capture system audio itself, so browser-side
 `getUserMedia` visualizers can only ever show the microphone. That is why the
 levels come from Rust.
 
+### Source-specific mute
+
+Live microphone and system-audio mute are independent of each other and Pause.
+Rust owns both atomic mute states, and the main window and separate minibar
+recover them through `get_recording_state` plus their source-specific change
+broadcasts. Capture streams stay open; muted-source samples are replaced with
+zeros before levels, VAD, retained source tracks, and the mixer. Normal-sized
+silent chunks must keep flowing so the other source remains live and
+`mic.mp4`, `system.mp4`, and `audio.mp4` retain the same timeline. Never
+implement either mute by dropping callbacks, stopping a device, or only hiding
+the frontend meter.
+
 ### Live segmentation and shutdown invariants
 
 - Live VAD redemption is 800 ms. Offline retranscription uses 2,000 ms because

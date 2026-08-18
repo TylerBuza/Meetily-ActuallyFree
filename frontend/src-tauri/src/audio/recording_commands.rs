@@ -1309,6 +1309,62 @@ pub async fn is_recording_paused() -> bool {
     }
 }
 
+/// Mute or unmute only the microphone while system capture continues.
+#[tauri::command]
+pub async fn set_microphone_muted<R: Runtime>(
+    app: AppHandle<R>,
+    muted: bool,
+) -> Result<bool, String> {
+    if !IS_RECORDING.load(Ordering::SeqCst) {
+        return Err("No recording is currently active".to_string());
+    }
+
+    let manager_guard = RECORDING_MANAGER.lock().unwrap();
+    let manager = manager_guard
+        .as_ref()
+        .ok_or_else(|| "No recording manager found".to_string())?;
+    manager.get_state().set_microphone_muted(muted);
+
+    let _ = app.emit(
+        "microphone-mute-changed",
+        serde_json::json!({ "muted": muted }),
+    );
+
+    info!(
+        "Microphone {} while recording",
+        if muted { "muted" } else { "unmuted" }
+    );
+    Ok(muted)
+}
+
+/// Mute or unmute only system audio while microphone capture continues.
+#[tauri::command]
+pub async fn set_system_audio_muted<R: Runtime>(
+    app: AppHandle<R>,
+    muted: bool,
+) -> Result<bool, String> {
+    if !IS_RECORDING.load(Ordering::SeqCst) {
+        return Err("No recording is currently active".to_string());
+    }
+
+    let manager_guard = RECORDING_MANAGER.lock().unwrap();
+    let manager = manager_guard
+        .as_ref()
+        .ok_or_else(|| "No recording manager found".to_string())?;
+    manager.get_state().set_system_audio_muted(muted);
+
+    let _ = app.emit(
+        "system-audio-mute-changed",
+        serde_json::json!({ "muted": muted }),
+    );
+
+    info!(
+        "System audio {} while recording",
+        if muted { "muted" } else { "unmuted" }
+    );
+    Ok(muted)
+}
+
 /// Get detailed recording state
 #[tauri::command]
 pub async fn get_recording_state() -> serde_json::Value {
@@ -1319,6 +1375,8 @@ pub async fn get_recording_state() -> serde_json::Value {
         serde_json::json!({
             "is_recording": is_recording,
             "is_paused": manager.is_paused(),
+            "is_microphone_muted": manager.get_state().is_microphone_muted(),
+            "is_system_audio_muted": manager.get_state().is_system_audio_muted(),
             "is_active": manager.is_active(),
             "recording_duration": manager.get_recording_duration(),
             "active_duration": manager.get_active_recording_duration(),
@@ -1329,6 +1387,8 @@ pub async fn get_recording_state() -> serde_json::Value {
         serde_json::json!({
             "is_recording": is_recording,
             "is_paused": false,
+            "is_microphone_muted": false,
+            "is_system_audio_muted": false,
             "is_active": false,
             "recording_duration": null,
             "active_duration": null,

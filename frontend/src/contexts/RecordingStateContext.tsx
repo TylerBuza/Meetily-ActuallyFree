@@ -27,6 +27,8 @@ export enum RecordingStatus {
 interface RecordingState {
   isRecording: boolean;           // Is a recording session active
   isPaused: boolean;              // Is the recording paused
+  isMicrophoneMuted: boolean;     // Is only the microphone silenced
+  isSystemAudioMuted: boolean;    // Is only system audio silenced
   isActive: boolean;              // Is actively recording (recording && !paused)
   recordingDuration: number | null;  // Total duration including pauses
   activeDuration: number | null;     // Active recording time (excluding pauses)
@@ -60,6 +62,8 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
   const [state, setState] = useState<RecordingState>({
     isRecording: false,
     isPaused: false,
+    isMicrophoneMuted: false,
+    isSystemAudioMuted: false,
     isActive: false,
     recordingDuration: null,
     activeDuration: null,
@@ -92,6 +96,8 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
         ...prev,
         isRecording: backendState.is_recording,
         isPaused: backendState.is_paused,
+        isMicrophoneMuted: backendState.is_microphone_muted,
+        isSystemAudioMuted: backendState.is_system_audio_muted,
         isActive: backendState.is_active,
         recordingDuration: backendState.recording_duration,
         activeDuration: backendState.active_duration,
@@ -143,6 +149,8 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
             ...prev,
             isRecording: true,
             isPaused: false,
+            isMicrophoneMuted: false,
+            isSystemAudioMuted: false,
             isActive: true,
             status: RecordingStatus.RECORDING,  // NEW: Set status to RECORDING
           }));
@@ -170,6 +178,8 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
               statusMessage: newStatus === RecordingStatus.STOPPING ? 'Stopping recording...' : prev.statusMessage,
               isRecording: false,
               isPaused: false,
+              isMicrophoneMuted: false,
+              isSystemAudioMuted: false,
               isActive: false,
               recordingDuration: null,
               activeDuration: null,
@@ -200,6 +210,24 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
           }));
         });
         unsubscribers.push(unlistenResumed);
+
+        const unlistenMicrophoneMute = await recordingService.onMicrophoneMuteChanged(({ muted }) => {
+          console.log('[RecordingStateContext] Microphone mute changed:', muted);
+          setState(prev => ({
+            ...prev,
+            isMicrophoneMuted: muted,
+          }));
+        });
+        unsubscribers.push(unlistenMicrophoneMute);
+
+        const unlistenSystemAudioMute = await recordingService.onSystemAudioMuteChanged(({ muted }) => {
+          console.log('[RecordingStateContext] System audio mute changed:', muted);
+          setState(prev => ({
+            ...prev,
+            isSystemAudioMuted: muted,
+          }));
+        });
+        unsubscribers.push(unlistenSystemAudioMute);
 
         console.log('[RecordingStateContext] Event listeners set up successfully');
       } catch (error) {

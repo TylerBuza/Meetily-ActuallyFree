@@ -24,7 +24,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Play, Pause, Square, Mic, Volume2, AlertCircle, X, Minimize2 } from 'lucide-react';
+import { Play, Pause, Square, Mic, MicOff, Volume2, VolumeX, AlertCircle, X, Minimize2 } from 'lucide-react';
 import { LiveAudioVisualizer } from './LiveAudioVisualizer';
 import { ProcessRequest, SummaryResponse } from '@/types/summary';
 import { listen } from '@tauri-apps/api/event';
@@ -67,6 +67,8 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   // Use global recording state context for pause state (syncs with tray operations)
   const recordingState = useRecordingState();
   const isPaused = recordingState.isPaused;
+  const isMicrophoneMuted = recordingState.isMicrophoneMuted;
+  const isSystemAudioMuted = recordingState.isSystemAudioMuted;
   // Phase text published by useRecordingStart ("Preparing transcription
   // model…", "Starting audio capture…") so the wait is explained rather than
   // just being a dead button.
@@ -92,6 +94,8 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   const [isStopping, setIsStopping] = useState(false);
   const [isPausing, setIsPausing] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
+  const [isChangingMicrophoneMute, setIsChangingMicrophoneMute] = useState(false);
+  const [isChangingSystemAudioMute, setIsChangingSystemAudioMute] = useState(false);
   const MIN_RECORDING_DURATION = 2000; // 2 seconds minimum recording time
   const [transcriptionErrors, setTranscriptionErrors] = useState(0);
   const [isValidatingModel, setIsValidatingModel] = useState(false);
@@ -316,6 +320,40 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
     }
   }, [isRecording, isPaused, isResuming]);
 
+  const handleMicrophoneMute = useCallback(async () => {
+    if (!isRecording || isStopping || isChangingMicrophoneMute || isChangingSystemAudioMute) return;
+
+    setIsChangingMicrophoneMute(true);
+    try {
+      await invoke<boolean>('set_microphone_muted', { muted: !isMicrophoneMuted });
+      Analytics.trackButtonClick(
+        isMicrophoneMuted ? 'unmute_microphone' : 'mute_microphone',
+        'recording_controls'
+      );
+    } catch (error) {
+      console.error('Failed to change microphone mute state:', error);
+    } finally {
+      setIsChangingMicrophoneMute(false);
+    }
+  }, [isChangingMicrophoneMute, isChangingSystemAudioMute, isMicrophoneMuted, isRecording, isStopping]);
+
+  const handleSystemAudioMute = useCallback(async () => {
+    if (!isRecording || isStopping || isChangingMicrophoneMute || isChangingSystemAudioMute) return;
+
+    setIsChangingSystemAudioMute(true);
+    try {
+      await invoke<boolean>('set_system_audio_muted', { muted: !isSystemAudioMuted });
+      Analytics.trackButtonClick(
+        isSystemAudioMuted ? 'unmute_system_audio' : 'mute_system_audio',
+        'recording_controls'
+      );
+    } catch (error) {
+      console.error('Failed to change system audio mute state:', error);
+    } finally {
+      setIsChangingSystemAudioMute(false);
+    }
+  }, [isChangingMicrophoneMute, isChangingSystemAudioMute, isRecording, isStopping, isSystemAudioMuted]);
+
   // Collapse the full window down to the floating compact bar. Mirrors the
   // bar's expand button so the two are one control surface in two sizes; the
   // current duration seeds the bar so its timer continues rather than resets.
@@ -432,7 +470,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   return (
     <TooltipProvider>
       <div className="flex flex-col space-y-2">
-        <div className={`flex items-center rounded-3xl border border-white/10 bg-[#0f1218]/90 text-white shadow-2xl backdrop-blur-xl ${isRecording ? 'w-[640px] max-w-full gap-3 px-5 py-4' : 'w-[540px] max-w-full gap-4 px-5 py-4'}`}>
+        <div className={`flex items-center rounded-3xl border border-white/10 bg-[#0f1218]/90 text-white shadow-2xl backdrop-blur-xl ${isRecording ? 'w-[704px] max-w-full gap-3 px-5 py-4' : 'w-[540px] max-w-full gap-4 px-5 py-4'}`}>
           {isProcessing && !isParentProcessing ? (
             <div className="flex items-center space-x-2">
               <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
@@ -569,18 +607,56 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
                           fill the space between the timer and the controls. */}
                       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                         <div className="flex items-center gap-2">
-                          <Mic size={12} className="shrink-0 text-gray-400" />
-                          <span className="w-12 shrink-0 text-[11px] text-gray-400">Mic</span>
-                          <LiveAudioVisualizer active={isRecording && !isPaused} source="mic" fill bars={28} className="flex-1" />
+                          {isMicrophoneMuted
+                            ? <MicOff size={12} className="shrink-0 text-orange-400" />
+                            : <Mic size={12} className="shrink-0 text-gray-400" />}
+                          <span className={`w-12 shrink-0 text-[11px] ${isMicrophoneMuted ? 'text-orange-400' : 'text-gray-400'}`}>
+                            {isMicrophoneMuted ? 'Muted' : 'Mic'}
+                          </span>
+                          <LiveAudioVisualizer active={isRecording && !isPaused && !isMicrophoneMuted} source="mic" fill bars={28} className="flex-1" />
                         </div>
                         <div className="flex items-center gap-2">
-                          <Volume2 size={12} className="shrink-0 text-gray-400" />
-                          <span className="w-12 shrink-0 text-[11px] text-gray-400">System</span>
-                          <LiveAudioVisualizer active={isRecording && !isPaused} source="system" fill bars={28} className="flex-1" />
+                          {isSystemAudioMuted
+                            ? <VolumeX size={12} className="shrink-0 text-orange-400" />
+                            : <Volume2 size={12} className="shrink-0 text-gray-400" />}
+                          <span className={`w-12 shrink-0 text-[11px] ${isSystemAudioMuted ? 'text-orange-400' : 'text-gray-400'}`}>
+                            {isSystemAudioMuted ? 'Muted' : 'System'}
+                          </span>
+                          <LiveAudioVisualizer active={isRecording && !isPaused && !isSystemAudioMuted} source="system" fill bars={28} className="flex-1" />
                         </div>
                       </div>
 
                       <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          onClick={handleMicrophoneMute}
+                          disabled={isStopping || isChangingMicrophoneMute || isChangingSystemAudioMute}
+                          title={isMicrophoneMuted ? 'Unmute microphone' : 'Mute microphone'}
+                          aria-pressed={isMicrophoneMuted}
+                          className={`flex h-12 w-14 flex-col items-center justify-center rounded-2xl border text-xs transition-colors disabled:opacity-40 ${
+                            isMicrophoneMuted
+                              ? 'border-orange-500/40 bg-orange-500/15 text-orange-300 hover:bg-orange-500/25'
+                              : 'border-white/10 bg-white/5 text-gray-300 hover:bg-white/10'
+                          }`}
+                        >
+                          {isMicrophoneMuted ? <MicOff size={15} /> : <Mic size={15} />}
+                          <span className="mt-0.5 text-[10px]">{isMicrophoneMuted ? 'Unmute' : 'Mute'}</span>
+                        </button>
+
+                        <button
+                          onClick={handleSystemAudioMute}
+                          disabled={isStopping || isChangingMicrophoneMute || isChangingSystemAudioMute}
+                          title={isSystemAudioMuted ? 'Unmute system audio' : 'Mute system audio'}
+                          aria-pressed={isSystemAudioMuted}
+                          className={`flex h-12 w-14 flex-col items-center justify-center rounded-2xl border text-xs transition-colors disabled:opacity-40 ${
+                            isSystemAudioMuted
+                              ? 'border-orange-500/40 bg-orange-500/15 text-orange-300 hover:bg-orange-500/25'
+                              : 'border-white/10 bg-white/5 text-gray-300 hover:bg-white/10'
+                          }`}
+                        >
+                          {isSystemAudioMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+                          <span className="mt-0.5 text-[10px]">{isSystemAudioMuted ? 'Unmute' : 'Mute'}</span>
+                        </button>
+
                         <button
                           onClick={() => {
                             if (isPaused) {
@@ -591,7 +667,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
                               handlePauseRecording();
                             }
                           }}
-                          disabled={isPausing || isResuming || isStopping}
+                          disabled={isPausing || isResuming || isStopping || isChangingMicrophoneMute || isChangingSystemAudioMute}
                           title={isPaused ? 'Resume recording' : 'Pause recording'}
                           className="flex h-12 w-14 flex-col items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-xs text-gray-300 transition-colors hover:bg-white/10 disabled:opacity-40"
                         >
@@ -604,7 +680,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
                             Analytics.trackButtonClick('stop_recording', 'recording_controls');
                             handleStopRecording();
                           }}
-                          disabled={isStopping || isPausing || isResuming}
+                          disabled={isStopping || isPausing || isResuming || isChangingMicrophoneMute || isChangingSystemAudioMute}
                           title="Stop recording"
                           className="flex h-12 w-14 flex-col items-center justify-center rounded-2xl border border-red-500/30 bg-red-500/15 text-xs text-red-300 transition-colors hover:bg-red-500/25 disabled:opacity-40"
                         >

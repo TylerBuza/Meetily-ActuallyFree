@@ -19,7 +19,7 @@ use std::sync::{
 use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 
 const MINIBAR_LABEL: &str = "minibar";
-const MINIBAR_WIDTH: f64 = 580.0;
+const MINIBAR_WIDTH: f64 = 704.0;
 const MINIBAR_HEIGHT: f64 = 76.0;
 
 // Serialize window lifecycle changes so a queued minimize request cannot race a
