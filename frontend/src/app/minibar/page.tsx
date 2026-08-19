@@ -189,56 +189,50 @@ export default function MiniBarPage() {
       {/* Live input levels â€” same Rust events the main window listens to. */}
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center gap-2">
-          {isMicMuted
-            ? <MicOff size={12} className="shrink-0 text-orange-400" />
-            : <Mic size={12} className="shrink-0 text-gray-400" />}
           <span className={`w-12 text-[11px] ${isMicMuted ? 'text-orange-400' : 'text-gray-400'}`}>
-            {isMicMuted ? 'Muted' : 'Mic'}
+            Mic
           </span>
           <LiveAudioVisualizer active={!isPaused && !isStopping && !isMicMuted} source="mic" bars={14} />
+          <button
+            type="button"
+            onClick={toggleMicMute}
+            disabled={isStopping || isChangingMicMute || isChangingSystemMute}
+            title={isMicMuted ? 'Unmute microphone' : 'Mute microphone'}
+            aria-label={isMicMuted ? 'Unmute microphone' : 'Mute microphone'}
+            aria-pressed={isMicMuted}
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:opacity-40 ${
+              isMicMuted
+                ? 'border-orange-500/40 bg-orange-500/15 text-orange-300 hover:bg-orange-500/25'
+                : 'border-white/10 bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200'
+            }`}
+          >
+            {isMicMuted ? <MicOff size={13} /> : <Mic size={13} />}
+          </button>
         </div>
         <div className="flex items-center gap-2">
-          {isSystemMuted
-            ? <VolumeX size={12} className="shrink-0 text-orange-400" />
-            : <Monitor size={12} className="shrink-0 text-gray-400" />}
           <span className={`w-12 text-[11px] ${isSystemMuted ? 'text-orange-400' : 'text-gray-400'}`}>
-            {isSystemMuted ? 'Muted' : 'System'}
+            System
           </span>
           <LiveAudioVisualizer active={!isPaused && !isStopping && !isSystemMuted} source="system" bars={14} />
+          <button
+            type="button"
+            onClick={toggleSystemMute}
+            disabled={isStopping || isChangingMicMute || isChangingSystemMute}
+            title={isSystemMuted ? 'Unmute system audio' : 'Mute system audio'}
+            aria-label={isSystemMuted ? 'Unmute system audio' : 'Mute system audio'}
+            aria-pressed={isSystemMuted}
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:opacity-40 ${
+              isSystemMuted
+                ? 'border-orange-500/40 bg-orange-500/15 text-orange-300 hover:bg-orange-500/25'
+                : 'border-white/10 bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200'
+            }`}
+          >
+            {isSystemMuted ? <VolumeX size={13} /> : <Monitor size={13} />}
+          </button>
         </div>
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        <button
-          onClick={toggleMicMute}
-          disabled={isStopping || isChangingMicMute || isChangingSystemMute}
-          title={isMicMuted ? 'Unmute microphone' : 'Mute microphone'}
-          aria-pressed={isMicMuted}
-          className={`flex h-10 w-14 flex-col items-center justify-center rounded-full border text-xs transition-colors disabled:opacity-40 ${
-            isMicMuted
-              ? 'border-orange-500/40 bg-orange-500/15 text-orange-300 hover:bg-orange-500/25'
-              : 'border-white/10 bg-white/5 text-gray-300 hover:bg-white/10'
-          }`}
-        >
-          {isMicMuted ? <MicOff size={15} /> : <Mic size={15} />}
-          <span className="mt-0.5 text-[10px]">{isMicMuted ? 'Unmute' : 'Mute'}</span>
-        </button>
-
-        <button
-          onClick={toggleSystemMute}
-          disabled={isStopping || isChangingMicMute || isChangingSystemMute}
-          title={isSystemMuted ? 'Unmute system audio' : 'Mute system audio'}
-          aria-pressed={isSystemMuted}
-          className={`flex h-10 w-14 flex-col items-center justify-center rounded-full border text-xs transition-colors disabled:opacity-40 ${
-            isSystemMuted
-              ? 'border-orange-500/40 bg-orange-500/15 text-orange-300 hover:bg-orange-500/25'
-              : 'border-white/10 bg-white/5 text-gray-300 hover:bg-white/10'
-          }`}
-        >
-          {isSystemMuted ? <VolumeX size={15} /> : <Monitor size={15} />}
-          <span className="mt-0.5 text-[10px]">{isSystemMuted ? 'Unmute' : 'Mute'}</span>
-        </button>
-
         <button
           onClick={togglePause}
           disabled={isStopping || isChangingMicMute || isChangingSystemMute}

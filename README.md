@@ -10,6 +10,20 @@ An entirely free, fully unlocked fork of [Meetily](https://github.com/Zackriya-S
 
 This fork also goes beyond removing feature restrictions. It adds speaker identity, separate mic and system audio, automatic meeting detection, people profiles, richer exports, a redesigned interface, dedicated Windows and Apple Silicon installers, and numerous recording and reliability improvements.
 
+## Interface
+
+<p align="center">
+  <img src="docs/images/meetily-interface.png" alt="Meetily live recording interface with source controls" width="1100" />
+</p>
+
+<p align="center"><sub>Live recording view shown with sanitized demo meetings.</sub></p>
+
+<p align="center">
+  <img src="docs/images/v0.2.6-source-mute.png" alt="Independent microphone and system-audio mute controls in Meetily v0.2.6" width="1000" />
+</p>
+
+<p align="center"><sub>New in v0.2.6: independently mute microphone or system audio without interrupting the recording timeline.</sub></p>
+
 ## Feature Comparison
 
 Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on its project page (verified August 2026).
@@ -27,6 +41,7 @@ Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on it
 | Calendar integration | ❌ | ✅ | ❌ |
 | Speaker identification | ❌ | ✅ | ✅ |
 | Live mic and system audio visualizations | ❌ | ❌ | ✅ |
+| Independent mic and system mute controls | ❌ | ❌ | ✅ |
 | Team self-hosted deployment | ❌ | ✅ | ❌ |
 | Automatic meeting detection | ❌ | ✅ | ✅ |
 | Floating recording controls | ❌ | ❌ | ✅ |

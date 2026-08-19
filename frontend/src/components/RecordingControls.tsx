@@ -470,7 +470,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   return (
     <TooltipProvider>
       <div className="flex flex-col space-y-2">
-        <div className={`flex items-center rounded-3xl border border-white/10 bg-[#0f1218]/90 text-white shadow-2xl backdrop-blur-xl ${isRecording ? 'w-[704px] max-w-full gap-3 px-5 py-4' : 'w-[540px] max-w-full gap-4 px-5 py-4'}`}>
+        <div className={`flex items-center rounded-3xl border border-white/10 bg-[#0f1218]/90 text-white shadow-2xl backdrop-blur-xl ${isRecording ? 'w-[640px] max-w-full gap-3 px-5 py-4' : 'w-[540px] max-w-full gap-4 px-5 py-4'}`}>
           {isProcessing && !isParentProcessing ? (
             <div className="flex items-center space-x-2">
               <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
@@ -607,56 +607,50 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
                           fill the space between the timer and the controls. */}
                       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                         <div className="flex items-center gap-2">
-                          {isMicrophoneMuted
-                            ? <MicOff size={12} className="shrink-0 text-orange-400" />
-                            : <Mic size={12} className="shrink-0 text-gray-400" />}
                           <span className={`w-12 shrink-0 text-[11px] ${isMicrophoneMuted ? 'text-orange-400' : 'text-gray-400'}`}>
-                            {isMicrophoneMuted ? 'Muted' : 'Mic'}
+                            Mic
                           </span>
                           <LiveAudioVisualizer active={isRecording && !isPaused && !isMicrophoneMuted} source="mic" fill bars={28} className="flex-1" />
+                          <button
+                            type="button"
+                            onClick={handleMicrophoneMute}
+                            disabled={isStopping || isChangingMicrophoneMute || isChangingSystemAudioMute}
+                            title={isMicrophoneMuted ? 'Unmute microphone' : 'Mute microphone'}
+                            aria-label={isMicrophoneMuted ? 'Unmute microphone' : 'Mute microphone'}
+                            aria-pressed={isMicrophoneMuted}
+                            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:opacity-40 ${
+                              isMicrophoneMuted
+                                ? 'border-orange-500/40 bg-orange-500/15 text-orange-300 hover:bg-orange-500/25'
+                                : 'border-white/10 bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200'
+                            }`}
+                          >
+                            {isMicrophoneMuted ? <MicOff size={13} /> : <Mic size={13} />}
+                          </button>
                         </div>
                         <div className="flex items-center gap-2">
-                          {isSystemAudioMuted
-                            ? <VolumeX size={12} className="shrink-0 text-orange-400" />
-                            : <Volume2 size={12} className="shrink-0 text-gray-400" />}
                           <span className={`w-12 shrink-0 text-[11px] ${isSystemAudioMuted ? 'text-orange-400' : 'text-gray-400'}`}>
-                            {isSystemAudioMuted ? 'Muted' : 'System'}
+                            System
                           </span>
                           <LiveAudioVisualizer active={isRecording && !isPaused && !isSystemAudioMuted} source="system" fill bars={28} className="flex-1" />
+                          <button
+                            type="button"
+                            onClick={handleSystemAudioMute}
+                            disabled={isStopping || isChangingMicrophoneMute || isChangingSystemAudioMute}
+                            title={isSystemAudioMuted ? 'Unmute system audio' : 'Mute system audio'}
+                            aria-label={isSystemAudioMuted ? 'Unmute system audio' : 'Mute system audio'}
+                            aria-pressed={isSystemAudioMuted}
+                            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:opacity-40 ${
+                              isSystemAudioMuted
+                                ? 'border-orange-500/40 bg-orange-500/15 text-orange-300 hover:bg-orange-500/25'
+                                : 'border-white/10 bg-white/5 text-gray-400 hover:bg-white/10 hover:text-gray-200'
+                            }`}
+                          >
+                            {isSystemAudioMuted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                          </button>
                         </div>
                       </div>
 
                       <div className="flex shrink-0 items-center gap-2">
-                        <button
-                          onClick={handleMicrophoneMute}
-                          disabled={isStopping || isChangingMicrophoneMute || isChangingSystemAudioMute}
-                          title={isMicrophoneMuted ? 'Unmute microphone' : 'Mute microphone'}
-                          aria-pressed={isMicrophoneMuted}
-                          className={`flex h-12 w-14 flex-col items-center justify-center rounded-2xl border text-xs transition-colors disabled:opacity-40 ${
-                            isMicrophoneMuted
-                              ? 'border-orange-500/40 bg-orange-500/15 text-orange-300 hover:bg-orange-500/25'
-                              : 'border-white/10 bg-white/5 text-gray-300 hover:bg-white/10'
-                          }`}
-                        >
-                          {isMicrophoneMuted ? <MicOff size={15} /> : <Mic size={15} />}
-                          <span className="mt-0.5 text-[10px]">{isMicrophoneMuted ? 'Unmute' : 'Mute'}</span>
-                        </button>
-
-                        <button
-                          onClick={handleSystemAudioMute}
-                          disabled={isStopping || isChangingMicrophoneMute || isChangingSystemAudioMute}
-                          title={isSystemAudioMuted ? 'Unmute system audio' : 'Mute system audio'}
-                          aria-pressed={isSystemAudioMuted}
-                          className={`flex h-12 w-14 flex-col items-center justify-center rounded-2xl border text-xs transition-colors disabled:opacity-40 ${
-                            isSystemAudioMuted
-                              ? 'border-orange-500/40 bg-orange-500/15 text-orange-300 hover:bg-orange-500/25'
-                              : 'border-white/10 bg-white/5 text-gray-300 hover:bg-white/10'
-                          }`}
-                        >
-                          {isSystemAudioMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
-                          <span className="mt-0.5 text-[10px]">{isSystemAudioMuted ? 'Unmute' : 'Mute'}</span>
-                        </button>
-
                         <button
                           onClick={() => {
                             if (isPaused) {
