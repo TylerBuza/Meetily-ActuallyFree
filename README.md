@@ -13,16 +13,10 @@ This fork also goes beyond removing feature restrictions. It adds speaker identi
 ## Interface
 
 <p align="center">
-  <img src="docs/images/meetily-interface.png" alt="Meetily live recording interface with source controls" width="1100" />
+  <img src="docs/images/meetily-interface.png" alt="Meetily live recording interface with speaker-labelled transcription" width="1100" />
 </p>
 
-<p align="center"><sub>Live recording view shown with sanitized demo meetings.</sub></p>
-
-<p align="center">
-  <img src="docs/images/v0.2.6-source-mute.png" alt="Independent microphone and system-audio mute controls in Meetily v0.2.6" width="1000" />
-</p>
-
-<p align="center"><sub>New in v0.2.6: independently mute microphone or system audio without interrupting the recording timeline.</sub></p>
+<p align="center"><sub>Live speaker-labelled transcription with synchronized source controls, shown with sanitized demo meetings.</sub></p>
 
 ## Feature Comparison
 
