@@ -172,6 +172,46 @@ impl SettingsRepository {
         Ok(())
     }
 
+    pub async fn get_post_call_transcript_config(
+        pool: &SqlitePool,
+    ) -> std::result::Result<Option<(String, String)>, sqlx::Error> {
+        sqlx::query_as::<_, (String, String)>(
+            r#"
+            SELECT postCallProvider, postCallModel
+            FROM transcript_settings
+            WHERE id = '1'
+              AND postCallProvider IS NOT NULL
+              AND postCallModel IS NOT NULL
+            LIMIT 1
+            "#,
+        )
+        .fetch_optional(pool)
+        .await
+    }
+
+    pub async fn save_post_call_transcript_config(
+        pool: &SqlitePool,
+        provider: &str,
+        model: &str,
+    ) -> std::result::Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO transcript_settings (id, provider, model, postCallProvider, postCallModel)
+            VALUES ('1', 'parakeet', $1, $2, $3)
+            ON CONFLICT(id) DO UPDATE SET
+                postCallProvider = excluded.postCallProvider,
+                postCallModel = excluded.postCallModel
+            "#,
+        )
+        .bind(crate::config::DEFAULT_PARAKEET_MODEL)
+        .bind(provider)
+        .bind(model)
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
     pub async fn save_transcript_api_key(
         pool: &SqlitePool,
         provider: &str,

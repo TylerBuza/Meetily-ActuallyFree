@@ -4,6 +4,7 @@ use crate::api::TranscriptSegment;
 use crate::audio::decoder::{decode_audio_file, decode_audio_file_with_progress};
 use crate::audio::vad::get_speech_chunks_with_progress;
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
+use crate::database::repositories::vocabulary::VocabularyRepository;
 use crate::parakeet_engine::ParakeetEngine;
 use crate::state::AppState;
 use crate::whisper_engine::WhisperEngine;
@@ -330,6 +331,14 @@ async fn run_import<R: Runtime>(
 
     // Determine which provider to use (default to whisper)
     let use_parakeet = provider.as_deref() == Some("parakeet");
+    let initial_prompt = if use_parakeet {
+        None
+    } else {
+        let state = app
+            .try_state::<AppState>()
+            .ok_or_else(|| anyhow!("Database not initialized"))?;
+        VocabularyRepository::get_effective(state.db_manager.pool(), None).await?
+    };
 
     emit_progress(&app, "copying", 5, "Creating meeting folder...");
 
@@ -589,7 +598,11 @@ async fn run_import<R: Runtime>(
         } else {
             let engine = whisper_engine.as_ref().unwrap();
             let (text, conf, _) = engine
-                .transcribe_audio_with_confidence(segment.samples.clone(), language.clone())
+                .transcribe_audio_with_confidence(
+                    segment.samples.clone(),
+                    language.clone(),
+                    initial_prompt.as_deref(),
+                )
                 .await
                 .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?;
             (text, conf)

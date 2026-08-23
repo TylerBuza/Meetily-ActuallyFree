@@ -259,7 +259,7 @@ if ($LASTEXITCODE -ne 0) { throw "Frameless installer signing failed" }
 $signature = (Get-Content $updaterSignatureOutput -Raw).Trim()
 $latest = [ordered]@{
   version = $appVersion
-  notes = "Adds independent microphone and system-audio mute controls during recording while preserving aligned audio tracks. Requested by @frankieg33 in issue #2."
+  notes = "Fixes Windows upgrade launch failures caused by migration line endings. Adds independent live/post-call transcription choices and scoped Whisper vocabulary hints."
   pub_date = [DateTime]::UtcNow.ToString("o")
   platforms = [ordered]@{
     "windows-x86_64" = [ordered]@{

@@ -146,6 +146,7 @@ impl ParallelProcessor {
         &mut self,
         chunks: Vec<AudioChunk>,
         model_name: String,
+        vocabulary: Option<String>,
     ) -> Result<()> {
         info!("Starting parallel processing of {} chunks with model {}",
               chunks.len(), model_name);
@@ -176,7 +177,7 @@ impl ParallelProcessor {
         *self.is_stopped.write().await = false;
 
         // Spawn workers
-        self.spawn_workers(safe_worker_count, model_name).await?;
+        self.spawn_workers(safe_worker_count, model_name, vocabulary).await?;
 
         // Start resource monitoring task
         self.start_resource_monitoring().await;
@@ -185,18 +186,30 @@ impl ParallelProcessor {
         Ok(())
     }
 
-    async fn spawn_workers(&mut self, worker_count: usize, model_name: String) -> Result<()> {
+    async fn spawn_workers(
+        &mut self,
+        worker_count: usize,
+        model_name: String,
+        vocabulary: Option<String>,
+    ) -> Result<()> {
         self.workers.clear();
 
         for worker_id in 0..worker_count {
-            let worker = self.create_worker(worker_id as u32, model_name.clone()).await?;
+            let worker = self
+                .create_worker(worker_id as u32, model_name.clone(), vocabulary.clone())
+                .await?;
             self.workers.push(worker);
         }
 
         Ok(())
     }
 
-    async fn create_worker(&self, worker_id: u32, model_name: String) -> Result<Worker> {
+    async fn create_worker(
+        &self,
+        worker_id: u32,
+        model_name: String,
+        vocabulary: Option<String>,
+    ) -> Result<Worker> {
         info!("Creating worker {}", worker_id);
 
         // Create isolated WhisperEngine for this worker
@@ -263,7 +276,8 @@ impl ParallelProcessor {
                             &engine_ref,
                             chunk.clone(),
                             &model_name,
-                            worker_id
+                            worker_id,
+                            vocabulary.as_deref(),
                         ).await;
 
                         // Handle result
@@ -330,6 +344,7 @@ impl ParallelProcessor {
         chunk: AudioChunk,
         model_name: &str,
         worker_id: u32,
+        vocabulary: Option<&str>,
     ) -> Result<TranscriptionResult> {
         let start_time = std::time::Instant::now();
 
@@ -344,7 +359,8 @@ impl ParallelProcessor {
         let language = crate::get_language_preference_internal();
 
         // Transcribe with timeout to prevent hanging
-        let transcription_future = engine.transcribe_audio(chunk.data.clone(), language);
+        let transcription_future =
+            engine.transcribe_audio(chunk.data.clone(), language, vocabulary);
         let timeout_duration = tokio::time::Duration::from_secs(120); // 2 minute timeout per chunk
 
         let text = tokio::time::timeout(timeout_duration, transcription_future)

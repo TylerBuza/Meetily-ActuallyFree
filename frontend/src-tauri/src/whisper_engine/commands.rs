@@ -502,7 +502,10 @@ pub async fn whisper_validate_model_ready_with_config<R: tauri::Runtime>(
 }
 
 #[command]
-pub async fn whisper_transcribe_audio(audio_data: Vec<f32>) -> Result<String, String> {
+pub async fn whisper_transcribe_audio<R: Runtime>(
+    app: AppHandle<R>,
+    audio_data: Vec<f32>,
+) -> Result<String, String> {
     let engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
         guard.as_ref().cloned()
@@ -511,8 +514,17 @@ pub async fn whisper_transcribe_audio(audio_data: Vec<f32>) -> Result<String, St
     if let Some(engine) = engine {
         // Get language preference
         let language = crate::get_language_preference_internal();
+        let initial_prompt = match app.try_state::<crate::state::AppState>() {
+            Some(state) => crate::database::repositories::vocabulary::VocabularyRepository::get_effective(
+                state.db_manager.pool(),
+                None,
+            )
+            .await
+            .map_err(|error| error.to_string())?,
+            None => None,
+        };
         engine
-            .transcribe_audio(audio_data, language)
+            .transcribe_audio(audio_data, language, initial_prompt.as_deref())
             .await
             .map_err(|e| format!("Transcription failed: {}", e))
     } else {

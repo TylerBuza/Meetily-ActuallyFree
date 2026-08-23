@@ -17,7 +17,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 
 interface ModelManagerProps {
   selectedModel?: string;
-  onModelSelect?: (modelName: string) => void;
+  onModelSelect?: (modelName: string) => void | boolean | Promise<void | boolean>;
   className?: string;
   autoSave?: boolean;
 }
@@ -249,8 +249,10 @@ export function ModelManager({
         model: modelName,
         apiKey: null
       });
+      return true;
     } catch (error) {
       console.error('Failed to save model selection:', error);
+      return false;
     }
   };
 
@@ -332,11 +334,13 @@ export function ModelManager({
     setHasUserSelection(true);
 
     if (onModelSelect) {
-      onModelSelect(modelName);
+      const accepted = await onModelSelect(modelName);
+      if (accepted === false) return;
     }
 
     if (autoSave) {
-      await saveModelSelection(modelName);
+      const saved = await saveModelSelection(modelName);
+      if (!saved) return;
     }
 
     const displayName = getDisplayName(modelName);
@@ -536,8 +540,8 @@ function ModelCard({
         ${isSelected && isAvailable
           ? 'border-blue-500 bg-blue-50'
           : isAvailable
-            ? 'border-gray-200 hover:border-gray-300 bg-white'
-            : 'border-gray-200 bg-gray-50'
+            ? 'border-[var(--af-border)] bg-[var(--af-panel-2)] hover:border-[var(--af-border-strong)]'
+            : 'border-[var(--af-border)] bg-[var(--af-panel-2)]'
         }
         ${isAvailable ? '' : 'cursor-default'}
       `}
@@ -703,9 +707,16 @@ function ModelCard({
                 Cancel
               </button>
             </div>
-            <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div
+              className="h-3 w-full overflow-hidden rounded-full border border-blue-400/50 bg-slate-950/70 p-px shadow-inner"
+              role="progressbar"
+              aria-label={`Downloading ${displayName}`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(downloadProgress)}
+            >
               <motion.div
-                className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full"
+                className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 shadow-[0_0_10px_rgba(59,130,246,0.7)]"
                 initial={{ width: 0 }}
                 animate={{ width: `${downloadProgress}%` }}
                 transition={{ duration: 0.3, ease: 'easeOut' }}

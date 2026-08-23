@@ -30,6 +30,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import type { RawModelInfo } from '@/hooks/useTranscriptionModels';
+import { isVisibleParakeetModel } from '@/lib/parakeet';
 
 type Stage = 'idle' | 'prompt' | 'enhancing' | 'diarizing' | 'refreshing' | 'error';
 type FailedStage = 'enhancing' | 'diarizing' | 'pre-diarization-refresh' | 'post-diarization-refresh';
@@ -54,6 +55,11 @@ interface ModelChoice {
   name: string;
 }
 
+interface PostCallTranscriptConfig {
+  provider: 'live' | 'whisper' | 'parakeet';
+  model: string;
+}
+
 async function resolveEnhancementModel(
   configuredProvider?: string,
   configuredModel?: string,
@@ -67,7 +73,7 @@ async function resolveEnhancementModel(
       .filter((model) => model.status === 'Available')
       .map((model) => ({ provider: 'whisper' as const, name: model.name })),
     ...parakeetModels
-      .filter((model) => model.status === 'Available')
+      .filter((model) => model.status === 'Available' && isVisibleParakeetModel(model.name))
       .map((model) => ({ provider: 'parakeet' as const, name: model.name })),
   ];
   const normalizedProvider = configuredProvider === 'localWhisper'
@@ -151,6 +157,8 @@ async function runRetranscription({
         language,
         model: model.name,
         provider: model.provider,
+        vocabularyTerms: null,
+        vocabularyScope: null,
       });
     } catch (error) {
       finish(error);
@@ -255,9 +263,12 @@ export function PostCallProcessingDialog({
     setStage('enhancing');
     setProgress(0);
     setMessage('Preparing enhanced transcript...');
+    const postCallConfig = await invoke<PostCallTranscriptConfig>('api_get_post_call_transcript_config')
+      .catch(() => ({ provider: 'live' as const, model: '' }));
+    const useLiveDefault = postCallConfig.provider === 'live';
     const model = await resolveEnhancementModel(
-      transcriptModelConfig?.provider,
-      transcriptModelConfig?.model,
+      useLiveDefault ? transcriptModelConfig?.provider : postCallConfig.provider,
+      useLiveDefault ? transcriptModelConfig?.model : postCallConfig.model,
     );
     await runRetranscription({
       meetingId,

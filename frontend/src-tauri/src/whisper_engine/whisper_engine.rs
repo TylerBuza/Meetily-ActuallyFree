@@ -4,7 +4,7 @@ use std::path::{PathBuf};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingStrategy};
+use whisper_rs::{WhisperContext, WhisperContextParameters, WhisperToken, FullParams, SamplingStrategy};
 use serde::{Serialize, Deserialize};
 use anyhow::{Result, anyhow};
 use reqwest::Client;
@@ -12,6 +12,8 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use crate::config::WHISPER_MODEL_CATALOG;
 use super::acceleration::{whisper_context_acceleration_for, WhisperCompiledBackend};
+
+const MAX_INITIAL_PROMPT_TOKENS: usize = 224;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ModelStatus {
@@ -50,6 +52,25 @@ pub struct WhisperEngine {
 }
 
 impl WhisperEngine {
+    fn tokenize_initial_prompt(
+        ctx: &WhisperContext,
+        initial_prompt: Option<&str>,
+    ) -> Result<Vec<WhisperToken>> {
+        let Some(prompt) = initial_prompt.filter(|prompt| !prompt.trim().is_empty()) else {
+            return Ok(Vec::new());
+        };
+
+        let mut tokens = ctx.tokenize(prompt, prompt.len().saturating_add(1))?;
+        if tokens.len() > MAX_INITIAL_PROMPT_TOKENS {
+            log::warn!(
+                "Whisper vocabulary prompt exceeded {} tokens and was truncated",
+                MAX_INITIAL_PROMPT_TOKENS
+            );
+            tokens.truncate(MAX_INITIAL_PROMPT_TOKENS);
+        }
+        Ok(tokens)
+    }
+
     /// Detect available GPU acceleration capabilities
     fn detect_gpu_acceleration() -> bool {
         match WhisperCompiledBackend::current() {
@@ -510,10 +531,17 @@ impl WhisperEngine {
     }
     
     /// Transcribe audio with streaming support for partial results and adaptive quality
-    pub async fn transcribe_audio_with_confidence(&self, audio_data: Vec<f32>, language: Option<String>) -> Result<(String, f32, bool)> {
+    pub async fn transcribe_audio_with_confidence(
+        &self,
+        audio_data: Vec<f32>,
+        language: Option<String>,
+        initial_prompt: Option<&str>,
+    ) -> Result<(String, f32, bool)> {
         let ctx_lock = self.current_context.read().await;
         let ctx = ctx_lock.as_ref()
             .ok_or_else(|| anyhow!("No model loaded. Please load a model first."))?;
+
+        let prompt_tokens = Self::tokenize_initial_prompt(ctx, initial_prompt)?;
 
         // Get adaptive configuration based on hardware
         let hardware_profile = crate::audio::HardwareProfile::detect();
@@ -524,6 +552,9 @@ impl WhisperEngine {
             beam_size: adaptive_config.beam_size as i32,
             patience: 1.0
         });
+        if !prompt_tokens.is_empty() {
+            params.set_tokens(&prompt_tokens);
+        }
 
         // Configure with adaptive settings
         // If language is "auto" or None, use automatic language detection (pass None)
@@ -627,10 +658,17 @@ impl WhisperEngine {
         Ok((cleaned_result, avg_confidence, is_partial))
     }
 
-    pub async fn transcribe_audio(&self, audio_data: Vec<f32>, language: Option<String>) -> Result<String> {
+    pub async fn transcribe_audio(
+        &self,
+        audio_data: Vec<f32>,
+        language: Option<String>,
+        initial_prompt: Option<&str>,
+    ) -> Result<String> {
         let ctx_lock = self.current_context.read().await;
         let ctx = ctx_lock.as_ref()
             .ok_or_else(|| anyhow!("No model loaded. Please load a model first."))?;
+
+        let prompt_tokens = Self::tokenize_initial_prompt(ctx, initial_prompt)?;
 
         // Get adaptive configuration based on hardware
         let hardware_profile = crate::audio::HardwareProfile::detect();
@@ -641,6 +679,9 @@ impl WhisperEngine {
             beam_size: adaptive_config.beam_size as i32,
             patience: 1.0
         });
+        if !prompt_tokens.is_empty() {
+            params.set_tokens(&prompt_tokens);
+        }
 
         // Configure for good quality
         // If language is "auto" or None, use automatic language detection (pass None)

@@ -5,6 +5,7 @@ use crate::audio::vad::get_speech_chunks_with_thresholds_and_progress;
 use super::common::{create_transcript_segments, split_segment_at_silence, write_transcripts_json};
 use super::constants::AUDIO_EXTENSIONS;
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
+use crate::database::repositories::vocabulary::VocabularyRepository;
 use crate::parakeet_engine::ParakeetEngine;
 use crate::state::AppState;
 use crate::whisper_engine::WhisperEngine;
@@ -95,9 +96,19 @@ async fn start_retranscription<R: Runtime>(
     language: Option<String>,
     model: Option<String>,
     provider: Option<String>,
+    initial_prompt: Option<String>,
 ) -> Result<RetranscriptionResult> {
     let use_parakeet = provider.as_deref() == Some("parakeet");
-    let result = run_retranscription(app.clone(), meeting_id.clone(), meeting_folder_path, language, model, provider).await;
+    let result = run_retranscription(
+        app.clone(),
+        meeting_id.clone(),
+        meeting_folder_path,
+        language,
+        model,
+        provider,
+        initial_prompt,
+    )
+    .await;
 
     // Unload the engine after the batch job (success, failure, or cancellation)
     super::common::unload_engine_after_batch(use_parakeet).await;
@@ -225,6 +236,7 @@ async fn run_retranscription<R: Runtime>(
     language: Option<String>,
     model: Option<String>,
     provider: Option<String>,
+    initial_prompt: Option<String>,
 ) -> Result<RetranscriptionResult> {
     let folder_path = PathBuf::from(&meeting_folder_path);
     let audio_path = find_audio_file(&folder_path)?;
@@ -444,7 +456,11 @@ async fn run_retranscription<R: Runtime>(
         } else {
             let engine = whisper_engine.as_ref().unwrap();
             let (text, conf, _) = engine
-                .transcribe_audio_with_confidence(segment.samples.clone(), language.clone())
+                .transcribe_audio_with_confidence(
+                    segment.samples.clone(),
+                    language.clone(),
+                    initial_prompt.as_deref(),
+                )
                 .await
                 .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?;
             (text, conf)
@@ -858,12 +874,47 @@ pub async fn start_retranscription_command<R: Runtime>(
     language: Option<String>,
     model: Option<String>,
     provider: Option<String>,
+    vocabulary_terms: Option<String>,
+    vocabulary_scope: Option<String>,
 ) -> Result<RetranscriptionStarted, String> {
 
     // Reserve before returning so duplicate requests and cancellation also see
     // jobs queued behind an offline diarization pass.
     let guard = RetranscriptionGuard::acquire()?;
     RETRANSCRIPTION_CANCELLED.store(false, Ordering::SeqCst);
+
+    let use_parakeet = provider.as_deref() == Some("parakeet");
+    let initial_prompt = if use_parakeet {
+        if vocabulary_terms
+            .as_deref()
+            .is_some_and(|terms| !terms.trim().is_empty())
+        {
+            return Err("Vocabulary hints are only supported by Whisper".to_string());
+        }
+        None
+    } else {
+        let state = app
+            .try_state::<AppState>()
+            .ok_or_else(|| "Database not initialized".to_string())?;
+        let pool = state.db_manager.pool();
+        if let Some(terms) = vocabulary_terms
+            .as_deref()
+            .filter(|terms| !terms.trim().is_empty())
+        {
+            match vocabulary_scope.as_deref().unwrap_or("meeting") {
+                "meeting" => {
+                    VocabularyRepository::add_meeting(pool, &meeting_id, terms).await?;
+                }
+                "global" => {
+                    VocabularyRepository::add_global(pool, terms).await?;
+                }
+                _ => return Err("Invalid vocabulary scope".to_string()),
+            }
+        }
+        VocabularyRepository::get_effective(pool, Some(&meeting_id))
+            .await
+            .map_err(|error| error.to_string())?
+    };
 
     // Clone values for the spawned task
     let meeting_id_clone = meeting_id.clone();
@@ -879,6 +930,7 @@ pub async fn start_retranscription_command<R: Runtime>(
             language,
             model,
             provider,
+            initial_prompt,
         )
         .await;
 

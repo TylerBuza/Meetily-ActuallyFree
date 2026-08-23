@@ -38,6 +38,14 @@ export default function SettingsPage() {
   const [tabsOverflow, setTabsOverflow] = useState(false);
 
   useEffect(() => {
+    const requestedTab = sessionStorage.getItem('meetily-settings-tab');
+    if (requestedTab && TABS.some((tab) => tab.value === requestedTab)) {
+      setActiveTab(requestedTab);
+    }
+    sessionStorage.removeItem('meetily-settings-tab');
+  }, []);
+
+  useEffect(() => {
     const loadTranscriptConfig = async () => {
       try {
         const config = await invoke('api_get_transcript_config') as any;

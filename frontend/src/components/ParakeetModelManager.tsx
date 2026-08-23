@@ -9,12 +9,13 @@ import {
   ParakeetAPI,
   getModelDisplayInfo,
   getModelDisplayName,
-  formatFileSize
+  formatFileSize,
+  isVisibleParakeetModel
 } from '../lib/parakeet';
 
 interface ParakeetModelManagerProps {
   selectedModel?: string;
-  onModelSelect?: (modelName: string) => void;
+  onModelSelect?: (modelName: string) => void | boolean | Promise<void | boolean>;
   className?: string;
   autoSave?: boolean;
 }
@@ -217,8 +218,10 @@ export function ParakeetModelManager({
         model: modelName,
         apiKey: null
       });
+      return true;
     } catch (error) {
       console.error('Failed to save model selection:', error);
+      return false;
     }
   };
 
@@ -301,11 +304,13 @@ export function ParakeetModelManager({
 
   const selectModel = async (modelName: string) => {
     if (onModelSelect) {
-      onModelSelect(modelName);
+      const accepted = await onModelSelect(modelName);
+      if (accepted === false) return;
     }
 
     if (autoSave) {
-      await saveModelSelection(modelName);
+      const saved = await saveModelSelection(modelName);
+      if (!saved) return;
     }
 
     const displayInfo = getModelDisplayInfo(modelName);
@@ -364,10 +369,11 @@ export function ParakeetModelManager({
     );
   }
 
-  const recommendedModel = models.find(m =>
+  const visibleModels = models.filter(m => isVisibleParakeetModel(m.name));
+  const recommendedModel = visibleModels.find(m =>
     m.name === 'parakeet-tdt-0.6b-v3-int8'
   );
-  const otherModels = models.filter(m =>
+  const otherModels = visibleModels.filter(m =>
     m.name !== 'parakeet-tdt-0.6b-v3-int8'
   );
 
@@ -477,8 +483,8 @@ function ModelCard({
         ${isSelected && isAvailable
           ? 'border-blue-500 bg-blue-50'
           : isAvailable
-            ? 'border-gray-200 hover:border-gray-300 bg-white'
-            : 'border-gray-200 bg-gray-50'
+            ? 'border-[var(--af-border)] bg-[var(--af-panel-2)] hover:border-[var(--af-border-strong)]'
+            : 'border-[var(--af-border)] bg-[var(--af-panel-2)]'
         }
         ${isAvailable ? '' : 'cursor-default'}
       `}

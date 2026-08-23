@@ -86,6 +86,12 @@ export const PARAKEET_MODEL_CONFIGS: Record<string, Partial<ParakeetModelInfo>> 
   }
 };
 
+// Keep legacy model support in the backend for existing installs, but only
+// offer the current v3 models in model pickers.
+export function isVisibleParakeetModel(modelName: string): boolean {
+  return modelName !== 'parakeet-tdt-0.6b-v2-int8';
+}
+
 // Helper functions
 export function getModelIcon(accuracy: ModelAccuracy): string {
   switch (accuracy) {

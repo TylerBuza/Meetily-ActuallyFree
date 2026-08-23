@@ -9,7 +9,7 @@ use crate::{
         models::MeetingModel,
         repositories::{
             meeting::MeetingsRepository, setting::SettingsRepository,
-            transcript::TranscriptsRepository,
+            transcript::TranscriptsRepository, vocabulary::VocabularyRepository,
         },
     },
     state::AppState,
@@ -109,11 +109,25 @@ pub struct TranscriptConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostCallTranscriptConfig {
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SaveTranscriptConfigRequest {
     pub provider: String,
     pub model: String,
     #[serde(rename = "apiKey")]
     pub api_key: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WhisperVocabularyConfig {
+    pub global: String,
+    pub meeting: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -707,6 +721,82 @@ pub async fn api_save_transcript_config<R: Runtime>(
     Ok(
         serde_json::json!({ "status": "success", "message": "Transcript configuration saved successfully" }),
     )
+}
+
+#[tauri::command]
+pub async fn api_get_post_call_transcript_config(
+    state: tauri::State<'_, AppState>,
+) -> Result<PostCallTranscriptConfig, String> {
+    let pool = state.db_manager.pool();
+    let config = SettingsRepository::get_post_call_transcript_config(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+    let (provider, model) = config.unwrap_or_else(|| ("live".to_string(), String::new()));
+    Ok(PostCallTranscriptConfig { provider, model })
+}
+
+#[tauri::command]
+pub async fn api_save_post_call_transcript_config(
+    state: tauri::State<'_, AppState>,
+    provider: String,
+    model: String,
+) -> Result<(), String> {
+    if !matches!(provider.as_str(), "live" | "whisper" | "parakeet") {
+        return Err("Invalid post-call transcription provider".to_string());
+    }
+    if provider != "live" && model.trim().is_empty() {
+        return Err("A post-call transcription model is required".to_string());
+    }
+    SettingsRepository::save_post_call_transcript_config(
+        state.db_manager.pool(),
+        &provider,
+        if provider == "live" { "" } else { model.trim() },
+    )
+    .await
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn api_get_whisper_vocabulary(
+    state: tauri::State<'_, AppState>,
+    meeting_id: Option<String>,
+) -> Result<WhisperVocabularyConfig, String> {
+    let pool = state.db_manager.pool();
+    let global = VocabularyRepository::get_global(pool)
+        .await
+        .map_err(|error| error.to_string())?
+        .unwrap_or_default();
+    let meeting = match meeting_id.as_deref() {
+        Some(meeting_id) => VocabularyRepository::get_meeting(pool, meeting_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .unwrap_or_default(),
+        None => String::new(),
+    };
+    Ok(WhisperVocabularyConfig { global, meeting })
+}
+
+#[tauri::command]
+pub async fn api_save_global_whisper_vocabulary(
+    state: tauri::State<'_, AppState>,
+    vocabulary: String,
+) -> Result<String, String> {
+    let normalized = VocabularyRepository::normalize(&vocabulary)?;
+    VocabularyRepository::save_global(state.db_manager.pool(), normalized.as_deref())
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(normalized.unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn api_save_meeting_whisper_vocabulary(
+    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+    vocabulary: String,
+) -> Result<String, String> {
+    VocabularyRepository::save_meeting(state.db_manager.pool(), &meeting_id, &vocabulary)
+        .await
+        .map(|normalized| normalized.unwrap_or_default())
 }
 
 #[tauri::command]

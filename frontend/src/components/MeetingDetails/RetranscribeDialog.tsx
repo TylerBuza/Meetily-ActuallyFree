@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { RefreshCw, Globe, Loader2, AlertCircle, CheckCircle2, X, Cpu } from 'lucide-react';
+import { RefreshCw, Globe, Loader2, AlertCircle, CheckCircle2, X, Cpu, BookOpen } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from '../ui/dialog';
 import { Button } from '../ui/button';
+import { Textarea } from '../ui/textarea';
 import {
   Select,
   SelectContent,
@@ -20,6 +21,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import { useConfig } from '@/contexts/ConfigContext';
+import { useRouter } from 'next/navigation';
 import { LANGUAGES } from '@/constants/languages';
 import { useTranscriptionModels, ModelOption } from '@/hooks/useTranscriptionModels';
 import Analytics from '@/lib/analytics';
@@ -51,6 +53,16 @@ interface RetranscriptionError {
   error: string;
 }
 
+interface WhisperVocabularyConfig {
+  global: string;
+  meeting: string;
+}
+
+interface PostCallTranscriptConfig {
+  provider: 'live' | 'whisper' | 'parakeet';
+  model: string;
+}
+
 export function RetranscribeDialog({
   open,
   onOpenChange,
@@ -58,11 +70,17 @@ export function RetranscribeDialog({
   meetingFolderPath,
   onComplete,
 }: RetranscribeDialogProps) {
+  const router = useRouter();
   const { selectedLanguage, transcriptModelConfig } = useConfig();
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<RetranscriptionProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedLang, setSelectedLang] = useState(selectedLanguage || 'auto');
+  const [vocabularyTerms, setVocabularyTerms] = useState('');
+  const [vocabularyScope, setVocabularyScope] = useState<'meeting' | 'global'>('meeting');
+  const [savedMeetingVocabulary, setSavedMeetingVocabulary] = useState('');
+  const [isClearingMeetingVocabulary, setIsClearingMeetingVocabulary] = useState(false);
+  const [listenersReady, setListenersReady] = useState(false);
 
   // Use centralized model fetching hook
   const {
@@ -70,9 +88,18 @@ export function RetranscribeDialog({
     selectedModelKey,
     setSelectedModelKey,
     loadingModels,
+    hasWhisperModel,
+    hasParakeetModel,
     fetchModels,
     resetSelection,
   } = useTranscriptionModels(transcriptModelConfig);
+
+  const openWhisperSettings = () => {
+    sessionStorage.setItem('meetily-settings-tab', 'Transcriptionmodels');
+    sessionStorage.setItem('meetily-settings-transcription-section', 'post-call');
+    onOpenChange(false);
+    router.push('/settings');
+  };
 
   // Stable refs for callbacks to avoid listener re-registration
   const onCompleteRef = useRef(onComplete);
@@ -112,16 +139,34 @@ export function RetranscribeDialog({
       setProgress(null);
       setError(null);
       setSelectedLang(selectedLanguage || 'auto');
+      setVocabularyTerms('');
+      setVocabularyScope('meeting');
+      setSavedMeetingVocabulary('');
 
-      // Fetch available models using centralized hook
-      fetchModels();
+      // A post-call default is independent from the live model. Existing users
+      // stay on the live model until they explicitly choose a post-call model.
+      void invoke<PostCallTranscriptConfig>('api_get_post_call_transcript_config')
+        .then((config) => fetchModels(config.provider === 'live'
+          ? transcriptModelConfig
+          : { provider: config.provider, model: config.model }))
+        .catch((loadError) => {
+          console.error('Failed to load post-call transcription config:', loadError);
+          return fetchModels();
+        });
+      invoke<WhisperVocabularyConfig>('api_get_whisper_vocabulary', { meetingId })
+        .then((config) => setSavedMeetingVocabulary(config.meeting || ''))
+        .catch((loadError) => console.error('Failed to load meeting vocabulary:', loadError));
     }
-  }, [open, selectedLanguage, transcriptModelConfig, fetchModels]);
+  }, [open, selectedLanguage, transcriptModelConfig, fetchModels, meetingId]);
 
   // Listen for retranscription events
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setListenersReady(false);
+      return;
+    }
 
+    setListenersReady(false);
     const unlisteners: UnlistenFn[] = [];
     const cleanedUpRef = { current: false };
 
@@ -186,17 +231,27 @@ export function RetranscribeDialog({
         return;
       }
       unlisteners.push(unlistenError);
+      setListenersReady(true);
     };
 
-    setupListeners();
+    void setupListeners().catch((listenerError) => {
+      if (!cleanedUpRef.current) {
+        setError(`Could not prepare retranscription events: ${String(listenerError)}`);
+      }
+    });
 
     return () => {
       cleanedUpRef.current = true;
+      setListenersReady(false);
       unlisteners.forEach((unlisten) => unlisten());
     };
   }, [open, meetingId]);
 
   const handleStartRetranscription = async () => {
+    if (!listenersReady) {
+      setError('Retranscription is still initializing. Please try again.');
+      return;
+    }
     if (!meetingFolderPath) {
       setError('Meeting folder path not available');
       return;
@@ -211,7 +266,8 @@ export function RetranscribeDialog({
       await Analytics.track('enhance_transcript_started', {
         language: isParakeetModel ? 'auto' : (selectedLang === 'auto' ? 'auto' : selectedLang),
         model_provider: selectedModelDetails?.provider || '',
-        model_name: selectedModelDetails?.name || ''
+        model_name: selectedModelDetails?.name || '',
+        vocabulary_scope: vocabularyTerms.trim() ? vocabularyScope : 'unchanged'
       });
 
       await invoke('start_retranscription_command', {
@@ -220,6 +276,8 @@ export function RetranscribeDialog({
         language: languageToSend,
         model: selectedModelDetails?.name || null,
         provider: selectedModelDetails?.provider || null,
+        vocabularyTerms: isParakeetModel ? null : vocabularyTerms.trim() || null,
+        vocabularyScope: isParakeetModel ? null : vocabularyScope,
       });
     } catch (err: any) {
       setIsProcessing(false);
@@ -242,6 +300,22 @@ export function RetranscribeDialog({
       }
     }
     onOpenChange(false);
+  };
+
+  const clearMeetingVocabulary = async () => {
+    setIsClearingMeetingVocabulary(true);
+    try {
+      await invoke<string>('api_save_meeting_whisper_vocabulary', {
+        meetingId,
+        vocabulary: '',
+      });
+      setSavedMeetingVocabulary('');
+      toast.success('Meeting vocabulary cleared');
+    } catch (clearError) {
+      toast.error(typeof clearError === 'string' ? clearError : String(clearError));
+    } finally {
+      setIsClearingMeetingVocabulary(false);
+    }
   };
 
   // Prevent closing during processing
@@ -267,7 +341,7 @@ export function RetranscribeDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="sm:max-w-[450px]"
+        className="max-h-[85vh] overflow-y-auto sm:max-w-[500px]"
         onEscapeKeyDown={handleEscapeKeyDown}
         onInteractOutside={handleInteractOutside}
       >
@@ -295,7 +369,7 @@ export function RetranscribeDialog({
               ? progress?.message || 'Processing audio...'
               : error
                 ? 'An error occurred during retranscription'
-                : 'Re-process the audio with different language settings'}
+                : 'Re-process the audio with a different model, language, or vocabulary hints'}
           </DialogDescription>
         </DialogHeader>
 
@@ -336,13 +410,23 @@ export function RetranscribeDialog({
             )
           )}
 
-          {!isProcessing && !error && availableModels.length > 0 && (
+          {!isProcessing && !error && (
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <Cpu className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm font-medium">Model</span>
               </div>
-              <Select value={selectedModelKey} onValueChange={setSelectedModelKey} disabled={loadingModels}>
+              <Select
+                value={selectedModelKey}
+                onValueChange={(value) => {
+                  if (value === 'install:whisper') {
+                    openWhisperSettings();
+                    return;
+                  }
+                  setSelectedModelKey(value);
+                }}
+                disabled={loadingModels}
+              >
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder={loadingModels ? "Loading models..." : "Select model"} />
                 </SelectTrigger>
@@ -352,11 +436,107 @@ export function RetranscribeDialog({
                       {model.displayName} ({Math.round(model.size_mb)} MB)
                     </SelectItem>
                   ))}
+                  {!hasWhisperModel && (
+                    <SelectItem value="install:whisper">
+                      + Install a Whisper model...
+                    </SelectItem>
+                  )}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
-                Choose a transcription model
-              </p>
+              {!loadingModels && (
+                <div className="grid gap-2 text-xs sm:grid-cols-2">
+                  <div className="rounded-md border border-border bg-muted/30 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">Parakeet</span>
+                      <span className={hasParakeetModel ? 'text-emerald-600' : 'text-muted-foreground'}>
+                        {hasParakeetModel ? 'Installed' : 'Not installed'}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-muted-foreground">
+                      Faster and smaller with automatic language detection. Does not support vocabulary hints.
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-border bg-muted/30 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">Whisper</span>
+                      <span className={hasWhisperModel ? 'text-emerald-600' : 'text-amber-600'}>
+                        {hasWhisperModel ? 'Installed' : 'Optional'}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-muted-foreground">
+                      Better control for names and jargon, with vocabulary hints and manual language selection. Usually slower and larger.
+                    </p>
+                    {!hasWhisperModel && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="mt-2 h-7 w-full text-xs"
+                        onClick={openWhisperSettings}
+                      >
+                        Install Whisper
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!isProcessing && !error && !isParakeetModel && (
+            <div className="space-y-3 rounded-lg border border-border p-3">
+              <div className="flex items-center gap-2">
+                <BookOpen className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium">Add vocabulary hints</span>
+              </div>
+              <Textarea
+                value={vocabularyTerms}
+                onChange={(event) => setVocabularyTerms(event.target.value)}
+                maxLength={1000}
+                rows={3}
+                placeholder={'Participant names, company names, acronyms, or technical terms'}
+              />
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>Meeting terms take priority within Whisper&apos;s prompt limit.</span>
+                <span>{vocabularyTerms.length}/1000</span>
+              </div>
+              {vocabularyTerms.trim() && (
+                <div className="space-y-2">
+                  <span className="text-xs font-medium">Use these terms for</span>
+                  <Select
+                    value={vocabularyScope}
+                    onValueChange={(value) => setVocabularyScope(value as 'meeting' | 'global')}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="meeting">This meeting only</SelectItem>
+                      <SelectItem value="global">This and future meetings</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {savedMeetingVocabulary && (
+                <div className="rounded-md bg-muted/60 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-medium">Already saved for this meeting</p>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      disabled={isClearingMeetingVocabulary}
+                      onClick={clearMeetingVocabulary}
+                    >
+                      {isClearingMeetingVocabulary ? 'Clearing...' : 'Clear'}
+                    </Button>
+                  </div>
+                  <p className="mt-1 max-h-16 overflow-y-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">
+                    {savedMeetingVocabulary}
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -396,7 +576,7 @@ export function RetranscribeDialog({
               <Button
                 onClick={handleStartRetranscription}
                 className="bg-blue-600 hover:bg-blue-700"
-                disabled={!meetingFolderPath}
+                disabled={!meetingFolderPath || !listenersReady || isClearingMeetingVocabulary || loadingModels || !selectedModelDetails}
               >
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Start Retranscription

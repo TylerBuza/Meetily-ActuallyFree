@@ -7,6 +7,8 @@ use crate::whisper_engine::{
     ParallelProcessor, ParallelConfig, SystemMonitor,
     AudioChunk, ProcessingStatus
 };
+use crate::database::repositories::vocabulary::VocabularyRepository;
+use crate::state::AppState;
 
 // Global state for parallel processor
 pub struct ParallelProcessorState {
@@ -61,6 +63,7 @@ pub async fn initialize_parallel_processor(
 #[tauri::command]
 pub async fn start_parallel_processing(
     state: State<'_, ParallelProcessorState>,
+    app_state: State<'_, AppState>,
     audio_chunks: Vec<serde_json::Value>, // JSON representation of AudioChunk
     model_name: String,
 ) -> Result<String, String> {
@@ -74,7 +77,11 @@ pub async fn start_parallel_processing(
     let processor = processor_guard.as_mut()
         .ok_or_else(|| "Parallel processor not initialized".to_string())?;
 
-    processor.start_processing(chunks.clone(), model_name.clone())
+    let vocabulary = VocabularyRepository::get_global(app_state.db_manager.pool())
+        .await
+        .map_err(|error| format!("Failed to load Whisper vocabulary: {error}"))?;
+
+    processor.start_processing(chunks.clone(), model_name.clone(), vocabulary)
         .await
         .map_err(|e| format!("Failed to start parallel processing: {}", e))?;
 

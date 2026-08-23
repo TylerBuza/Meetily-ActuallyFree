@@ -326,6 +326,17 @@ people(id, display_name, normalized_name, notes, created_at, updated_at)
 person_speakers(person_id, meeting_id, speaker_label)
 ```
 
+Migration files are immutable byte-for-byte after release. SQLx hashes the raw
+SQL, including line endings. Historical migrations through 2025 intentionally
+retain their platform checkout behavior because Windows and macOS releases
+embedded different line endings; never normalize those files retroactively.
+Every new migration must instead receive an explicit LF entry in
+`.gitattributes` before release. Windows `0.2.5` and `0.2.6` accidentally
+embedded LF and CRLF variants of the same people migration. Database startup
+may repair only those two known hashes, and only after verifying the exact
+people table/index definitions; never generalize that exception to arbitrary
+migration mismatches.
+
 Identity is explicit through `person_speakers`; never infer one person from
 `Speaker N`, capture-source placeholders (`mic`, `system`, etc.), `Guest`, `You`,
 or combined overlap labels. Existing custom labels are backfilled and exact

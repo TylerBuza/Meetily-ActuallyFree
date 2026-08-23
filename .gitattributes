@@ -1,0 +1,5 @@
+# Historical migrations have platform-specific released checksums. Do not
+# normalize them retroactively; add every new migration here before release.
+frontend/src-tauri/migrations/20260811000000_add_people.sql text eol=lf
+frontend/src-tauri/migrations/20260822000000_add_whisper_vocabulary.sql text eol=lf
+frontend/src-tauri/migrations/20260823000000_add_post_call_transcription.sql text eol=lf
