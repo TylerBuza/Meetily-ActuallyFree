@@ -18,6 +18,16 @@ This fork also goes beyond removing feature restrictions. It adds speaker identi
 
 <p align="center"><sub>Live speaker-labelled transcription with synchronized source controls, shown with sanitized demo meetings.</sub></p>
 
+## Latest Release
+
+<p align="center">
+  <img src="docs/images/v0.2.7-whisper-vocabulary.png" alt="Meetily Whisper vocabulary settings for global and meeting-specific terms" width="1100" />
+</p>
+
+Meetily `v0.2.7` adds global and meeting-specific Whisper vocabulary hints,
+independent live and post-call transcription defaults, and a critical Windows
+upgrade repair. [Read the v0.2.7 changelog](CHANGELOG.md).
+
 ## Feature Comparison
 
 Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on its project page (verified August 2026).
@@ -60,6 +70,7 @@ Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on it
 - **Meeting memory:** global search, reusable people profiles, speaker naming, and grounded person Q&A.
 - **Native exports:** PDF, DOCX, Markdown, text, JSON, or clipboard.
 - **Resilient local models:** resumable, validated downloads with Parakeet mirror fallback.
+- **Whisper vocabulary hints:** teach live and post-call transcription recurring names, acronyms, products, and meeting-specific terms.
 - **Private updates and no telemetry:** Windows update checks are opt-in, and analytics transmission is disabled on every platform.
 
 ## Install
