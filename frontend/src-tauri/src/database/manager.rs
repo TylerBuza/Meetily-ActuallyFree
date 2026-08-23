@@ -40,9 +40,13 @@ impl DatabaseManager {
             }
         }
 
-        let pool = SqlitePool::connect(tauri_db_path).await?;
+        let migration_pool = SqlitePool::connect(tauri_db_path).await?;
 
-        Self::run_migrations(&pool).await?;
+        Self::run_migrations(&migration_pool).await?;
+        // A failed checksum pass can leave another pooled SQLite connection
+        // holding the pre-migration schema. Reopen before serving app queries.
+        migration_pool.close().await;
+        let pool = SqlitePool::connect(tauri_db_path).await?;
 
         Ok(DatabaseManager { pool })
     }
