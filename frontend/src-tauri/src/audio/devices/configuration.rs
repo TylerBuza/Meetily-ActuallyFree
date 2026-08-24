@@ -159,7 +159,42 @@ pub async fn get_device_and_config(
 
                 #[cfg(target_os = "linux")]
                 {
-                    // For Linux, we use PulseAudio monitor sources for system audio.
+                    // For Linux system audio with "(System Audio)" suffix, we use native
+                    // PulseAudio capture which doesn't go through CPAL. Validate by
+                    // checking if the sink exists in PulseAudio.
+                    if audio_device.name.contains("(System Audio)") {
+                        use crate::audio::capture::pulse_linux;
+
+                        // Strip "(System Audio)" to get the sink description
+                        let sink_desc = audio_device.name
+                            .strip_suffix(" (System Audio)")
+                            .unwrap_or(&audio_device.name);
+
+                        // Check if this sink exists in PulseAudio
+                        match pulse_linux::find_monitor_source_by_description(sink_desc) {
+                            Ok(_monitor_source) => {
+                                // Device exists! Return a dummy CPAL device since the actual
+                                // stream creation in stream.rs will use PulseCapture directly
+                                let host = cpal::default_host();
+                                let dummy_device = host
+                                    .default_input_device()
+                                    .ok_or_else(|| anyhow!("No default input device"))?;
+                                let config = dummy_device
+                                    .default_input_config()
+                                    .map_err(|e| anyhow!("Failed to get config: {}", e))?;
+                                return Ok((dummy_device, config));
+                            }
+                            Err(e) => {
+                                return Err(anyhow!(
+                                    "PulseAudio sink '{}' not found: {}",
+                                    sink_desc,
+                                    e
+                                ));
+                            }
+                        }
+                    }
+
+                    // For fallback ALSA devices, validate they exist in CPAL
                     // Serialize every alsa-lib call: see ALSA_GLOBAL_LOCK doc comment.
                     let _guard = super::platform::linux::ALSA_GLOBAL_LOCK
                         .lock()

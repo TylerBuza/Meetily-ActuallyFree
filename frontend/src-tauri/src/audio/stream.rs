@@ -325,13 +325,14 @@ impl AudioStream {
     ) -> Result<Self> {
         info!("🔊 Stream: Creating PulseAudio stream for device: {}", device.name);
 
-        // The picker shows "<sink description> (System Audio)" (see
-        // devices/platform/linux.rs); strip that suffix to recover the sink
+        // The picker shows "<sink description> (System Audio) (output)" (see
+        // devices/platform/linux.rs); strip those suffixes to recover the sink
         // description and resolve it to its real monitor source name.
-        let description = device
+        let mut description = device
             .name
             .strip_suffix(" (System Audio)")
             .unwrap_or(&device.name);
+        description = description.strip_suffix(" (output)").unwrap_or(description);
 
         let monitor_source_name = find_monitor_source_by_description(description)
             .map_err(|e| anyhow::anyhow!("Failed to resolve PulseAudio sink '{}': {}", description, e))?;
@@ -354,10 +355,18 @@ impl AudioStream {
         );
 
         let device_name = device.name.clone();
+        let task = std::thread::Builder::new()
+            .name(format!("audio-capture-{}", device.name))
+            .spawn(move || {
+                info!("✅ Stream: PulseAudio capture thread started for {}", device_name);
+                capture_impl.run(|samples| capture.process_audio_data(samples));
+                info!("⚠️ Stream: PulseAudio capture thread ended for {}", device_name);
+            })
+            .map_err(|e| anyhow::anyhow!("Failed to spawn audio capture thread: {}", e))?;
+
+        // Wrap the thread handle in a tokio JoinHandle-like structure
         let task = tokio::task::spawn_blocking(move || {
-            info!("✅ Stream: PulseAudio capture thread started for {}", device_name);
-            capture_impl.run(|samples| capture.process_audio_data(samples));
-            info!("⚠️ Stream: PulseAudio capture thread ended for {}", device_name);
+            let _ = task.join();
         });
 
         info!("✅ Stream: PulseAudio stream fully initialized for device: {}", device.name);

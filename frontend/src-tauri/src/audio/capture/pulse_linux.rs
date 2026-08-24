@@ -156,9 +156,22 @@ pub fn list_sinks() -> Result<Vec<PulseSink>> {
 /// Resolve a sink's real monitor source name from its display description (as
 /// shown in the "System Audio" picker, e.g. "JBL Tune 770NC").
 pub fn find_monitor_source_by_description(description: &str) -> Result<String> {
-    list_sinks()?
+    info!("🔍 find_monitor_source_by_description: searching for '{}'", description);
+    let sinks = list_sinks()?;
+    info!("🔍 Available sinks:");
+    for sink in &sinks {
+        info!("  - '{}' -> monitor: '{}'", sink.description, sink.monitor_source_name);
+    }
+
+    sinks
         .into_iter()
-        .find(|sink| sink.description == description)
+        .find(|sink| {
+            let matches = sink.description == description;
+            if matches {
+                info!("✅ Found match: '{}' -> monitor: '{}'", sink.description, sink.monitor_source_name);
+            }
+            matches
+        })
         .map(|sink| sink.monitor_source_name)
         .ok_or_else(|| anyhow!("No PulseAudio sink found matching '{}'", description))
 }
@@ -313,6 +326,25 @@ impl PulseCapture {
             return Err(anyhow!("Invalid PulseAudio sample spec"));
         }
 
+        // Match fragsize exactly to our read buffer (1024 frames) to prevent timing issues.
+        // This ensures PulseAudio delivers exactly what we're reading each iteration.
+        use libpulse_binding::def::BufferAttr;
+
+        const FRAMES_PER_CHUNK: u32 = 1024; // must match the constant in run()
+        let fragsize = FRAMES_PER_CHUNK * channels as u32 * 4; // bytes per chunk
+        let maxlength = (CAPTURE_SAMPLE_RATE / 2) * channels as u32 * 4; // 500ms max buffer
+
+        let buffer_attr = BufferAttr {
+            maxlength,      // 500ms max buffer to survive CPU spikes
+            tlength: std::u32::MAX,   // not used for record streams
+            prebuf: std::u32::MAX,    // not used for record streams
+            minreq: std::u32::MAX,    // not used for record streams
+            fragsize,       // exactly match our read buffer size
+        };
+
+        info!("🔊 PulseAudio buffer: fragsize=1024 frames (~21ms), maxlength={}ms",
+              maxlength as f32 / (CAPTURE_SAMPLE_RATE * channels as u32 * 4) as f32 * 1000.0);
+
         let simple = Simple::new(
             None, // default server
             "Meetily",
@@ -321,7 +353,7 @@ impl PulseCapture {
             stream_label,
             &spec,
             None, // default channel map
-            None, // default buffering attributes
+            Some(&buffer_attr), // large max buffer, default timing
         )
         .map_err(|e| {
             anyhow!(
