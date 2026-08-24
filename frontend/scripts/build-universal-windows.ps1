@@ -44,6 +44,31 @@ cmd /c "call `"$vcvars`" >nul 2>&1 && set" | ForEach-Object {
   }
 }
 
+function Build-VulkanProbe([string]$Sdk) {
+  Write-Host ""
+  Write-Host "=== Building Vulkan capability probe ==="
+  $source = Join-Path $tauri "vulkan-probe\vulkan_probe.cpp"
+  $header = Join-Path $Sdk "Include\vulkan\vulkan.h"
+  $build = Join-Path $repo "target\vulkan-probe\release"
+  $object = Join-Path $build "vulkan_probe.obj"
+  $binary = Join-Path $build "meetily-vulkan-probe.exe"
+  foreach ($required in @($source, $header)) {
+    if (-not (Test-Path -LiteralPath $required)) {
+      throw "Vulkan probe input missing: $required"
+    }
+  }
+  New-Item -ItemType Directory -Force -Path $build | Out-Null
+  & cl.exe /nologo /O2 /MT /W4 /EHsc /std:c++17 /DUNICODE /D_UNICODE /DNOMINMAX `
+    "/D_WIN32_WINNT=0x0A00" /I (Join-Path $Sdk "Include") /c $source /Fo"$object" | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw "Vulkan capability probe compilation failed" }
+  & link.exe /nologo /SUBSYSTEM:CONSOLE /MACHINE:X64 /OPT:REF /OPT:ICF `
+    /OUT:"$binary" "$object" kernel32.lib | Out-Host
+  if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $binary)) {
+    throw "Vulkan capability probe link failed"
+  }
+  return $binary
+}
+
 if ($BootstrapperOnly) {
   $dist = Join-Path $repo "dist"
   $engineOutput = Join-Path $dist "Meetily-ActuallyFree-${appVersion}-x64-universal-updater.exe"
@@ -56,7 +81,7 @@ if ($BootstrapperOnly) {
       throw "Bootstrapper-only input is missing: $required"
     }
   }
-  foreach ($variant in @("meetily-cpu.exe", "meetily-vulkan.exe", "meetily-cuda.exe")) {
+  foreach ($variant in @("meetily-cpu.exe", "meetily-vulkan.exe", "meetily-cuda.exe", "meetily-vulkan-probe.exe")) {
     $variantPath = Join-Path $variants $variant
     if (-not (Test-Path -LiteralPath $variantPath)) {
       throw "Staged variant missing: $variantPath"
@@ -140,12 +165,14 @@ $universalMarker = Join-Path $variants "universal.marker"
 try {
 [System.IO.File]::WriteAllText($universalMarker, "universal`r`n")
 
-if (-not $PackageOnly) {
 if (-not $VulkanSdk) { $VulkanSdk = $env:VULKAN_SDK }
 if (-not $VulkanSdk -or -not (Test-Path (Join-Path $VulkanSdk "Bin\glslc.exe"))) {
   $VulkanSdk = & (Join-Path $PSScriptRoot "bootstrap-vulkan-build-tools.ps1") | Select-Object -Last 1
 }
 $VulkanSdk = [System.IO.Path]::GetFullPath($VulkanSdk)
+$vulkanProbeBinary = Build-VulkanProbe $VulkanSdk
+
+if (-not $PackageOnly) {
 
 function Build-Variant([string]$Name, [string]$TargetDir, [string[]]$Features) {
   Write-Host ""
@@ -193,6 +220,7 @@ New-Item -ItemType Directory -Force -Path $variants | Out-Null
 Copy-Item $cpuBinary (Join-Path $variants "meetily-cpu.exe") -Force
 Copy-Item $vulkanBinary (Join-Path $variants "meetily-vulkan.exe") -Force
 Copy-Item $cudaBinary (Join-Path $variants "meetily-cuda.exe") -Force
+Copy-Item $vulkanProbeBinary (Join-Path $variants "meetily-vulkan-probe.exe") -Force
 
 & (Join-Path $PSScriptRoot "stage-runtime-deps.ps1") -BuildOutput @(
   (Join-Path $cpuTarget "release"),
@@ -207,6 +235,8 @@ foreach ($binary in Get-ChildItem $variants -Filter "*.exe") {
     $variantPath = Join-Path $variants $variant
     if (-not (Test-Path $variantPath)) { throw "Staged variant missing: $variantPath" }
   }
+  Copy-Item $vulkanProbeBinary (Join-Path $variants "meetily-vulkan-probe.exe") -Force
+  & $sign -FilePath (Join-Path $variants "meetily-vulkan-probe.exe")
 }
 
 # Bundle once with CPU as the safe main executable. The post-install hook

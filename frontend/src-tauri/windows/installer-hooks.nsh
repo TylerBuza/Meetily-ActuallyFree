@@ -155,7 +155,10 @@ Var MeetilyBackend
   ${EnableX64FSRedirection}
 !macroend
 
-; Sets $R6=1 when the 64-bit Vulkan loader and an enabled vendor ICD are installed.
+; Sets $R6=1 when the 64-bit Vulkan loader can reach a usable physical device.
+; The native x64 probe follows the loader's modern DCH discovery and rejects
+; stale loaders with no physical device. The legacy registry scan is retained
+; only as a compatibility fallback for packages that predate the probe.
 !macro Meetily_CheckVulkan
   StrCpy $R6 0
   ${DisableX64FSRedirection}
@@ -166,21 +169,34 @@ Var MeetilyBackend
   ${EndIf}
   ${If} $R6 == 1
     StrCpy $R6 0
-    StrCpy $R5 0
-    SetRegView 64
-    ${Do}
-      EnumRegValue $R4 HKLM "SOFTWARE\Khronos\Vulkan\Drivers" $R5
-      ${If} $R4 == ""
-        ${ExitDo}
-      ${EndIf}
-      ReadRegDword $R3 HKLM "SOFTWARE\Khronos\Vulkan\Drivers" "$R4"
+    StrCpy $R4 "$INSTDIR\installer-variants\meetily-vulkan-probe.exe"
+    ${If} ${FileExists} "$R4"
+      nsExec::ExecToStack /TIMEOUT=15000 '"$R4"'
+      Pop $R3
+      Pop $R2
       ${If} $R3 == 0
-      ${AndIf} ${FileExists} "$R4"
         StrCpy $R6 1
+      ${Else}
+        DetailPrint "      Vulkan probe found no usable device (code $R3)."
       ${EndIf}
-      IntOp $R5 $R5 + 1
-    ${LoopUntil} $R6 == 1
-    SetRegView lastused
+    ${Else}
+      DetailPrint "      Vulkan capability probe is missing; checking legacy drivers."
+      StrCpy $R5 0
+      SetRegView 64
+      ${Do}
+        EnumRegValue $R4 HKLM "SOFTWARE\Khronos\Vulkan\Drivers" $R5
+        ${If} $R4 == ""
+          ${ExitDo}
+        ${EndIf}
+        ReadRegDword $R3 HKLM "SOFTWARE\Khronos\Vulkan\Drivers" "$R4"
+        ${If} $R3 == 0
+        ${AndIf} ${FileExists} "$R4"
+          StrCpy $R6 1
+        ${EndIf}
+        IntOp $R5 $R5 + 1
+      ${LoopUntil} $R6 == 1
+      SetRegView lastused
+    ${EndIf}
   ${EndIf}
   ${EnableX64FSRedirection}
 !macroend

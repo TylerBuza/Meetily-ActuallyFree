@@ -541,6 +541,16 @@ hook chooses CUDA, Vulkan, or CPU, then installs the chosen variant as the
 canonical `meetily.exe`. In-app updates continue through the raw NSIS engine so
 they retain Tauri's `/P /R /UPDATE /ARGS` behavior.
 
+Vulkan selection requires the 64-bit system loader and runs the staged x64
+`meetily-vulkan-probe.exe`, which applies GGML's device-selection policy and
+requires every selected device to provide Vulkan 1.2, a compute queue, 16-bit
+storage support, and successful logical-device creation. This follows modern
+Intel/AMD DCH discovery without a fragile registry scan. Do not
+replace it with a loader-file-only check: stale loaders can exist without a
+usable ICD, and the Vulkan backend cannot safely assume CPU fallback. A legacy
+Khronos ICD scan remains only for packages missing the probe. The helper is
+installer-only and is removed with the staged variants after selection.
+
 The raw engine detects `/UPDATE` before its install-files page is shown. Update
 mode must use updater-specific chrome and language (`Meetily - Actually Free
 Updater`, `Updating Meetily`, and `Updating app files`) rather than exposing the
