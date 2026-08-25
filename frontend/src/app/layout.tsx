@@ -26,6 +26,9 @@ import { ImportAudioDialog, ImportDropOverlay } from '@/components/ImportAudio'
 import { ImportDialogProvider } from '@/contexts/ImportDialogContext'
 import { isAudioExtension, getAudioFormatsDisplayList } from '@/constants/audioFormats'
 import GlobalSearchDialog from '@/components/GlobalSearchDialog'
+import CrashReportDialog from '@/components/CrashReportDialog'
+import { getPendingCrashReport, type PendingCrashReport } from '@/services/crashReportService'
+import { Button } from '@/components/ui/button'
 
 
 const sourceSans3 = Source_Sans_3({
@@ -71,6 +74,10 @@ export default function RootLayout({
 }) {
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [onboardingCompleted, setOnboardingCompleted] = useState(false)
+  const [startupResolved, setStartupResolved] = useState(false)
+  const [startupError, setStartupError] = useState<string | null>(null)
+  const [startupAttempt, setStartupAttempt] = useState(0)
+  const [pendingCrashReport, setPendingCrashReport] = useState<PendingCrashReport | null>(null)
 
   // Import audio state
   const [showDropOverlay, setShowDropOverlay] = useState(false)
@@ -84,9 +91,14 @@ export default function RootLayout({
   }, [])
 
   useEffect(() => {
-    // Check onboarding status first
-    invoke<{ completed: boolean } | null>('get_onboarding_status')
-      .then((status) => {
+    let cancelled = false
+
+    const initializeStartup = async () => {
+      setStartupResolved(false)
+      setStartupError(null)
+      try {
+        const status = await invoke<{ completed: boolean } | null>('get_onboarding_status')
+        if (cancelled) return
         const isComplete = status?.completed ?? false
         setOnboardingCompleted(isComplete)
 
@@ -95,15 +107,23 @@ export default function RootLayout({
           setShowOnboarding(true)
         } else {
           console.log('[Layout] Onboarding completed, showing main app')
+          const report = await getPendingCrashReport()
+          if (!cancelled) setPendingCrashReport(report)
         }
-      })
-      .catch((error) => {
-        console.error('[Layout] Failed to check onboarding status:', error)
-        // Default to showing onboarding if we can't check
-        setShowOnboarding(true)
-        setOnboardingCompleted(false)
-      })
-  }, [])
+      } catch (error) {
+        console.error('[Layout] Failed to resolve startup state:', error)
+        if (cancelled) return
+        setStartupError('Meetily could not verify local startup and crash-report state.')
+      } finally {
+        if (!cancelled) setStartupResolved(true)
+      }
+    }
+
+    initializeStartup()
+    return () => {
+      cancelled = true
+    }
+  }, [startupAttempt])
 
   // Disable context menu in production
   useEffect(() => {
@@ -114,6 +134,7 @@ export default function RootLayout({
     }
   }, []);
   useEffect(() => {
+    if (!startupResolved || startupError || pendingCrashReport) return
     // Listen for tray recording toggle request
     const unlisten = listen('request-recording-toggle', () => {
       console.log('[Layout] Received request-recording-toggle from tray');
@@ -132,10 +153,11 @@ export default function RootLayout({
     return () => {
       unlisten.then(fn => fn());
     };
-  }, [showOnboarding]);
+  }, [showOnboarding, startupResolved, startupError, pendingCrashReport]);
 
   // Meeting Detection: prompt to start recording when a meeting app is detected.
   useEffect(() => {
+    if (!startupResolved || startupError || pendingCrashReport) return
     const unlisten = listen<{ app: string; process: string; notify: boolean }>(
       'meeting-detected',
       (event) => {
@@ -187,7 +209,7 @@ export default function RootLayout({
       unlisten.then((fn) => fn());
       unlistenStart.then((fn) => fn());
     };
-  }, [showOnboarding]);
+  }, [showOnboarding, startupResolved, startupError, pendingCrashReport]);
 
   // Handle file drop for audio import
   const handleFileDrop = useCallback((paths: string[]) => {
@@ -220,7 +242,7 @@ export default function RootLayout({
 
   // Listen for drag-drop events
   useEffect(() => {
-    if (showOnboarding) return; // Don't handle drops during onboarding
+    if (!startupResolved || startupError || pendingCrashReport || showOnboarding) return
 
     const unlisteners: UnlistenFn[] = [];
     const cleanedUpRef = { current: false };
@@ -268,7 +290,7 @@ export default function RootLayout({
       cleanedUpRef.current = true;
       unlisteners.forEach((unlisten) => unlisten());
     };
-  }, [showOnboarding, handleFileDrop]);
+  }, [showOnboarding, startupResolved, startupError, pendingCrashReport, handleFileDrop]);
 
   // Handle import dialog close
   const handleImportDialogClose = useCallback((open: boolean) => {
@@ -310,49 +332,70 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className={`${sourceSans3.variable} font-sans antialiased`}>
-        <AnalyticsProvider>
-          <RecordingStateProvider>
-            <TranscriptProvider>
-              <ConfigProvider>
-                <OllamaDownloadProvider>
-                  <OnboardingProvider>
-                    <UpdateCheckProvider>
+        {!startupResolved ? (
+          <div className="h-screen bg-[var(--af-bg)]" />
+        ) : startupError ? (
+          <div className="flex h-screen items-center justify-center bg-[var(--af-bg)] px-6">
+            <div className="max-w-md rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] p-6 text-center shadow-xl">
+              <h1 className="text-lg font-semibold text-[var(--af-text)]">Startup check failed</h1>
+              <p className="mt-2 text-sm text-[var(--af-text-2)]">{startupError}</p>
+              <Button className="mt-5" onClick={() => setStartupAttempt((value) => value + 1)}>
+                Retry
+              </Button>
+            </div>
+          </div>
+        ) : pendingCrashReport ? (
+          <>
+            <div className="h-screen bg-[var(--af-bg)]" />
+            <CrashReportDialog
+              report={pendingCrashReport}
+              onResolved={() => setPendingCrashReport(null)}
+            />
+          </>
+        ) : (
+          <AnalyticsProvider>
+            <RecordingStateProvider>
+              <TranscriptProvider>
+                <ConfigProvider>
+                  <OllamaDownloadProvider>
+                    <OnboardingProvider>
                       <SidebarProvider>
                         <TooltipProvider>
-                          {onboardingCompleted && !showOnboarding && <GlobalSearchDialog />}
                           <RecordingPostProcessingProvider>
-                            <ImportDialogProvider onOpen={handleOpenImportDialog}>
-                              {/* Download progress toast provider - listens for background downloads */}
-                              <DownloadProgressToastProvider />
+                            <UpdateCheckProvider>
+                              {onboardingCompleted && !showOnboarding && <GlobalSearchDialog />}
+                              <ImportDialogProvider onOpen={handleOpenImportDialog}>
+                                {/* Download progress toast provider - listens for background downloads */}
+                                <DownloadProgressToastProvider />
 
-                              {/* Show onboarding or main app */}
-                              {showOnboarding ? (
-                                <OnboardingFlow onComplete={handleOnboardingComplete} />
-                              ) : (
-                                <div className="flex min-h-0 min-w-0 h-screen overflow-hidden">
-                                  <Sidebar />
-                                  <MainContent>{children}</MainContent>
-                                </div>
-                              )}
-                              {/* Import audio overlay and dialog */}
-                              <ImportDropOverlay visible={showDropOverlay} />
-                              <ConditionalImportDialog
-                                showImportDialog={showImportDialog}
-                                handleImportDialogClose={handleImportDialogClose}
-                                importFilePath={importFilePath}
-                              />
-                            </ImportDialogProvider>
+                                {/* Show onboarding or main app */}
+                                {showOnboarding ? (
+                                  <OnboardingFlow onComplete={handleOnboardingComplete} />
+                                ) : (
+                                  <div className="flex min-h-0 min-w-0 h-screen overflow-hidden">
+                                    <Sidebar />
+                                    <MainContent>{children}</MainContent>
+                                  </div>
+                                )}
+                                {/* Import audio overlay and dialog */}
+                                <ImportDropOverlay visible={showDropOverlay} />
+                                <ConditionalImportDialog
+                                  showImportDialog={showImportDialog}
+                                  handleImportDialogClose={handleImportDialogClose}
+                                  importFilePath={importFilePath}
+                                />
+                              </ImportDialogProvider>
+                            </UpdateCheckProvider>
                           </RecordingPostProcessingProvider>
                         </TooltipProvider>
                       </SidebarProvider>
-                    </UpdateCheckProvider>
-                  </OnboardingProvider>
-
-                </OllamaDownloadProvider>
-              </ConfigProvider>
-            </TranscriptProvider>
-          </RecordingStateProvider>
-        </AnalyticsProvider>
+                    </OnboardingProvider>
+                  </OllamaDownloadProvider>
+                </ConfigProvider>
+              </TranscriptProvider>
+            </RecordingStateProvider>
+          </AnalyticsProvider>
+        )}
 
         <Toaster position="bottom-center" theme="dark" richColors closeButton />
       </body>

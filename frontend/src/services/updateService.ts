@@ -8,6 +8,7 @@
 import { check, Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { getVersion } from '@tauri-apps/api/app';
+import { invoke } from '@tauri-apps/api/core';
 
 export interface UpdateInfo {
   available: boolean;
@@ -95,6 +96,7 @@ export class UpdateService {
     update: Update,
     onProgress?: (progress: UpdateProgress) => void
   ): Promise<void> {
+    let crashSessionSuspended = false;
     try {
       // Download the update
       await update.download();
@@ -105,9 +107,16 @@ export class UpdateService {
       }
 
       // Install and relaunch
+      await invoke('prepare_for_app_restart');
+      crashSessionSuspended = true;
       await update.install();
       await relaunch();
     } catch (error) {
+      if (crashSessionSuspended) {
+        await invoke('resume_crash_session').catch((resumeError) => {
+          console.error('Failed to resume crash detection after update failure:', resumeError);
+        });
+      }
       console.error('Failed to download/install update:', error);
       throw error;
     }

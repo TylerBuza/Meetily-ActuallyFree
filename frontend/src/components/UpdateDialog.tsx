@@ -12,6 +12,7 @@ import { Button } from './ui/button';
 import { updateService, UpdateInfo, UpdateProgress } from '@/services/updateService';
 import { check, Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
+import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 
 interface UpdateDialogProps {
@@ -84,13 +85,13 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
     setPhase('preparing');
     setError(null);
     setProgress({ downloaded: 0, total: 0, percentage: 0 });
+    let crashSessionSuspended = false;
 
     try {
       let downloaded = 0;
       let contentLength = 0;
 
-      // Use the official Tauri updater API with progress callbacks
-      await updateToUse.downloadAndInstall((event) => {
+      await updateToUse.download((event) => {
         switch (event.event) {
           case 'Started':
             setPhase('downloading');
@@ -128,6 +129,10 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
         }
       });
 
+      await invoke('prepare_for_app_restart');
+      crashSessionSuspended = true;
+      await updateToUse.install();
+
       console.log('[UpdateDialog] Update installed successfully');
       toast.success('Update installed successfully. The app will restart...');
 
@@ -141,6 +146,11 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
       // Relaunch the app
       await relaunch();
     } catch (err: any) {
+      if (crashSessionSuspended) {
+        await invoke('resume_crash_session').catch((resumeError) => {
+          console.error('Failed to resume crash detection after update failure:', resumeError);
+        });
+      }
       console.error('Update failed:', err);
       setError(err.message || 'Failed to download or install update');
       setIsDownloading(false);

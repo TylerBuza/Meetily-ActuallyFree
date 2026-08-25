@@ -114,14 +114,15 @@ the frontend meter.
 The floating bar is a separate `minibar` webview, so it cannot share React
 recording state with `main`. Rust owns its lifecycle in `src-tauri/src/minibar.rs`:
 
-- `MINIBAR_LIFECYCLE` serializes create/destroy transitions because Windows can
+- `MINIBAR_LIFECYCLE` serializes create/hide/destroy transitions because Windows can
   report one minimize through more than one observer.
 - A new bar is built hidden; Rust hides `main` before showing the bar so both
   control surfaces never flash onscreen together.
 - `recording_commands::stop_recording_inner` is the only native stop owner and
-  the only source of `recording-stop-complete`. It destroys the bar immediately
-  after claiming `IS_STOPPING`; tray and frontend code must not emit a second
-  completion event.
+  the only source of `recording-stop-complete`. A minibar-origin Stop hides the
+  bar immediately after claiming `IS_STOPPING`, then Rust destroys it after the
+  command returns so Tauri can safely send the IPC response. Tray and frontend
+  code must not emit a second completion event.
 - Only Stop originating in the minibar restores the main window it hid. A tray
   or already-visible main-window stop must not steal focus.
 - The minibar polls Rust `RecordingState.active_duration` every 500 ms rather
@@ -185,6 +186,33 @@ path.
 
 A one-time migration (`paths::migrate_legacy_data`) copies data from the old
 Tauri app-data location on first run so upgrading users keep their history.
+
+### Crash reports
+
+`src-tauri/src/crash_report.rs` writes a small session marker under
+`<data>/crash-reports`. A marker left behind after process termination becomes a
+pending unexpected-exit report on the next launch; the panic hook also writes a
+source-relative location and anonymous fingerprint. Clean shutdown removes only the current session's
+marker. This detects abrupt exits without trying to allocate a ZIP inside a
+failing process. If failures repeat before the prompt is resolved, the newest
+failure replaces the older pending report.
+
+After onboarding is resolved, `app/layout.tsx` checks for that pending report
+before mounting the application provider tree. This prevents service probes,
+meeting loads, and transcript/audio recovery from running behind the prompt.
+The dialog has exactly **Send Report**, **Save
+ZIP**, and **Ignore**. Send Report creates the same local ZIP and opens a
+prefilled public GitHub issue for manual attachment because the project has no
+report-upload server; nothing is uploaded automatically.
+
+The in-app ZIP is deliberately allowlist-only: crash classification/time,
+version/backend, OS family and major version, architecture, bucketed CPU core
+count, rounded memory size, source-relative panic file/line details, and a
+panic-location fingerprint. It
+never includes ordinary logs, recordings, checkpoints, transcript/summary data,
+meeting identity, SQLite/WebView/settings storage, credentials, usernames,
+hostnames, or device names. Do not replace it with the much broader manual
+`scripts/collect-meetily-crash-diagnostics.bat` support bundle.
 
 ---
 

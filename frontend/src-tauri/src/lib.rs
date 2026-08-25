@@ -38,6 +38,7 @@ pub mod api;
 pub mod audio;
 pub mod config;
 pub mod console_utils;
+pub mod crash_report;
 pub mod database;
 pub mod diarization;
 pub mod notifications;
@@ -420,33 +421,7 @@ pub fn get_language_preference_internal() -> Option<String> {
 
 pub fn run() {
     log::set_max_level(log::LevelFilter::Info);
-
-    // Crash reports stay on-disk only (no telemetry). Written under the portable
-    // data root so users can attach them to bug reports if they choose.
-    {
-        let prev = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            let msg = format!(
-                "[{}] panic: {}\n",
-                chrono::Local::now().to_rfc3339(),
-                info
-            );
-            let path = crate::paths::install_data_root().join("crash.log");
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)
-            {
-                use std::io::Write;
-                let _ = writeln!(f, "{msg}");
-                if let Some(loc) = info.location() {
-                    let _ = writeln!(f, "  at {}:{}:{}", loc.file(), loc.line(), loc.column());
-                }
-            }
-            log::error!("PANIC (also written to {}): {info}", path.display());
-            prev(info);
-        }));
-    }
+    crash_report::install_panic_hook();
 
     // Set the unpackaged Windows app identity before Tauri creates any HWNDs.
     // The taskbar and installer shortcuts use this same AUMID.
@@ -482,6 +457,9 @@ pub fn run() {
         .manage(audio::init_system_audio_state())
         .manage(summary::summary_engine::ModelManagerState(Arc::new(tokio::sync::Mutex::new(None))))
         .setup(|_app| {
+            if let Err(error) = crash_report::start_session() {
+                log::error!("Failed to initialize crash reporting: {error}");
+            }
             log::info!("Application setup complete");
 
             // Initialize system tray
@@ -703,6 +681,11 @@ pub fn run() {
             get_audio_devices,
             get_check_updates_on_launch,
             set_check_updates_on_launch,
+            crash_report::get_pending_crash_report,
+            crash_report::create_crash_report_zip,
+            crash_report::dismiss_pending_crash_report,
+            crash_report::prepare_for_app_restart,
+            crash_report::resume_crash_session,
             trigger_microphone_permission,
             start_recording_with_devices,
             start_recording_with_devices_and_meeting,
@@ -919,6 +902,9 @@ pub fn run() {
                             log::error!("Failed to force shutdown sidecar: {}", e);
                         }
                     });
+                    if let Err(error) = crash_report::finish_session() {
+                        log::warn!("Failed to mark the crash session as clean: {error}");
+                    }
                     log::info!("Application cleanup complete");
                 }
                 _ => {}
