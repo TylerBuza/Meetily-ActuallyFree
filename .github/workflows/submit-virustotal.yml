@@ -1,0 +1,151 @@
+name: "Security - Submit Windows Release to VirusTotal"
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release-tag:
+        description: "Published Windows release tag, for example v0.2.8"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: virustotal-${{ github.event.release.tag_name || inputs['release-tag'] }}
+  cancel-in-progress: false
+
+jobs:
+  submit:
+    name: Submit Windows executables
+    if: ${{ !endsWith(github.event.release.tag_name || inputs['release-tag'], '-macos') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VIRUSTOTAL_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs['release-tag'] }}
+
+    steps:
+      - name: Validate release and download executables
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a Windows release tag such as v0.2.8, got: $RELEASE_TAG"
+            exit 1
+          fi
+
+          RELEASE_JSON=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")
+          test "$(jq -r .draft <<< "$RELEASE_JSON")" = "false"
+          test "$(jq -r .prerelease <<< "$RELEASE_JSON")" = "false"
+          test "$(jq -r .immutable <<< "$RELEASE_JSON")" = "true"
+
+          VERSION=${RELEASE_TAG#v}
+          SETUP="Meetily-ActuallyFree-${VERSION}-x64-universal-setup.exe"
+          UPDATER="Meetily-ActuallyFree-${VERSION}-x64-universal-updater.exe"
+          mkdir -p release
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$SETUP" \
+            --pattern "$UPDATER" \
+            --pattern "SHA256SUMS.txt" \
+            --dir release
+
+          for file in "$SETUP" "$UPDATER"; do
+            test -f "release/$file"
+            (
+              cd release
+              grep -F "  $file" SHA256SUMS.txt | sha256sum --check --strict
+            )
+          done
+          printf 'SETUP=%s\nUPDATER=%s\n' "$SETUP" "$UPDATER" >> "$GITHUB_ENV"
+
+      - name: Submit public executables
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$VIRUSTOTAL_API_KEY" ]]; then
+            echo "The VIRUSTOTAL_API_KEY Actions secret is required."
+            exit 1
+          fi
+
+          # VirusTotal's large-file endpoint accepts at most 650 MiB.
+          MAX_BYTES=$((650 * 1024 * 1024))
+          FIRST_REQUEST=true
+          rate_limit() {
+            if [[ "$FIRST_REQUEST" == "true" ]]; then
+              FIRST_REQUEST=false
+            else
+              sleep 16
+            fi
+          }
+
+          submit_file() {
+            local name="$1"
+            local path="release/$name"
+            local bytes sha256 status upload_url analysis_id
+            bytes=$(stat --format='%s' "$path")
+            sha256=$(sha256sum "$path" | awk '{print $1}')
+            if (( bytes > MAX_BYTES )); then
+              echo "$name is larger than VirusTotal's 650 MiB upload limit."
+              exit 1
+            fi
+
+            rate_limit
+            status=$(curl \
+              --silent \
+              --show-error \
+              --output "$RUNNER_TEMP/vt-file.json" \
+              --write-out '%{http_code}' \
+              --header "x-apikey: $VIRUSTOTAL_API_KEY" \
+              "https://www.virustotal.com/api/v3/files/$sha256")
+            if [[ "$status" == "200" ]]; then
+              echo "$name already exists in VirusTotal."
+            elif [[ "$status" == "404" ]]; then
+              rate_limit
+              upload_url=$(curl \
+                --fail-with-body \
+                --silent \
+                --show-error \
+                --header "x-apikey: $VIRUSTOTAL_API_KEY" \
+                "https://www.virustotal.com/api/v3/files/upload_url" \
+                | jq -er .data)
+
+              rate_limit
+              curl \
+                --fail-with-body \
+                --silent \
+                --show-error \
+                --max-time 7200 \
+                --header "x-apikey: $VIRUSTOTAL_API_KEY" \
+                --form "file=@$path;type=application/octet-stream" \
+                "$upload_url" \
+                --output "$RUNNER_TEMP/vt-upload.json"
+              analysis_id=$(jq -er .data.id "$RUNNER_TEMP/vt-upload.json")
+              echo "$name accepted for analysis: $analysis_id"
+            else
+              cat "$RUNNER_TEMP/vt-file.json"
+              echo "VirusTotal lookup failed with HTTP $status for $name."
+              exit 1
+            fi
+
+            {
+              echo "| \`$name\` | \`$sha256\` | [VirusTotal report](https://www.virustotal.com/gui/file/$sha256) |"
+            } >> "$RUNNER_TEMP/vt-results.md"
+          }
+
+          {
+            echo "## VirusTotal submission for $RELEASE_TAG"
+            echo
+            echo "These public release executables were verified against \`SHA256SUMS.txt\` before submission."
+            echo
+            echo "| File | SHA-256 | Report |"
+            echo "| --- | --- | --- |"
+          } > "$RUNNER_TEMP/vt-results.md"
+
+          submit_file "$SETUP"
+          submit_file "$UPDATER"
+          cat "$RUNNER_TEMP/vt-results.md" >> "$GITHUB_STEP_SUMMARY"
