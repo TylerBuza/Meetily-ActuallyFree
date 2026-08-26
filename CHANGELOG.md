@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.2.8 - 2026-08-25
+
+### Recording Reliability
+
+- Fixed the native Windows crash that could occur when Stop or Expand destroyed
+  the floating recording bar while its WebView IPC command was still returning.
+- Hid the minibar immediately, serialized its lifecycle, and deferred destruction
+  until the originating command can finish safely.
+- Preserved one main-window stop completion event and prevented updater restarts
+  from being mistaken for crashes.
+
+### Private Crash Recovery
+
+- Added an opt-in next-launch prompt after an unexpected exit or native panic.
+- Reports expose exactly **Send Report**, **Save ZIP**, and **Ignore** actions.
+- Diagnostic ZIPs contain only allowlisted app/runtime metadata and panic details;
+  they exclude transcripts, recordings, databases, logs, credentials, usernames,
+  hostnames, and audio-device names.
+- Kept native memory dumps in the separate, manually run Windows diagnostics
+  collector rather than collecting them automatically.
+
+### Installer And Runtime
+
+- Added a real Vulkan capability probe before the universal installer selects
+  the Vulkan backend, with safe CPU fallback when probing fails.
+- Added a Windows support collector for users who explicitly choose to gather
+  broader crash diagnostics.
+- Updated the supported Tauri desktop stack and matching JavaScript plugins to
+  current compatible patch releases without forcing an unsupported Wry override.
+- Applied compatible security patches to transitive editor and frontend build
+  dependencies while retaining the release's existing React and Next.js majors.
+
+### Windows Downloads
+
+- `Meetily-ActuallyFree-0.2.8-x64-universal-setup.exe`: recommended installer;
+  automatically selects CPU, Vulkan, or CUDA.
+- `Meetily-ActuallyFree-0.2.8-x64-universal-updater.exe`: Tauri updater engine
+  used by the in-app updater.
+- `latest.json` and the matching `.sig`: updater metadata and cryptographic
+  signature.
+- `SHA256SUMS.txt`: SHA-256 checksums for release verification.
+
+The same `0.2.8` source will be released separately for Apple Silicon as
+`v0.2.8-macos` only after its exact candidate passes the required physical
+macOS 14.2 qualification. The macOS release will not replace Windows Latest or
+modify Windows updater metadata.
+
 ## 0.2.7 - 2026-08-23
 
 <p align="center">

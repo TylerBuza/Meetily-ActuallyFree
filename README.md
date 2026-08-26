@@ -20,13 +20,10 @@ This fork also goes beyond removing feature restrictions. It adds speaker identi
 
 ## Latest Release
 
-<p align="center">
-  <img src="docs/images/v0.2.7-whisper-vocabulary.png" alt="Meetily Whisper vocabulary settings for global and meeting-specific terms" width="1100" />
-</p>
-
-Meetily `v0.2.7` adds global and meeting-specific Whisper vocabulary hints,
-independent live and post-call transcription defaults, and a critical Windows
-upgrade repair. [Read the v0.2.7 changelog](CHANGELOG.md).
+Meetily `v0.2.8` fixes the floating recording bar's native Windows teardown
+crash, adds opt-in privacy-safe crash reports and a manual diagnostics collector,
+improves universal-installer backend probing, and updates the supported Tauri
+desktop stack. [Read the v0.2.8 changelog](CHANGELOG.md).
 
 ## Feature Comparison
 
@@ -80,7 +77,8 @@ Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on it
 2. Run setup. It selects CUDA, Vulkan, or CPU automatically.
 3. Complete first-launch model setup.
 
-Windows 10/11 x64 is supported. The installer is unsigned, so SmartScreen may show **Unknown publisher**.
+Windows 10/11 x64 is supported. The installer is unsigned, so SmartScreen may
+show **Unknown publisher**.
 
 ### macOS Apple Silicon
 

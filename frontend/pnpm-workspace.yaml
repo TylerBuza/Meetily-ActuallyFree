@@ -1,2 +1,13 @@
 allowBuilds:
   core-js: false
+
+overrides:
+  brace-expansion: 2.1.4
+  linkify-it: 5.0.2
+  nanoid: 3.3.18
+  postcss: 8.5.26
+  prosemirror-model: 1.25.3
+  prosemirror-state: 1.4.3
+  prosemirror-view: 1.41.3
+  prosemirror-transform: 1.10.4
+  prosemirror-tables: 1.8.1
