@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.2.10 - 2026-08-26
+
+### Light Theme
+
+- Added a light semantic palette so meeting lists, transcript views, search,
+  settings, and other shared surfaces no longer inherit dark colors.
+- Synchronized the saved interface theme with the native Tauri window theme.
+- Fixed meeting summaries, meeting Q&A, person overviews, and person Q&A so
+  Markdown uses light typography unless dark mode is active.
+
+### Auto Summary Preference
+
+- Fixed the Auto Summary setting so disabling it stops post-call processing
+  after transcript enhancement and speaker identification instead of generating
+  a summary.
+- Kept enhanced transcripts and saved live transcripts available for manual
+  summary generation when automatic summaries are disabled.
+- Preserved automatic post-call summaries when the preference is enabled and
+  added regression coverage for recording and existing-meeting entry paths.
+
+### Windows Downloads
+
+- `Meetily-ActuallyFree-0.2.10-x64-universal-setup.exe`: recommended installer;
+  automatically selects CPU, Vulkan, or CUDA.
+- `Meetily-ActuallyFree-0.2.10-x64-universal-updater.exe`: Tauri updater engine
+  used by the in-app updater.
+- `latest.json` and the matching `.sig`: updater metadata and cryptographic
+  signature.
+- `SHA256SUMS.txt`: SHA-256 checksums for release verification.
+
+The same `0.2.10` source can be released separately for Apple Silicon as
+`v0.2.10-macos` only after its exact candidate passes the required physical
+macOS 14.2 qualification. The macOS release will not replace Windows Latest or
+modify Windows updater metadata.
+
 ## 0.2.9 - 2026-08-26
 
 ### Post-call Reliability

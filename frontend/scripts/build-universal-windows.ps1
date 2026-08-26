@@ -289,7 +289,7 @@ if ($LASTEXITCODE -ne 0) { throw "Frameless installer signing failed" }
 $signature = (Get-Content $updaterSignatureOutput -Raw).Trim()
 $latest = [ordered]@{
   version = $appVersion
-  notes = "Prevents long post-call transcription jobs from losing their model, keeps meeting transcripts usable while enhancement runs, and shows the selected Whisper acceleration backend during setup and in settings."
+  notes = "Fixes remaining dark-mode traces in the light theme, keeps native window colors synchronized with the selected theme, and prevents post-call summary generation when Auto Summary is disabled."
   pub_date = [DateTime]::UtcNow.ToString("o")
   platforms = [ordered]@{
     "windows-x86_64" = [ordered]@{

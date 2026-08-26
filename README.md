@@ -20,10 +20,10 @@ This fork also goes beyond removing feature restrictions. It adds speaker identi
 
 ## Latest Release
 
-Meetily `v0.2.9` keeps long post-call transcription jobs from losing their
-loaded model, lets you continue reviewing the live transcript while enhancement
-runs, and clearly reports the selected Whisper acceleration backend during setup
-and in settings. [Read the v0.2.9 changelog](CHANGELOG.md).
+Meetily `v0.2.10` removes remaining dark-mode traces from the light theme,
+keeps native window colors synchronized with the selected theme, and prevents
+automatic post-call summaries when Auto Summary is disabled.
+[Read the v0.2.10 changelog](CHANGELOG.md).
 
 ## Feature Comparison
 
