@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.2.9 - 2026-08-26
+
+### Post-call Reliability
+
+- Prevented idle cleanup, manual memory cleanup, and local LLM startup from
+  unloading Whisper or Parakeet during a long import or post-call
+  retranscription batch.
+- Added lifecycle-lock regression coverage so cleanup remains blocked until
+  every transcription segment and persistence step finishes.
+- Kept the existing live transcript readable and scrollable while enhancement,
+  speaker identification, and transcript refresh run in the background.
+- Replaced the blocking processing dialog with a compact progress card while
+  preserving modal speaker-count choices and actionable errors.
+
+### Acceleration Visibility
+
+- Added the automatically selected Whisper backend to first-run setup and Local
+  Stack settings: NVIDIA CUDA, Vulkan GPU, Apple Metal, AMD HIP, or CPU.
+- Clearly distinguished Whisper acceleration from Parakeet, which currently
+  uses ONNX Runtime on the CPU.
+- Shows a backend as active only while the Whisper model is actually loaded.
+
+### Windows Downloads
+
+- `Meetily-ActuallyFree-0.2.9-x64-universal-setup.exe`: recommended installer;
+  automatically selects CPU, Vulkan, or CUDA.
+- `Meetily-ActuallyFree-0.2.9-x64-universal-updater.exe`: Tauri updater engine
+  used by the in-app updater.
+- `latest.json` and the matching `.sig`: updater metadata and cryptographic
+  signature.
+- `SHA256SUMS.txt`: SHA-256 checksums for release verification.
+
+The same `0.2.9` source can be released separately for Apple Silicon as
+`v0.2.9-macos` only after its exact candidate passes the required physical
+macOS 14.2 qualification. The macOS release will not replace Windows Latest or
+modify Windows updater metadata.
+
 ## 0.2.8 - 2026-08-25
 
 ### Recording Reliability

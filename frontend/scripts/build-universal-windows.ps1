@@ -289,7 +289,7 @@ if ($LASTEXITCODE -ne 0) { throw "Frameless installer signing failed" }
 $signature = (Get-Content $updaterSignatureOutput -Raw).Trim()
 $latest = [ordered]@{
   version = $appVersion
-  notes = "Fixes compact recording bar teardown crashes, adds opt-in privacy-safe crash reports, improves Vulkan backend probing, and updates compatible desktop dependencies."
+  notes = "Prevents long post-call transcription jobs from losing their model, keeps meeting transcripts usable while enhancement runs, and shows the selected Whisper acceleration backend during setup and in settings."
   pub_date = [DateTime]::UtcNow.ToString("o")
   platforms = [ordered]@{
     "windows-x86_64" = [ordered]@{
