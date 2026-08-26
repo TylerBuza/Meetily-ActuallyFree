@@ -6,6 +6,7 @@ import { FolderOpen } from "lucide-react"
 import { invoke } from "@tauri-apps/api/core"
 import Analytics from "@/lib/analytics"
 import { useConfig, NotificationSettings } from "@/contexts/ConfigContext"
+import { applyAppTheme, getSavedAppTheme } from "@/lib/app-theme"
 
 export function PreferenceSettings() {
   const {
@@ -38,16 +39,11 @@ export function PreferenceSettings() {
   // Theme (default dark). Applies a `.dark` class on <html> for the navy skin.
   const [isDark, setIsDark] = useState(true);
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setIsDark((localStorage.getItem('meetily_theme') || 'dark') !== 'light');
-    }
+    setIsDark(getSavedAppTheme() === 'dark');
   }, []);
   const toggleTheme = (dark: boolean) => {
     setIsDark(dark);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('meetily_theme', dark ? 'dark' : 'light');
-      document.documentElement.classList.toggle('dark', dark);
-    }
+    applyAppTheme(dark ? 'dark' : 'light', true);
   };
 
   // Lazy load preferences on mount (only loads if not already cached)

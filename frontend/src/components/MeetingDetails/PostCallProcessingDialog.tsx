@@ -225,8 +225,8 @@ export function PostCallProcessingDialog({
     setStage('idle');
     toast.success('Post-call processing complete', {
       description: skippedEnhancementRef.current
-        ? 'Speaker labels refreshed from the saved transcript. Generating summary next.'
-        : 'Transcript enhanced and speaker labels refreshed. Generating summary next.',
+        ? 'Speaker labels refreshed from the saved transcript.'
+        : 'Transcript enhanced and speaker labels refreshed.',
     });
     onComplete();
   };
@@ -346,7 +346,7 @@ export function PostCallProcessingDialog({
       await refreshTranscript('post-diarization-refresh');
       completeWorkflow();
       toast.info('Using the live transcript', {
-        description: 'No enhanced audio pass was applied; generating the summary from saved live text.',
+        description: 'No enhanced audio pass was applied; the saved live text remains available.',
       });
     } catch (cause) {
       const nextError = cause instanceof Error ? cause.message : String(cause);

@@ -213,11 +213,36 @@
   }
 }
 /* ============================================================
-   Dark theme — "Actually Free" deep-navy skin (Decred-style)
-   Remaps common Tailwind light utilities to a navy palette when
-   <html class="dark"> is present (default on). Toggle in Settings.
+   "Actually Free" semantic palette
+   Components use these tokens in both themes. Light is the base palette;
+   <html class="dark"> switches the same surfaces to the deep-navy skin.
    ============================================================ */
 :root {
+  --af-bg: #f6f8fb;
+  --af-panel: #ffffff;
+  --af-panel-2: #eef3f8;
+  --af-hover: #e6edf5;
+  --af-active: #dce7f3;
+
+  --af-border: #dce3ec;
+  --af-border-strong: #c2cedd;
+
+  --af-text: #172033;
+  --af-text-2: #475569;
+  --af-text-3: #64748b;
+
+  --af-accent: #2563eb;
+  --af-accent-soft: #e7efff;
+
+  --af-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);
+  --af-shadow-md: 0 2px 6px rgba(15, 23, 42, 0.10), 0 1px 2px rgba(15, 23, 42, 0.07);
+  --af-shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.16), 0 2px 8px rgba(15, 23, 42, 0.08);
+
+  --af-radius: 12px;
+  --af-radius-sm: 9px;
+}
+
+html.dark {
   /* Elevation ramp. Each step is a deliberate, small lift — enough to read as
      a distinct layer without the surfaces looking striped. */
   --af-bg: #0a0c10;       /* app canvas — near-black with a cool cast */
@@ -243,11 +268,9 @@
   --af-shadow-md: 0 2px 6px rgba(0, 0, 0, 0.32), 0 1px 2px rgba(0, 0, 0, 0.28);
   --af-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.42), 0 2px 8px rgba(0, 0, 0, 0.30);
 
-  --af-radius: 12px;
-  --af-radius-sm: 9px;
 }
 
-html.dark, html.dark body { background-color: var(--af-bg) !important; color: var(--af-text); }
+html, body { background-color: var(--af-bg); color: var(--af-text); }
 
 .dark .bg-white { background-color: var(--af-panel) !important; }
 .dark .bg-gray-50, .dark .bg-slate-50, .dark .bg-neutral-50 { background-color: var(--af-panel-2) !important; }

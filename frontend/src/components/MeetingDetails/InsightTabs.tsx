@@ -367,7 +367,7 @@ export function InsightTabs({
           ) : (
             <>
               {summaryText ? (
-                <div className="prose prose-invert prose-sm max-w-none leading-relaxed text-[var(--af-text-2)] prose-strong:text-[var(--af-text)] prose-p:my-2">
+                <div className="prose prose-sm max-w-none leading-relaxed text-[var(--af-text-2)] dark:prose-invert prose-strong:text-[var(--af-text)] prose-p:my-2">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{summaryText}</ReactMarkdown>
                 </div>
               ) : (
@@ -487,7 +487,7 @@ export function InsightTabs({
                       <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--af-text-3)]" /> Thinking…
                     </span>
                   ) : (
-                    <div className="prose prose-invert prose-sm max-w-none prose-p:my-1 prose-ul:my-1">
+                    <div className="prose prose-sm max-w-none dark:prose-invert prose-p:my-1 prose-ul:my-1">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{qa.answer}</ReactMarkdown>
                     </div>
                   )}

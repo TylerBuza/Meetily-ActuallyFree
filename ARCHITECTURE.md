@@ -397,7 +397,8 @@ save live meeting and retained tracks
   -> refetch replaced transcript rows
   -> diarize using the selected exact count or threshold-based Auto-detect
   -> refetch persisted labels
-  -> summarize fresh SQLite transcript rows
+  -> if Auto Summary is enabled, summarize fresh SQLite transcript rows
+  -> otherwise leave the summary empty for manual generation
 ```
 
 Enhanced retranscription must carry retained-track provenance into every new
@@ -414,7 +415,9 @@ and voiceprint evidence.
 Do not start automatic diarization without the user's explicit Auto-detect
 choice, or generate a summary before this sequence. The count-prompt X skips
 only retranscription: it keeps the live rows, still runs the selected exact or
-automatic diarization, refetches labels, and then releases the summary gate.
+automatic diarization, refetches labels, and then releases the post-call
+completion gate. The Auto Summary preference decides whether that completion
+starts a summary.
 Register retranscription listeners before invoking Rust,
 filter events by meeting ID, and clean them once. Model fallback stays within the
 configured local provider. Timeout cancellation waits for the native reservation
@@ -422,9 +425,11 @@ to clear before retry. Pre-diarization and post-diarization refresh failures are
 distinct retry stages. Workflow refetch failures reject without replacing the
 already-mounted page with its initial fatal-load screen.
 
-Summary generation is gated by both the initial summary lookup and post-call
-completion. It fetches all current rows directly from SQLite, not the paginated
-React page. Both success-toast and delayed navigation paths must preserve
+When Auto Summary is enabled, summary generation is gated by both the initial
+summary lookup and post-call completion. It fetches all current rows directly
+from SQLite, not the paginated React page. With Auto Summary disabled, post-call
+processing still completes and the empty summary remains available for manual
+generation. Both success-toast and delayed navigation paths must preserve
 `source=recording`. Completed meeting IDs are recorded in `sessionStorage` to
 prevent React remount duplication.
 
@@ -437,8 +442,9 @@ Do not mark summary start before backend acceptance.
 
 If audio saving was disabled or retained audio is unavailable, enhancement and
 diarization are impossible. The error state offers **Use live transcript**, which
-refetches the saved live rows, unblocks the sequence, and summarizes those rows
-instead of trapping the user in a retry loop.
+refetches the saved live rows and unblocks the sequence instead of trapping the
+user in a retry loop. Those rows are summarized only when Auto Summary is
+enabled or the user generates a summary manually.
 
 Summary prompts serialize every persisted transcript row with timestamp,
 speaker label, and text. This is required for a regeneration after speaker

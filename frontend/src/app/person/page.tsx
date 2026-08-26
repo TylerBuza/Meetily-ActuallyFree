@@ -325,7 +325,7 @@ function PersonProfileContent() {
                   </div>
                 ) : overview ? (
                   <>
-                    <div className="prose prose-invert prose-sm max-w-none leading-relaxed text-[var(--af-text-2)] prose-headings:text-[var(--af-text)] prose-strong:text-[var(--af-text)] prose-p:my-2 prose-ul:my-2">
+                    <div className="prose prose-sm max-w-none leading-relaxed text-[var(--af-text-2)] dark:prose-invert prose-headings:text-[var(--af-text)] prose-strong:text-[var(--af-text)] prose-p:my-2 prose-ul:my-2">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{overview}</ReactMarkdown>
                     </div>
                     {overviewError && <p className="mt-4 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-400">Regeneration failed: {overviewError}</p>}
@@ -455,7 +455,7 @@ function PersonProfileContent() {
                         ) : message.status === 'error' ? (
                           <>Couldn't answer: {message.answer}</>
                         ) : (
-                          <div className="prose prose-invert prose-xs max-w-none text-[var(--af-text-2)] prose-strong:text-[var(--af-text)] prose-p:my-1 prose-ul:my-1">
+                          <div className="prose prose-xs max-w-none text-[var(--af-text-2)] dark:prose-invert prose-strong:text-[var(--af-text)] prose-p:my-1 prose-ul:my-1">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.answer}</ReactMarkdown>
                           </div>
                         )}

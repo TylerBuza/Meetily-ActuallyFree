@@ -11,6 +11,7 @@ import "sonner/dist/styles.css"
 import { useState, useEffect, useCallback } from 'react'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
+import { applyAppTheme, getSavedAppTheme } from '@/lib/app-theme'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { RecordingStateProvider } from '@/contexts/RecordingStateContext'
 import { OllamaDownloadProvider } from '@/contexts/OllamaDownloadContext'
@@ -86,8 +87,7 @@ export default function RootLayout({
 
   // Apply saved theme (default: dark). Toggle lives in Settings.
   useEffect(() => {
-    const saved = typeof window !== 'undefined' ? localStorage.getItem('meetily_theme') : null
-    document.documentElement.classList.toggle('dark', saved !== 'light')
+    applyAppTheme(getSavedAppTheme())
   }, [])
 
   useEffect(() => {

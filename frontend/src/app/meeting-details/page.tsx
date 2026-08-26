@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { LoaderIcon } from "lucide-react";
 import { useConfig } from "@/contexts/ConfigContext";
 import { usePaginatedTranscripts } from "@/hooks/usePaginatedTranscripts";
+import { shouldSetUpAutoSummary } from "@/lib/meeting-summary-policy";
 
 interface MeetingDetailsResponse {
   id: string;
@@ -68,17 +69,10 @@ function MeetingDetailsContent() {
     if (hasCheckedAutoGen || autoGenerationSetupMeetingRef.current === meetingId) return;
     autoGenerationSetupMeetingRef.current = meetingId;
 
-    // Only auto-generate if navigated from recording
-    if (source !== 'recording') {
-      console.log('Not from recording navigation, skipping auto-generation');
-      setHasCheckedAutoGen(true);
-      return;
-    }
-
-    // A newly stopped recording owns an explicit post-call pipeline whose final
-    // stage is summary generation. Other entry points continue to respect the
-    // general auto-summary preference.
-    if (!isAutoSummary && source !== 'recording') {
+    if (!shouldSetUpAutoSummary(source, isAutoSummary)) {
+      console.log(source === 'recording'
+        ? 'Auto Summary is disabled, skipping automatic generation'
+        : 'Not from recording navigation, skipping auto-generation');
       setHasCheckedAutoGen(true);
       return;
     }
