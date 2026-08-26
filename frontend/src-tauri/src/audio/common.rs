@@ -36,6 +36,28 @@ pub(crate) async fn acquire_engine_lifecycle_lock() -> OwnedMutexGuard<()> {
     ENGINE_LIFECYCLE_LOCK.clone().lock_owned().await
 }
 
+/// Keeps a batch transcription's model loaded until every segment finishes.
+/// Idle cleanup, manual memory cleanup, and LLM startup all use the same lock.
+pub(crate) struct SttBatchLease {
+    _engine_lifecycle_guard: OwnedMutexGuard<()>,
+}
+
+pub(crate) async fn acquire_stt_batch_lease() -> SttBatchLease {
+    let engine_lifecycle_guard = acquire_engine_lifecycle_lock().await;
+    prepare_for_stt().await;
+    mark_stt_activity();
+    SttBatchLease {
+        _engine_lifecycle_guard: engine_lifecycle_guard,
+    }
+}
+
+impl Drop for SttBatchLease {
+    fn drop(&mut self) {
+        // An idle-unload waiter re-checks activity after acquiring the lock.
+        mark_stt_activity();
+    }
+}
+
 fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -402,6 +424,32 @@ mod tests {
 
         acquired_rx.await.unwrap();
         waiter.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stt_batch_lease_blocks_model_cleanup_until_batch_finishes() {
+        let lease = acquire_stt_batch_lease().await;
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (acquired_tx, mut acquired_rx) = tokio::sync::oneshot::channel();
+        let cleanup = tokio::spawn(async {
+            started_tx.send(()).unwrap();
+            let _guard = acquire_engine_lifecycle_lock().await;
+            acquired_tx.send(()).unwrap();
+        });
+
+        started_rx.await.unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(25), &mut acquired_rx)
+                .await
+                .is_err()
+        );
+        drop(lease);
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), acquired_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        cleanup.await.unwrap();
     }
 
     #[test]

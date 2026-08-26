@@ -1,7 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Info } from 'lucide-react';
+import { Cpu, Info, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  formatWhisperBackend,
+  getWhisperBackend,
+  type TranscriptionAccelerationStatus,
+  type WhisperBackend,
+} from '@/lib/transcription-acceleration';
 import { OnboardingContainer } from '../OnboardingContainer';
 import { useOnboarding } from '@/contexts/OnboardingContext';
 import {
@@ -9,11 +15,12 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from '@/components/ui/tooltip';
 
 export function SetupOverviewStep() {
   const { goNext } = useOnboarding();
   const [isMac, setIsMac] = useState(false);
+  const [whisperBackend, setWhisperBackend] = useState<WhisperBackend | null | undefined>();
 
   useEffect(() => {
     const checkPlatform = async () => {
@@ -25,6 +32,13 @@ export function SetupOverviewStep() {
       }
     };
     checkPlatform();
+
+    invoke<TranscriptionAccelerationStatus>('get_local_stack_status')
+      .then((status) => setWhisperBackend(getWhisperBackend(status)))
+      .catch((error) => {
+        console.error('Failed to detect transcription acceleration:', error);
+        setWhisperBackend(null);
+      });
   }, []);
 
   const steps = [
@@ -50,6 +64,19 @@ export function SetupOverviewStep() {
     }).catch((error) => console.error('Failed to open GitHub issues:', error));
   };
 
+  const accelerationLabel = whisperBackend === undefined
+    ? 'Detecting...'
+    : whisperBackend === null
+      ? 'Could not determine'
+      : `${formatWhisperBackend(whisperBackend)} selected`;
+  const accelerationDescription = whisperBackend === undefined
+    ? 'Checking the acceleration selected for this installation.'
+    : whisperBackend === null
+      ? 'You can review the acceleration backend later in Local Stack settings.'
+      : whisperBackend === 'CPU'
+        ? 'Whisper post-call enhancement will use CPU processing.'
+        : 'Whisper post-call enhancement will use this automatically selected backend.';
+
   return (
     <OnboardingContainer
       title="Setup Overview"
@@ -61,17 +88,17 @@ export function SetupOverviewStep() {
         {/* Steps Card */}
         <div className="w-full max-w-md bg-white rounded-lg border border-gray-200 p-4">
           <div className="space-y-4">
-            {steps.map((step, idx) => {
+            {steps.map((step) => {
               return (
                 <div
                   key={step.number}
-                  className={`flex items-start gap-4 p-1`}
+                  className="flex items-start gap-4 p-1"
                 >
                   <div className="flex-1 ml-1">
                     <h3 className="font-medium text-gray-900 flex items-center gap-2">
                         Step {step.number} :  {step.title}
 
-                        {step.type === "summarization" && (
+                        {step.type === 'summarization' && (
                             <TooltipProvider>
                             <Tooltip>
                                 <TooltipTrigger asChild>
@@ -94,6 +121,22 @@ export function SetupOverviewStep() {
           </div>
         </div>
 
+        <div className="w-full max-w-md rounded-lg border border-gray-200 bg-white p-4">
+          <div className="flex items-start gap-3">
+            <div className="rounded-full bg-blue-50 p-2 text-blue-600">
+              {whisperBackend === 'CPU' ? <Cpu className="h-4 w-4" /> : <Zap className="h-4 w-4" />}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-gray-900">Transcription acceleration</p>
+              <p className="mt-1 text-sm font-semibold text-blue-700">
+                {accelerationLabel}
+              </p>
+              <p className="mt-1 text-xs leading-5 text-gray-600">
+                {accelerationDescription} Live Parakeet transcription uses the CPU.
+              </p>
+            </div>
+          </div>
+        </div>
 
         {/* CTA Section */}
         <div className="w-full max-w-xs space-y-4">

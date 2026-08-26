@@ -99,6 +99,7 @@ async fn start_retranscription<R: Runtime>(
     initial_prompt: Option<String>,
 ) -> Result<RetranscriptionResult> {
     let use_parakeet = provider.as_deref() == Some("parakeet");
+    let batch_lease = super::common::acquire_stt_batch_lease().await;
     let result = run_retranscription(
         app.clone(),
         meeting_id.clone(),
@@ -109,6 +110,7 @@ async fn start_retranscription<R: Runtime>(
         initial_prompt,
     )
     .await;
+    drop(batch_lease);
 
     // Unload the engine after the batch job (success, failure, or cancellation)
     super::common::unload_engine_after_batch(use_parakeet).await;

@@ -27,10 +27,10 @@ impl WhisperCompiledBackend {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Metal => "Metal",
-            Self::Cuda => "Cuda",
+            Self::Cuda => "CUDA",
             Self::Vulkan => "Vulkan",
-            Self::HipBlas => "HipBlas",
-            Self::Cpu => "Cpu",
+            Self::HipBlas => "HIP BLAS",
+            Self::Cpu => "CPU",
         }
     }
 }

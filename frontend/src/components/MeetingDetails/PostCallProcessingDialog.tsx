@@ -357,6 +357,7 @@ export function PostCallProcessingDialog({
   };
 
   const isWorking = stage === 'enhancing' || stage === 'diarizing' || stage === 'refreshing';
+  const visibleProgress = Math.max(4, Math.min(100, progress));
 
   // DialogContent already renders a compact X button. At the count prompt that
   // X means "keep the live transcript": skip only retranscription, then still
@@ -371,30 +372,24 @@ export function PostCallProcessingDialog({
   };
 
   return (
-    <Dialog open={stage !== 'idle'} onOpenChange={handleOpenChange}>
-      <DialogContent
-        aria-describedby="post-call-processing-description"
-        className="sm:max-w-md"
-        onEscapeKeyDown={(event) => event.preventDefault()}
-        onPointerDownOutside={(event) => event.preventDefault()}
-      >
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {isWorking ? (
-              <Sparkles size={18} className="text-blue-400" />
-            ) : (
+    <>
+      <Dialog open={stage === 'prompt' || stage === 'error'} onOpenChange={handleOpenChange}>
+        <DialogContent
+          aria-describedby="post-call-processing-description"
+          className="sm:max-w-md"
+          onEscapeKeyDown={(event) => event.preventDefault()}
+          onPointerDownOutside={(event) => event.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
               <Users size={18} className="text-blue-400" />
-            )}
-            {isWorking ? 'Improving your meeting' : 'How many people spoke?'}
-          </DialogTitle>
-          <DialogDescription id="post-call-processing-description">
-            {isWorking
-              ? 'Meetily is rebuilding the transcript before creating the AI summary.'
-              : 'Include yourself in the total. Entering the actual number gives more accurate speaker labels, or choose Auto-detect if you are not sure.'}
-          </DialogDescription>
-        </DialogHeader>
+              How many people spoke?
+            </DialogTitle>
+            <DialogDescription id="post-call-processing-description">
+              Include yourself in the total. Entering the actual number gives more accurate speaker labels, or choose Auto-detect if you are not sure.
+            </DialogDescription>
+          </DialogHeader>
 
-        {stage === 'prompt' || stage === 'error' ? (
           <div className="space-y-4 py-2">
             <div className="grid grid-cols-4 gap-2">
               {[1, 2, 3, 4, 5, 6, 7, 8].map((count) => (
@@ -439,22 +434,7 @@ export function PostCallProcessingDialog({
             />
             {error && <p className="text-sm text-red-400">{error}</p>}
           </div>
-        ) : (
-          <div className="space-y-3 py-4">
-            <div className="flex items-center gap-2 text-sm text-[var(--af-text-2)]">
-              <Loader2 size={16} className="animate-spin text-blue-400" />
-              <span>{message}</span>
-            </div>
-            <div className="h-2 overflow-hidden rounded-full bg-[var(--af-panel-2)]">
-              <div
-                className="h-full rounded-full bg-blue-500 transition-[width] duration-300"
-                style={{ width: `${Math.max(4, progress)}%` }}
-              />
-            </div>
-          </div>
-        )}
 
-        {!isWorking && (
           <DialogFooter>
             {stage === 'error' && (
               <Button type="button" variant="outline" onClick={continueWithLiveTranscript}>
@@ -465,8 +445,43 @@ export function PostCallProcessingDialog({
               {stage === 'error' ? 'Retry' : 'Enhance meeting'}
             </Button>
           </DialogFooter>
-        )}
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+
+      {isWorking && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-4 right-4 z-40 w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] p-4 shadow-2xl"
+        >
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 rounded-lg bg-blue-500/10 p-2 text-blue-400">
+              <Sparkles size={17} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-[var(--af-text)]">Improving transcript</p>
+                <span className="shrink-0 text-xs tabular-nums text-[var(--af-text-3)]">
+                  {visibleProgress}%
+                </span>
+              </div>
+              <div className="mt-1 flex items-center gap-2 text-xs text-[var(--af-text-2)]">
+                <Loader2 size={13} className="shrink-0 animate-spin text-blue-400" />
+                <span className="truncate">{message}</span>
+              </div>
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--af-panel-2)]">
+                <div
+                  className="h-full rounded-full bg-blue-500 transition-[width] duration-300"
+                  style={{ width: `${visibleProgress}%` }}
+                />
+              </div>
+              <p className="mt-2 text-[11px] text-[var(--af-text-3)]">
+                You can keep reviewing the live transcript while this finishes.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

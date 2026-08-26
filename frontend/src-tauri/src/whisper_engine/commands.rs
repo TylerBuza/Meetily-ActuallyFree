@@ -308,15 +308,7 @@ pub async fn get_local_stack_status() -> Result<serde_json::Value, String> {
         "vramHintMb": vram_hint_mb,
         "cuda": cfg!(feature = "cuda"),
         "vulkan": cfg!(feature = "vulkan"),
-        "sttBackend": if cfg!(feature = "cuda") {
-            "CUDA"
-        } else if cfg!(feature = "vulkan") {
-            "Vulkan"
-        } else if cfg!(target_os = "macos") || cfg!(feature = "metal") {
-            "Metal"
-        } else {
-            "CPU"
-        },
+        "sttBackend": super::acceleration::WhisperCompiledBackend::current().as_str(),
         "networkPolicy": "local-first",
         "networkNote": "No telemetry. Cloud LLM only if you add an API key and select that provider.",
     }))

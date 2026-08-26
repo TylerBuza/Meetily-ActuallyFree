@@ -9,8 +9,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import { Cpu, HardDrive, RefreshCw, Trash2, Zap, Shield, Network } from 'lucide-react';
+import {
+  formatWhisperBackend,
+  getWhisperBackend,
+  type TranscriptionAccelerationStatus,
+} from '@/lib/transcription-acceleration';
 
-type StackStatus = {
+type StackStatus = TranscriptionAccelerationStatus & {
   recording: boolean;
   whisper: { loaded: boolean; model: string | null };
   parakeet: { loaded: boolean; model: string | null };
@@ -22,9 +27,6 @@ type StackStatus = {
   dataDirBytes?: number;
   modelsDir?: string;
   vramHintMb?: number;
-  cuda: boolean;
-  vulkan?: boolean;
-  sttBackend?: string;
   networkPolicy?: string;
   networkNote?: string;
 };
@@ -63,6 +65,10 @@ function formatAgo(unixSecs?: number): string {
 export function LocalStackStatus() {
   const [status, setStatus] = useState<StackStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const whisperBackend = getWhisperBackend(status);
+  const whisperBackendLabel = whisperBackend
+    ? formatWhisperBackend(whisperBackend)
+    : 'Detecting...';
 
   const refresh = useCallback(async () => {
     try {
@@ -111,8 +117,8 @@ export function LocalStackStatus() {
       <div>
         <h3 className="text-base font-semibold text-[var(--af-text)]">Local stack</h3>
         <p className="mt-1 text-sm text-[var(--af-text-3)]">
-          What is loaded on this PC. STT and the local LLM never stay loaded together —
-          loading one frees the other so VRAM is not shared.
+          What is loaded on this PC. STT and the local LLM never stay loaded together,
+          so their model memory is not shared.
         </p>
       </div>
 
@@ -126,6 +132,7 @@ export function LocalStackStatus() {
               ok={!!status?.parakeet.loaded}
               label={status?.parakeet.loaded ? 'Loaded' : 'Unloaded'}
             />
+            <Pill ok={false} label="CPU" />
             {status?.parakeet.model && (
               <span className="text-xs text-[var(--af-text-2)]">{status.parakeet.model}</span>
             )}
@@ -141,6 +148,7 @@ export function LocalStackStatus() {
               ok={!!status?.whisper.loaded}
               label={status?.whisper.loaded ? 'Loaded' : 'Unloaded'}
             />
+            <Pill ok={whisperBackend != null && whisperBackend !== 'CPU'} label={whisperBackendLabel} />
             {status?.whisper.model && (
               <span className="text-xs text-[var(--af-text-2)]">{status.whisper.model}</span>
             )}
@@ -165,14 +173,24 @@ export function LocalStackStatus() {
 
         <div className="rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--af-text)]">
-            <Cpu size={16} className="text-purple-400" /> Memory / GPU
+            <Cpu size={16} className="text-purple-400" /> Transcription acceleration
           </div>
-          <Pill
-            ok={status?.sttBackend !== 'CPU'}
-            label={`${status?.sttBackend || (status?.cuda ? 'CUDA' : status?.vulkan ? 'Vulkan' : 'CPU')} build`}
-          />
-          <p className="mt-1 text-xs text-[var(--af-text-2)]">
-            Rough STT VRAM in use: ~{status?.vramHintMb ?? 0} MB
+          <div className="space-y-2 text-xs text-[var(--af-text-2)]">
+            <div className="flex items-center justify-between gap-3">
+              <span>Whisper</span>
+              <Pill
+                ok={whisperBackend != null && whisperBackend !== 'CPU'}
+                label={status?.whisper.loaded ? `${whisperBackendLabel} active` : whisperBackendLabel}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span>Parakeet</span>
+              <Pill ok={false} label="CPU" />
+            </div>
+          </div>
+          <p className="mt-2 text-[11px] text-[var(--af-text-3)]">
+            Whisper acceleration was auto-selected for this installation. Estimated STT model
+            memory loaded: ~{status?.vramHintMb ?? 0} MB.
           </p>
         </div>
 
