@@ -58,7 +58,9 @@ jobs:
             test -f "release/$file"
             (
               cd release
-              grep -F "  $file" SHA256SUMS.txt | sha256sum --check --strict
+              checksum=$(awk -v file="$file" '$2 == file { print }' SHA256SUMS.txt)
+              test "$(wc -l <<< "$checksum")" -eq 1
+              printf '%s\n' "$checksum" | sha256sum --check --strict
             )
           done
           printf 'SETUP=%s\nUPDATER=%s\n' "$SETUP" "$UPDATER" >> "$GITHUB_ENV"
