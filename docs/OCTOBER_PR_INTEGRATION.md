@@ -21,6 +21,35 @@ does not establish or claim a fix for the reporter's new failure.
 
 ## Pending review
 
+## Linux capture #22 — blocked
+
+The rebased branch removes Windows `NATIVE_CLEANUPS` bounded teardown, leaves
+Windows hardware-test stop call sites synchronous after making stop async, and
+returns success after Pulse timeout/panic. Reconnect takes the global manager out
+then unconditionally restores it, exposing a concurrent Start/Stop race. Requested
+changes and native tests; not integrated into the candidate.
+
+## Remaining #38 — blocked
+
+The new delete-files path checks shared folders by raw string equality before
+canonical recursive deletion. Aliases/nested meeting directories are not covered;
+file deletion precedes successful database deletion. Requested canonical/shared
+ownership and partial-failure tests, retained opt-in/beta voice matching, and a
+reproduction for the headset source-attribution report. Only #44/#45 is integrated.
+
+## ROCm #8
+
+Rebased Linux-only SDK discovery and helper feature mapping onto current Windows
+toolchain handling. ROCm is an opt-in source-build backend; neither this Windows
+machine nor its Ubuntu WSL environment has HIP/ROCm. Parser/syntax checks do not
+establish a working AMD GPU build or inference. No installer advertises ROCm.
+
+## Permission probe #12
+
+Author requested not merging. The cited upstream commit changes device monitoring,
+not every permission-probe/UI behavior in this PR. Close as superseded/withdrawn,
+without claiming the entire proposed feature is already implemented in this fork.
+
 ## Speaker labels #44/#45
 
 Integrated contributor commit `1c9f89d` independently of the remaining #38 feature

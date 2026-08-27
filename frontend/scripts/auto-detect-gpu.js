@@ -45,8 +45,12 @@ function detectGPU() {
       }
     }
 
-    // Check for AMD GPU (Linux only)
-    if (platform === 'linux' && commandExists('rocm-smi')) {
+    // Check for AMD GPU (Linux only). Fedora and newer ROCm installs may
+    // provide rocminfo without the legacy rocm-smi command.
+    if (
+      platform === 'linux' &&
+      (commandExists('rocm-smi') || commandExists('rocminfo'))
+    ) {
       const rocmPath = process.env.ROCM_PATH;
       if (rocmPath || commandExists('hipcc')) {
         console.log('🔴 AMD GPU detected with ROCm - using HIPBlas acceleration');
