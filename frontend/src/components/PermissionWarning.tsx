@@ -124,7 +124,7 @@ export function PermissionWarning({
                     <p className="font-medium">To enable system audio on macOS:</p>
                     <ul className="list-disc list-inside ml-2 space-y-1">
                       <li>Grant Audio Capture permission to Meetily</li>
-                      <li>Play audio and use Recheck to verify the native capture tap</li>
+                      <li>Use Recheck — Meetily plays a short test sound to verify the native capture tap</li>
                       <li>Restart Meetily after changing permission if capture remains silent</li>
                     </ul>
                   </div>

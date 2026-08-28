@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### macOS Audio Capture
+
+- The system-audio permission probe now plays its own short test sound, so
+  Recheck no longer requires other audio to be playing and silence reliably
+  indicates a denied capture tap.
+
 ## 0.2.10 - 2026-08-26
 
 ### Light Theme
