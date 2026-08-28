@@ -482,8 +482,13 @@ impl ParakeetEngine {
         self.current_model.read().await.is_some()
     }
 
-    /// Transcribe audio samples using the loaded Parakeet model
-    pub async fn transcribe_audio(&self, audio_data: Vec<f32>) -> Result<String> {
+    /// Transcribe audio samples using the loaded Parakeet model and optional
+    /// comma- or newline-separated vocabulary phrases.
+    pub async fn transcribe_audio(
+        &self,
+        audio_data: Vec<f32>,
+        vocabulary: Option<&str>,
+    ) -> Result<String> {
         let mut model_guard = self.current_model.write().await;
         let model = model_guard
             .as_mut()
@@ -498,7 +503,7 @@ impl ParakeetEngine {
 
         // Transcribe using Parakeet model
         let result = model
-            .transcribe_samples(audio_data)
+            .transcribe_samples(audio_data, vocabulary)
             .map_err(|e| anyhow!("Parakeet transcription failed: {}", e))?;
 
         log::debug!("Parakeet transcription result: '{}'", result.text);

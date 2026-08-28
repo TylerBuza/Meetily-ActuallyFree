@@ -125,7 +125,7 @@ pub struct SaveTranscriptConfigRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WhisperVocabularyConfig {
+pub struct VocabularyConfig {
     pub global: String,
     pub meeting: String,
 }
@@ -757,10 +757,10 @@ pub async fn api_save_post_call_transcript_config(
 }
 
 #[tauri::command]
-pub async fn api_get_whisper_vocabulary(
+pub async fn api_get_vocabulary(
     state: tauri::State<'_, AppState>,
     meeting_id: Option<String>,
-) -> Result<WhisperVocabularyConfig, String> {
+) -> Result<VocabularyConfig, String> {
     let pool = state.db_manager.pool();
     let global = VocabularyRepository::get_global(pool)
         .await
@@ -773,11 +773,11 @@ pub async fn api_get_whisper_vocabulary(
             .unwrap_or_default(),
         None => String::new(),
     };
-    Ok(WhisperVocabularyConfig { global, meeting })
+    Ok(VocabularyConfig { global, meeting })
 }
 
 #[tauri::command]
-pub async fn api_save_global_whisper_vocabulary(
+pub async fn api_save_global_vocabulary(
     state: tauri::State<'_, AppState>,
     vocabulary: String,
 ) -> Result<String, String> {
@@ -789,7 +789,7 @@ pub async fn api_save_global_whisper_vocabulary(
 }
 
 #[tauri::command]
-pub async fn api_save_meeting_whisper_vocabulary(
+pub async fn api_save_meeting_vocabulary(
     state: tauri::State<'_, AppState>,
     meeting_id: String,
     vocabulary: String,

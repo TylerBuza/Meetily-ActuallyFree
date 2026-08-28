@@ -66,7 +66,7 @@ Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on it
 - **Meeting memory:** global search, reusable people profiles, speaker naming, and grounded person Q&A.
 - **Native exports:** PDF, DOCX, Markdown, text, JSON, or clipboard.
 - **Resilient local models:** resumable, validated downloads with Parakeet mirror fallback.
-- **Whisper vocabulary hints:** teach live and post-call transcription recurring names, acronyms, products, and meeting-specific terms.
+- **Transcription vocabulary hints:** teach Parakeet and Whisper recurring names, acronyms, products, and meeting-specific terms.
 - **Private updates and no telemetry:** Windows update checks are opt-in, and analytics transmission is disabled on every platform.
 
 ## Install
