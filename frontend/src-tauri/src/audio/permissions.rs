@@ -95,8 +95,10 @@ pub async fn request_screen_recording_permission_command() -> Result<(), String>
 }
 
 /// Trigger the system-audio permission request and probe functional capture.
-/// Returns Ok(true) only when the started tap receives audible system audio;
-/// false can mean denial, silence, or another capture initialization failure.
+/// Plays short system sounds itself while probing, so a granted tap always has
+/// audio to observe. Returns Ok(true) only when the tap receives audible audio;
+/// false then indicates denial (or a fully unavailable output path), not the
+/// absence of ambient playback.
 #[cfg(target_os = "macos")]
 pub fn trigger_system_audio_permission() -> Result<bool> {
     info!("🔐 Triggering Audio Capture permission request...");
@@ -104,12 +106,40 @@ pub fn trigger_system_audio_permission() -> Result<bool> {
     match crate::audio::capture::CoreAudioCapture::new() {
         Ok(capture) => {
             info!("✅ Core Audio tap created; starting native capture probe");
-            let detected = capture.probe(std::time::Duration::from_secs(5))?;
+
+            // Self-test tone: the tap only yields samples while some process
+            // renders audio. Denied taps deliver nothing, so playing our own
+            // sound makes silence an actual denial signal instead of a guess
+            // about whether anything happened to be playing.
+            let tone_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let tone_stop_player = tone_stop.clone();
+            let tone_player = std::thread::spawn(move || {
+                for _ in 0..12 {
+                    if tone_stop_player.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    let played = Command::new("/usr/bin/afplay")
+                        .args(["-v", "0.5", "/System/Library/Sounds/Pop.aiff"])
+                        .status()
+                        .map(|status| status.success())
+                        .unwrap_or(false);
+                    if !played {
+                        // afplay unavailable; fall back to ambient audio.
+                        break;
+                    }
+                }
+            });
+
+            let detected = capture.probe(std::time::Duration::from_secs(5));
+            tone_stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            let _ = tone_player.join();
+            let detected = detected?;
+
             if detected {
                 info!("✅ Native system audio capture verified");
             } else {
                 warn!(
-                    "Audio Capture returned silence; permission may be denied or no audio was playing"
+                    "Audio Capture probe heard no audio, including its own test sound; permission is likely denied"
                 );
             }
             Ok(detected)
@@ -136,8 +166,9 @@ pub fn trigger_system_audio_permission() -> Result<bool> {
     Ok(true)
 }
 
-/// Trigger Audio Capture permission and test for audible samples for up to five
-/// seconds. False is not a definitive denial status because silence is identical.
+/// Trigger Audio Capture permission and probe the tap for up to five seconds
+/// while playing a short self-test sound, so false indicates a denied or
+/// non-functional tap rather than the absence of ambient playback.
 #[tauri::command]
 pub async fn trigger_system_audio_permission_command() -> Result<bool, String> {
     // Run in blocking task to avoid blocking the async runtime

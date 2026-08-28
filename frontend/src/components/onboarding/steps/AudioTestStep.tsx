@@ -104,7 +104,7 @@ export function AudioTestStep() {
               setSysRms(detected ? 0.2 : 0);
               if (!detected) {
                 setError(
-                  'System audio was not detected. Play audio, grant Audio Capture permission if prompted, then click Retest audio.',
+                  'System audio was not detected. Grant Audio Capture permission if prompted, then click Retest audio.',
                 );
               }
             } catch (systemError) {
