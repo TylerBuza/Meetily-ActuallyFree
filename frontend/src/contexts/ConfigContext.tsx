@@ -91,6 +91,7 @@ interface ConfigContextType {
   isLoadingPreferences: boolean;
   loadPreferences: () => Promise<void>;
   updateNotificationSettings: (settings: NotificationSettings) => Promise<void>;
+  updateRecordingsLocation: (path: string) => void;
 }
 
 const ConfigContext = createContext<ConfigContextType | undefined>(undefined);
@@ -444,16 +445,20 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       }
 
       // Load storage locations
-      const [dbDir, modelsDir, recordingsDir] = await Promise.all([
+      const [dbDir, modelsDir, defaultRecordingsDir, recordingPreferences] = await Promise.all([
         invoke<string>('get_database_directory'),
         invoke<string>('whisper_get_models_directory'),
-        invoke<string>('get_default_recordings_folder_path')
+        invoke<string>('get_default_recordings_folder_path'),
+        invoke<{ save_folder: string }>('get_recording_preferences').catch((error) => {
+          console.error('[ConfigContext] Failed to load recording preferences:', error);
+          return null;
+        }),
       ]);
 
       setStorageLocations({
         database: dbDir,
         models: modelsDir,
-        recordings: recordingsDir
+        recordings: recordingPreferences?.save_folder.trim() || defaultRecordingsDir,
       });
 
       // Mark as loaded
@@ -475,6 +480,12 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       console.error('[ConfigContext] Failed to update notification settings:', error);
       throw error; // Re-throw so component can handle error
     }
+  }, []);
+
+  const updateRecordingsLocation = useCallback((path: string) => {
+    setStorageLocations((current) =>
+      current ? { ...current, recordings: path } : current,
+    );
   }, []);
 
   // Wrapper for setSelectedLanguage that persists to localStorage and syncs to Rust
@@ -514,6 +525,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     isLoadingPreferences,
     loadPreferences,
     updateNotificationSettings,
+    updateRecordingsLocation,
   }), [
     modelConfig,
     isAutoSummary,
@@ -536,6 +548,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     isLoadingPreferences,
     loadPreferences,
     updateNotificationSettings,
+    updateRecordingsLocation,
   ]);
 
   return (

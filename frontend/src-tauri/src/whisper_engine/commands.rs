@@ -1,8 +1,205 @@
-use crate::whisper_engine::{ModelInfo, WhisperEngine};
-use std::sync::{Arc, Mutex};
-use std::path::PathBuf;
-use tauri::{command, Emitter, Manager, AppHandle, Runtime};
 use crate::config::WHISPER_MODEL_CATALOG;
+use crate::whisper_engine::{ModelInfo, WhisperEngine};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use tauri::{command, AppHandle, Emitter, Manager, Runtime};
+
+const MIN_CUDA_DRIVER: (u32, u32) = (580, 0);
+const MIN_CUDA_COMPUTE_CAPABILITY: (u32, u32) = (7, 5);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum CudaDriverState {
+    NotApplicable,
+    MissingDriver,
+    OutdatedDriver,
+    UnsupportedGpu,
+    QueryFailed,
+    Ready,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CudaReconfigurationStatus {
+    compiled_backend: String,
+    nvidia_gpu_detected: bool,
+    driver_state: CudaDriverState,
+    driver_update_required: bool,
+    reconfiguration_required: bool,
+    setup_download_url: Option<String>,
+}
+
+fn parse_version_pair(value: &str) -> Option<(u32, u32)> {
+    let mut parts = value.lines().next()?.trim().split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().unwrap_or("0").parse().ok()?;
+    Some((major, minor))
+}
+
+fn classify_cuda_driver(
+    nvidia_hardware: bool,
+    nvidia_smi_available: bool,
+    driver_version: Option<&str>,
+    compute_capability: Option<&str>,
+) -> CudaDriverState {
+    if !nvidia_hardware && !nvidia_smi_available {
+        return CudaDriverState::NotApplicable;
+    }
+    if !nvidia_smi_available {
+        return CudaDriverState::MissingDriver;
+    }
+    let Some(driver_version) = driver_version.and_then(parse_version_pair) else {
+        return CudaDriverState::QueryFailed;
+    };
+    if driver_version < MIN_CUDA_DRIVER {
+        return CudaDriverState::OutdatedDriver;
+    }
+    let Some(compute_capability) = compute_capability.and_then(parse_version_pair) else {
+        return CudaDriverState::QueryFailed;
+    };
+    if compute_capability < MIN_CUDA_COMPUTE_CAPABILITY {
+        CudaDriverState::UnsupportedGpu
+    } else {
+        CudaDriverState::Ready
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn has_nvidia_display_adapter() -> bool {
+    use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_64KEY};
+    use winreg::RegKey;
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let Ok(pci) = hklm.open_subkey_with_flags(
+        "SYSTEM\\CurrentControlSet\\Enum\\PCI",
+        KEY_READ | KEY_WOW64_64KEY,
+    ) else {
+        return false;
+    };
+    pci.enum_keys().flatten().any(|device_name| {
+        if !device_name
+            .get(..8)
+            .is_some_and(|vendor| vendor.eq_ignore_ascii_case("VEN_10DE"))
+        {
+            return false;
+        }
+        let Ok(device) = pci.open_subkey_with_flags(&device_name, KEY_READ | KEY_WOW64_64KEY)
+        else {
+            return false;
+        };
+        device.enum_keys().flatten().any(|instance_name| {
+            let Ok(instance) =
+                device.open_subkey_with_flags(instance_name, KEY_READ | KEY_WOW64_64KEY)
+            else {
+                return false;
+            };
+            instance
+                .get_value::<String, _>("ClassGUID")
+                .is_ok_and(|class_guid| {
+                    class_guid.eq_ignore_ascii_case("{4d36e968-e325-11ce-bfc1-08002be10318}")
+                })
+        })
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn nvidia_smi_path() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(windows) = std::env::var_os("WINDIR") {
+        candidates.push(
+            PathBuf::from(windows)
+                .join("System32")
+                .join("nvidia-smi.exe"),
+        );
+    }
+    if let Some(program_files) = std::env::var_os("ProgramFiles") {
+        candidates.push(
+            PathBuf::from(program_files)
+                .join("NVIDIA Corporation")
+                .join("NVSMI")
+                .join("nvidia-smi.exe"),
+        );
+    }
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+#[cfg(target_os = "windows")]
+fn run_nvidia_smi(path: &std::path::Path, query: &str) -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let mut command = Command::new(path);
+    command
+        .args(["--id=0", query, "--format=csv,noheader,nounits"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW);
+    let mut child = command.spawn().ok()?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let output = child.wait_with_output().ok()?;
+                return status
+                    .success()
+                    .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string());
+            }
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            _ => {
+                if child.kill().is_ok() {
+                    let _ = child.wait();
+                }
+                return None;
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_cuda_reconfiguration_status() -> CudaReconfigurationStatus {
+    let compiled_backend = super::acceleration::WhisperCompiledBackend::current()
+        .as_str()
+        .to_string();
+    let nvidia_hardware = has_nvidia_display_adapter();
+    let nvidia_smi = nvidia_smi_path();
+    let driver_version = nvidia_smi
+        .as_deref()
+        .and_then(|path| run_nvidia_smi(path, "--query-gpu=driver_version"));
+    let compute_capability = driver_version
+        .as_deref()
+        .and_then(parse_version_pair)
+        .filter(|version| *version >= MIN_CUDA_DRIVER)
+        .and_then(|_| nvidia_smi.as_deref())
+        .and_then(|path| run_nvidia_smi(path, "--query-gpu=compute_cap"));
+    let driver_state = classify_cuda_driver(
+        nvidia_hardware,
+        nvidia_smi.is_some(),
+        driver_version.as_deref(),
+        compute_capability.as_deref(),
+    );
+    let cuda_compiled = compiled_backend.eq_ignore_ascii_case("cuda");
+
+    CudaReconfigurationStatus {
+        compiled_backend,
+        nvidia_gpu_detected: nvidia_hardware || nvidia_smi.is_some(),
+        driver_state,
+        driver_update_required: matches!(
+            driver_state,
+            CudaDriverState::MissingDriver
+                | CudaDriverState::OutdatedDriver
+                | CudaDriverState::QueryFailed
+        ),
+        reconfiguration_required: driver_state == CudaDriverState::Ready && !cuda_compiled,
+        setup_download_url: Some(format!(
+            "https://github.com/TylerBuza/Meetily-ActuallyFree/releases/download/v{version}/Meetily-ActuallyFree-{version}-x64-universal-setup.exe",
+            version = env!("CARGO_PKG_VERSION"),
+        )),
+    }
+}
 
 // Global whisper engine
 pub static WHISPER_ENGINE: Mutex<Option<Arc<WhisperEngine>>> = Mutex::new(None);
@@ -73,8 +270,8 @@ pub async fn whisper_get_available_models() -> Result<Vec<ModelInfo>, String> {
 fn discover_models_standalone() -> Result<Vec<ModelInfo>, String> {
     use crate::whisper_engine::ModelStatus;
 
-    let models_dir = get_models_directory()
-        .ok_or_else(|| "Models directory not initialized".to_string())?;
+    let models_dir =
+        get_models_directory().ok_or_else(|| "Models directory not initialized".to_string())?;
 
     // Whisper models are stored directly in the models directory (not in a whisper subdirectory)
     let whisper_dir = models_dir.clone();
@@ -115,7 +312,10 @@ fn discover_models_standalone() -> Result<Vec<ModelInfo>, String> {
         });
     }
 
-    let downloaded_count = models.iter().filter(|m| matches!(m.status, ModelStatus::Available)).count();
+    let downloaded_count = models
+        .iter()
+        .filter(|m| matches!(m.status, ModelStatus::Available))
+        .count();
     log::info!("Found {} downloaded Whisper models", downloaded_count);
 
     Ok(models)
@@ -124,7 +324,7 @@ fn discover_models_standalone() -> Result<Vec<ModelInfo>, String> {
 #[command]
 pub async fn whisper_load_model(
     app_handle: tauri::AppHandle,
-    model_name: String
+    model_name: String,
 ) -> Result<(), String> {
     let engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
@@ -209,9 +409,7 @@ pub async fn whisper_is_model_loaded() -> Result<bool, String> {
 
 #[command]
 pub async fn whisper_unload_model() -> Result<bool, String> {
-    crate::audio::common::force_unload_stt()
-        .await
-        .map(|_| true)
+    crate::audio::common::force_unload_stt().await.map(|_| true)
 }
 
 /// Force-unload Whisper + Parakeet (settings / local stack panel).
@@ -312,6 +510,33 @@ pub async fn get_local_stack_status() -> Result<serde_json::Value, String> {
         "networkPolicy": "local-first",
         "networkNote": "No telemetry. Cloud LLM only if you add an API key and select that provider.",
     }))
+}
+
+/// Recheck whether a Windows NVIDIA driver now supports the CUDA build selected
+/// by setup. CUDA and Vulkan are separate executables, so a newly ready CUDA
+/// driver requires rerunning setup rather than changing the active process.
+#[command]
+pub async fn get_cuda_reconfiguration_status() -> Result<CudaReconfigurationStatus, String> {
+    #[cfg(target_os = "windows")]
+    {
+        return tauri::async_runtime::spawn_blocking(windows_cuda_reconfiguration_status)
+            .await
+            .map_err(|error| format!("Failed to recheck CUDA availability: {error}"));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(CudaReconfigurationStatus {
+            compiled_backend: super::acceleration::WhisperCompiledBackend::current()
+                .as_str()
+                .to_string(),
+            nvidia_gpu_detected: false,
+            driver_state: CudaDriverState::NotApplicable,
+            driver_update_required: false,
+            reconfiguration_required: false,
+            setup_download_url: None,
+        })
+    }
 }
 
 #[command]
@@ -507,12 +732,14 @@ pub async fn whisper_transcribe_audio<R: Runtime>(
         // Get language preference
         let language = crate::get_language_preference_internal();
         let initial_prompt = match app.try_state::<crate::state::AppState>() {
-            Some(state) => crate::database::repositories::vocabulary::VocabularyRepository::get_effective(
+            Some(state) => {
+                crate::database::repositories::vocabulary::VocabularyRepository::get_effective(
                 state.db_manager.pool(),
                 None,
             )
             .await
-            .map_err(|error| error.to_string())?,
+                .map_err(|error| error.to_string())?
+            }
             None => None,
         };
         engine
@@ -642,8 +869,8 @@ pub async fn whisper_delete_corrupted_model(model_name: String) -> Result<String
 /// Open the models folder in the system file explorer
 #[command]
 pub async fn open_models_folder() -> Result<(), String> {
-    let models_dir = get_models_directory()
-        .ok_or_else(|| "Models directory not initialized".to_string())?;
+    let models_dir =
+        get_models_directory().ok_or_else(|| "Models directory not initialized".to_string())?;
 
     // Ensure directory exists before trying to open it
     if !models_dir.exists() {
@@ -679,4 +906,62 @@ pub async fn open_models_folder() -> Result<(), String> {
 
     log::info!("Opened models folder: {}", folder_path);
     Ok(())
+}
+
+#[cfg(test)]
+mod cuda_reconfiguration_tests {
+    use super::*;
+
+    #[test]
+    fn version_parser_handles_driver_and_compute_values() {
+        assert_eq!(parse_version_pair("610.74\r\n"), Some((610, 74)));
+        assert_eq!(parse_version_pair("12.0"), Some((12, 0)));
+        assert_eq!(parse_version_pair("invalid"), None);
+    }
+
+    #[test]
+    fn fresh_nvidia_install_requires_a_driver() {
+        assert_eq!(
+            classify_cuda_driver(true, false, None, None),
+            CudaDriverState::MissingDriver
+        );
+    }
+
+    #[test]
+    fn current_driver_and_supported_gpu_are_ready() {
+        assert_eq!(
+            classify_cuda_driver(true, true, Some("610.74"), Some("12.0")),
+            CudaDriverState::Ready
+        );
+    }
+
+    #[test]
+    fn old_driver_and_old_gpu_have_distinct_results() {
+        assert_eq!(
+            classify_cuda_driver(true, true, Some("579.99"), Some("12.0")),
+            CudaDriverState::OutdatedDriver
+        );
+        assert_eq!(
+            classify_cuda_driver(true, true, Some("610.74"), Some("7.0")),
+            CudaDriverState::UnsupportedGpu
+        );
+    }
+
+    #[test]
+    fn status_serializes_for_the_frontend_contract() {
+        let status = CudaReconfigurationStatus {
+            compiled_backend: "Vulkan".to_string(),
+            nvidia_gpu_detected: true,
+            driver_state: CudaDriverState::Ready,
+            driver_update_required: false,
+            reconfiguration_required: true,
+            setup_download_url: Some("https://example.test/setup.exe".to_string()),
+        };
+        let value = serde_json::to_value(status).unwrap();
+
+        assert_eq!(value["compiledBackend"], "Vulkan");
+        assert_eq!(value["driverState"], "ready");
+        assert_eq!(value["reconfigurationRequired"], true);
+        assert_eq!(value["setupDownloadUrl"], "https://example.test/setup.exe");
+    }
 }

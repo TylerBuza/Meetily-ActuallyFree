@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.2.11 - 2026-08-28
+
+### Audio Balance
+
+- Added a persisted `0.5×–3.0×` system-audio gain control alongside microphone
+  gain.
+- Applied system gain once before source meters, transcription, retained source
+  tracks, and playback mixing while preserving source alignment.
+- Added waveform-preserving peak limiting and a live warning when boosted
+  system audio repeatedly reaches the safety limiter.
+
+### CUDA Setup Recovery
+
+- Detects NVIDIA display hardware even before the vendor driver is installed
+  and explains why setup temporarily selected Vulkan or CPU.
+- Requires a compatible NVIDIA driver and compute capability before selecting
+  CUDA, with timeout-bounded checks that cannot stall setup.
+- Rechecks CUDA readiness in Setup Overview and at startup for existing users,
+  then offers the current universal setup when the installed executable needs
+  to be replaced with the CUDA build.
+
+### Recording Storage
+
+- Added native folder selection for meeting recordings in Preferences and
+  Recording Settings.
+- Kept both settings views synchronized with the persisted destination and
+  preserved the previous folder when selection or validation fails.
+- Prevented macOS recordings from being placed inside the signed application
+  bundle.
+
+### Development
+
+- Made Tauri launch the checked-in Next.js development binary directly instead
+  of relying on a package-manager script.
+
+### Windows Downloads
+
+- `Meetily-ActuallyFree-0.2.11-x64-universal-setup.exe`: recommended installer;
+  automatically selects CPU, Vulkan, or CUDA.
+- `Meetily-ActuallyFree-0.2.11-x64-universal-updater.exe`: Tauri updater engine
+  used by the in-app updater.
+- `latest.json` and the matching `.sig`: updater metadata and cryptographic
+  signature.
+- `SHA256SUMS.txt`: SHA-256 checksums for release verification.
+
+The same `0.2.11` source can be released separately for Apple Silicon as
+`v0.2.11-macos` only after its exact candidate passes the required physical
+macOS 14.2 qualification. The macOS release will not replace Windows Latest or
+modify Windows updater metadata.
+
 ## 0.2.10 - 2026-08-26
 
 ### Light Theme

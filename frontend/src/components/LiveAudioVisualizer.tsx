@@ -24,6 +24,7 @@ interface RecordingAudioLevels {
   source: 'mic' | 'system' | string;
   rms: number;
   peak: number;
+  limiter_hit?: boolean;
 }
 
 interface LiveAudioVisualizerProps {
@@ -64,7 +65,11 @@ export function LiveAudioVisualizer({
   className = '',
 }: LiveAudioVisualizerProps) {
   const [levels, setLevels] = useState<number[]>(() => new Array(bars).fill(0));
+  const [limiterWarning, setLimiterWarning] = useState(false);
   const levelsRef = useRef<number[]>(new Array(bars).fill(0));
+  const limiterStartedAtRef = useRef<number | null>(null);
+  const limiterLastHitAtRef = useRef<number | null>(null);
+  const limiterClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reset the history buffer when the bar count changes.
   useEffect(() => {
@@ -78,6 +83,13 @@ export function LiveAudioVisualizer({
       const idle = new Array(bars).fill(0);
       levelsRef.current = idle;
       setLevels(idle);
+      limiterStartedAtRef.current = null;
+      limiterLastHitAtRef.current = null;
+      setLimiterWarning(false);
+      if (limiterClearTimerRef.current) {
+        clearTimeout(limiterClearTimerRef.current);
+        limiterClearTimerRef.current = null;
+      }
       return;
     }
 
@@ -86,7 +98,7 @@ export function LiveAudioVisualizer({
 
     (async () => {
       try {
-        unlisten = await listen<RecordingAudioLevels>('recording-audio-levels', (event) => {
+        const stopListening = await listen<RecordingAudioLevels>('recording-audio-levels', (event) => {
           if (!mounted) return;
           const payload = event.payload;
           if (payload.source !== source) return;
@@ -96,7 +108,35 @@ export function LiveAudioVisualizer({
           next.push(level);
           levelsRef.current = next;
           setLevels(next);
+
+          if (source === 'system' && payload.limiter_hit) {
+            const now = performance.now();
+            const lastHit = limiterLastHitAtRef.current;
+            if (lastHit === null || now - lastHit > 250) {
+              limiterStartedAtRef.current = now;
+            }
+            limiterLastHitAtRef.current = now;
+
+            const startedAt = limiterStartedAtRef.current;
+            if (startedAt !== null && now - startedAt >= 750) {
+              setLimiterWarning(true);
+            }
+
+            if (limiterClearTimerRef.current) {
+              clearTimeout(limiterClearTimerRef.current);
+            }
+            limiterClearTimerRef.current = setTimeout(() => {
+              limiterStartedAtRef.current = null;
+              limiterLastHitAtRef.current = null;
+              setLimiterWarning(false);
+            }, 1500);
+          }
         });
+        if (mounted) {
+          unlisten = stopListening;
+        } else {
+          stopListening();
+        }
       } catch {
         // Not in a Tauri context (e.g. plain browser dev) — silently idle.
       }
@@ -105,16 +145,26 @@ export function LiveAudioVisualizer({
     return () => {
       mounted = false;
       if (unlisten) unlisten();
+      if (limiterClearTimerRef.current) {
+        clearTimeout(limiterClearTimerRef.current);
+        limiterClearTimerRef.current = null;
+      }
     };
   }, [active, source, bars]);
 
-  const barColor = source === 'mic' ? 'bg-blue-500' : 'bg-purple-500';
+  const barColor = limiterWarning
+    ? 'bg-amber-400'
+    : source === 'mic'
+      ? 'bg-blue-500'
+      : 'bg-purple-500';
+  const warningText = 'System audio is hitting the limiter. Lower system gain or playback volume.';
 
   return (
     <div
       className={`flex items-end gap-[2px] h-4 ${fill ? 'w-full' : ''} ${className}`}
-      role="img"
-      aria-label={`${source === 'mic' ? 'Microphone' : 'System'} audio level`}
+      role="group"
+      aria-label={`${source === 'mic' ? 'Microphone' : 'System'} audio level${limiterWarning ? '. Too loud.' : ''}`}
+      title={limiterWarning ? warningText : undefined}
     >
       {levels.map((level, index) => (
         <div
@@ -128,6 +178,7 @@ export function LiveAudioVisualizer({
           }}
         />
       ))}
+      {limiterWarning && <span role="status" className="sr-only">{warningText}</span>}
     </div>
   );
 }

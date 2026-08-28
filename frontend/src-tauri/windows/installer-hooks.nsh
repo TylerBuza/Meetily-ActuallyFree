@@ -6,6 +6,9 @@
 !include "x64.nsh"
 
 Var MeetilyBackend
+Var MeetilyCudaState
+Var MeetilyCudaNotice
+!define MEETILY_MIN_NVIDIA_DRIVER "580.00"
 
 !macro Meetily_CheckVcredist
   StrCpy $R9 0
@@ -119,11 +122,47 @@ Var MeetilyBackend
   ${EndIf}
 !macroend
 
+; Sets $R9=1 when Windows has an NVIDIA display adapter, including fresh
+; machines where only Microsoft Basic Display Adapter is installed and
+; nvidia-smi is not available yet.
+!macro Meetily_CheckNvidiaHardware
+  StrCpy $R9 0
+  SetRegView 64
+  StrCpy $0 0
+  ${Do}
+    EnumRegKey $1 HKLM "SYSTEM\CurrentControlSet\Enum\PCI" $0
+    ${If} $1 == ""
+      ${ExitDo}
+    ${EndIf}
+    StrCpy $2 $1 8
+    ${If} $2 == "VEN_10DE"
+      StrCpy $3 0
+      ${Do}
+        EnumRegKey $4 HKLM "SYSTEM\CurrentControlSet\Enum\PCI\$1" $3
+        ${If} $4 == ""
+          ${ExitDo}
+        ${EndIf}
+        ReadRegStr $5 HKLM "SYSTEM\CurrentControlSet\Enum\PCI\$1\$4" "ClassGUID"
+        ${If} $5 == "{4d36e968-e325-11ce-bfc1-08002be10318}"
+          StrCpy $R9 1
+          ${ExitDo}
+        ${EndIf}
+        IntOp $3 $3 + 1
+      ${LoopUntil} $R9 == 1
+    ${EndIf}
+    IntOp $0 $0 + 1
+  ${LoopUntil} $R9 == 1
+  SetRegView lastused
+!macroend
+
 ; CUDA 13 requires a modern driver and this universal build targets Turing+
-; (compute capability 7.5 and newer). Sets $R8=1 when both checks pass.
+; (compute capability 7.5 and newer). Sets $R8=1 when both checks pass and
+; records a reason in $MeetilyCudaState when detected NVIDIA hardware cannot.
 !macro Meetily_CheckCudaCapable
   StrCpy $R8 0
   StrCpy $R7 ""
+  StrCpy $MeetilyCudaState "no-nvidia"
+  !insertmacro Meetily_CheckNvidiaHardware
   ${DisableX64FSRedirection}
   ${If} ${FileExists} "$WINDIR\System32\nvidia-smi.exe"
     StrCpy $R7 "$WINDIR\System32\nvidia-smi.exe"
@@ -134,23 +173,34 @@ Var MeetilyBackend
   ${EndIf}
 
   ${If} $R7 != ""
-    nsExec::ExecToStack '"$R7" --id=0 --query-gpu=driver_version --format=csv,noheader,nounits'
+    ; A working nvidia-smi path itself proves an NVIDIA driver is present even
+    ; if Windows' PCI class metadata was unavailable to this process.
+    StrCpy $R9 1
+    StrCpy $MeetilyCudaState "query-failed"
+    nsExec::ExecToStack /TIMEOUT=5000 '"$R7" --id=0 --query-gpu=driver_version --format=csv,noheader,nounits'
     Pop $0
     Pop $1
     ${If} $0 == 0
-      ${VersionCompare} "$1" "580.00" $2
+      ${VersionCompare} "$1" "${MEETILY_MIN_NVIDIA_DRIVER}" $2
       ${If} $2 != 2
-        nsExec::ExecToStack '"$R7" --id=0 --query-gpu=compute_cap --format=csv,noheader,nounits'
+        nsExec::ExecToStack /TIMEOUT=5000 '"$R7" --id=0 --query-gpu=compute_cap --format=csv,noheader,nounits'
         Pop $0
         Pop $1
         ${If} $0 == 0
           ${VersionCompare} "$1" "7.5" $2
           ${If} $2 != 2
             StrCpy $R8 1
+            StrCpy $MeetilyCudaState "ready"
+          ${Else}
+            StrCpy $MeetilyCudaState "unsupported-gpu"
           ${EndIf}
         ${EndIf}
+      ${Else}
+        StrCpy $MeetilyCudaState "old-driver"
       ${EndIf}
     ${EndIf}
+  ${ElseIf} $R9 == 1
+    StrCpy $MeetilyCudaState "no-driver"
   ${EndIf}
   ${EnableX64FSRedirection}
 !macroend
@@ -205,6 +255,8 @@ Var MeetilyBackend
 ;   /BACKEND=cuda | /BACKEND=vulkan | /BACKEND=cpu
 !macro Meetily_SelectBackend
   StrCpy $MeetilyBackend ""
+  StrCpy $MeetilyCudaState ""
+  StrCpy $MeetilyCudaNotice ""
   ClearErrors
   ${GetOptions} $CMDLINE "/BACKEND=" $MeetilyBackend
 
@@ -272,10 +324,33 @@ Var MeetilyBackend
     ${EndIf}
   ${EndIf}
 
+  StrCpy $R3 "$MeetilyBackend"
+  ${If} $MeetilyBackend == "vulkan"
+    StrCpy $R3 "Vulkan"
+  ${ElseIf} $MeetilyBackend == "cpu"
+    StrCpy $R3 "CPU"
+  ${ElseIf} $MeetilyBackend == "bundled"
+    StrCpy $R3 "the bundled backend"
+  ${EndIf}
+  ${If} $MeetilyCudaState == "no-driver"
+    StrCpy $MeetilyCudaNotice "NVIDIA graphics were detected, but a compatible driver was not found. Install NVIDIA driver ${MEETILY_MIN_NVIDIA_DRIVER} or newer, then rerun setup to enable CUDA. Meetily selected $R3 for now."
+  ${ElseIf} $MeetilyCudaState == "old-driver"
+    StrCpy $MeetilyCudaNotice "The installed NVIDIA driver is too old for Meetily CUDA. Update to NVIDIA driver ${MEETILY_MIN_NVIDIA_DRIVER} or newer, then rerun setup. Meetily selected $R3 for now."
+  ${ElseIf} $MeetilyCudaState == "query-failed"
+    StrCpy $MeetilyCudaNotice "NVIDIA graphics were detected, but setup could not verify CUDA support. Update or reinstall the NVIDIA driver, then rerun setup. Meetily selected $R3 for now."
+  ${EndIf}
+  ${If} $MeetilyCudaNotice != ""
+    DetailPrint "      NOTICE: $MeetilyCudaNotice"
+  ${EndIf}
+
   CreateDirectory "$INSTDIR\data"
   FileOpen $R4 "$INSTDIR\data\selected-backend.txt" w
   FileWrite $R4 "$MeetilyBackend$\r$\n"
   FileClose $R4
+  ${If} $MeetilyProgressToken != ""
+    WriteRegStr HKCU "Software\meetily\InstallerProgress\$MeetilyProgressToken" "Backend" "$MeetilyBackend"
+    WriteRegStr HKCU "Software\meetily\InstallerProgress\$MeetilyProgressToken" "CudaNotice" "$MeetilyCudaNotice"
+  ${EndIf}
 
   RMDir /r "$INSTDIR\installer-variants"
 !macroend

@@ -1,12 +1,12 @@
 {
     "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
     "productName": "Meetily - Actually Free",
-    "version": "0.2.10",
+    "version": "0.2.11",
     "identifier": "com.meetily.ai",
     "build": {
         "frontendDist": "../out",
         "devUrl": "http://localhost:3118",
-        "beforeDevCommand": "pnpm dev",
+        "beforeDevCommand": "node node_modules/next/dist/bin/next dev -p 3118",
         "beforeBuildCommand": "node node_modules/next/dist/bin/next build"
     },
     "app": {

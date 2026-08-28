@@ -70,6 +70,14 @@ VAD, mic loudness normalization targets -20 LUFS, limits automatic gain to
 -1 dB limiter. Do not move user gain after that limiter or restore unbounded
 normalization; retained mic tracks showed hard 0 dBFS clipping under that design.
 
+Microphone and system gain are separate persisted Rust-owned values. System
+gain is applied once before source meters, system VAD/transcription, retained
+`system.mp4`, and playback mixing. Over-range chunks are attenuated to a -1 dBFS
+peak while preserving waveform shape, sample count, and source timing. Repeated
+limiter activity is included in `recording-audio-levels` so both recording
+windows can warn that the system gain or playback volume is too high. Do not
+reimplement either gain only in the webview or in the final mixer.
+
 Note: the webview **cannot** capture system audio itself, so browser-side
 `getUserMedia` visualizers can only ever show the microphone. That is why the
 levels come from Rust.
@@ -173,6 +181,11 @@ discard command canonicalizes paths, rejects every allowed root itself, and only
 deletes descendants of the configured, default, or legacy portable roots. Keep
 the equality rejection separate from descendant checks because roots may be
 nested.
+
+The native folder picker persists a destination only after it can be created and
+written. On macOS, validation must reject the `.app` bundle and every descendant
+before creating anything so a writable user-installed application cannot
+invalidate its signature.
 
 Required mixed-audio failures are not allowed to fail silently. FFmpeg process
 failures, timeouts, and missing mixed outputs propagate through
@@ -574,6 +587,24 @@ in the bootstrapper. The universal package stages three app executables and the
 hook chooses CUDA, Vulkan, or CPU, then installs the chosen variant as the
 canonical `meetily.exe`. In-app updates continue through the raw NSIS engine so
 they retain Tauri's `/P /R /UPDATE /ARGS` behavior.
+
+CUDA selection also distinguishes missing or outdated NVIDIA drivers from a PC
+with no NVIDIA display adapter. The hook checks PCI display-class metadata so a
+fresh Windows install using Microsoft Basic Display Adapter is still recognized,
+then reports the CUDA fallback reason through the run-specific progress registry
+key. The frameless setup shows that notice on its completion page, including the
+minimum NVIDIA driver and the temporary Vulkan/CPU selection. Keep this decision
+in NSIS; the bootstrapper only presents the result and removes the temporary key.
+
+The selected Whisper backend is compiled into the installed executable; closing
+and reopening a Vulkan build cannot turn it into the CUDA build. Setup Overview
+and completed-onboarding startup therefore run a fresh, timeout-bounded
+`nvidia-smi` check.
+Before a compatible driver exists it links to NVIDIA's driver page. If CUDA
+becomes available later, it replaces the stale "Vulkan selected" message with a
+prompt to rerun the latest setup, which safely installs the CUDA executable.
+That action links directly to the current version's `*-universal-setup.exe`, not
+the updater engine listed beside it on the release.
 
 Vulkan selection requires the 64-bit system loader and runs the staged x64
 `meetily-vulkan-probe.exe`, which applies GGML's device-selection policy and

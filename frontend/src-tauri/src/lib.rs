@@ -644,6 +644,7 @@ pub fn run() {
             whisper_engine::commands::force_unload_stt_models,
             whisper_engine::commands::force_unload_all_models,
             whisper_engine::commands::get_local_stack_status,
+            whisper_engine::commands::get_cuda_reconfiguration_status,
             whisper_engine::commands::whisper_has_available_models,
             whisper_engine::commands::whisper_validate_model_ready,
             whisper_engine::commands::whisper_transcribe_audio,

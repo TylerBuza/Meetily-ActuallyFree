@@ -20,10 +20,10 @@ This fork also goes beyond removing feature restrictions. It adds speaker identi
 
 ## Latest Release
 
-Meetily `v0.2.10` removes remaining dark-mode traces from the light theme,
-keeps native window colors synchronized with the selected theme, and prevents
-automatic post-call summaries when Auto Summary is disabled.
-[Read the v0.2.10 changelog](CHANGELOG.md).
+Meetily `v0.2.11` adds adjustable system-audio gain with safety limiting,
+improves NVIDIA driver recovery and CUDA setup guidance, and adds validated
+custom recording folders.
+[Read the v0.2.11 changelog](CHANGELOG.md).
 
 ## Feature Comparison
 
@@ -99,8 +99,13 @@ meetings.
 | --- | --- |
 | Database, templates, and models | Windows/Linux: install-local when writable; macOS: `~/Library/Application Support/Meetily` |
 | Recording/onboarding preference stores | macOS: `~/Library/Application Support/com.meetily.ai` |
-| Recordings | Windows: `Music/meetily-recordings`; macOS: `Movies/meetily-recordings` |
+| Recordings | Windows: `Music/meetily-recordings`; macOS: `Movies/meetily-recordings`; configurable in Settings |
 | Playback and retained tracks | `audio.mp4`, `mic.mp4`, `system.mp4` |
+
+Use **Settings → General → Data Storage Locations** or **Settings → Recording →
+Save Location** to choose another writable recordings folder.
+Meetily validates the destination before saving it and keeps core app data in
+the platform-specific location above.
 
 ## Build
 

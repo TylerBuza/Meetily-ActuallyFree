@@ -362,7 +362,7 @@ export default function RootLayout({
                       <SidebarProvider>
                         <TooltipProvider>
                           <RecordingPostProcessingProvider>
-                            <UpdateCheckProvider>
+                            <UpdateCheckProvider onboardingCompleted={onboardingCompleted}>
                               {onboardingCompleted && !showOnboarding && <GlobalSearchDialog />}
                               <ImportDialogProvider onOpen={handleOpenImportDialog}>
                                 {/* Download progress toast provider - listens for background downloads */}

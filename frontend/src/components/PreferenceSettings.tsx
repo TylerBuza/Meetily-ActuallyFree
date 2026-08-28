@@ -2,8 +2,9 @@
 
 import { useEffect, useState, useRef } from "react"
 import { Switch } from "./ui/switch"
-import { FolderOpen } from "lucide-react"
+import { FolderCog, FolderOpen } from "lucide-react"
 import { invoke } from "@tauri-apps/api/core"
+import { toast } from "sonner"
 import Analytics from "@/lib/analytics"
 import { useConfig, NotificationSettings } from "@/contexts/ConfigContext"
 import { applyAppTheme, getSavedAppTheme } from "@/lib/app-theme"
@@ -14,8 +15,10 @@ export function PreferenceSettings() {
     storageLocations,
     isLoadingPreferences,
     loadPreferences,
-    updateNotificationSettings
+    updateNotificationSettings,
+    updateRecordingsLocation,
   } = useConfig();
+  const [isChoosingRecordingsFolder, setIsChoosingRecordingsFolder] = useState(false);
 
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean | null>(null);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -157,6 +160,33 @@ export function PreferenceSettings() {
     }
   };
 
+  const handleChangeRecordingsFolder = async () => {
+    if (isChoosingRecordingsFolder) return;
+
+    setIsChoosingRecordingsFolder(true);
+    try {
+      const selectedFolder = await invoke<string | null>('select_recording_folder');
+      if (!selectedFolder) return;
+
+      const preferences = await invoke<Record<string, unknown> & { save_folder: string }>(
+        'get_recording_preferences',
+      );
+      await invoke('set_recording_preferences', {
+        preferences: { ...preferences, save_folder: selectedFolder },
+      });
+      updateRecordingsLocation(selectedFolder);
+      toast.success('Recordings folder updated');
+      Analytics.track('recordings_folder_changed', { source: 'preferences' }).catch(console.error);
+    } catch (error) {
+      console.error('Failed to change recordings folder:', error);
+      toast.error('Could not update recordings folder', {
+        description: String(error),
+      });
+    } finally {
+      setIsChoosingRecordingsFolder(false);
+    }
+  };
+
   // Show loading only if we're actually loading and don't have cached data
   if (isLoadingPreferences && !notificationSettings && !storageLocations) {
     return <div className="max-w-2xl mx-auto p-6">Loading Preferences...</div>
@@ -255,21 +285,31 @@ export function PreferenceSettings() {
             <div className="text-sm text-gray-600 mb-3 break-all font-mono text-xs">
               {storageLocations?.recordings || 'Loading...'}
             </div>
-            <button
-              onClick={() => handleOpenFolder('recordings')}
-              className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
-            >
-              <FolderOpen className="w-4 h-4" />
-              Open Folder
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={handleChangeRecordingsFolder}
+                disabled={isChoosingRecordingsFolder}
+                className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-100 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <FolderCog className="w-4 h-4" />
+                {isChoosingRecordingsFolder ? 'Choosing...' : 'Change Folder'}
+              </button>
+              <button
+                onClick={() => handleOpenFolder('recordings')}
+                className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
+              >
+                <FolderOpen className="w-4 h-4" />
+                Open Folder
+              </button>
+            </div>
           </div>
         </div>
 
         <div className="mt-4 p-3 bg-blue-50 rounded-md">
           <p className="text-xs text-blue-800">
-            <strong>Portable:</strong> Models, database, templates and recordings are all stored together
-            inside this app&apos;s own install folder (<code>…/data</code>). Move or copy the folder and
-            everything travels with it — nothing is scattered across your system.
+            <strong>Portable core data:</strong> Models, database, and templates use Meetily&apos;s app data
+            folder. Recordings stay in the user-facing folder shown above so they remain easy to find,
+            play, and back up.
           </p>
         </div>
       </div>

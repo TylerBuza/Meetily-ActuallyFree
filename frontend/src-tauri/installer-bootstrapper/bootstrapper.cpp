@@ -45,6 +45,8 @@ std::wstring g_install_dir;
 std::wstring g_error;
 std::wstring g_payload_path;
 std::wstring g_progress_token;
+std::wstring g_cuda_notice;
+std::mutex g_result_mutex;
 std::mutex g_detail_mutex;
 std::wstring g_install_detail;
 HFONT g_title_font = nullptr;
@@ -312,20 +314,34 @@ void DrawCompleteBadge(HDC dc) {
 
 void DrawComplete(HDC dc) {
   DrawCompleteBadge(dc);
+  std::wstring cuda_notice;
+  {
+    std::lock_guard<std::mutex> lock(g_result_mutex);
+    cuda_notice = g_cuda_notice;
+  }
 
   Text(dc, L"Meetily is ready.", {72, 182, 688, 232}, g_title_font, 0xf2f6fc,
        DT_CENTER | DT_SINGLELINE | DT_VCENTER);
   Text(dc, L"Launch it to finish the in-app welcome and audio check.", {72, 232, 688, 266},
        g_body_font, 0xa9bed9, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
-  RoundedFill(dc, {158, 294, 602, 352}, 12, 0x121925);
-  Border(dc, {158, 294, 602, 352}, 12, 0x202c3e);
-  Text(dc, L"INSTALLED IN", {178, 298, 582, 320}, g_small_font, 0x6da2f8,
-       DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-  std::wstring shown_path = g_install_dir;
-  if (shown_path.size() > 54) shown_path = L"..." + shown_path.substr(shown_path.size() - 51);
-  Text(dc, shown_path, {178, 320, 582, 346}, g_small_font, 0xb8c8dc,
-       DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+  if (cuda_notice.empty()) {
+    RoundedFill(dc, {158, 294, 602, 352}, 12, 0x121925);
+    Border(dc, {158, 294, 602, 352}, 12, 0x202c3e);
+    Text(dc, L"INSTALLED IN", {178, 298, 582, 320}, g_small_font, 0x6da2f8,
+         DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+    std::wstring shown_path = g_install_dir;
+    if (shown_path.size() > 54) shown_path = L"..." + shown_path.substr(shown_path.size() - 51);
+    Text(dc, shown_path, {178, 320, 582, 346}, g_small_font, 0xb8c8dc,
+         DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+  } else {
+    RoundedFill(dc, {100, 278, 660, 365}, 12, 0x2a2113);
+    Border(dc, {100, 278, 660, 365}, 12, 0x6e5426);
+    Text(dc, L"CUDA ACCELERATION IS NOT ENABLED", {120, 284, 640, 307},
+         g_small_font, 0xf2bd62, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+    Text(dc, cuda_notice, {120, 307, 640, 359}, g_small_font, 0xd6c29a,
+         DT_CENTER | DT_WORDBREAK | DT_VCENTER);
+  }
 
   RoundedFill(dc, LaunchRect(), 12, 0x4b88f7);
   Text(dc, L"Launch Meetily", LaunchRect(), g_heading_font, 0xffffff,
@@ -598,6 +614,18 @@ int ReadInstallerMilestone() {
   return std::clamp(static_cast<int>(percent), 0, 100);
 }
 
+std::wstring ReadInstallerResult(const wchar_t* name) {
+  if (g_progress_token.empty()) return {};
+  const std::wstring key = L"Software\\meetily\\InstallerProgress\\" + g_progress_token;
+  wchar_t text[1024]{};
+  DWORD size = sizeof(text);
+  if (RegGetValueW(HKEY_CURRENT_USER, key.c_str(), name, RRF_RT_REG_SZ,
+                   nullptr, text, &size) != ERROR_SUCCESS) {
+    return {};
+  }
+  return text;
+}
+
 int ParseOperationPercent(const std::wstring& detail) {
   const size_t percent = detail.rfind(L'%');
   if (percent == std::wstring::npos) return -1;
@@ -683,6 +711,10 @@ void InstallWorker() {
   GetExitCodeProcess(process.hProcess, &exit_code);
   CloseHandle(process.hThread);
   CloseHandle(process.hProcess);
+  if (exit_code == 0) {
+    std::lock_guard<std::mutex> lock(g_result_mutex);
+    g_cuda_notice = ReadInstallerResult(L"CudaNotice");
+  }
   CleanupProgressRegistry();
   CleanupPayload();
 

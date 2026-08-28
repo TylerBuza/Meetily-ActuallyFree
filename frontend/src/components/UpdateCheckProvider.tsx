@@ -7,6 +7,8 @@ import { UpdateDialog } from './UpdateDialog';
 import { setUpdateDialogCallback, showUpdateNotification } from './UpdateNotification';
 import { invoke } from '@tauri-apps/api/core';
 import { usePlatform } from '@/hooks/usePlatform';
+import { toast } from 'sonner';
+import type { CudaReconfigurationStatus } from '@/lib/transcription-acceleration';
 
 interface UpdateCheckContextType {
   updateInfo: UpdateInfo | null;
@@ -17,7 +19,13 @@ interface UpdateCheckContextType {
 
 const UpdateCheckContext = createContext<UpdateCheckContextType | undefined>(undefined);
 
-export function UpdateCheckProvider({ children }: { children: React.ReactNode }) {
+export function UpdateCheckProvider({
+  children,
+  onboardingCompleted = false,
+}: {
+  children: React.ReactNode;
+  onboardingCompleted?: boolean;
+}) {
   const platform = usePlatform();
   // macOS ships as a separate DMG release with no Tauri updater artifact or
   // latest.json entry. Calling the Windows updater path there is misleading.
@@ -38,6 +46,50 @@ export function UpdateCheckProvider({ children }: { children: React.ReactNode })
       .then(setCheckOnMount)
       .catch(() => setCheckOnMount(false));
   }, [updatesSupported]);
+
+  useEffect(() => {
+    if (platform !== 'windows' || !onboardingCompleted) return;
+
+    let cancelled = false;
+    invoke<CudaReconfigurationStatus>('get_cuda_reconfiguration_status')
+      .then((status) => {
+        if (cancelled) return;
+
+        const reconfigurationUrl = status.setupDownloadUrl;
+        if (status.reconfigurationRequired && reconfigurationUrl) {
+          toast.warning('NVIDIA CUDA is ready', {
+            id: 'cuda-reconfiguration-status',
+            description: `Rerun Meetily setup to replace the ${status.compiledBackend} build with the CUDA build.`,
+            duration: 30000,
+            action: {
+              label: 'Download setup',
+              onClick: () => {
+                void invoke('open_external_url', { url: reconfigurationUrl });
+              },
+            },
+          });
+        } else if (status.driverUpdateRequired) {
+          toast.warning('NVIDIA driver update recommended', {
+            id: 'cuda-reconfiguration-status',
+            description: 'Install a current NVIDIA driver, then reopen Meetily to recheck CUDA support.',
+            duration: 30000,
+            action: {
+              label: 'Get driver',
+              onClick: () => {
+                void invoke('open_external_url', {
+                  url: 'https://www.nvidia.com/Download/index.aspx',
+                });
+              },
+            },
+          });
+        }
+      })
+      .catch((error) => console.error('Failed to recheck CUDA availability:', error));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [onboardingCompleted, platform]);
 
   const { updateInfo, isChecking, checkForUpdates } = useUpdateCheck({
     checkOnMount: updatesSupported && checkOnMount,

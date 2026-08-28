@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Switch } from '@/components/ui/switch';
-import { FolderOpen } from 'lucide-react';
+import { FolderCog, FolderOpen } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { DeviceSelection, SelectedDevices } from '@/components/DeviceSelection';
 import Analytics from '@/lib/analytics';
 import { toast } from 'sonner';
+import { useConfig } from '@/contexts/ConfigContext';
 
 export interface RecordingPreferences {
   save_folder: string;
@@ -14,6 +15,8 @@ export interface RecordingPreferences {
   preferred_system_device: string | null;
   /** Extra mic loudness after normalize (0.5–3.0). */
   mic_gain?: number;
+  /** System-audio gain before metering, transcription, and recording (0.5–3.0). */
+  system_gain?: number;
 }
 
 interface RecordingSettingsProps {
@@ -21,6 +24,7 @@ interface RecordingSettingsProps {
 }
 
 export function RecordingSettings({ onSave }: RecordingSettingsProps) {
+  const { updateRecordingsLocation } = useConfig();
   const [preferences, setPreferences] = useState<RecordingPreferences>({
     save_folder: '',
     auto_save: true,
@@ -28,9 +32,11 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
     preferred_mic_device: null,
     preferred_system_device: null,
     mic_gain: 1.0,
+    system_gain: 1.0,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [isChoosingFolder, setIsChoosingFolder] = useState(false);
   const [showRecordingNotification, setShowRecordingNotification] = useState(true);
 
   // Load recording preferences on component mount
@@ -89,6 +95,13 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
     await savePreferences(newPreferences);
   };
 
+  const handleSystemGainChange = async (value: number) => {
+    const system_gain = Math.min(3, Math.max(0.5, value));
+    const newPreferences = { ...preferences, system_gain };
+    setPreferences(newPreferences);
+    await savePreferences(newPreferences);
+  };
+
   const handleDeviceChange = async (devices: SelectedDevices) => {
     const newPreferences = {
       ...preferences,
@@ -111,6 +124,34 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
       await invoke('open_recordings_folder');
     } catch (error) {
       console.error('Failed to open recordings folder:', error);
+      toast.error('Could not open recordings folder', {
+        description: String(error),
+      });
+    }
+  };
+
+  const handleChangeFolder = async () => {
+    if (isChoosingFolder) return;
+
+    setIsChoosingFolder(true);
+    try {
+      const selectedFolder = await invoke<string | null>('select_recording_folder');
+      if (!selectedFolder) return;
+
+      const newPreferences = { ...preferences, save_folder: selectedFolder };
+      await invoke('set_recording_preferences', { preferences: newPreferences });
+      setPreferences(newPreferences);
+      updateRecordingsLocation(selectedFolder);
+      onSave?.(newPreferences);
+      toast.success('Recordings folder updated');
+      Analytics.track('recordings_folder_changed', { source: 'recording_settings' }).catch(console.error);
+    } catch (error) {
+      console.error('Failed to change recordings folder:', error);
+      toast.error('Could not update recordings folder', {
+        description: String(error),
+      });
+    } finally {
+      setIsChoosingFolder(false);
     }
   };
 
@@ -230,6 +271,52 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
         </div>
       </div>
 
+      {/* System gain — applied before meters, transcription, and saved tracks */}
+      <div className="min-w-0 space-y-3 rounded-lg border p-4">
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="font-medium">System audio gain</div>
+            <div className="text-sm text-gray-600 break-words">
+              Balance other participants and computer audio (0.5×–3×)
+            </div>
+          </div>
+          <span className="shrink-0 text-sm font-semibold tabular-nums text-[var(--af-text)]">
+            {(preferences.system_gain ?? 1).toFixed(1)}×
+          </span>
+        </div>
+        <input
+          type="range"
+          min={0.5}
+          max={3}
+          step={0.1}
+          value={preferences.system_gain ?? 1}
+          disabled={saving}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            setPreferences((p) => ({ ...p, system_gain: v }));
+          }}
+          onMouseUp={(e) => void handleSystemGainChange(parseFloat((e.target as HTMLInputElement).value))}
+          onTouchEnd={(e) => void handleSystemGainChange(parseFloat((e.target as HTMLInputElement).value))}
+          onBlur={(e) => void handleSystemGainChange(parseFloat(e.target.value))}
+          className="w-full min-w-0 max-w-full accent-[var(--af-accent,#4a8bff)]"
+        />
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500">
+          <span>Quieter</span>
+          <button
+            type="button"
+            className="underline hover:text-gray-800"
+            disabled={saving}
+            onClick={() => void handleSystemGainChange(1)}
+          >
+            Reset 1.0×
+          </button>
+          <span>Louder</span>
+        </div>
+        <p className="text-xs text-amber-700">
+          If boosted audio repeatedly hits the safety limiter, the live system meter warns you to lower this gain or playback volume.
+        </p>
+      </div>
+
       {/* Folder Location - Only shown when auto_save is enabled */}
       {preferences.auto_save && (
         <div className="min-w-0 space-y-4">
@@ -238,13 +325,24 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
             <div className="mb-3 break-all text-sm text-gray-600">
               {preferences.save_folder || 'Default folder'}
             </div>
-            <button
-              onClick={handleOpenFolder}
-              className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-            >
-              <FolderOpen className="w-4 h-4" />
-              Open Folder
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={handleChangeFolder}
+                disabled={isChoosingFolder || saving}
+                className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <FolderCog className="w-4 h-4" />
+                {isChoosingFolder ? 'Choosing...' : 'Change Folder'}
+              </button>
+              <button
+                onClick={handleOpenFolder}
+                disabled={isChoosingFolder}
+                className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <FolderOpen className="w-4 h-4" />
+                Open Folder
+              </button>
+            </div>
           </div>
 
           <div className="p-4 border rounded-lg bg-blue-50">

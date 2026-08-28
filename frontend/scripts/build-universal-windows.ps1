@@ -289,7 +289,7 @@ if ($LASTEXITCODE -ne 0) { throw "Frameless installer signing failed" }
 $signature = (Get-Content $updaterSignatureOutput -Raw).Trim()
 $latest = [ordered]@{
   version = $appVersion
-  notes = "Fixes remaining dark-mode traces in the light theme, keeps native window colors synchronized with the selected theme, and prevents post-call summary generation when Auto Summary is disabled."
+  notes = "Adds adjustable system-audio gain with safety limiting, improves NVIDIA driver recovery and CUDA setup guidance, and adds validated custom recording folders."
   pub_date = [DateTime]::UtcNow.ToString("o")
   platforms = [ordered]@{
     "windows-x86_64" = [ordered]@{

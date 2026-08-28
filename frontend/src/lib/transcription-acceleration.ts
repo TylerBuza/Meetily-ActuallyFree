@@ -6,6 +6,21 @@ export interface TranscriptionAccelerationStatus {
   sttBackend?: string;
 }
 
+export interface CudaReconfigurationStatus {
+  compiledBackend: string;
+  nvidiaGpuDetected: boolean;
+  driverState:
+    | 'not-applicable'
+    | 'missing-driver'
+    | 'outdated-driver'
+    | 'unsupported-gpu'
+    | 'query-failed'
+    | 'ready';
+  driverUpdateRequired: boolean;
+  reconfigurationRequired: boolean;
+  setupDownloadUrl: string | null;
+}
+
 export function getWhisperBackend(
   status?: TranscriptionAccelerationStatus | null,
 ): WhisperBackend | null {
