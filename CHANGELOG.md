@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Recordings Folder
+
+- Added a Change Folder picker for the recordings save location in Recording
+  and Preference settings; previously the folder was fixed to the platform
+  default.
+- Preferences now display the configured recordings folder instead of always
+  showing the platform default.
+
 ## 0.2.10 - 2026-08-26
 
 ### Light Theme

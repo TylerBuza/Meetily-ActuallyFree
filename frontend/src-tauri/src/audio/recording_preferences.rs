@@ -366,15 +366,39 @@ pub async fn open_recordings_folder<R: Runtime>(app: AppHandle<R>) -> Result<(),
     Ok(())
 }
 
+/// Open a native folder picker for choosing where recordings are saved.
+/// Returns the picked path, or `None` when the user cancels. The caller
+/// persists it via `set_recording_preferences`, which validates writability.
 #[tauri::command]
 pub async fn select_recording_folder<R: Runtime>(
-    _app: AppHandle<R>,
+    app: AppHandle<R>,
 ) -> Result<Option<String>, String> {
-    // Use Tauri's dialog to select folder
-    // For now, return None - this would need to be implemented with tauri-plugin-dialog
-    // when it's available in the Cargo.toml
-    warn!("Folder selection not yet implemented - using dialog plugin");
-    Ok(None)
+    use tauri_plugin_dialog::DialogExt;
+
+    let current = load_recording_preferences(&app)
+        .await
+        .map(|prefs| prefs.save_folder)
+        .unwrap_or_else(|_| get_default_recordings_folder());
+
+    // Blocking dialog; keep it off the async runtime. The plugin dispatches
+    // the native panel to the main thread itself.
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        let mut dialog = app.dialog().file().set_title("Choose Recordings Folder");
+        if current.is_dir() {
+            dialog = dialog.set_directory(&current);
+        }
+        dialog.blocking_pick_folder()
+    })
+    .await
+    .map_err(|e| format!("Folder picker failed: {e}"))?;
+
+    let Some(path) = picked else {
+        return Ok(None);
+    };
+    let path = path
+        .into_path()
+        .map_err(|e| format!("Invalid folder selection: {e}"))?;
+    Ok(Some(path.to_string_lossy().to_string()))
 }
 
 // Backend selection commands

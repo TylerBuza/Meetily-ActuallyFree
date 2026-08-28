@@ -443,11 +443,14 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         setNotificationSettings(null);
       }
 
-      // Load storage locations
+      // Load storage locations. Recordings honor the user-configured
+      // save_folder; fall back to the platform default if prefs fail to load.
       const [dbDir, modelsDir, recordingsDir] = await Promise.all([
         invoke<string>('get_database_directory'),
         invoke<string>('whisper_get_models_directory'),
-        invoke<string>('get_default_recordings_folder_path')
+        invoke<{ save_folder: string }>('get_recording_preferences')
+          .then((prefs) => prefs.save_folder)
+          .catch(() => invoke<string>('get_default_recordings_folder_path'))
       ]);
 
       setStorageLocations({

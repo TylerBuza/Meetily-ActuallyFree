@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react"
 import { Switch } from "./ui/switch"
-import { FolderOpen } from "lucide-react"
+import { FolderOpen, FolderCog } from "lucide-react"
 import { invoke } from "@tauri-apps/api/core"
 import Analytics from "@/lib/analytics"
 import { useConfig, NotificationSettings } from "@/contexts/ConfigContext"
@@ -21,6 +21,11 @@ export function PreferenceSettings() {
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [previousNotificationsEnabled, setPreviousNotificationsEnabled] = useState<boolean | null>(null);
   const hasTrackedViewRef = useRef(false);
+
+  // Configured recordings folder; overridden locally after an in-page change
+  // so the display updates without a full preferences reload.
+  const [recordingsFolderOverride, setRecordingsFolderOverride] = useState<string | null>(null);
+  const recordingsFolder = recordingsFolderOverride ?? storageLocations?.recordings;
 
   // "Your name" — used to label the user's mic transcripts as "You (Name)".
   const [userName, setUserName] = useState<string>('');
@@ -157,6 +162,22 @@ export function PreferenceSettings() {
     }
   };
 
+  const handleChangeRecordingsFolder = async () => {
+    try {
+      const selected = await invoke<string | null>('select_recording_folder');
+      if (!selected || selected === recordingsFolder) return;
+
+      const preferences = await invoke<{ save_folder: string }>('get_recording_preferences');
+      await invoke('set_recording_preferences', {
+        preferences: { ...preferences, save_folder: selected }
+      });
+      setRecordingsFolderOverride(selected);
+      await Analytics.track('recordings_folder_changed', {});
+    } catch (error) {
+      console.error('Failed to change recordings folder:', error);
+    }
+  };
+
   // Show loading only if we're actually loading and don't have cached data
   if (isLoadingPreferences && !notificationSettings && !storageLocations) {
     return <div className="max-w-2xl mx-auto p-6">Loading Preferences...</div>
@@ -253,23 +274,35 @@ export function PreferenceSettings() {
           <div className="p-4 border rounded-lg bg-gray-50">
             <div className="font-medium mb-2">Meeting Recordings</div>
             <div className="text-sm text-gray-600 mb-3 break-all font-mono text-xs">
-              {storageLocations?.recordings || 'Loading...'}
+              {recordingsFolder || 'Loading...'}
             </div>
-            <button
-              onClick={() => handleOpenFolder('recordings')}
-              className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
-            >
-              <FolderOpen className="w-4 h-4" />
-              Open Folder
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => handleOpenFolder('recordings')}
+                className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
+              >
+                <FolderOpen className="w-4 h-4" />
+                Open Folder
+              </button>
+              <button
+                onClick={handleChangeRecordingsFolder}
+                className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
+              >
+                <FolderCog className="w-4 h-4" />
+                Change Folder
+              </button>
+            </div>
+            <div className="mt-2 text-xs text-gray-500">
+              New recordings are saved here. Existing recordings stay in their current folder.
+            </div>
           </div>
         </div>
 
         <div className="mt-4 p-3 bg-blue-50 rounded-md">
           <p className="text-xs text-blue-800">
-            <strong>Portable:</strong> Models, database, templates and recordings are all stored together
-            inside this app&apos;s own install folder (<code>…/data</code>). Move or copy the folder and
-            everything travels with it — nothing is scattered across your system.
+            <strong>Portable:</strong> Models, database and templates are stored together inside this
+            app&apos;s own install folder (<code>…/data</code>). Recordings are saved to the folder shown
+            above so they stay easy to find and play with normal tools.
           </p>
         </div>
       </div>

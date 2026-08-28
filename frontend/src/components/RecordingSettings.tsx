@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Switch } from '@/components/ui/switch';
-import { FolderOpen } from 'lucide-react';
+import { FolderOpen, FolderCog } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { DeviceSelection, SelectedDevices } from '@/components/DeviceSelection';
 import Analytics from '@/lib/analytics';
@@ -111,6 +111,33 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
       await invoke('open_recordings_folder');
     } catch (error) {
       console.error('Failed to open recordings folder:', error);
+    }
+  };
+
+  const handleChangeFolder = async () => {
+    let selected: string | null;
+    try {
+      selected = await invoke<string | null>('select_recording_folder');
+    } catch (error) {
+      console.error('Failed to open folder picker:', error);
+      toast.error('Failed to open folder picker');
+      return;
+    }
+    if (!selected || selected === preferences.save_folder) return;
+
+    const newPreferences = { ...preferences, save_folder: selected };
+    setSaving(true);
+    try {
+      await invoke('set_recording_preferences', { preferences: newPreferences });
+      setPreferences(newPreferences);
+      onSave?.(newPreferences);
+      toast.success('Save location updated', { description: selected });
+      await Analytics.track('recordings_folder_changed', {});
+    } catch (error) {
+      console.error('Failed to change recordings folder:', error);
+      toast.error('Failed to change save location', { description: String(error) });
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -238,13 +265,26 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
             <div className="mb-3 break-all text-sm text-gray-600">
               {preferences.save_folder || 'Default folder'}
             </div>
-            <button
-              onClick={handleOpenFolder}
-              className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-            >
-              <FolderOpen className="w-4 h-4" />
-              Open Folder
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={handleOpenFolder}
+                className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+              >
+                <FolderOpen className="w-4 h-4" />
+                Open Folder
+              </button>
+              <button
+                onClick={handleChangeFolder}
+                disabled={saving}
+                className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                <FolderCog className="w-4 h-4" />
+                Change Folder
+              </button>
+            </div>
+            <div className="mt-2 text-xs text-gray-500">
+              New recordings are saved here. Existing recordings stay in their current folder.
+            </div>
           </div>
 
           <div className="p-4 border rounded-lg bg-blue-50">

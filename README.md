@@ -99,7 +99,7 @@ meetings.
 | --- | --- |
 | Database, templates, and models | Windows/Linux: install-local when writable; macOS: `~/Library/Application Support/Meetily` |
 | Recording/onboarding preference stores | macOS: `~/Library/Application Support/com.meetily.ai` |
-| Recordings | Windows: `Music/meetily-recordings`; macOS: `Movies/meetily-recordings` |
+| Recordings | Windows: `Music/meetily-recordings`; macOS: `Movies/meetily-recordings` (configurable in Settings) |
 | Playback and retained tracks | `audio.mp4`, `mic.mp4`, `system.mp4` |
 
 ## Build
