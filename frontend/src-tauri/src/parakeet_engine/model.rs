@@ -17,6 +17,310 @@ const WINDOW_SIZE: f32 = 0.01;
 const MAX_TOKENS_PER_STEP: usize = 3;
 const TDT_DURATIONS: [usize; 5] = [0, 1, 2, 3, 4];
 
+// Conservative token-logit boosts. The score grows only after the decoder has
+// followed a glossary phrase, reducing false starts while strongly preferring
+// completion of an already-recognized name or technical term.
+const VOCABULARY_ROOT_BOOST: f32 = 1.0;
+const VOCABULARY_COMPLETION_BOOST: f32 = 3.0;
+const MIN_VOCABULARY_TERM_CHARS: usize = 2;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BiasPhrase {
+    tokens: Vec<i32>,
+    start_only: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GlossaryTerm {
+    canonical: String,
+    normalized: String,
+    word_count: usize,
+}
+
+#[derive(Debug)]
+struct VocabularyBias {
+    phrases: Vec<BiasPhrase>,
+    terms: Vec<GlossaryTerm>,
+    scores: Vec<f32>,
+    touched: Vec<usize>,
+}
+
+impl VocabularyBias {
+    fn compile(source: &str, vocab: &[String]) -> Self {
+        let mut terms = Vec::new();
+        let mut phrases = Vec::new();
+
+        for term in source
+            .split([',', '\n', '\r'])
+            .map(str::trim)
+            .filter(|term| term.chars().count() >= MIN_VOCABULARY_TERM_CHARS)
+        {
+            let normalized = normalize_phrase(term);
+            let word_count = word_spans(term).len();
+            if normalized.chars().count() < MIN_VOCABULARY_TERM_CHARS
+                || word_count == 0
+                || terms
+                    .iter()
+                    .any(|existing: &GlossaryTerm| existing.normalized == normalized)
+            {
+                continue;
+            }
+
+            for spelling in [term.to_string(), term.to_lowercase()] {
+                for (text, start_only) in
+                    [(format!(" {spelling}"), false), (spelling.clone(), true)]
+                {
+                    let Some(tokens) = Self::tokenize(&text, vocab) else {
+                        log::warn!("Parakeet vocabulary term cannot be tokenized: '{spelling}'");
+                        continue;
+                    };
+                    let phrase = BiasPhrase { tokens, start_only };
+                    if !phrases.contains(&phrase) {
+                        phrases.push(phrase);
+                    }
+                }
+            }
+
+            terms.push(GlossaryTerm {
+                canonical: term.to_string(),
+                normalized,
+                word_count,
+            });
+        }
+
+        Self {
+            terms,
+            phrases,
+            scores: vec![0.0; vocab.len()],
+            touched: Vec::new(),
+        }
+    }
+
+    /// Tokenize a phrase into the fewest available model tokens.
+    ///
+    /// The exported ONNX bundle contains only `vocab.txt`, not the original
+    /// SentencePiece model. Minimum-token dynamic programming gives the decoder
+    /// a valid, stable path while preserving exact spelling and capitalization.
+    fn tokenize(text: &str, vocab: &[String]) -> Option<Vec<i32>> {
+        let mut best = vec![usize::MAX; text.len() + 1];
+        let mut previous: Vec<Option<(usize, i32)>> = vec![None; text.len() + 1];
+        best[0] = 0;
+
+        for position in 0..text.len() {
+            if best[position] == usize::MAX || !text.is_char_boundary(position) {
+                continue;
+            }
+            let remaining = &text[position..];
+            for (token_id, token) in vocab.iter().enumerate() {
+                if token.is_empty() || token.starts_with('<') || !remaining.starts_with(token) {
+                    continue;
+                }
+                let next = position + token.len();
+                let token_count = best[position] + 1;
+                if token_count < best[next] {
+                    best[next] = token_count;
+                    previous[next] = Some((position, token_id as i32));
+                }
+            }
+        }
+
+        if best[text.len()] == usize::MAX {
+            return None;
+        }
+
+        let mut tokens = Vec::with_capacity(best[text.len()]);
+        let mut position = text.len();
+        while position > 0 {
+            let (previous_position, token_id) = previous[position]?;
+            tokens.push(token_id);
+            position = previous_position;
+        }
+        tokens.reverse();
+        Some(tokens)
+    }
+
+    fn matched_prefix_len(history: &[i32], phrase: &[i32]) -> usize {
+        let max_len = history.len().min(phrase.len().saturating_sub(1));
+        (1..=max_len)
+            .rev()
+            .find(|&len| history[history.len() - len..] == phrase[..len])
+            .unwrap_or(0)
+    }
+
+    fn select_token(&mut self, history: &[i32], logits: &[f32], fallback: i32) -> i32 {
+        let (mut best_token, mut best_score) = argmax(logits, fallback);
+
+        for token_id in self.touched.drain(..) {
+            self.scores[token_id] = 0.0;
+        }
+
+        for phrase in &self.phrases {
+            let matched = Self::matched_prefix_len(history, &phrase.tokens);
+            if matched == 0 && phrase.start_only && !history.is_empty() {
+                continue;
+            }
+
+            let Some(&next_token) = phrase.tokens.get(matched) else {
+                continue;
+            };
+            let token_id = next_token as usize;
+            if token_id >= logits.len() {
+                continue;
+            }
+
+            let progress = (matched + 1) as f32 / phrase.tokens.len() as f32;
+            let boost = VOCABULARY_ROOT_BOOST
+                + (VOCABULARY_COMPLETION_BOOST - VOCABULARY_ROOT_BOOST) * progress;
+            if self.scores[token_id] == 0.0 {
+                self.touched.push(token_id);
+            }
+            self.scores[token_id] = self.scores[token_id].max(boost);
+        }
+
+        for &token_id in &self.touched {
+            let score = logits[token_id] + self.scores[token_id];
+            if score > best_score {
+                best_token = token_id as i32;
+                best_score = score;
+            }
+        }
+
+        best_token
+    }
+
+    /// Canonicalize words that remain phonetically close to explicit glossary
+    /// entries after decoding. This complements greedy token boosting, which
+    /// cannot retain an alternate hypothesis when the first uncommon subword
+    /// loses by a wide acoustic margin.
+    fn correct_text(&self, text: &str) -> String {
+        let spans = word_spans(text);
+        if spans.is_empty() || self.terms.is_empty() {
+            return text.to_string();
+        }
+
+        let mut output = String::with_capacity(text.len());
+        let mut cursor = 0;
+        let mut position = 0;
+
+        while position < spans.len() {
+            let mut best_match: Option<(usize, usize, usize, usize)> = None;
+
+            for (term_index, term) in self.terms.iter().enumerate() {
+                let minimum_words = term.word_count.saturating_sub(1).max(1);
+                let maximum_words = (term.word_count + 1).min(spans.len() - position);
+                for word_count in minimum_words..=maximum_words {
+                    let start = spans[position].0;
+                    let end = spans[position + word_count - 1].1;
+                    let candidate = normalize_phrase(&text[start..end]);
+                    let distance = levenshtein(&candidate, &term.normalized);
+                    let same_edges = candidate.chars().next() == term.normalized.chars().next()
+                        && candidate.chars().last() == term.normalized.chars().last();
+                    if distance > allowed_vocabulary_distance(term.normalized.chars().count())
+                        || (distance > 1 && !same_edges)
+                    {
+                        continue;
+                    }
+                    let denominator = candidate
+                        .chars()
+                        .count()
+                        .max(term.normalized.chars().count())
+                        .max(1);
+                    let ratio = distance * 1000 / denominator;
+                    let is_better = match best_match {
+                        None => true,
+                        Some((best_ratio, best_distance, best_term, _)) => {
+                            ratio < best_ratio
+                                || (ratio == best_ratio && distance < best_distance)
+                                || (ratio == best_ratio
+                                    && distance == best_distance
+                                    && term.normalized.len()
+                                        > self.terms[best_term].normalized.len())
+                        }
+                    };
+                    if is_better {
+                        best_match = Some((ratio, distance, term_index, word_count));
+                    }
+                }
+            }
+
+            if let Some((_, _, term_index, word_count)) = best_match {
+                let start = spans[position].0;
+                let end = spans[position + word_count - 1].1;
+                output.push_str(&text[cursor..start]);
+                output.push_str(&self.terms[term_index].canonical);
+                cursor = end;
+                position += word_count;
+            } else {
+                position += 1;
+            }
+        }
+
+        output.push_str(&text[cursor..]);
+        output
+    }
+}
+
+fn argmax(logits: &[f32], fallback: i32) -> (i32, f32) {
+    logits
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(index, &score)| (index as i32, score))
+        .unwrap_or((fallback, f32::NEG_INFINITY))
+}
+
+fn word_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut start = None;
+
+    for (index, character) in text.char_indices() {
+        if character.is_alphanumeric() {
+            start.get_or_insert(index);
+        } else if let Some(word_start) = start.take() {
+            spans.push((word_start, index));
+        }
+    }
+    if let Some(word_start) = start {
+        spans.push((word_start, text.len()));
+    }
+
+    spans
+}
+
+fn normalize_phrase(text: &str) -> String {
+    text.chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn allowed_vocabulary_distance(term_len: usize) -> usize {
+    if term_len <= 3 {
+        0
+    } else {
+        (term_len * 2 / 5).clamp(1, 3)
+    }
+}
+
+fn levenshtein(left: &str, right: &str) -> usize {
+    let right_chars: Vec<char> = right.chars().collect();
+    let mut previous: Vec<usize> = (0..=right_chars.len()).collect();
+    let mut current = vec![0; right_chars.len() + 1];
+
+    for (left_index, left_char) in left.chars().enumerate() {
+        current[0] = left_index + 1;
+        for (right_index, &right_char) in right_chars.iter().enumerate() {
+            let substitution = previous[right_index] + usize::from(left_char != right_char);
+            current[right_index + 1] = (current[right_index] + 1)
+                .min(previous[right_index + 1] + 1)
+                .min(substitution);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+
+    previous[right_chars.len()]
+}
+
 static DECODE_SPACE_RE: Lazy<Result<Regex, regex::Error>> =
     Lazy::new(|| Regex::new(r"\A\s|\s\B|(\s)\b"));
 
@@ -50,11 +354,16 @@ pub struct ParakeetModel {
     vocab: Vec<String>,
     blank_idx: i32,
     vocab_size: usize,
+    vocabulary_source: Option<String>,
+    vocabulary_bias: Option<VocabularyBias>,
 }
 
 impl Drop for ParakeetModel {
     fn drop(&mut self) {
-        log::debug!("Dropping ParakeetModel with {} vocab tokens", self.vocab.len());
+        log::debug!(
+            "Dropping ParakeetModel with {} vocab tokens",
+            self.vocab.len()
+        );
     }
 }
 
@@ -80,7 +389,29 @@ impl ParakeetModel {
             vocab,
             blank_idx,
             vocab_size,
+            vocabulary_source: None,
+            vocabulary_bias: None,
         })
+    }
+
+    fn configure_vocabulary(&mut self, vocabulary: Option<&str>) {
+        let source = vocabulary
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        if self.vocabulary_source == source {
+            return;
+        }
+
+        self.vocabulary_bias = source.as_deref().and_then(|value| {
+            let bias = VocabularyBias::compile(value, &self.vocab);
+            log::info!(
+                "Configured Parakeet vocabulary boosting with {} token paths",
+                bias.phrases.len()
+            );
+            (!bias.phrases.is_empty()).then_some(bias)
+        });
+        self.vocabulary_source = source;
     }
 
     fn init_session<P: AsRef<Path>>(
@@ -96,7 +427,10 @@ impl ParakeetModel {
             let quantized_name = format!("{}.int8.onnx", model_name);
             let quantized_path = model_dir.as_ref().join(&quantized_name);
             if quantized_path.exists() {
-                log::info!("Loading quantized Parakeet model from {}...", quantized_name);
+                log::info!(
+                    "Loading quantized Parakeet model from {}...",
+                    quantized_name
+                );
                 quantized_name
             } else {
                 let regular_name = format!("{}.onnx", model_name);
@@ -377,13 +711,12 @@ impl ParakeetModel {
                 (vocab_logits_slice, None)
             };
 
-            // Get argmax token from vocabulary logits only
-            let token = vocab_logits
-                .iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(idx, _)| idx as i32)
-                .unwrap_or(self.blank_idx);
+            // Apply glossary phrase boosting before choosing the vocabulary token.
+            let token = if let Some(bias) = self.vocabulary_bias.as_mut() {
+                bias.select_token(&tokens, vocab_logits, self.blank_idx)
+            } else {
+                argmax(vocab_logits, self.blank_idx).0
+            };
 
             if token != self.blank_idx {
                 prev_state = new_state;
@@ -456,6 +789,10 @@ impl ParakeetModel {
                 .to_string(),
             Err(_) => tokens.join(""), // Fallback if regex failed to compile
         };
+        let text = match &self.vocabulary_bias {
+            Some(bias) => bias.correct_text(&text),
+            None => text,
+        };
 
         let float_timestamps: Vec<f32> = timestamps
             .iter()
@@ -472,7 +809,9 @@ impl ParakeetModel {
     pub fn transcribe_samples(
         &mut self,
         samples: Vec<f32>,
+        vocabulary: Option<&str>,
     ) -> Result<TimestampedResult, ParakeetError> {
+        self.configure_vocabulary(vocabulary);
         let batch_size = 1;
         let samples_len = samples.len();
 
@@ -494,5 +833,102 @@ impl ParakeetModel {
         })?;
 
         Ok(timestamped_result)
+    }
+}
+
+#[cfg(test)]
+mod vocabulary_bias_tests {
+    use super::*;
+
+    fn vocab() -> Vec<String> {
+        [
+            "<unk>", " Meet", "M", "e", "et", "ily", " meeting", " other", "<blk>",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+    }
+
+    #[test]
+    fn compiles_boundary_and_utterance_start_paths() {
+        let bias = VocabularyBias::compile("Meetily", &vocab());
+
+        assert!(bias.phrases.contains(&BiasPhrase {
+            tokens: vec![1, 5],
+            start_only: false,
+        }));
+        assert!(bias.phrases.contains(&BiasPhrase {
+            tokens: vec![2, 3, 4, 5],
+            start_only: true,
+        }));
+    }
+
+    #[test]
+    fn boosts_phrase_start_and_completion() {
+        let mut bias = VocabularyBias::compile("Meetily", &vocab());
+        let mut logits = vec![-5.0; 9];
+        logits[1] = -0.5;
+        logits[7] = 0.6;
+
+        assert_eq!(bias.select_token(&[], &logits, 8), 1);
+
+        logits[1] = -5.0;
+        logits[5] = -0.5;
+        assert_eq!(bias.select_token(&[1], &logits, 8), 5);
+    }
+
+    #[test]
+    fn does_not_restart_an_utterance_start_path_mid_word() {
+        let mut bias = VocabularyBias {
+            phrases: vec![BiasPhrase {
+                tokens: vec![2, 3],
+                start_only: true,
+            }],
+            terms: Vec::new(),
+            scores: vec![0.0; 9],
+            touched: Vec::new(),
+        };
+        let mut logits = vec![-5.0; 9];
+        logits[2] = 0.0;
+        logits[7] = 0.6;
+
+        assert_eq!(bias.select_token(&[7], &logits, 8), 7);
+        assert_eq!(bias.select_token(&[], &logits, 8), 2);
+    }
+
+    #[test]
+    fn deduplicates_terms_and_ignores_unsafe_single_character_terms() {
+        let bias = VocabularyBias::compile("Meetily, Meetily\nA", &vocab());
+
+        assert_eq!(bias.terms.len(), 1);
+        assert_eq!(bias.phrases.len(), 2);
+    }
+
+    #[test]
+    fn canonicalizes_close_glossary_words() {
+        let bias = VocabularyBias::compile("Christophe, Meetily, Tauri, ROCm", &vocab());
+
+        assert_eq!(
+            bias.correct_text("Christopher uses meetily with Tori and Rocum."),
+            "Christophe uses Meetily with Tauri and ROCm."
+        );
+    }
+
+    #[test]
+    fn leaves_distant_or_differently_ended_words_unchanged() {
+        let bias = VocabularyBias::compile("Meetily, Tauri", &vocab());
+
+        assert_eq!(
+            bias.correct_text("The meeting remains productive."),
+            "The meeting remains productive."
+        );
+    }
+
+    #[test]
+    fn empty_glossary_preserves_raw_argmax() {
+        let mut bias = VocabularyBias::compile("", &vocab());
+        let logits = vec![0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 1.5, -1.0];
+
+        assert_eq!(bias.select_token(&[], &logits, 8), 7);
     }
 }

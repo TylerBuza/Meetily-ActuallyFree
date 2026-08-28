@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Parakeet Vocabulary
+
+- Added contextual phrase boosting and conservative glossary correction to the
+  local Parakeet TDT decoder.
+- Applied global and meeting-specific vocabulary to live transcription,
+  imports, manual retranscription, and automatic post-call enhancement.
+- Made vocabulary controls available for both Parakeet and Whisper.
+
 ## 0.2.10 - 2026-08-26
 
 ### Light Theme
