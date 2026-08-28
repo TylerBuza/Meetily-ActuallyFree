@@ -354,7 +354,10 @@ pub async fn parakeet_validate_model_ready_with_config<R: tauri::Runtime>(
 }
 
 #[command]
-pub async fn parakeet_transcribe_audio(audio_data: Vec<f32>) -> Result<String, String> {
+pub async fn parakeet_transcribe_audio(
+    audio_data: Vec<f32>,
+    vocabulary: Option<String>,
+) -> Result<String, String> {
     let engine = {
         let guard = PARAKEET_ENGINE.lock().unwrap();
         guard.as_ref().cloned()
@@ -362,7 +365,7 @@ pub async fn parakeet_transcribe_audio(audio_data: Vec<f32>) -> Result<String, S
 
     if let Some(engine) = engine {
         engine
-            .transcribe_audio(audio_data)
+            .transcribe_audio(audio_data, vocabulary.as_deref())
             .await
             .map_err(|e| format!("Parakeet transcription failed: {}", e))
     } else {

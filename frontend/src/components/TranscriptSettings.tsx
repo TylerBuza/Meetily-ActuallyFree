@@ -28,7 +28,7 @@ export interface TranscriptSettingsProps {
     onModelSelect?: () => void;
 }
 
-interface WhisperVocabularyConfig {
+interface VocabularyConfig {
     global: string;
     meeting: string;
 }
@@ -161,14 +161,14 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
 
     useEffect(() => {
         const revision = vocabularyRevisionRef.current;
-        invoke<WhisperVocabularyConfig>('api_get_whisper_vocabulary', { meetingId: null })
+        invoke<VocabularyConfig>('api_get_vocabulary', { meetingId: null })
             .then((config) => {
                 if (vocabularyRevisionRef.current === revision) {
                     setVocabulary(config.global || '');
                 }
             })
             .catch((error) => {
-                console.error('Failed to load Whisper vocabulary:', error);
+                console.error('Failed to load vocabulary:', error);
                 setVocabularyError('Could not load the saved vocabulary.');
             });
     }, []);
@@ -271,7 +271,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
         setVocabularyError(null);
         const revision = vocabularyRevisionRef.current;
         try {
-            const normalized = await invoke<string>('api_save_global_whisper_vocabulary', { vocabulary });
+            const normalized = await invoke<string>('api_save_global_vocabulary', { vocabulary });
             if (vocabularyRevisionRef.current === revision) {
                 setVocabulary(normalized);
             }
@@ -299,7 +299,6 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
         : postCallConfig.model;
     const postCallWhisperModel = installedWhisperModels.find((model) => model.name === effectivePostCallModel)
         || installedWhisperModels[0];
-    const whisperIsActive = uiProvider === 'localWhisper' || postCallConfig.provider === 'whisper';
     const openWhisperManager = () => {
         setWhisperManagerOpen(true);
         window.setTimeout(() => postCallSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
@@ -313,7 +312,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                     <div className="min-w-0 flex-1">
                         <h3 className="font-semibold">Live transcription</h3>
                         <p className="mt-1 text-sm text-muted-foreground">
-                            Choose the model used while recording. Parakeet is recommended for most live meetings; Whisper remains available when its extra language and vocabulary controls matter more than speed.
+                            Choose the model used while recording. Parakeet is recommended for most live meetings; Whisper remains available when manual language control and broader coverage matter more than speed.
                         </p>
                     </div>
                 </div>
@@ -353,7 +352,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                     )}
                                 </div>
                                 <p className="mt-1 text-sm text-[var(--af-text-2)]">
-                                    Best for live meetings: lower latency, lighter resource use, and strong real-time accuracy. Parakeet does not support custom vocabulary hints.
+                                    Best for live meetings: lower latency, lighter resource use, strong real-time accuracy, and contextual vocabulary hints.
                                 </p>
                             </div>
                         </div>
@@ -413,7 +412,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                     )}
                                 </div>
                                 <p className="mt-1 text-sm text-[var(--af-text-2)]">
-                                    Best as a post-call second pass. Whisper is slower and heavier during live meetings, but supports vocabulary hints, manual language selection, and broad multilingual transcription.
+                                    Best as a post-call second pass. Whisper is slower and heavier during live meetings, but supports manual language selection and broad multilingual transcription.
                                 </p>
                             </div>
                         </div>
@@ -502,8 +501,8 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                     <span className="rounded-full bg-af-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-af-accent">
                                         Recommended for post-call
                                     </span>
-                                    <span className="rounded-full bg-af-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-af-accent">
-                                        Vocabulary hints
+                                        <span className="rounded-full bg-af-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-af-accent">
+                                            Prompt-based hints
                                     </span>
                                     {labs.whisperSilenceGuard && (
                                         <span className="rounded-full border border-af-accent/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-af-accent">
@@ -512,7 +511,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                     )}
                                 </div>
                                 <p className="mt-1 text-sm text-[var(--af-text-2)]">
-                                    Best for post-call quality. Whisper is slower and uses more resources, but can improve difficult names, jargon, and multilingual audio. It uses your global vocabulary hints below to guide names, acronyms, and technical terms.
+                                    Whisper is slower and uses more resources, but offers a different post-call pass for difficult audio and manual language control. It uses your global vocabulary as an initial prompt.
                                 </p>
                             </div>
                         </div>
@@ -585,7 +584,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                     )}
                                 </div>
                                 <p className="mt-1 text-sm text-[var(--af-text-2)]">
-                                    Finishes post-call enhancement sooner and uses fewer resources while maintaining strong accuracy. It does not use global vocabulary hints.
+                                    Finishes post-call enhancement sooner and uses fewer resources while maintaining strong accuracy. It applies global and meeting vocabulary through contextual biasing.
                                 </p>
                             </div>
                         </div>
@@ -632,25 +631,20 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                 </details>
             </section>
 
-            <section className={`space-y-3 rounded-xl border border-[var(--af-border)] bg-[var(--af-panel-2)] p-4 text-[var(--af-text)] ${whisperIsActive ? '' : 'opacity-60'}`}>
+            <section className="space-y-3 rounded-xl border border-[var(--af-border)] bg-[var(--af-panel-2)] p-4 text-[var(--af-text)]">
                 <div className="flex items-start gap-3">
-                    <BookOpen className={`mt-0.5 h-4 w-4 shrink-0 ${whisperIsActive ? 'text-af-accent' : 'text-muted-foreground'}`} />
+                    <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-af-accent" />
                     <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                            <Label htmlFor="whisper-vocabulary" className="text-sm font-medium">Global vocabulary hints</Label>
-                            {!whisperIsActive && (
-                                <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide">Whisper only</span>
-                            )}
+                            <Label htmlFor="transcription-vocabulary" className="text-sm font-medium">Global vocabulary hints</Label>
                         </div>
                         <p className="mt-1 text-xs text-muted-foreground">
-                            {whisperIsActive
-                                ? 'Help Whisper recognize names, companies, products, acronyms, and technical terms in live or post-call transcription. Whisper uses up to 224 prompt tokens.'
-                                : 'These hints become available when Whisper is selected for live or post-call transcription.'}
+                            Help Parakeet or Whisper recognize names, companies, products, acronyms, and technical terms. Parakeet uses contextual phrase boosting; Whisper uses up to 224 prompt tokens.
                         </p>
                     </div>
                 </div>
                 <Textarea
-                    id="whisper-vocabulary"
+                    id="transcription-vocabulary"
                     value={vocabulary}
                     onChange={(event) => {
                         vocabularyRevisionRef.current += 1;
@@ -660,7 +654,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                     }}
                     maxLength={1000}
                     rows={5}
-                    disabled={isSavingVocabulary || !whisperIsActive}
+                    disabled={isSavingVocabulary}
                     placeholder={'Meetily\nTauri\nKubernetes\nOKR'}
                     className="resize-y"
                 />
@@ -674,7 +668,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                             <span className="text-muted-foreground">{vocabulary.length}/1000 characters</span>
                         )}
                     </div>
-                    <Button type="button" size="sm" onClick={saveVocabulary} disabled={isSavingVocabulary || !whisperIsActive}>
+                    <Button type="button" size="sm" onClick={saveVocabulary} disabled={isSavingVocabulary}>
                         {isSavingVocabulary && <Spinner className="mr-2 h-4 w-4 " />}
                         Save vocabulary
                     </Button>

@@ -22,7 +22,7 @@ mock.module('@tauri-apps/api/core', () => ({ invoke: async (command: string) => 
   if (command === 'whisper_get_available_models') return [{ name: 'large-v3-turbo-q5_0', status: nativeWhisperAvailable ? 'Available' : 'Missing' }];
   if (command === 'parakeet_get_available_models') return [{ name: 'parakeet-tdt-0.6b-v3-int8', status: 'Available' }];
   if (command === 'api_get_post_call_transcript_config') return postCall;
-  if (command === 'api_get_whisper_vocabulary') return { global: '', meeting: '' };
+  if (command === 'api_get_vocabulary') return { global: '', meeting: '' };
   if (command === 'get_recording_preferences') return { real_time_transcription: false };
   throw new Error(command);
 } }));

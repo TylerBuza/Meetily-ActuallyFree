@@ -99,7 +99,7 @@ mod tests {
         segments.extend(vad.flush().unwrap());
         assert!(!segments.is_empty(), "VAD lost speech under DirectML-enabled runtime");
         let mut model = crate::parakeet_engine::model::ParakeetModel::new(path, true).unwrap();
-        let result = model.transcribe_samples(audio).unwrap();
+        let result = model.transcribe_samples(audio, None).unwrap();
         assert!(result.text.to_lowercase().contains("meeting"), "Unexpected Parakeet output: {}", result.text);
         println!("CPU VAD and Parakeet passed: {}", result.text);
     }

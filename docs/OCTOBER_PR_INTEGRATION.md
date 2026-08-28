@@ -59,3 +59,13 @@ all rows once for both attendees and body; other formats retain existing paths.
 Combined speakers are split before linking and participant collection, preserving
 #44/#45 fixes. Reserved wikilink delimiters remain plain text. Tests moved into
 the isolated-test discovery tree. Storage denial falls back to generic style.
+
+## Parakeet vocabulary #10
+
+Ported contributor vocabulary decoding onto current capture/ASR interfaces,
+preserving existing source labeling, DirectML tests, UI theme, and scoped
+retranscription cancellation. Glossary hints now apply to live, import, and
+post-call Parakeet as well as Whisper. Parakeet uses token boosts followed by
+edit-distance canonicalization against explicitly configured glossary terms;
+this can alter recognized words and is not an accuracy guarantee. Empty glossary
+retains the original argmax path. Model-dependent accuracy remains unqualified.
