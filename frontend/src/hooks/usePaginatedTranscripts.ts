@@ -57,9 +57,13 @@ export function usePaginatedTranscripts({
     const loadedMeetingIdRef = useRef<string | null>(null);
     const isLoadingRef = useRef(false);
     const lastLoadTimeRef = useRef(0); // Debounce protection
+    const requestGenerationRef = useRef(0);
+    const activeMeetingIdRef = useRef(meetingId);
+    activeMeetingIdRef.current = meetingId;
 
     // Reset state when meeting changes
     const reset = useCallback(() => {
+        requestGenerationRef.current += 1;
         setMetadata(null);
         setTranscripts([]);
         setTotalCount(0);
@@ -74,16 +78,26 @@ export function usePaginatedTranscripts({
     const loadMetadata = useCallback(async (
         throwOnError = false,
         reportError = true,
+        expectedGeneration = requestGenerationRef.current,
     ): Promise<MeetingMetadata | null> => {
         if (!meetingId) return null;
+        const requestMeetingId = meetingId;
 
         try {
             const data = await invoke<MeetingMetadata>('api_get_meeting_metadata', {
                 meetingId,
             });
+            if (
+                activeMeetingIdRef.current !== requestMeetingId ||
+                requestGenerationRef.current !== expectedGeneration
+            ) return null;
             setMetadata(data);
             return data;
         } catch (err) {
+            if (
+                activeMeetingIdRef.current !== requestMeetingId ||
+                requestGenerationRef.current !== expectedGeneration
+            ) return null;
             console.error('Failed to load meeting metadata:', err);
             if (reportError) setError('Failed to load meeting details');
             if (throwOnError) throw err;
@@ -97,8 +111,10 @@ export function usePaginatedTranscripts({
         append: boolean = true,
         throwOnError = false,
         reportError = true,
+        expectedGeneration = requestGenerationRef.current,
     ): Promise<Transcript[]> => {
         if (!meetingId) return [];
+        const requestMeetingId = meetingId;
 
         try {
             const response = await invoke<PaginatedTranscriptsResponse>(
@@ -109,6 +125,11 @@ export function usePaginatedTranscripts({
                     offset,
                 }
             );
+
+            if (
+                activeMeetingIdRef.current !== requestMeetingId ||
+                requestGenerationRef.current !== expectedGeneration
+            ) return [];
 
             const newTranscripts = response.transcripts;
 
@@ -132,6 +153,10 @@ export function usePaginatedTranscripts({
 
             return newTranscripts;
         } catch (err) {
+            if (
+                activeMeetingIdRef.current !== requestMeetingId ||
+                requestGenerationRef.current !== expectedGeneration
+            ) return [];
             console.error('Failed to load transcripts:', err);
             if (reportError) setError('Failed to load transcripts');
             if (throwOnError) throw err;
@@ -164,15 +189,19 @@ export function usePaginatedTranscripts({
     const refetch = useCallback(async () => {
         if (!meetingId) return;
 
-        reset();
+        const expectedGeneration = requestGenerationRef.current + 1;
+        requestGenerationRef.current = expectedGeneration;
         setIsLoading(true);
         try {
-            await loadMetadata(true, false);
-            await loadTranscriptsAtOffset(0, false, true, false);
+            const refreshedMetadata = await loadMetadata(true, false, expectedGeneration);
+            if (!refreshedMetadata || requestGenerationRef.current !== expectedGeneration) return;
+            await loadTranscriptsAtOffset(0, false, true, false, expectedGeneration);
         } finally {
-            setIsLoading(false);
+            if (requestGenerationRef.current === expectedGeneration) {
+                setIsLoading(false);
+            }
         }
-    }, [meetingId, reset, loadMetadata, loadTranscriptsAtOffset]);
+    }, [meetingId, loadMetadata, loadTranscriptsAtOffset]);
 
     // Initial load
     useEffect(() => {
@@ -186,14 +215,18 @@ export function usePaginatedTranscripts({
         loadedMeetingIdRef.current = meetingId;
 
         reset();
+        const expectedGeneration = requestGenerationRef.current;
 
         const loadInitial = async () => {
             setIsLoading(true);
             try {
-                await loadMetadata();
-                await loadTranscriptsAtOffset(0, false);
+                const initialMetadata = await loadMetadata(false, true, expectedGeneration);
+                if (!initialMetadata || requestGenerationRef.current !== expectedGeneration) return;
+                await loadTranscriptsAtOffset(0, false, false, true, expectedGeneration);
             } finally {
-                setIsLoading(false);
+                if (requestGenerationRef.current === expectedGeneration) {
+                    setIsLoading(false);
+                }
             }
         };
 

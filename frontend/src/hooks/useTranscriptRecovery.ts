@@ -181,7 +181,8 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
       const saveResponse = await storageService.saveMeeting(
         metadata.title,
         formattedTranscripts,
-        folderPath ?? null
+        folderPath ?? null,
+        new Date(metadata.startTime).toISOString()
       );
 
       const savedMeetingId = saveResponse.meeting_id;

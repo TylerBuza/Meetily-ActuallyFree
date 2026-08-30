@@ -27,7 +27,7 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
   const blockNoteSummaryRef = useRef<BlockNoteSummaryViewRef>(null);
 
   // Sidebar context
-  const { setCurrentMeeting, setMeetings, meetings: sidebarMeetings } = useSidebar();
+  const { currentMeeting, setCurrentMeeting, setMeetings, meetings: sidebarMeetings } = useSidebar();
 
   // Sync from the parent prop when it actually has a summary. Never clobber a
   // locally-generated summary with `null` — that was wiping the just-finished
@@ -46,6 +46,14 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
     setMeetingTitle(meeting.title || '+ New Call');
     setIsTitleDirty(false);
   }, [meeting.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sidebar renames are persisted outside this hook. Mirror them without
+  // resetting summary state or destroying an unsaved local title edit.
+  useEffect(() => {
+    if (currentMeeting && currentMeeting.id === meeting.id && !isTitleDirty) {
+      setMeetingTitle(currentMeeting.title || '+ New Call');
+    }
+  }, [currentMeeting?.id, currentMeeting?.title, meeting.id, isTitleDirty]);
 
   // Handlers
   const handleTitleChange = useCallback((newTitle: string) => {
@@ -153,32 +161,6 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
     }
   }, [isTitleDirty, handleSaveMeetingTitle, aiSummary, handleSaveSummary]);
 
-  // Update meeting title from external source (e.g., AI summary)
-  const updateMeetingTitle = useCallback(async (newTitle: string): Promise<boolean> => {
-    console.log('📝 Updating meeting title to:', newTitle);
-    setMeetingTitle(newTitle);
-    // Keep stale meeting props from restoring the old title while persistence
-    // and the subsequent sidebar refetch are still in flight.
-    setIsTitleDirty(true);
-    const updatedMeetings = sidebarMeetings.map((m: CurrentMeeting) =>
-      m.id === meeting.id ? { id: m.id, title: newTitle } : m
-    );
-    setMeetings(updatedMeetings);
-    setCurrentMeeting({ id: meeting.id, title: newTitle });
-    try {
-      await invokeTauri('api_save_meeting_title', {
-        meetingId: meeting.id,
-        title: newTitle,
-      });
-      setIsTitleDirty(false);
-      return true;
-    } catch (error) {
-      console.error('Failed to save generated meeting title:', error);
-      toast.error('Generated title could not be saved');
-      return false;
-    }
-  }, [meeting.id, sidebarMeetings, setMeetings, setCurrentMeeting]);
-
   return {
     // State
     transcripts,
@@ -201,6 +183,5 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
     handleSaveSummary,
     handleSaveMeetingTitle,
     saveAllChanges,
-    updateMeetingTitle,
   };
 }

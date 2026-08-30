@@ -289,7 +289,7 @@ if ($LASTEXITCODE -ne 0) { throw "Frameless installer signing failed" }
 $signature = (Get-Content $updaterSignatureOutput -Raw).Trim()
 $latest = [ordered]@{
   version = $appVersion
-  notes = "Adds adjustable system-audio gain with safety limiting, improves NVIDIA driver recovery and CUDA setup guidance, and adds validated custom recording folders."
+  notes = "Preserves user-renamed meetings, restores summary template and model controls, synchronizes meeting titles, and anchors meeting and transcript times to the recording start."
   pub_date = [DateTime]::UtcNow.ToString("o")
   platforms = [ordered]@{
     "windows-x86_64" = [ordered]@{

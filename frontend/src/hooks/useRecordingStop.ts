@@ -84,12 +84,16 @@ export function useRecordingStop(
     // Accidental taps: under 10s → discard, no meeting note.
     const MIN_MEETING_SECS = 10;
     let elapsedSecs = recordingState.recordingDuration ?? 0;
+    let recordingStartedAtMs = 0;
+    let recordingStartFallbackAtMs = 0;
     try {
-      const startedAt = Number(sessionStorage.getItem('recording_started_at') || '0');
-      if (startedAt > 0) {
-        elapsedSecs = Math.max(elapsedSecs, (Date.now() - startedAt) / 1000);
+      recordingStartedAtMs = Number(sessionStorage.getItem('recording_started_at') || '0');
+      recordingStartFallbackAtMs = Number(sessionStorage.getItem('recording_start_fallback_at') || '0');
+      if (recordingStartedAtMs > 0) {
+        elapsedSecs = Math.max(elapsedSecs, (Date.now() - recordingStartedAtMs) / 1000);
       }
       sessionStorage.removeItem('recording_started_at');
+      sessionStorage.removeItem('recording_start_fallback_at');
     } catch {
       /* ignore */
     }
@@ -241,6 +245,9 @@ export function useRecordingStop(
         // Get folder_path and meeting_name from the atomic completion payload.
         const folderPath = sessionStorage.getItem('last_recording_folder_path');
         const savedMeetingName = sessionStorage.getItem('last_recording_meeting_name');
+        const recordingStartedAt = Number.isFinite(recordingStartFallbackAtMs) && recordingStartFallbackAtMs > 0
+          ? new Date(recordingStartFallbackAtMs).toISOString()
+          : null;
 
         console.log('💾 Saving COMPLETE transcripts to database...', {
           transcript_count: freshTranscripts.length,
@@ -254,7 +261,8 @@ export function useRecordingStop(
           const responseData = await storageService.saveMeeting(
             savedMeetingName || meetingTitle || 'New Meeting',  // PREFER savedMeetingName (backend source)
             freshTranscripts,
-            folderPath
+            folderPath,
+            recordingStartedAt
           );
 
           const meetingId = responseData.meeting_id;

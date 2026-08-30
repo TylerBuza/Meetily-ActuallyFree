@@ -35,6 +35,9 @@ function MeetingDetailsContent() {
   const [hasCheckedAutoGen, setHasCheckedAutoGen] = useState<boolean>(false);
   const [summaryLoaded, setSummaryLoaded] = useState<boolean>(false);
   const autoGenerationSetupMeetingRef = useRef<string | null>(null);
+  const autoGenerationSetupRef = useRef(0);
+  const activeMeetingIdRef = useRef(meetingId);
+  activeMeetingIdRef.current = meetingId;
 
   // Use pagination hook for efficient transcript loading
   const {
@@ -66,8 +69,13 @@ function MeetingDetailsContent() {
 
   // Set up auto-generation - respects DB as source of truth
   const setupAutoGeneration = useCallback(async () => {
-    if (hasCheckedAutoGen || autoGenerationSetupMeetingRef.current === meetingId) return;
-    autoGenerationSetupMeetingRef.current = meetingId;
+    if (!meetingId || hasCheckedAutoGen || autoGenerationSetupMeetingRef.current === meetingId) return;
+    const setupMeetingId = meetingId;
+    const setupGeneration = ++autoGenerationSetupRef.current;
+    const isCurrentSetup = () =>
+      activeMeetingIdRef.current === setupMeetingId &&
+      autoGenerationSetupRef.current === setupGeneration;
+    autoGenerationSetupMeetingRef.current = setupMeetingId;
 
     if (!shouldSetUpAutoSummary(source, isAutoSummary)) {
       console.log(source === 'recording'
@@ -80,6 +88,7 @@ function MeetingDetailsContent() {
     try {
       // Check what's currently in database
       const currentConfig = await invoke('api_get_model_config') as any;
+      if (!isCurrentSetup()) return;
 
       // If DB already has a model, use it (never override!)
       if (currentConfig && currentConfig.model) {
@@ -91,6 +100,7 @@ function MeetingDetailsContent() {
 
       // DB is empty - check if gemma3:1b exists as fallback
       const hasGemma = await checkForGemmaModel();
+      if (!isCurrentSetup()) return;
 
       if (hasGemma) {
         console.log('💾 DB empty, using gemma3:1b as initial default');
@@ -103,9 +113,12 @@ function MeetingDetailsContent() {
           ollamaEndpoint: null,
         };
         await invoke('api_save_model_config', fallbackConfig);
+        if (!isCurrentSetup()) return;
         setModelConfig(fallbackConfig);
         const { emit } = await import('@tauri-apps/api/event');
+        if (!isCurrentSetup()) return;
         await emit('model-config-updated', fallbackConfig);
+        if (!isCurrentSetup()) return;
 
         setShouldAutoGenerate(true);
       } else {
@@ -115,33 +128,31 @@ function MeetingDetailsContent() {
       console.error('❌ Failed to setup auto-generation:', error);
     }
 
-    setHasCheckedAutoGen(true);
+    if (isCurrentSetup()) setHasCheckedAutoGen(true);
   }, [hasCheckedAutoGen, meetingId, checkForGemmaModel, source, isAutoSummary, setModelConfig]);
 
-  // Sync meeting metadata from pagination hook to meeting details state
+  // Metadata owns meeting identity/title. Transcript page changes are handled
+  // separately so loading another page cannot restore an older title.
   useEffect(() => {
-    if (metadata && (!meetingId || meetingId === 'intro-call')) {
-      // If invalid meeting ID, don't sync
-      return;
-    }
+    if (!metadata || !meetingId || meetingId === 'intro-call' || metadata.id !== meetingId) return;
 
-    if (metadata) {
-      console.log('Meeting metadata loaded:', metadata);
+    console.log('Meeting metadata loaded:', metadata);
+    setMeetingDetails((current) => ({
+      id: metadata.id,
+      title: metadata.title,
+      created_at: metadata.created_at,
+      updated_at: metadata.updated_at,
+      transcripts: current?.id === metadata.id ? current.transcripts : [],
+      folder_path: metadata.folder_path,
+    }));
+    setCurrentMeeting({ id: metadata.id, title: metadata.title });
+  }, [metadata, meetingId, setCurrentMeeting]);
 
-      // Build meeting details from metadata and paginated transcripts
-      setMeetingDetails({
-        id: metadata.id,
-        title: metadata.title,
-        created_at: metadata.created_at,
-        updated_at: metadata.updated_at,
-        transcripts: transcripts, // Paginated transcripts from hook
-        folder_path: metadata.folder_path, // For retranscription feature
-      });
-
-      // Sync with sidebar context
-      setCurrentMeeting({ id: metadata.id, title: metadata.title });
-    }
-  }, [metadata, transcripts, meetingId, setCurrentMeeting]);
+  useEffect(() => {
+    setMeetingDetails((current) =>
+      current && current.id === meetingId ? { ...current, transcripts } : current
+    );
+  }, [transcripts, meetingId]);
 
   // Handle transcript loading errors
   useEffect(() => {
@@ -157,10 +168,8 @@ function MeetingDetailsContent() {
       return;
     }
 
-    // The usePaginatedTranscripts hook automatically refetches when meetingId changes
-    // This function is kept for compatibility with onMeetingUpdated callback
-    console.log('fetchMeetingDetails called - pagination hook will handle refetch');
-  }, [meetingId]);
+    await refetch();
+  }, [meetingId, refetch]);
 
   // Reset states when meetingId changes (prevent race conditions)
   useEffect(() => {
@@ -173,6 +182,7 @@ function MeetingDetailsContent() {
     setShouldAutoGenerate(false);
     setSummaryLoaded(false);
     autoGenerationSetupMeetingRef.current = null;
+    autoGenerationSetupRef.current += 1;
   }, [meetingId]);
 
   // Cleanup: stop polling only when leaving this meeting / unmounting.
@@ -190,6 +200,7 @@ function MeetingDetailsContent() {
   }, [meetingId]);
 
   useEffect(() => {
+    let active = true;
     console.log('MeetingDetails useEffect triggered - meetingId:', meetingId);
 
     if (!meetingId || meetingId === 'intro-call') {
@@ -219,6 +230,7 @@ function MeetingDetailsContent() {
         // Note: 'cancelled' and 'failed' statuses can still have data if backup was restored
         if (summary.status === 'idle' || (!summary.data && summary.status === 'error')) {
           console.warn('Meeting summary not found or no summary generated yet:', summary.error || 'idle');
+          if (!active) return;
           setMeetingSummary(null);
           return;
         }
@@ -239,12 +251,14 @@ function MeetingDetailsContent() {
 
         // Priority 1: BlockNote JSON format
         if (parsedData.summary_json) {
+          if (!active) return;
           setMeetingSummary(parsedData as any);
           return;
         }
 
         // Priority 2: Markdown format
         if (parsedData.markdown) {
+          if (!active) return;
           setMeetingSummary(parsedData as any);
           return;
         }
@@ -301,8 +315,10 @@ function MeetingDetailsContent() {
         }
 
         console.log('LEGACY FORMAT: Formatted summary:', formattedSummary);
+        if (!active) return;
         setMeetingSummary(formattedSummary);
       } catch (error) {
+        if (!active) return;
         console.error('FETCH SUMMARY: Error fetching meeting summary:', error);
         // Don't set error state for summary fetch failure, set to null to show generate button
         setMeetingSummary(null);
@@ -313,12 +329,17 @@ function MeetingDetailsContent() {
       try {
         await fetchMeetingSummary();
       } finally {
-        setIsLoading(false);
-        setSummaryLoaded(true);
+        if (active) {
+          setIsLoading(false);
+          setSummaryLoaded(true);
+        }
       }
     };
 
     loadData();
+    return () => {
+      active = false;
+    };
   }, [meetingId]);
 
   // Auto-generation check: runs when meeting is loaded with no summary
@@ -378,10 +399,7 @@ function MeetingDetailsContent() {
     onAutoGenerateComplete={() => setShouldAutoGenerate(false)}
     onSummaryReady={(summary) => setMeetingSummary(summary)}
     onMeetingUpdated={async () => {
-      // Refetch meeting details to get updated title from backend
-      await fetchMeetingDetails();
-      // Refetch meetings list to update sidebar
-      await refetchMeetings();
+      await Promise.allSettled([fetchMeetingDetails(), refetchMeetings()]);
     }}
     onRefetchTranscripts={refetch}
     // Pagination props for efficient transcript loading

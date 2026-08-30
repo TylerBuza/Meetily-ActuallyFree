@@ -307,6 +307,7 @@ export function SummaryGeneratorButtonGroup({
             onStopGeneration();
           }}
           title="Stop summary generation"
+          aria-label="Stop summary generation"
         >
           <Square className="xl:mr-2" size={18} fill="currentColor" />
           <span className="hidden lg:inline xl:inline">Stop</span>
@@ -325,6 +326,7 @@ export function SummaryGeneratorButtonGroup({
                 ? 'Checking models...'
                 : hasSummary ? 'Regenerate AI Summary' : 'Generate AI Summary'
           }
+          aria-label={hasSummary ? 'Regenerate AI Summary' : 'Generate AI Summary'}
         >
           {isCheckingModels || isModelConfigLoading ? (
             <>
@@ -349,6 +351,7 @@ export function SummaryGeneratorButtonGroup({
             variant="outline"
             size="sm"
             title="Summary Settings"
+            aria-label="Summary Settings"
           >
             <Settings />
             <span className="hidden lg:inline">AI Model</span>
@@ -374,13 +377,14 @@ export function SummaryGeneratorButtonGroup({
       </Dialog>
 
       {/* Template selector dropdown */}
-      {availableTemplates.length > 0 && (
+      {(availableTemplates.length > 0 || onManageTemplates) && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="outline"
               size="sm"
               title="Select summary template"
+              aria-label="Select summary template"
             >
               <FileText />
               <span className="hidden lg:inline">Template</span>

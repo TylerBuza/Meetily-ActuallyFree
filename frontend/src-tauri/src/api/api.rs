@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use log::{debug as log_debug, error as log_error, info as log_info, warn as log_warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -367,6 +368,19 @@ pub async fn api_get_meetings<R: Runtime>(
             // Duration = furthest audio_end_time on any transcript for that meeting.
             let mut result: Vec<Meeting> = Vec::with_capacity(meeting_models.len());
             for m in meeting_models {
+                let metadata_started_at = m.folder_path.as_deref().and_then(|folder| {
+                    std::path::Path::new(folder)
+                        .join("metadata.json")
+                        .is_file()
+                        .then(|| recording_started_at_from_folder(folder))
+                        .flatten()
+                });
+                let created_at = metadata_started_at.unwrap_or(m.created_at.0);
+                if created_at != m.created_at.0 {
+                    MeetingsRepository::repair_recording_start(pool, &m.id, created_at)
+                        .await
+                        .map_err(|e| format!("Failed to repair meeting start time: {}", e))?;
+                }
                 let duration_seconds: Option<f64> = sqlx::query_scalar(
                     "SELECT MAX(COALESCE(audio_end_time, audio_start_time + COALESCE(duration, 0))) FROM transcripts WHERE meeting_id = ?",
                 )
@@ -379,10 +393,11 @@ pub async fn api_get_meetings<R: Runtime>(
                 result.push(Meeting {
                     id: m.id,
                     title: m.title,
-                    created_at: Some(m.created_at.0.to_rfc3339()),
+                    created_at: Some(created_at.to_rfc3339()),
                     duration_seconds,
                 });
             }
+            result.sort_by(|a, b| b.created_at.cmp(&a.created_at));
             Ok(result)
         }
         Err(e) => {
@@ -937,11 +952,21 @@ pub async fn api_get_meeting_metadata<R: Runtime>(
 
     match MeetingsRepository::get_meeting_metadata(pool, &meeting_id).await {
         Ok(Some(meeting)) => {
+            let metadata_started_at = meeting
+                .folder_path
+                .as_deref()
+                .and_then(recording_started_at_from_folder);
+            let created_at = metadata_started_at.unwrap_or(meeting.created_at.0);
+            if created_at != meeting.created_at.0 {
+                MeetingsRepository::repair_recording_start(pool, &meeting.id, created_at)
+                    .await
+                    .map_err(|e| format!("Failed to repair meeting start time: {}", e))?;
+            }
             log_info!("Successfully retrieved meeting metadata {}", meeting_id);
             Ok(MeetingMetadata {
                 id: meeting.id,
                 title: meeting.title,
-                created_at: meeting.created_at.0.to_rfc3339(),
+                created_at: created_at.to_rfc3339(),
                 updated_at: meeting.updated_at.0.to_rfc3339(),
                 folder_path: meeting.folder_path,
             })
@@ -1050,6 +1075,7 @@ pub async fn api_save_transcript<R: Runtime>(
     meeting_title: String,
     transcripts: Vec<serde_json::Value>,
     folder_path: Option<String>,
+    recording_started_at: Option<String>,
     auth_token: Option<String>,
 ) -> Result<serde_json::Value, String> {
     log_info!(
@@ -1095,6 +1121,19 @@ pub async fn api_save_transcript<R: Runtime>(
     );
 
     let pool = state.db_manager.pool();
+    let supplied_recording_start = recording_started_at.as_deref().and_then(|value| {
+        match DateTime::parse_from_rfc3339(value) {
+            Ok(timestamp) => Some(timestamp.with_timezone(&Utc)),
+            Err(error) => {
+                log_warn!("Invalid supplied recording start '{}': {}", value, error);
+                None
+            }
+        }
+    });
+    let metadata_recording_start = folder_path
+        .as_deref()
+        .and_then(recording_started_at_from_folder);
+    let recording_started_at = metadata_recording_start.or(supplied_recording_start);
 
     // Now, call the repository with the correctly typed data.
     match TranscriptsRepository::save_transcript(
@@ -1102,6 +1141,7 @@ pub async fn api_save_transcript<R: Runtime>(
         &meeting_title,
         &transcripts_to_save,
         folder_path,
+        recording_started_at,
     )
     .await
     {
@@ -1123,6 +1163,44 @@ pub async fn api_save_transcript<R: Runtime>(
                 e
             );
             Err(format!("Failed to save transcript: {}", e))
+        }
+    }
+}
+
+pub(crate) fn recording_started_at_from_folder(folder_path: &str) -> Option<DateTime<Utc>> {
+    let metadata_path = std::path::Path::new(folder_path).join("metadata.json");
+    let metadata = match std::fs::read_to_string(&metadata_path) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            log_warn!(
+                "Could not read recording start from {}: {}",
+                metadata_path.display(),
+                error
+            );
+            return None;
+        }
+    };
+    let value: serde_json::Value = match serde_json::from_str(&metadata) {
+        Ok(value) => value,
+        Err(error) => {
+            log_warn!(
+                "Could not parse recording metadata {}: {}",
+                metadata_path.display(),
+                error
+            );
+            return None;
+        }
+    };
+    let created_at = value.get("created_at")?.as_str()?;
+    match DateTime::parse_from_rfc3339(created_at) {
+        Ok(timestamp) => Some(timestamp.with_timezone(&Utc)),
+        Err(error) => {
+            log_warn!(
+                "Invalid recording start in {}: {}",
+                metadata_path.display(),
+                error
+            );
+            None
         }
     }
 }

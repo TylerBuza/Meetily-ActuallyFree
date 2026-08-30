@@ -5,11 +5,13 @@ use crate::audio::vad::get_speech_chunks_with_thresholds_and_progress;
 use super::common::{create_transcript_segments, split_segment_at_silence, write_transcripts_json};
 use super::constants::AUDIO_EXTENSIONS;
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
+use crate::database::models::DateTimeUtc;
 use crate::database::repositories::vocabulary::VocabularyRepository;
 use crate::parakeet_engine::ParakeetEngine;
 use crate::state::AppState;
 use crate::whisper_engine::WhisperEngine;
 use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -221,13 +223,14 @@ fn find_retranscription_sources(folder: &Path, fallback: &Path) -> Vec<Retranscr
 fn create_source_labeled_segments(
     transcripts: &[(String, f64, f64)],
     speaker_hints: &[Option<&str>],
-) -> Vec<crate::api::TranscriptSegment> {
+    recording_started_at: DateTime<Utc>,
+) -> Result<Vec<crate::api::TranscriptSegment>> {
     debug_assert_eq!(transcripts.len(), speaker_hints.len());
-    let mut segments = create_transcript_segments(transcripts);
+    let mut segments = create_transcript_segments(transcripts, recording_started_at)?;
     for (segment, speaker_hint) in segments.iter_mut().zip(speaker_hints) {
         segment.speaker = speaker_hint.map(str::to_string);
     }
-    segments
+    Ok(segments)
 }
 
 /// Internal function to run retranscription
@@ -503,9 +506,6 @@ async fn run_retranscription<R: Runtime>(
 
     emit_progress(&app, &meeting_id, "saving", 80, "Saving transcripts...");
 
-    // Create transcript segments with proper timestamps from VAD
-    let segments = create_source_labeled_segments(&all_transcripts, &speaker_hints);
-
     // Save to database
     let app_state = app
         .try_state::<AppState>()
@@ -513,10 +513,32 @@ async fn run_retranscription<R: Runtime>(
 
     // Wrap delete+insert+update in a transaction to prevent data loss
     let pool = app_state.db_manager.pool();
+    let stored_recording_start: DateTimeUtc =
+        sqlx::query_scalar("SELECT created_at FROM meetings WHERE id = ?")
+            .bind(&meeting_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| anyhow!("Failed to load meeting recording start: {}", e))?;
+    let recording_started_at = crate::api::recording_started_at_from_folder(&meeting_folder_path)
+        .unwrap_or(stored_recording_start.0);
+
+    // Reconstructed timestamps must remain stable across repeated runs.
+    let segments =
+        create_source_labeled_segments(&all_transcripts, &speaker_hints, recording_started_at)?;
+
     let mut conn = pool.acquire().await.map_err(|e| anyhow!("DB error: {}", e))?;
     let mut tx = sqlx::Connection::begin(&mut *conn)
         .await
         .map_err(|e| anyhow!("Failed to start transaction: {}", e))?;
+
+    if recording_started_at != stored_recording_start.0 {
+        sqlx::query("UPDATE meetings SET created_at = ? WHERE id = ?")
+            .bind(recording_started_at)
+            .bind(&meeting_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| anyhow!("Failed to repair meeting recording start: {}", e))?;
+    }
 
     crate::database::repositories::person::clear_meeting_speaker_mappings(
         &mut tx,
@@ -967,10 +989,16 @@ pub async fn is_retranscription_in_progress_command() -> bool {
 mod tests {
     use super::*;
 
+    fn test_recording_start() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-08-30T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
     #[test]
     fn test_create_transcript_segments_empty() {
         let transcripts: Vec<(String, f64, f64)> = vec![];
-        let segments = create_transcript_segments(&transcripts);
+        let segments = create_transcript_segments(&transcripts, test_recording_start()).unwrap();
         assert!(segments.is_empty());
     }
 
@@ -979,13 +1007,14 @@ mod tests {
         let transcripts = vec![
             ("Hello world".to_string(), 0.0, 1500.0), // 0-1.5 seconds
         ];
-        let segments = create_transcript_segments(&transcripts);
+        let segments = create_transcript_segments(&transcripts, test_recording_start()).unwrap();
 
         assert_eq!(segments.len(), 1);
         assert_eq!(segments[0].text, "Hello world");
         assert_eq!(segments[0].audio_start_time, Some(0.0));
         assert_eq!(segments[0].audio_end_time, Some(1.5));
         assert_eq!(segments[0].duration, Some(1.5));
+        assert_eq!(segments[0].timestamp, "2026-08-30T12:00:00.000Z");
     }
 
     #[test]
@@ -995,7 +1024,7 @@ mod tests {
             ("Second segment".to_string(), 3000.0, 5000.0),  // 3-5 seconds
             ("Third segment".to_string(), 6500.0, 8000.0),   // 6.5-8 seconds
         ];
-        let segments = create_transcript_segments(&transcripts);
+        let segments = create_transcript_segments(&transcripts, test_recording_start()).unwrap();
 
         assert_eq!(segments.len(), 3);
 
@@ -1016,6 +1045,7 @@ mod tests {
         assert_eq!(segments[2].audio_start_time, Some(6.5));
         assert_eq!(segments[2].audio_end_time, Some(8.0));
         assert_eq!(segments[2].duration, Some(1.5));
+        assert_eq!(segments[2].timestamp, "2026-08-30T12:00:06.500Z");
     }
 
     #[test]
@@ -1023,7 +1053,7 @@ mod tests {
         let transcripts = vec![
             ("  Hello with spaces  ".to_string(), 0.0, 1000.0),
         ];
-        let segments = create_transcript_segments(&transcripts);
+        let segments = create_transcript_segments(&transcripts, test_recording_start()).unwrap();
 
         assert_eq!(segments.len(), 1);
         assert_eq!(segments[0].text, "Hello with spaces");
@@ -1035,7 +1065,7 @@ mod tests {
             ("Segment one".to_string(), 0.0, 1000.0),
             ("Segment two".to_string(), 1000.0, 2000.0),
         ];
-        let segments = create_transcript_segments(&transcripts);
+        let segments = create_transcript_segments(&transcripts, test_recording_start()).unwrap();
 
         assert_eq!(segments.len(), 2);
         assert_ne!(segments[0].id, segments[1].id);
@@ -1110,11 +1140,14 @@ mod tests {
         let segments = create_source_labeled_segments(
             &transcripts,
             &[Some("You"), Some("Guest")],
-        );
+            test_recording_start(),
+        )
+        .unwrap();
 
         assert_eq!(segments[0].speaker.as_deref(), Some("You"));
         assert_eq!(segments[1].speaker.as_deref(), Some("Guest"));
         assert_eq!(segments[0].audio_start_time, Some(14.97));
+        assert_eq!(segments[0].timestamp, "2026-08-30T12:00:14.970Z");
     }
 
     #[test]

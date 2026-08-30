@@ -37,9 +37,10 @@ export function useRecordingStart(
   const { selectedDevices, transcriptModelConfig } = useConfig();
   const { setStatus } = useRecordingState();
 
-  const markRecordingStarted = useCallback(() => {
+  const markRecordingStarted = useCallback((requestedAt: number) => {
     try {
       sessionStorage.setItem('recording_started_at', String(Date.now()));
+      sessionStorage.setItem('recording_start_fallback_at', String(requestedAt));
     } catch {
       /* ignore */
     }
@@ -166,6 +167,7 @@ export function useRecordingStart(
 
       // Start the actual backend recording
       console.log('Starting backend recording with meeting:', randomTitle);
+      const recordingStartedAt = Date.now();
       await recordingService.startRecordingWithDevices(
         selectedDevices?.micDevice || null,
         selectedDevices?.systemDevice || null,
@@ -179,7 +181,7 @@ export function useRecordingStart(
       setIsRecording(true); // This will also update the sidebar via the useEffect
       clearTranscripts(); // Clear previous transcripts when starting new recording
       setIsMeetingActive(true);
-      markRecordingStarted();
+      markRecordingStarted(recordingStartedAt);
       Analytics.trackButtonClick('start_recording', 'home_page');
 
       // Coach-mark above the minimize button on the recording bar (not a global toast).
@@ -238,6 +240,7 @@ export function useRecordingStart(
             setStatus(RecordingStatus.STARTING, 'Initializing recording...');
 
             console.log('Auto-starting backend recording with meeting:', generatedMeetingTitle);
+            const recordingStartedAt = Date.now();
             const result = await recordingService.startRecordingWithDevices(
               selectedDevices?.micDevice || null,
               selectedDevices?.systemDevice || null,
@@ -251,7 +254,7 @@ export function useRecordingStart(
             setIsRecording(true);
             clearTranscripts();
             setIsMeetingActive(true);
-            markRecordingStarted();
+            markRecordingStarted(recordingStartedAt);
             Analytics.trackButtonClick('start_recording', 'sidebar_auto');
 
             // Show recording notification if enabled
@@ -325,6 +328,7 @@ export function useRecordingStart(
         setStatus(RecordingStatus.STARTING, 'Initializing recording...');
 
         console.log('Starting backend recording with meeting:', generatedMeetingTitle);
+        const recordingStartedAt = Date.now();
         const result = await recordingService.startRecordingWithDevices(
           selectedDevices?.micDevice || null,
           selectedDevices?.systemDevice || null,
@@ -338,7 +342,7 @@ export function useRecordingStart(
         setIsRecording(true);
         clearTranscripts();
         setIsMeetingActive(true);
-        markRecordingStarted();
+        markRecordingStarted(recordingStartedAt);
         Analytics.trackButtonClick('start_recording', 'sidebar_direct');
 
         // Show recording notification if enabled

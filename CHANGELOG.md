@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.2.12 - 2026-08-30
+
+### Meeting Details
+
+- Preserved user-renamed meeting titles when summaries are generated or
+  regenerated, while still allowing AI names to replace recognizable default
+  and automatically assigned titles.
+- Kept sidebar and meeting-detail titles synchronized without allowing stale
+  pagination or summary responses from another meeting to overwrite the active
+  view.
+- Restored the summary template selector, custom-template management, summary
+  language, and AI model settings to the visible meeting toolbar.
+- Removed duplicate summary actions and stacked transcript and summary panels on
+  narrow screens.
+
+### Time Accuracy
+
+- Stored the native recording start as the meeting start instead of the later
+  database save time.
+- Derived transcript timestamps from the recording start plus each segment's
+  audio offset so enhancement no longer rewrites them to the current time.
+- Repaired upgraded recordings from their existing `metadata.json` start time
+  when meetings are listed, opened, or retranscribed.
+- Preserved recording-start timestamps through crash recovery and audio import.
+
+### Reliability
+
+- Added title-provenance migration and regression coverage for manual,
+  generated, imported, and legacy default titles.
+- Added request-generation guards for metadata, transcript, and summary loading,
+  and made summary completion idempotent across native events and polling.
+
+### Windows Downloads
+
+- `Meetily-ActuallyFree-0.2.12-x64-universal-setup.exe`: recommended installer;
+  automatically selects CPU, Vulkan, or CUDA.
+- `Meetily-ActuallyFree-0.2.12-x64-universal-updater.exe`: Tauri updater engine
+  used by the in-app updater.
+- `latest.json` and the matching `.sig`: updater metadata and cryptographic
+  signature.
+- `SHA256SUMS.txt`: SHA-256 checksums for release verification.
+
+Windows binaries are published without Authenticode and may show an Unknown
+Publisher warning. The updater payload remains signed with the app's Tauri
+updater key.
+
+The same `0.2.12` source can be released separately for Apple Silicon as
+`v0.2.12-macos` only after its exact candidate passes the required physical
+macOS 14.2 qualification. The macOS release will not replace Windows Latest or
+modify Windows updater metadata.
+
 ## 0.2.11 - 2026-08-28
 
 ### Audio Balance

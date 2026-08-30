@@ -21,7 +21,6 @@ import { ModelConfig } from '@/components/ModelSettingsModal';
 import { SummaryGeneratorButtonGroup } from './SummaryGeneratorButtonGroup';
 import { SummaryUpdaterButtonGroup } from './SummaryUpdaterButtonGroup';
 import { InsightTabs } from './InsightTabs';
-import Analytics from '@/lib/analytics';
 import { useEffect, useRef, useState, RefObject } from 'react';
 import { toast } from 'sonner';
 import { Languages, ChevronDown } from 'lucide-react';
@@ -273,80 +272,56 @@ export function SummaryPanel({
   );
 
   return (
-    <div className="flex min-h-0 min-w-0 w-full flex-[1.15] flex-col overflow-hidden border-l border-[var(--af-border)] bg-[var(--af-bg)] sm:min-w-[280px] lg:max-w-[960px]">
-      {/* Title area (replaced by the in-card toolbar in InsightTabs) */}
-      <div className="hidden">
-        {/* <EditableTitle
-          title={meetingTitle}
-          isEditing={isEditingTitle}
-          onStartEditing={onStartEditTitle}
-          onFinishEditing={onFinishEditTitle}
-          onChange={onTitleChange}
-        /> */}
+    <div className="flex min-h-0 min-w-0 w-full flex-[1.15] flex-col overflow-hidden border-t border-[var(--af-border)] bg-[var(--af-bg)] md:min-w-[280px] md:border-l md:border-t-0 lg:max-w-[960px]">
+      <div className="flex min-h-12 items-center gap-2 overflow-x-auto border-b border-[var(--af-border)] bg-[var(--af-panel)] px-3 py-2">
+        <div className="flex-shrink-0">
+          <SummaryGeneratorButtonGroup
+            modelConfig={modelConfig}
+            setModelConfig={setModelConfig}
+            onSaveModelConfig={onSaveModelConfig}
+            onGenerateSummary={onGenerateSummary}
+            onRequestRegenerate={onRequestRegenerate}
+            onStopGeneration={onStopGeneration}
+            customPrompt={customPrompt}
+            summaryStatus={summaryStatus}
+            availableTemplates={availableTemplates}
+            selectedTemplate={selectedTemplate}
+            onTemplateSelect={onTemplateSelect}
+            onManageTemplates={onManageTemplates}
+            hasTranscripts={transcripts.length > 0}
+            hasSummary={!!aiSummary}
+            isModelConfigLoading={isModelConfigLoading}
+            onOpenModelSettings={onOpenModelSettings}
+            languageSlot={languageSlot}
+          />
+        </div>
 
-        {/* Button groups - only show when summary exists */}
-        {aiSummary && !isSummaryLoading && (
-          <div className="flex items-center justify-center w-full pt-0 gap-2">
-            {/* Left-aligned: Summary Generator Button Group */}
-            <div className="flex-shrink-0">
-              <SummaryGeneratorButtonGroup
-                modelConfig={modelConfig}
-                setModelConfig={setModelConfig}
-                onSaveModelConfig={onSaveModelConfig}
-                onGenerateSummary={onGenerateSummary}
-                onRequestRegenerate={onRequestRegenerate}
-                onStopGeneration={onStopGeneration}
-                customPrompt={customPrompt}
-                summaryStatus={summaryStatus}
-                availableTemplates={availableTemplates}
-                selectedTemplate={selectedTemplate}
-                onTemplateSelect={onTemplateSelect}
-                onManageTemplates={onManageTemplates}
-                hasTranscripts={transcripts.length > 0}
-                hasSummary={!!aiSummary}
-                isModelConfigLoading={isModelConfigLoading}
-                onOpenModelSettings={onOpenModelSettings}
-                languageSlot={languageSlot}
-              />
-            </div>
-
-            {/* Right-aligned: Summary Updater Button Group */}
-            <div className="flex-shrink-0">
-              <SummaryUpdaterButtonGroup
-                isSaving={isSaving}
-                isDirty={isTitleDirty || (summaryRef.current?.isDirty || false)}
-                onSave={onSaveAll}
-                onCopy={onCopySummary}
-                onExport={onOpenExport}
-                onFind={() => {
-                  // TODO: Implement find in summary functionality
-                  console.log('Find in summary clicked');
-                }}
-                onOpenFolder={onOpenFolder}
-                hasSummary={!!aiSummary}
-              />
-            </div>
+        {aiSummary && (
+          <div className="ml-auto flex-shrink-0">
+            <SummaryUpdaterButtonGroup
+              isSaving={isSaving}
+              isDirty={isTitleDirty || (summaryRef.current?.isDirty || false)}
+              onSave={onSaveAll}
+              onCopy={onCopySummary}
+              onExport={onOpenExport}
+              onFind={() => {
+                // TODO: Implement find in summary functionality
+                console.log('Find in summary clicked');
+              }}
+              onOpenFolder={onOpenFolder}
+              hasSummary={true}
+            />
           </div>
         )}
       </div>
 
-      {/* The insight surface is shown for every meeting — before a summary
-          exists it offers a Generate action and empty states; the whole thing
-          fills the area to the right of the transcript column. */}
+      {/* The insight surface is shown for every meeting and fills the area next
+          to the transcript column. Summary actions live in the toolbar above. */}
       <div className="flex-1 min-h-0">
         <InsightTabs
           aiSummary={aiSummary}
           transcripts={transcripts}
           generating={isSummaryLoading}
-          onGenerate={() => {
-            Analytics.trackButtonClick('generate_summary', 'meeting_details');
-            void onGenerateSummary(customPrompt);
-          }}
-          onCopySummary={onCopySummary}
-          onRegenerate={() => {
-            Analytics.trackButtonClick('regenerate_summary', 'meeting_details');
-            onRequestRegenerate();
-          }}
         />
       </div>
     </div>

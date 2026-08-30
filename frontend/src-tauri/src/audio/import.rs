@@ -9,6 +9,7 @@ use crate::parakeet_engine::ParakeetEngine;
 use crate::state::AppState;
 use crate::whisper_engine::WhisperEngine;
 use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -320,6 +321,7 @@ async fn run_import<R: Runtime>(
     provider: Option<String>,
 ) -> Result<ImportResult> {
     let source = PathBuf::from(&source_path);
+    let title_is_manual = is_import_title_manual(&title, &source);
 
     // Validate source file
     if !source.exists() {
@@ -645,7 +647,8 @@ async fn run_import<R: Runtime>(
     emit_progress(&app, "saving", 85, "Creating meeting...");
 
     // Create transcript segments
-    let segments = create_transcript_segments(&all_transcripts);
+    let recording_started_at = Utc::now();
+    let segments = create_transcript_segments(&all_transcripts, recording_started_at)?;
 
     // Save to database
     let app_state = app
@@ -657,6 +660,8 @@ async fn run_import<R: Runtime>(
         &title,
         &segments,
         meeting_folder.to_string_lossy().to_string(),
+        recording_started_at,
+        title_is_manual,
     )
     .await?;
 
@@ -674,6 +679,7 @@ async fn run_import<R: Runtime>(
         duration_seconds,
         &dest_filename,
         "import",
+        recording_started_at,
     ) {
         warn!("Failed to write metadata.json: {}", e);
     }
@@ -707,6 +713,8 @@ async fn create_meeting_with_transcripts(
     title: &str,
     segments: &[TranscriptSegment],
     folder_path: String,
+    recording_started_at: DateTime<Utc>,
+    title_is_manual: bool,
 ) -> Result<String> {
     let meeting_id = format!("meeting-{}", Uuid::new_v4());
     let now = chrono::Utc::now();
@@ -719,14 +727,16 @@ async fn create_meeting_with_transcripts(
 
     // Insert meeting
     sqlx::query(
-        "INSERT INTO meetings (id, title, created_at, updated_at, folder_path)
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO meetings
+         (id, title, created_at, updated_at, folder_path, title_is_manual)
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(&meeting_id)
     .bind(title)
-    .bind(now)
+    .bind(recording_started_at)
     .bind(now)
     .bind(&folder_path)
+    .bind(title_is_manual)
     .execute(&mut *tx)
     .await
     .map_err(|e| anyhow!("Failed to create meeting: {}", e))?;
@@ -760,6 +770,14 @@ async fn create_meeting_with_transcripts(
     );
 
     Ok(meeting_id)
+}
+
+fn is_import_title_manual(title: &str, source: &Path) -> bool {
+    source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|filename| title.trim() != filename)
+        .unwrap_or(true)
 }
 
 /// Get or initialize the Whisper engine
@@ -898,6 +916,7 @@ fn write_import_metadata(
     duration_seconds: f64,
     audio_filename: &str,
     source: &str,
+    recording_started_at: DateTime<Utc>,
 ) -> Result<()> {
     let metadata_path = folder.join("metadata.json");
     let temp_path = folder.join(".metadata.json.tmp");
@@ -907,7 +926,7 @@ fn write_import_metadata(
         "version": "1.0",
         "meeting_id": meeting_id,
         "meeting_name": title,
-        "created_at": now,
+        "created_at": recording_started_at.to_rfc3339(),
         "completed_at": now,
         "duration_seconds": duration_seconds,
         "audio_file": audio_filename,
@@ -1023,6 +1042,12 @@ pub async fn is_import_in_progress_command() -> bool {
 mod tests {
     use super::*;
 
+    fn test_recording_start() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-08-30T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
     #[test]
     fn test_audio_extensions() {
         assert!(AUDIO_EXTENSIONS.contains(&"mp4"));
@@ -1032,21 +1057,29 @@ mod tests {
     }
 
     #[test]
+    fn imported_filename_is_automatic_until_edited() {
+        let source = Path::new("recording.mp4");
+        assert!(!is_import_title_manual("recording.mp4", source));
+        assert!(is_import_title_manual("Customer Interview", source));
+    }
+
+    #[test]
     fn test_create_transcript_segments_empty() {
         let transcripts: Vec<(String, f64, f64)> = vec![];
-        let segments = create_transcript_segments(&transcripts);
+        let segments = create_transcript_segments(&transcripts, test_recording_start()).unwrap();
         assert!(segments.is_empty());
     }
 
     #[test]
     fn test_create_transcript_segments_single() {
         let transcripts = vec![("Hello world".to_string(), 0.0, 1500.0)];
-        let segments = create_transcript_segments(&transcripts);
+        let segments = create_transcript_segments(&transcripts, test_recording_start()).unwrap();
 
         assert_eq!(segments.len(), 1);
         assert_eq!(segments[0].text, "Hello world");
         assert_eq!(segments[0].audio_start_time, Some(0.0));
         assert_eq!(segments[0].audio_end_time, Some(1.5));
+        assert_eq!(segments[0].timestamp, "2026-08-30T12:00:00.000Z");
     }
 
     #[test]
@@ -1240,6 +1273,7 @@ mod tests {
             1800.0,
             "audio.mp4",
             "import",
+            test_recording_start(),
         );
         assert!(result.is_ok(), "write_import_metadata failed: {:?}", result);
 
@@ -1255,6 +1289,7 @@ mod tests {
         assert_eq!(parsed["audio_file"], "audio.mp4");
         assert_eq!(parsed["status"], "completed");
         assert_eq!(parsed["source"], "import");
+        assert_eq!(parsed["created_at"], "2026-08-30T12:00:00+00:00");
     }
 
     /// Integration test that decodes a real audio file and runs VAD.

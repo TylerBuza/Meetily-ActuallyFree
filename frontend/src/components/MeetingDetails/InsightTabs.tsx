@@ -18,8 +18,6 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   Sparkles,
-  Copy,
-  RefreshCw,
   Plus,
   Circle,
   CheckCircle2,
@@ -270,18 +268,12 @@ interface InsightTabsProps {
   aiSummary: Summary | null;
   transcripts: Transcript[];
   generating?: boolean;
-  onGenerate?: () => void;
-  onCopySummary?: () => void | Promise<void>;
-  onRegenerate?: () => void | Promise<void>;
 }
 
 export function InsightTabs({
   aiSummary,
   transcripts,
   generating = false,
-  onGenerate,
-  onCopySummary,
-  onRegenerate,
 }: InsightTabsProps) {
   const [done, setDone] = useState<Set<string>>(new Set());
 
@@ -357,12 +349,11 @@ export function InsightTabs({
               <p className="mb-4 text-sm text-[var(--af-text-2)]">
                 No summary yet. Generate an AI summary with key points, action items and topics.
               </p>
-              <button
-                onClick={() => onGenerate?.()}
-                className="inline-flex items-center gap-2 rounded-lg bg-[var(--af-accent)] px-4 py-2 text-sm font-medium text-white transition-[filter] hover:brightness-110"
-              >
-                <Sparkles size={15} /> Generate summary
-              </button>
+              <p className="text-xs text-[var(--af-text-3)]">
+                {transcripts.length > 0
+                  ? 'Use the summary toolbar above to choose a template and generate.'
+                  : 'A transcript is required before a summary can be generated.'}
+              </p>
             </div>
           ) : (
             <>
@@ -373,10 +364,6 @@ export function InsightTabs({
               ) : (
                 <p className="text-sm text-[var(--af-text-3)]">No summary text available.</p>
               )}
-              <div className="mt-4 flex items-center gap-2">
-                <ToolbarButton icon={<Copy size={14} />} onClick={() => { void onCopySummary?.(); toast.success('Summary copied'); }}>Copy</ToolbarButton>
-                <ToolbarButton icon={<RefreshCw size={14} />} onClick={() => void onRegenerate?.()}>Regenerate</ToolbarButton>
-              </div>
             </>
           )}
         </section>

@@ -148,7 +148,6 @@ export default function PageContent({
     isModelConfigLoading: false, // ConfigContext loads on mount
     selectedTemplate: templates.selectedTemplate,
     onMeetingUpdated,
-    updateMeetingTitle: meetingData.updateMeetingTitle,
     setAiSummary,
     onOpenModelSettings: handleOpenModelSettings,
   });
@@ -234,7 +233,7 @@ export default function PageContent({
       transition={{ duration: 0.3, ease: 'easeOut' }}
       className="flex flex-col h-screen bg-[var(--af-bg)]"
     >
-      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-[var(--af-bg)]">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--af-bg)] md:flex-row">
         <TranscriptPanel
           transcripts={meetingData.transcripts}
           title={meetingData.meetingTitle}

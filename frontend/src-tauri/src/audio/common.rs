@@ -1,5 +1,6 @@
 use crate::api::TranscriptSegment;
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use log::{debug, info};
 use once_cell::sync::Lazy;
 use std::path::Path;
@@ -236,7 +237,10 @@ pub(crate) async fn unload_engine_after_batch(use_parakeet: bool) {
 
 /// Create transcript segments from transcription results.
 /// Each tuple is (text, start_ms, end_ms) from VAD timestamps.
-pub(crate) fn create_transcript_segments(transcripts: &[(String, f64, f64)]) -> Vec<TranscriptSegment> {
+pub(crate) fn create_transcript_segments(
+    transcripts: &[(String, f64, f64)],
+    recording_started_at: DateTime<Utc>,
+) -> Result<Vec<TranscriptSegment>> {
     transcripts
         .iter()
         .map(|(text, start_ms, end_ms)| {
@@ -244,17 +248,20 @@ pub(crate) fn create_transcript_segments(transcripts: &[(String, f64, f64)]) -> 
             let end_seconds = end_ms / 1000.0;
             let duration = end_seconds - start_seconds;
 
-            TranscriptSegment {
+            Ok(TranscriptSegment {
                 id: format!("transcript-{}", Uuid::new_v4()),
                 text: text.trim().to_string(),
-                timestamp: chrono::Utc::now().to_rfc3339(),
+                timestamp: crate::database::repositories::transcript::timestamp_from_offset(
+                    recording_started_at,
+                    start_seconds,
+                )?,
                 audio_start_time: Some(start_seconds),
                 audio_end_time: Some(end_seconds),
                 duration: Some(duration),
                 // Import/retranscribe path: no live capture, so no speaker
                 // hint exists; offline diarization can label these later.
                 speaker: None,
-            }
+            })
         })
         .collect()
 }

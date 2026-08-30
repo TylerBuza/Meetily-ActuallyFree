@@ -349,6 +349,9 @@ pub async fn api_process_transcript<R: Runtime>(
     let pool = state.db_manager.pool().clone();
     let final_prompt = custom_prompt.unwrap_or_else(|| "".to_string());
     let final_template_id = template_id.unwrap_or_else(|| "daily_standup".to_string());
+    let process_id = Uuid::new_v4().to_string();
+    let registration = SummaryService::try_register_cancellation_token(&m_id)
+        .ok_or_else(|| "Summary generation is already active for this meeting".to_string())?;
 
     // Normalise empty / whitespace-only to None so "" and null behave identically
     let summary_language = summary_language.and_then(|s| {
@@ -357,9 +360,10 @@ pub async fn api_process_transcript<R: Runtime>(
     });
 
     // Create or reset the process entry in the database
-    SummaryProcessesRepository::create_or_reset_process(&pool, &m_id)
-        .await
-        .map_err(|e| format!("Failed to initialize process: {}", e))?;
+    if let Err(error) = SummaryProcessesRepository::create_or_reset_process(&pool, &m_id).await {
+        SummaryService::cleanup_cancellation_token(&m_id, &registration);
+        return Err(format!("Failed to initialize process: {}", error));
+    }
 
     log_info!("✓ Summary process initialized for meeting_id: {}", &m_id);
 
@@ -367,7 +371,7 @@ pub async fn api_process_transcript<R: Runtime>(
     let chunk_size = _chunk_size.unwrap_or(40000);
     let overlap = _overlap.unwrap_or(1000);
 
-    TranscriptChunksRepository::save_transcript_data(
+    if let Err(error) = TranscriptChunksRepository::save_transcript_data(
         &pool,
         &m_id,
         &text,
@@ -377,17 +381,33 @@ pub async fn api_process_transcript<R: Runtime>(
         overlap,
     )
     .await
-    .map_err(|e| format!("Failed to save transcript data: {}", e))?;
+    {
+        if let Err(status_error) =
+            SummaryProcessesRepository::update_process_failed(&pool, &m_id, &error.to_string())
+                .await
+        {
+            log_error!(
+                "Failed to mark summary setup failure for {}: {}",
+                m_id,
+                status_error
+            );
+        }
+        SummaryService::cleanup_cancellation_token(&m_id, &registration);
+        return Err(format!("Failed to save transcript data: {}", error));
+    }
 
     log_info!("✓ Transcript chunks saved for meeting_id: {}", &m_id);
 
     // Spawn background task for actual processing
     let meeting_id_clone = m_id.clone();
+    let process_id_clone = process_id.clone();
     tauri::async_runtime::spawn(async move {
         SummaryService::process_transcript_background(
             app,
             pool,
             meeting_id_clone.clone(),
+            process_id_clone,
+            registration,
             text,
             model,
             model_name,
@@ -402,7 +422,7 @@ pub async fn api_process_transcript<R: Runtime>(
 
     Ok(ProcessTranscriptResponse {
         message: "Summary generation started".to_string(),
-        process_id: m_id,
+        process_id,
     })
 }
 

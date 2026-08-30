@@ -71,6 +71,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   // re-ran page-level effect cleanups and immediately killed the brand-new poll
   // — auto-summary finished on the backend but the UI never received it.
   const activeSummaryPollsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const summaryPollGenerationRef = useRef<Map<string, number>>(new Map());
   const [activeSummaryPolls, setActiveSummaryPolls] = useState<Map<string, NodeJS.Timeout>>(new Map());
 
   // Use recording state from RecordingStateContext (single source of truth)
@@ -173,6 +174,10 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 
   // Summary polling management
   const clearPoll = useCallback((meetingId: string) => {
+    summaryPollGenerationRef.current.set(
+      meetingId,
+      (summaryPollGenerationRef.current.get(meetingId) ?? 0) + 1
+    );
     const existing = activeSummaryPollsRef.current.get(meetingId);
     if (existing) {
       clearInterval(existing);
@@ -188,6 +193,9 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   ) => {
     // Stop existing poll for this meeting if any
     clearPoll(meetingId);
+    const pollGeneration = summaryPollGenerationRef.current.get(meetingId) ?? 0;
+    const isCurrentPoll = () =>
+      summaryPollGenerationRef.current.get(meetingId) === pollGeneration;
 
     console.log(`📊 Starting polling for meeting ${meetingId}, process ${processId}`);
 
@@ -196,7 +204,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
     let stopped = false;
 
     const tick = async () => {
-      if (stopped) return;
+      if (stopped || !isCurrentPoll()) return;
       pollCount++;
 
       if (pollCount >= MAX_POLLS) {
@@ -215,7 +223,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
           meetingId: meetingId,
         }) as any;
 
-        if (stopped) return;
+        if (stopped || !isCurrentPoll()) return;
         console.log(`📊 Polling update for ${meetingId}:`, result.status);
 
         onUpdate(result);
@@ -237,7 +245,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
           clearPoll(meetingId);
         }
       } catch (error) {
-        if (stopped) return;
+        if (stopped || !isCurrentPoll()) return;
         console.error(`Polling error for ${meetingId}:`, error);
         onUpdate({
           status: 'error',

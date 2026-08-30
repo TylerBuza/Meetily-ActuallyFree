@@ -124,16 +124,16 @@ impl SummaryProcessesRepository {
         result: Value, // Keep this as Value to handle both old and new formats if needed
         chunk_count: i64,
         processing_time: f64,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<bool, sqlx::Error> {
         let now = Utc::now();
         let result_str = serde_json::to_string(&result)
             .map_err(|e| sqlx::Error::Protocol(format!("Failed to serialize result: {}", e)))?;
 
-        sqlx::query(
+        let result = sqlx::query(
             r#"
             UPDATE summary_processes
             SET status = 'completed', result = ?, updated_at = ?, end_time = ?, chunk_count = ?, processing_time = ?, error = NULL, result_backup = NULL, result_backup_timestamp = NULL
-            WHERE meeting_id = ?
+            WHERE meeting_id = ? AND status = 'PENDING'
             "#
         )
         .bind(result_str)
@@ -144,11 +144,14 @@ impl SummaryProcessesRepository {
         .bind(meeting_id)
         .execute(pool)
         .await?;
+        if result.rows_affected() == 0 {
+            return Ok(false);
+        }
         log_info!(
             "Summary completed and backup cleared for meeting_id: {}",
             meeting_id
         );
-        Ok(())
+        Ok(true)
     }
 
     pub async fn update_process_failed(
@@ -170,7 +173,7 @@ impl SummaryProcessesRepository {
                 result = COALESCE(result_backup, result),
                 result_backup = NULL,
                 result_backup_timestamp = NULL
-            WHERE meeting_id = ?
+            WHERE meeting_id = ? AND status = 'PENDING'
             "#,
         )
         .bind(error)
@@ -204,7 +207,7 @@ impl SummaryProcessesRepository {
                 result = COALESCE(result_backup, result),
                 result_backup = NULL,
                 result_backup_timestamp = NULL
-            WHERE meeting_id = ?
+            WHERE meeting_id = ? AND status = 'PENDING'
             "#,
         )
         .bind(now)
