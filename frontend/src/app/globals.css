@@ -218,6 +218,12 @@
    <html class="dark"> switches the same surfaces to the deep-navy skin.
    ============================================================ */
 :root {
+  /* Tell the engine which scheme native controls should paint in. Without this,
+     WebKitGTK renders <select>, its option popup, scrollbars and date pickers
+     with the light system theme regardless of our tokens — which left the
+     selected value in a <select> unreadable once the app was in dark mode. */
+  color-scheme: light;
+
   --af-bg: #f6f8fb;
   --af-panel: #ffffff;
   --af-panel-2: #eef3f8;
@@ -243,6 +249,9 @@
 }
 
 html.dark {
+  /* Repaint native controls dark too — see the note on :root. */
+  color-scheme: dark;
+
   /* Elevation ramp. Each step is a deliberate, small lift — enough to read as
      a distinct layer without the surfaces looking striped. */
   --af-bg: #0a0c10;       /* app canvas — near-black with a cool cast */
