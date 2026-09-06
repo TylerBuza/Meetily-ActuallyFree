@@ -145,9 +145,10 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
         // Listen for recording-stopped event
         unlistenRecordingStopped = await recordingService.onRecordingStopped(async (payload) => {
           try {
-            if (currentMeetingId) {
+            const meetingId = currentMeetingId || sessionStorage.getItem('indexeddb_current_meeting_id');
+            if (meetingId) {
               // Update folder path in IndexedDB
-              const metadata = await indexedDBService.getMeetingMetadata(currentMeetingId);
+              const metadata = await indexedDBService.getMeetingMetadata(meetingId);
 
               if (metadata && payload.folder_path) {
                 metadata.folderPath = payload.folder_path;
@@ -323,8 +324,9 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
           console.log(`✅ MAIN LISTENER: Buffered transcript with sequence_id ${update.sequence_id}. Buffer size: ${transcriptBuffer.size}, Last processed: ${lastProcessedSequence}`);
 
           // Save to IndexedDB (non-blocking)
-          if (currentMeetingId) {
-            indexedDBService.saveTranscript(currentMeetingId, update)
+          const meetingId = currentMeetingId || sessionStorage.getItem('indexeddb_current_meeting_id');
+          if (meetingId) {
+            indexedDBService.saveTranscript(meetingId, update)
               .catch(err => console.warn('IndexedDB save failed:', err));
           }
 

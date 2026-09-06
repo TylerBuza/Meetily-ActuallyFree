@@ -1,6 +1,6 @@
 [package]
 name = "meetily"
-version = "0.2.12"
+version = "0.2.13"
 description = "Meetily - Actually Free: privacy-first AI meeting assistant"
 authors = ["TylerBuza"]
 repository = "https://github.com/TylerBuza/Meetily-ActuallyFree"
@@ -172,6 +172,16 @@ tauri-plugin-single-instance = "=2.3.7"
 tauri-winrt-notification = "0.7.2"
 winreg = "0.55"
 windows-sys = { version = "0.59", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.54.0", features = [
+    "Win32_Devices_Properties",
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
 
 # macOS-specific dependencies with Metal GPU acceleration
 [target.'cfg(target_os = "macos")'.dependencies]

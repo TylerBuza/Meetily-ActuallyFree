@@ -142,6 +142,10 @@ Do not restore cross-webview stop-request events, elapsed-time reseeding, or a
 frontend close fallback. Those mechanisms caused zombie bars, frozen
 `Finishing` states, timer resets, and duplicate post-processing.
 
+Dragging uses one bubbling mouse handler that excludes buttons and their children,
+plus a minibar-only `core:window:allow-start-dragging` capability. Container-only
+`data-tauri-drag-region` attributes miss child targets in Tauri's native handler.
+
 ---
 
 ## 3. Where things are stored
@@ -340,6 +344,11 @@ exactly this confusion; it has been deleted along with `SettingTabs.tsx`,
 
 The label also has to survive the Rust side: `MeetingTranscript` must include
 `speaker`, and every place constructing it must set it.
+
+`InsightTabs` renders the complete stored Markdown as its authoritative summary.
+English-keyword action/topic shortcuts are supplemental only; never make them the
+sole visible representation, because custom and non-English headings do not map
+reliably to those buckets. Preserve Markdown whitespace, nesting, and table syntax.
 
 ### Stable speaker colors
 
@@ -715,6 +724,19 @@ release asset so installed clients can download it. Users manually launch only
   below variant compilation.
 - `setup.exe --verify-payload` extracts and verifies the embedded engine without
   installing it; use this as a release smoke test.
+- `node frontend/scripts/verify-windows-release.mjs [asset-directory]` verifies
+  manifest routing, checksums, both Minisign signatures, NSIS archive integrity,
+  packaged variant hashes, and the bootstrapper payload without installation.
+- Isolated worktrees can pass `-LlvmDir`, `-VulkanSdk`, and `-CudaToolkit` to the
+  universal builder to reuse installed toolchains without writing into another
+  checkout. Runtime staging must use that same CUDA toolkit.
+
+Native updater downloads in `app_update.rs` are owned by a frontend-generated
+request ID. Cancellation, completion cleanup, and installation must remain scoped
+to that ID; an old dialog must not discard another dialog's download. Rust reserves
+verified bytes until installation or cancellation and rejects replacement during
+installation. The dialog enters its non-cancellable phase after the download
+command resolves, not upon receipt of the progress channel's Finished event.
 
 ### Branding assets
 

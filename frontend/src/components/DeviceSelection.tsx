@@ -372,6 +372,11 @@ export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = fa
               macOS captures the current default output. Change the route in System Settings.
             </p>
           )}
+          {!isMacOS && outputDevices.length > 0 && (
+            <p className="text-xs text-gray-500">
+              Zoom and similar apps can use their own speaker. Set the app&apos;s Speaker to the same output selected here.
+            </p>
+          )}
 
           {/* Backend Selection - available on all platforms */}
           {!disabled && (

@@ -5,10 +5,8 @@
  * Provides update checking, downloading, and installation functionality.
  */
 
-import { check, Update } from '@tauri-apps/plugin-updater';
-import { relaunch } from '@tauri-apps/plugin-process';
+import { check } from '@tauri-apps/plugin-updater';
 import { getVersion } from '@tauri-apps/api/app';
-import { invoke } from '@tauri-apps/api/core';
 
 export interface UpdateInfo {
   available: boolean;
@@ -83,42 +81,6 @@ export class UpdateService {
       throw error;
     } finally {
       this.updateCheckInProgress = false;
-    }
-  }
-
-  /**
-   * Download and install the available update
-   * @param update The update object from checkForUpdates
-   * @param onProgress Optional progress callback
-   * @returns Promise that resolves when download completes
-   */
-  async downloadAndInstall(
-    update: Update,
-    onProgress?: (progress: UpdateProgress) => void
-  ): Promise<void> {
-    let crashSessionSuspended = false;
-    try {
-      // Download the update
-      await update.download();
-
-      // Notify progress if callback provided
-      if (onProgress) {
-        onProgress({ downloaded: 100, total: 100, percentage: 100 });
-      }
-
-      // Install and relaunch
-      await invoke('prepare_for_app_restart');
-      crashSessionSuspended = true;
-      await update.install();
-      await relaunch();
-    } catch (error) {
-      if (crashSessionSuspended) {
-        await invoke('resume_crash_session').catch((resumeError) => {
-          console.error('Failed to resume crash detection after update failure:', resumeError);
-        });
-      }
-      console.error('Failed to download/install update:', error);
-      throw error;
     }
   }
 

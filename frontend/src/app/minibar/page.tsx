@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Mic, MicOff, Monitor, VolumeX, Pause, Play, Square, Maximize2 } from 'lucide-react';
 import { LiveAudioVisualizer } from '@/components/LiveAudioVisualizer';
 import { recordingService } from '@/services/recordingService';
@@ -155,11 +156,17 @@ export default function MiniBarPage() {
 
   return (
     <div
-      data-tauri-drag-region
+      onMouseDown={(event) => {
+        if (event.button !== 0 || (event.target as Element).closest('button')) return;
+        event.preventDefault();
+        void getCurrentWindow().startDragging().catch((error) => {
+          console.error('Compact bar: dragging failed', error);
+        });
+      }}
       className="flex h-screen w-screen items-center gap-4 rounded-full border border-white/10 bg-[#0f1218]/60 px-6 text-white shadow-2xl backdrop-blur-xl select-none"
     >
       {/* Status + timer */}
-      <div data-tauri-drag-region className="flex items-center gap-3 pl-1">
+      <div className="flex items-center gap-3 pl-1">
         <span className="relative flex h-6 w-6 items-center justify-center">
           <span
             className={`absolute inset-0 rounded-full ${

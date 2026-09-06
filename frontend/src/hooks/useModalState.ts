@@ -163,6 +163,37 @@ export function useModalState(transcriptModelConfig?: TranscriptModelProps): Use
     };
   }, [showModal]);
 
+  // Individual chunks can fail transiently while the recording and remaining
+  // transcription continue. Surface that as a warning, not a terminal stop.
+  useEffect(() => {
+    let unlistenFn: (() => void) | undefined;
+    let disposed = false;
+
+    const setupTranscriptionWarningListener = async () => {
+      try {
+        unlistenFn = await listen<string>('transcription-warning', (event) => {
+          if (disposed) return;
+          console.warn('Recoverable transcription warning:', event.payload);
+          toast.warning('Some speech could not be transcribed', {
+            id: 'transcription-warning',
+            description: event.payload,
+            duration: 5000,
+          });
+        });
+        if (disposed) unlistenFn();
+      } catch (error) {
+        console.error('Failed to setup transcription warning listener:', error);
+      }
+    };
+
+    setupTranscriptionWarningListener();
+
+    return () => {
+      disposed = true;
+      unlistenFn?.();
+    };
+  }, []);
+
   // Listen for model download completion to auto-close modal
   useEffect(() => {
     const setupDownloadListeners = async () => {

@@ -188,14 +188,16 @@ export function useSummaryGeneration({
     transcriptTexts,
     customPrompt = '',
     isRegeneration = false,
+    requestGeneration: providedRequestGeneration,
   }: {
     transcriptText: string;
     transcriptTexts?: string[];
     customPrompt?: string;
     isRegeneration?: boolean;
+    requestGeneration?: number;
   }): Promise<boolean> => {
     const requestMeetingId = meeting.id;
-    const requestGeneration = ++summaryRequestGenerationRef.current;
+    const requestGeneration = providedRequestGeneration ?? ++summaryRequestGenerationRef.current;
     const isCurrentRequest = () =>
       activeMeetingIdRef.current === requestMeetingId &&
       summaryRequestGenerationRef.current === requestGeneration;
@@ -567,8 +569,11 @@ export function useSummaryGeneration({
   // Public API: Generate summary from transcripts
   const handleGenerateSummary = useCallback(async (customPrompt: string = ''): Promise<boolean> => {
     const requestMeetingId = meeting.id;
-    const isCurrentMeeting = () => activeMeetingIdRef.current === requestMeetingId;
-    if (!isCurrentMeeting()) return false;
+    const requestGeneration = ++summaryRequestGenerationRef.current;
+    const isCurrentRequest = () =>
+      activeMeetingIdRef.current === requestMeetingId &&
+      summaryRequestGenerationRef.current === requestGeneration;
+    if (!isCurrentRequest()) return false;
 
     // Check if model config is still loading
     if (isModelConfigLoading) {
@@ -586,7 +591,7 @@ export function useSummaryGeneration({
     // CHANGE: Fetch ALL transcripts from database, not from pagination state
     console.log('📊 Fetching all transcripts for summary generation...');
     const allTranscripts = await fetchAllTranscripts(meeting.id);
-    if (!isCurrentMeeting()) return false;
+    if (!isCurrentRequest()) return false;
 
     if (!allTranscripts.length) {
       const error_msg = 'No transcripts available for summary';
@@ -609,21 +614,42 @@ export function useSummaryGeneration({
       try {
         const endpoint = modelConfig.ollamaEndpoint || null;
         const models = await invokeTauri('get_ollama_models', { endpoint }) as any[];
-        if (!isCurrentMeeting()) return false;
+        if (!isCurrentRequest()) return false;
 
         if (!models || models.length === 0) {
-          setSummaryStatus('idle');
+          const errorMessage = 'No Ollama models are installed at the configured endpoint.';
+          setSummaryStatus('error');
+          setSummaryError(errorMessage);
           toast.error(
             'No Ollama models found. Please download gemma3:1b from Model Settings.',
             { duration: 5000 }
           );
+          onOpenModelSettings?.();
+          return false;
+        }
+
+        const selectedModelAvailable = models.some((model) =>
+          model?.name === modelConfig.model || model?.id === modelConfig.model
+        );
+        if (!modelConfig.model || !selectedModelAvailable) {
+          const errorMessage = modelConfig.model
+            ? `${modelConfig.model} is not installed at the configured endpoint.`
+            : 'Select an installed model before generating a summary.';
+          setSummaryStatus('error');
+          setSummaryError(errorMessage);
+          toast.error('Selected Ollama model is unavailable', {
+            description: errorMessage,
+            duration: 6000,
+          });
+          onOpenModelSettings?.();
           return false;
         }
       } catch (error) {
-        if (!isCurrentMeeting()) return false;
+        if (!isCurrentRequest()) return false;
         console.error('Error checking Ollama models:', error);
         const errorMessage = error instanceof Error ? error.message : String(error);
-        setSummaryStatus('idle');
+        setSummaryStatus('error');
+        setSummaryError(errorMessage);
 
         if (isOllamaNotInstalledError(errorMessage)) {
           // Ollama is not installed - show specific message with download link
@@ -645,6 +671,7 @@ export function useSummaryGeneration({
             { duration: 5000 }
           );
         }
+        onOpenModelSettings?.();
         return false;
       }
     }
@@ -671,14 +698,14 @@ export function useSummaryGeneration({
           modelName: selectedModel,
           refresh: true,
         });
-        if (!isCurrentMeeting()) return false;
+        if (!isCurrentRequest()) return false;
 
         if (!isReady) {
           // Get detailed model status
           const modelInfo = await invokeTauri<BuiltInModelInfo | null>('builtin_ai_get_model_info', {
             modelName: selectedModel,
           });
-          if (!isCurrentMeeting()) return false;
+          if (!isCurrentRequest()) return false;
 
           if (modelInfo) {
             const status = modelInfo.status;
@@ -744,7 +771,7 @@ export function useSummaryGeneration({
 
         // Model is ready, continue to backend call
       } catch (error) {
-        if (!isCurrentMeeting()) return false;
+        if (!isCurrentRequest()) return false;
         console.error('Error validating built-in AI model:', error);
         setSummaryStatus('idle');
         toast.error('Failed to validate built-in AI model', {
@@ -756,22 +783,27 @@ export function useSummaryGeneration({
     }
 
     const summaryPayload = buildSummaryTranscriptPayload(allTranscripts);
-    if (!isCurrentMeeting()) return false;
+    if (!isCurrentRequest()) return false;
 
     return processSummary({
       ...summaryPayload,
       customPrompt,
+      requestGeneration,
     });
-  }, [meeting.id, fetchAllTranscripts, buildSummaryTranscriptPayload, processSummary, modelConfig, isModelConfigLoading, selectedTemplate]);
+  }, [meeting.id, fetchAllTranscripts, buildSummaryTranscriptPayload, processSummary, modelConfig, isModelConfigLoading, selectedTemplate, onOpenModelSettings]);
 
   // Public API: Regenerate summary from the current saved transcript
   const handleRegenerateSummary = useCallback(async (customPrompt = '') => {
     const requestMeetingId = meeting.id;
+    const requestGeneration = ++summaryRequestGenerationRef.current;
+    const isCurrentRequest = () =>
+      activeMeetingIdRef.current === requestMeetingId &&
+      summaryRequestGenerationRef.current === requestGeneration;
     setSummaryStatus('regenerating');
     setSummaryError(null);
 
     const allTranscripts = await fetchAllTranscripts(meeting.id);
-    if (activeMeetingIdRef.current !== requestMeetingId) return;
+    if (!isCurrentRequest()) return;
 
     if (!allTranscripts.length) {
       console.error('No transcripts available for regeneration');
@@ -780,12 +812,48 @@ export function useSummaryGeneration({
       return;
     }
 
+    if (modelConfig.provider === 'ollama') {
+      try {
+        const endpoint = modelConfig.ollamaEndpoint || null;
+        const models = await invokeTauri('get_ollama_models', { endpoint }) as any[];
+        if (!isCurrentRequest()) return;
+
+        const selectedModelAvailable = models?.some((model) =>
+          model?.name === modelConfig.model || model?.id === modelConfig.model
+        );
+        if (!modelConfig.model || !selectedModelAvailable) {
+          const errorMessage = modelConfig.model
+            ? `${modelConfig.model} is not installed at the configured endpoint.`
+            : 'Select an installed model before regenerating a summary.';
+          setSummaryStatus('error');
+          setSummaryError(errorMessage);
+          toast.error('Selected Ollama model is unavailable', {
+            description: errorMessage,
+            duration: 6000,
+          });
+          onOpenModelSettings?.();
+          return;
+        }
+      } catch (error) {
+        if (!isCurrentRequest()) return;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        setSummaryStatus('error');
+        setSummaryError(errorMessage);
+        toast.error('Failed to check Ollama models', {
+          description: errorMessage,
+          duration: 5000,
+        });
+        return;
+      }
+    }
+
     await processSummary({
       ...buildSummaryTranscriptPayload(allTranscripts),
       customPrompt,
-      isRegeneration: true
+      isRegeneration: true,
+      requestGeneration,
     });
-  }, [meeting.id, fetchAllTranscripts, buildSummaryTranscriptPayload, processSummary]);
+  }, [meeting.id, fetchAllTranscripts, buildSummaryTranscriptPayload, processSummary, modelConfig, onOpenModelSettings]);
 
   // Public API: Stop ongoing summary generation
   const handleStopGeneration = useCallback(async () => {

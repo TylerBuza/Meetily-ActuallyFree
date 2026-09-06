@@ -155,6 +155,27 @@ export default function RootLayout({
     };
   }, [showOnboarding, startupResolved, startupError, pendingCrashReport]);
 
+  useEffect(() => {
+    if (!startupResolved || startupError || pendingCrashReport) return
+    const unlisten = listen<{ title: string; message: string }>(
+      'recording-audio-route-warning',
+      (event) => {
+        toast.warning(event.payload.title, {
+          description: event.payload.message,
+          duration: 30000,
+        });
+        invoke('show_simple_notification', {
+          title: event.payload.title,
+          body: event.payload.message,
+        }).catch(() => {});
+      }
+    );
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [startupResolved, startupError, pendingCrashReport]);
+
   // Meeting Detection: prompt to start recording when a meeting app is detected.
   useEffect(() => {
     if (!startupResolved || startupError || pendingCrashReport) return

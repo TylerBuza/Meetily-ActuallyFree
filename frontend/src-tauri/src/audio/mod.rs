@@ -35,6 +35,8 @@ pub mod system_detector;
 pub mod system_audio_commands;
 pub mod device_monitor;  // NEW: Device disconnect/reconnect monitoring
 pub mod playback_monitor; // NEW: Playback device detection for BT warnings
+#[cfg(target_os = "windows")]
+pub mod windows_audio_sessions;
 
 // Transcription module (provider abstraction, engine management, worker pool)
 pub mod transcription;

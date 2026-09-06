@@ -121,6 +121,39 @@ fn install_fatal_error_callback<R: Runtime>(
     });
 }
 
+#[cfg(target_os = "windows")]
+fn start_windows_audio_route_monitor<R: Runtime>(
+    app: &AppHandle<R>,
+    manager: &RecordingManager,
+    system_device_name: Option<String>,
+) {
+    let system_capture_active = manager
+        .get_state()
+        .active_capture_sources()
+        .map(|(_, system_active)| system_active)
+        .unwrap_or(false);
+
+    if system_capture_active {
+        if let Some(device_name) = system_device_name.as_ref() {
+            super::windows_audio_sessions::start_monitoring(app.clone(), device_name.clone());
+            return;
+        }
+    }
+
+    super::windows_audio_sessions::stop_monitoring();
+    let device = system_device_name.unwrap_or_else(|| "the selected output".to_string());
+    let warning = super::windows_audio_sessions::AudioRouteWarning {
+        title: "System audio is not being captured".to_string(),
+        message: format!(
+            "Meetily could not open {} for loopback capture. Your microphone is still recording; stop and restart after selecting an available output under Settings > Recording > System Audio.",
+            device
+        ),
+    };
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit("recording-audio-route-warning", warning);
+    }
+}
+
 // ============================================================================
 // PUBLIC TYPES
 // ============================================================================
@@ -369,10 +402,15 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     let level_sender = spawn_level_forwarder(&app);
 
     // Start recording with resolved devices (replaces start_recording_with_defaults_and_auto_save call)
+    #[cfg(target_os = "windows")]
+    let resolved_system_device_name = system_device.as_ref().map(|device| device.name.clone());
     let transcription_receiver = manager
         .start_recording(microphone_device, system_device, auto_save, Some(level_sender))
         .await
         .map_err(|e| format!("Failed to start recording: {}", e))?;
+
+    #[cfg(target_os = "windows")]
+    start_windows_audio_route_monitor(&app, &manager, resolved_system_device_name);
 
     // Store the manager globally to keep it alive
     {
@@ -615,10 +653,15 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     let level_sender = spawn_level_forwarder(&app);
 
     // Start recording with specified devices and auto_save setting
+    #[cfg(target_os = "windows")]
+    let resolved_system_device_name = system_device.as_ref().map(|device| device.name.clone());
     let transcription_receiver = manager
         .start_recording(mic_device, system_device, auto_save, Some(level_sender))
         .await
         .map_err(|e| format!("Failed to start recording: {}", e))?;
+
+    #[cfg(target_os = "windows")]
+    start_windows_audio_route_monitor(&app, &manager, resolved_system_device_name);
 
     // Store the manager globally to keep it alive
     {
@@ -760,6 +803,9 @@ async fn stop_recording_inner<R: Runtime>(
         return Ok(StopOutcome::AlreadyStopping);
     }
     let _stop_guard = StopGuard;
+
+    #[cfg(target_os = "windows")]
+    super::windows_audio_sessions::stop_monitoring();
 
     // Rust owns teardown. This is independent of webview event delivery and is
     // serialized against duplicate/queued minimize callbacks.

@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Download, X, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Download, AlertCircle, Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -9,10 +9,9 @@ import {
   DialogTitle,
 } from './ui/dialog';
 import { Button } from './ui/button';
-import { updateService, UpdateInfo, UpdateProgress } from '@/services/updateService';
-import { check, Update } from '@tauri-apps/plugin-updater';
+import { UpdateInfo, UpdateProgress } from '@/services/updateService';
 import { relaunch } from '@tauri-apps/plugin-process';
-import { invoke } from '@tauri-apps/api/core';
+import { Channel, invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 
 interface UpdateDialogProps {
@@ -21,68 +20,65 @@ interface UpdateDialogProps {
   updateInfo: UpdateInfo | null;
 }
 
+type UpdateDownloadEvent =
+  | { event: 'Started'; data: { contentLength?: number } }
+  | { event: 'Progress'; data: { chunkLength: number } }
+  | { event: 'Finished' };
+
+type UpdatePhase = 'idle' | 'preparing' | 'downloading' | 'installing';
+
 export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogProps) {
-  const [isDownloading, setIsDownloading] = useState(false);
   const [progress, setProgress] = useState<UpdateProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [update, setUpdate] = useState<Update | null>(null);
-  const [phase, setPhase] = useState<'idle' | 'preparing' | 'downloading' | 'installing'>('idle');
+  const [phase, setPhase] = useState<UpdatePhase>('idle');
+  const phaseRef = useRef<UpdatePhase>('idle');
+  const operationRef = useRef(0);
+  const requestIdRef = useRef<string | null>(null);
+  const isDownloading = phase !== 'idle';
+  const updateAvailable = updateInfo?.available;
+  const updateVersion = updateInfo?.version;
+
+  const updatePhase = (nextPhase: UpdatePhase) => {
+    phaseRef.current = nextPhase;
+    setPhase(nextPhase);
+  };
 
   useEffect(() => {
-    if (open && updateInfo?.available) {
-      // Reset state when dialog opens
-      setIsDownloading(false);
-      setProgress(null);
-      setError(null);
-      setPhase('idle');
-
-      // Get the update object when dialog opens
-      check().then((updateResult) => {
-        if (updateResult?.available) {
-          setUpdate(updateResult);
-        } else {
-          setError('Update no longer available');
-        }
-      }).catch((err) => {
-        console.error('Failed to get update object:', err);
-        setError('Failed to prepare update: ' + (err.message || 'Unknown error'));
-      });
+    if (open && updateAvailable) {
+      if (phaseRef.current === 'idle') {
+        setProgress(null);
+        setError(null);
+      }
     } else {
-      // Reset state when dialog closes
-      setIsDownloading(false);
+      if (phaseRef.current === 'installing') return;
+      operationRef.current += 1;
+      if (phaseRef.current === 'preparing' || phaseRef.current === 'downloading') {
+        void invoke('cancel_app_update_download', { requestId: requestIdRef.current }).catch((cancelError) => {
+          console.error('Failed to cancel update download:', cancelError);
+        });
+      }
       setProgress(null);
       setError(null);
-      setUpdate(null);
+      phaseRef.current = 'idle';
       setPhase('idle');
     }
-  }, [open, updateInfo]);
+  }, [open, updateAvailable, updateVersion]);
+
+  useEffect(() => () => {
+    operationRef.current += 1;
+    if (phaseRef.current === 'preparing' || phaseRef.current === 'downloading') {
+      void invoke('cancel_app_update_download', { requestId: requestIdRef.current }).catch((cancelError) => {
+        console.error('Failed to cancel update download during cleanup:', cancelError);
+      });
+    }
+  }, []);
 
   const handleDownloadAndInstall = async () => {
-    // Get update object if not already available
-    let updateToUse: Update | null = update;
-    if (!updateToUse) {
-      try {
-        const updateResult = await check();
-        if (updateResult?.available) {
-          updateToUse = updateResult;
-          setUpdate(updateResult);
-        } else {
-          setError('Update not available');
-          return;
-        }
-      } catch (err: any) {
-        setError('Failed to get update: ' + (err.message || 'Unknown error'));
-        return;
-      }
-    }
-
-    // At this point, updateToUse is guaranteed to be non-null
-    if (!updateToUse) {
-      return; // This should never happen, but TypeScript needs this check
-    }
-
-    setIsDownloading(true);
-    setPhase('preparing');
+    if (phaseRef.current !== 'idle') return;
+    const operation = ++operationRef.current;
+    const requestId = crypto.randomUUID();
+    requestIdRef.current = requestId;
+    updatePhase('preparing');
     setError(null);
     setProgress({ downloaded: 0, total: 0, percentage: 0 });
     let crashSessionSuspended = false;
@@ -90,11 +86,15 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
     try {
       let downloaded = 0;
       let contentLength = 0;
+      let downloadStarted = false;
+      const onEvent = new Channel<UpdateDownloadEvent>();
 
-      await updateToUse.download((event) => {
+      onEvent.onmessage = (event) => {
+        if (operation !== operationRef.current || phaseRef.current === 'installing') return;
         switch (event.event) {
           case 'Started':
-            setPhase('downloading');
+            updatePhase('downloading');
+            downloadStarted = true;
             contentLength = event.data.contentLength || 0;
             console.log(`[UpdateDialog] Started downloading ${contentLength} bytes`);
             setProgress({
@@ -105,6 +105,10 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
             break;
 
           case 'Progress':
+            if (!downloadStarted) {
+              updatePhase('downloading');
+              downloadStarted = true;
+            }
             downloaded += event.data.chunkLength || 0;
             const percentage = contentLength > 0
               ? Math.round((downloaded / contentLength) * 100)
@@ -118,7 +122,6 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
             break;
 
           case 'Finished':
-            setPhase('installing');
             console.log('[UpdateDialog] Download finished');
             setProgress({
               downloaded: contentLength,
@@ -127,35 +130,42 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
             });
             break;
         }
-      });
+      };
 
+      await invoke('download_app_update', { onEvent, requestId });
+      if (operation !== operationRef.current) return;
+
+      updatePhase('installing');
       await invoke('prepare_for_app_restart');
       crashSessionSuspended = true;
-      await updateToUse.install();
+      await invoke('install_downloaded_app_update', { requestId });
 
       console.log('[UpdateDialog] Update installed successfully');
       toast.success('Update installed successfully. The app will restart...');
 
       // Mark download as complete before closing
-      setIsDownloading(false);
-      setPhase('idle');
+      updatePhase('idle');
 
       // Close dialog before relaunch
-      handleOpenChange(false);
+      onOpenChange(false);
 
       // Relaunch the app
       await relaunch();
     } catch (err: any) {
+      const message = err instanceof Error ? err.message : String(err);
       if (crashSessionSuspended) {
         await invoke('resume_crash_session').catch((resumeError) => {
           console.error('Failed to resume crash detection after update failure:', resumeError);
         });
       }
+      if (operation !== operationRef.current || message.includes('Update download cancelled')) {
+        return;
+      }
+      await invoke('cancel_app_update_download', { requestId }).catch(() => {});
       console.error('Update failed:', err);
-      setError(err.message || 'Failed to download or install update');
-      setIsDownloading(false);
-      setPhase('idle');
-      toast.error('Update failed: ' + (err.message || 'Unknown error'));
+      setError(message || 'Failed to download or install update');
+      updatePhase('idle');
+      toast.error('Update failed: ' + (message || 'Unknown error'));
     }
   };
 
@@ -168,24 +178,25 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
     }
   };
 
-  // Prevent closing the dialog when downloading
   const handleOpenChange = (newOpen: boolean) => {
-    // If trying to close while downloading, prevent it
-    if (!newOpen && isDownloading) {
+    if (!newOpen && phaseRef.current === 'installing') {
       return;
     }
-    // Otherwise, allow normal close behavior
+    if (!newOpen && (phaseRef.current === 'preparing' || phaseRef.current === 'downloading')) {
+      operationRef.current += 1;
+      void invoke('cancel_app_update_download', { requestId: requestIdRef.current }).catch((cancelError) => {
+        console.error('Failed to cancel update download:', cancelError);
+      });
+    }
     onOpenChange(newOpen);
   };
 
-  // Prevent ESC key from closing dialog during download
   const handleEscapeKeyDown = (event: KeyboardEvent) => {
-    if (isDownloading) {
+    if (phaseRef.current === 'installing') {
       event.preventDefault();
     }
   };
 
-  // Prevent outside clicks from closing dialog during download
   const handleInteractOutside = (event: Event) => {
     if (isDownloading) {
       event.preventDefault();
@@ -202,6 +213,7 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
         className="overflow-hidden border-slate-700/80 bg-[#0b1220] p-0 text-slate-100 shadow-2xl shadow-black/50 sm:max-w-[520px]"
         onEscapeKeyDown={handleEscapeKeyDown}
         onInteractOutside={handleInteractOutside}
+        showCloseButton={phase !== 'installing'}
       >
         <div className="border-b border-slate-800 bg-gradient-to-br from-slate-900 via-[#0d1728] to-[#0a1c25] px-6 py-5">
         <DialogHeader>

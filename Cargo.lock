@@ -3611,7 +3611,7 @@ dependencies = [
 
 [[package]]
 name = "meetily"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3683,6 +3683,7 @@ dependencies = [
  "whatlang",
  "which 6.0.3",
  "whisper-rs",
+ "windows 0.54.0",
  "windows-sys 0.59.0",
  "winreg 0.55.0",
  "xz2",

@@ -280,6 +280,22 @@ pub fn clean_llm_markdown_output(markdown: &str) -> String {
     trimmed.to_string()
 }
 
+fn require_meaningful_summary(markdown: &str, stage: &str) -> Result<String, String> {
+    let cleaned = clean_llm_markdown_output(markdown);
+    let has_content = cleaned.lines().any(|line| {
+        let line = line.trim();
+        !line.starts_with('#')
+            && !line.starts_with("```")
+            && line.chars().any(char::is_alphanumeric)
+    });
+
+    if has_content {
+        Ok(cleaned)
+    } else {
+        Err(format!("{stage} returned empty content"))
+    }
+}
+
 /// Extracts meeting name from the first heading in markdown
 ///
 /// # Arguments
@@ -417,6 +433,10 @@ pub async fn generate_meeting_summary(
                 .await
                 {
                     Ok(summary) => {
+                        let summary = require_meaningful_summary(
+                            &summary,
+                            &format!("Transcript chunk {}/{}", i + 1, num_chunks),
+                        )?;
                         chunk_summaries.push(summary);
                         info!("✓ Chunk {}/{} processed successfully", i + 1, num_chunks);
                     }
@@ -426,15 +446,14 @@ pub async fn generate_meeting_summary(
                             return Err(e);
                         }
                         error!("Failed processing chunk {}/{}: {}", i + 1, num_chunks, e);
+                        return Err(format!(
+                            "Summary generation failed while processing transcript chunk {}/{}: {}",
+                            i + 1,
+                            num_chunks,
+                            e
+                        ));
                     }
                 }
-            }
-
-            if chunk_summaries.is_empty() {
-                return Err(
-                    "Multi-level summarization failed: No chunks were processed successfully."
-                        .to_string(),
-                );
             }
 
             successful_chunk_count = chunk_summaries.len() as i64;
@@ -452,7 +471,7 @@ pub async fn generate_meeting_summary(
                 let combined_text = chunk_summaries.join("\n---\n");
                 let system_prompt_combine = "You are an expert at synthesizing meeting summaries.";
                 let user_prompt_combine = build_combine_summary_user_prompt(&combined_text);
-                generate_summary(
+                let combined = generate_summary(
                     client,
                     provider,
                     model_name,
@@ -467,7 +486,8 @@ pub async fn generate_meeting_summary(
                     app_data_dir,
                     cancellation_token,
                 )
-                .await?
+                .await?;
+                require_meaningful_summary(&combined, "Combined transcript summary")?
             } else {
                 chunk_summaries.remove(0)
             };
@@ -517,7 +537,7 @@ pub async fn generate_meeting_summary(
         )
         .await?;
 
-        let english_markdown = clean_llm_markdown_output(&raw_markdown);
+        let english_markdown = require_meaningful_summary(&raw_markdown, "Final summary")?;
         info!("Summary pass completed ({} chars)", english_markdown.len());
 
         (english_markdown, successful_chunk_count)
@@ -620,7 +640,7 @@ async fn run_markdown_transform(
     .await
     .map_err(|e| format!("{failure_label} failed: {e}"))?;
 
-    Ok(clean_llm_markdown_output(&raw))
+    require_meaningful_summary(&raw, failure_label)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -737,6 +757,29 @@ mod tests {
     fn english_base_instruction_marks_non_english_prose_invalid_without_bloat() {
         assert!(ENGLISH_BASE_SUMMARY_INSTRUCTION.contains("non-English prose is invalid"));
         assert!(ENGLISH_BASE_SUMMARY_INSTRUCTION.len() <= 120);
+    }
+
+    #[test]
+    fn meaningful_summary_rejects_empty_or_heading_only_output() {
+        assert!(require_meaningful_summary("", "Summary").is_err());
+        assert!(require_meaningful_summary("# Meeting title\n\n## Notes", "Summary").is_err());
+        assert!(
+            require_meaningful_summary("```markdown\n# Meeting title\n```", "Summary").is_err()
+        );
+        assert!(require_meaningful_summary("```json\n```", "Summary").is_err());
+        assert!(require_meaningful_summary("-\n-\n", "Summary").is_err());
+    }
+
+    #[test]
+    fn meaningful_summary_cleans_and_accepts_body_content() {
+        assert_eq!(
+            require_meaningful_summary(
+                "```markdown\n# Meeting title\n\n- A decision was made.\n```",
+                "Summary"
+            )
+            .unwrap(),
+            "# Meeting title\n\n- A decision was made."
+        );
     }
 
     #[test]

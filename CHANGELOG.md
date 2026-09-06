@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.2.13 - 2026-09-06
+
+### Bug Fixes
+
+- Display complete multilingual summary Markdown with original headings, lists,
+  tables, and code blocks; custom sections and decisions no longer disappear (#17).
+- Allow dragging the compact recording bar from any non-button surface with a
+  minibar-scoped native permission, preserving native recording lifecycle (#24).
+- Import OGG Opus and Vorbis through the existing bundled FFmpeg conversion path;
+  temporary conversion files no longer require a writable source folder (#21).
+- Use the application accent for checked settings switches in both themes (#18).
+
+### Reliability
+
+- Surface persistent summary failures and retry controls, validate selected Ollama
+  models, and prevent cancelled preflight requests from starting generation.
+- Reject empty summaries and failed transcript chunks rather than silently
+  saving incomplete summaries.
+- Keep recoverable transcription failures non-terminal and preserve IndexedDB
+  recovery writes when listener closures predate meeting initialization.
+- Cancel updater downloads natively, isolate stale cancellation by request ID,
+  and guard the non-cancellable installation phase.
+- Match Windows audio devices exactly and warn about unavailable loopback capture
+  or possible Zoom speaker-route mismatches. Zoom warnings are heuristic: endpoint
+  sound cannot be attributed to a particular application.
+
+### Windows Packaging
+
+- Fresh CPU, Vulkan, and CUDA variants are required for this release.
+- The universal setup is for manual installation; the signed universal updater
+  engine and its matching signature remain the target of `latest.json`.
+- Windows Authenticode is not configured. The Tauri updater signature is separate
+  and remains required. No macOS release is included.
+
 ## 0.2.12 - 2026-08-30
 
 ### Meeting Details

@@ -1,7 +1,7 @@
 {
     "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
     "productName": "Meetily - Actually Free",
-    "version": "0.2.12",
+    "version": "0.2.13",
     "identifier": "com.meetily.ai",
     "build": {
         "frontendDist": "../out",
@@ -78,6 +78,11 @@
                             ]
                         }
                     ]
+                },
+                {
+                    "identifier": "minibar-drag",
+                    "windows": ["minibar"],
+                    "permissions": ["core:window:allow-start-dragging"]
                 }
             ]
         }

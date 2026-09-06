@@ -121,6 +121,25 @@ function normalize(aiSummary: any): Record<Bucket, string[]> {
   return bucketizeSections(aiSummary);
 }
 
+// Classification is only a convenience for shortcuts, never the source of the
+// visible summary: arbitrary headings and GFM structure must survive unchanged.
+export function completeSummaryMarkdown(summary: any): string {
+  if (!summary) return '';
+  if (typeof summary === 'string') return summary;
+  if (typeof summary.markdown === 'string') return summary.markdown;
+  if (Array.isArray(summary.summary_json)) return blocksToMarkdown(summary.summary_json);
+  const keys = [...new Set([
+    ...(Array.isArray(summary._section_order) ? summary._section_order : []),
+    ...Object.keys(summary),
+  ])];
+  return keys.flatMap((key) => {
+    if (key === 'english_cache') return [];
+    const section = summary[key];
+    if (!Array.isArray(section?.blocks)) return [];
+    return [`## ${section.title || key}\n\n${section.blocks.map((block: any) => inlineText(block.content)).join('\n\n')}`];
+  }).join('\n\n');
+}
+
 const OWNER_CHIP = [
   'bg-purple-500/15 text-purple-300',
   'bg-blue-500/15 text-blue-300',
@@ -265,7 +284,7 @@ interface QA {
 }
 
 interface InsightTabsProps {
-  aiSummary: Summary | null;
+  aiSummary: Summary | { markdown: string } | null;
   transcripts: Transcript[];
   generating?: boolean;
 }
@@ -279,7 +298,7 @@ export function InsightTabs({
 
   const buckets = useMemo(() => normalize(aiSummary), [aiSummary]);
   const actions = useMemo(() => parseActionItems(buckets.actions), [buckets.actions]);
-  const summaryText = useMemo(() => buckets.summary.join('\n\n'), [buckets.summary]);
+  const summaryText = useMemo(() => completeSummaryMarkdown(aiSummary), [aiSummary]);
   const hasSummary = !!aiSummary;
 
   const toggleDone = (key: string) =>
@@ -358,7 +377,7 @@ export function InsightTabs({
           ) : (
             <>
               {summaryText ? (
-                <div className="prose prose-sm max-w-none leading-relaxed text-[var(--af-text-2)] dark:prose-invert prose-strong:text-[var(--af-text)] prose-p:my-2">
+                <div className="prose prose-sm max-w-none overflow-x-auto break-words leading-relaxed text-[var(--af-text-2)] dark:prose-invert prose-strong:text-[var(--af-text)] prose-p:my-2">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{summaryText}</ReactMarkdown>
                 </div>
               ) : (

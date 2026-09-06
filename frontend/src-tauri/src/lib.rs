@@ -35,6 +35,7 @@ macro_rules! perf_trace {
 // Declare audio module
 pub mod analytics;
 pub mod api;
+pub mod app_update;
 pub mod audio;
 pub mod config;
 pub mod console_utils;
@@ -450,6 +451,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .manage(app_update::UpdateDownloadState::default())
         .manage(whisper_engine::parallel_commands::ParallelProcessorState::new())
         .manage(Arc::new(RwLock::new(
             None::<notifications::manager::NotificationManager<tauri::Wry>>,
@@ -682,6 +684,9 @@ pub fn run() {
             get_audio_devices,
             get_check_updates_on_launch,
             set_check_updates_on_launch,
+            app_update::download_app_update,
+            app_update::cancel_app_update_download,
+            app_update::install_downloaded_app_update,
             crash_report::get_pending_crash_report,
             crash_report::create_crash_report_zip,
             crash_report::dismiss_pending_crash_report,

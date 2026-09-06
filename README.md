@@ -20,10 +20,10 @@ This fork also goes beyond removing feature restrictions. It adds speaker identi
 
 ## Latest Release
 
-Meetily `v0.2.12` preserves user-renamed meetings during summary generation,
-restores summary template and model controls, synchronizes meeting titles, and
-anchors meeting and transcript times to the actual recording start.
-[Read the v0.2.12 changelog](CHANGELOG.md).
+Meetily `v0.2.13` preserves complete multilingual summaries, fixes compact-bar
+dragging and OGG Opus imports, and improves summary failures, transcript recovery,
+update cancellation, and Windows audio-route warnings.
+[Read the v0.2.13 changelog](CHANGELOG.md).
 
 ## Feature Comparison
 

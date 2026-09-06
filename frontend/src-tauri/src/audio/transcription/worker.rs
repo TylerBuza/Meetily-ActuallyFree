@@ -223,12 +223,11 @@ pub fn start_transcription_task<R: Runtime>(
                             match transcribe_chunk_with_provider(
                                 &engine_clone,
                                 chunk,
-                                &app_clone,
                                 initial_prompt_clone.as_deref(),
                             )
-                                .await
-                                {
-                                    Ok((transcript, confidence_opt, is_partial)) => {
+                            .await
+                            {
+                                Ok((transcript, confidence_opt, is_partial)) => {
                                     let confidence_str = match confidence_opt {
                                         Some(c) => format!("{:.2}", c),
                                         None => "N/A".to_string(),
@@ -473,10 +472,9 @@ pub fn start_transcription_task<R: Runtime>(
 
 /// Transcribe audio chunk using the appropriate provider (Whisper, Parakeet, or trait-based)
 /// Returns: (text, confidence Option, is_partial)
-async fn transcribe_chunk_with_provider<R: Runtime>(
+async fn transcribe_chunk_with_provider(
     engine: &TranscriptionEngine,
     chunk: AudioChunk,
-    app: &AppHandle<R>,
     initial_prompt: Option<&str>,
 ) -> std::result::Result<(String, Option<f32>, bool), TranscriptionError> {
     // Convert to 16kHz mono for transcription
@@ -541,15 +539,6 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
                     );
 
                     let transcription_error = TranscriptionError::EngineFailed(e.to_string());
-                    let _ = app.emit(
-                        "transcription-error",
-                        &serde_json::json!({
-                            "error": transcription_error.to_string(),
-                            "userMessage": format!("Transcription failed: {}", transcription_error),
-                            "actionable": false
-                        }),
-                    );
-
                     Err(transcription_error)
                 }
             }
@@ -577,15 +566,6 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
                     );
 
                     let transcription_error = TranscriptionError::EngineFailed(e.to_string());
-                    let _ = app.emit(
-                        "transcription-error",
-                        &serde_json::json!({
-                            "error": transcription_error.to_string(),
-                            "userMessage": format!("Transcription failed: {}", transcription_error),
-                            "actionable": false
-                        }),
-                    );
-
                     Err(transcription_error)
                 }
             }
@@ -624,16 +604,6 @@ async fn transcribe_chunk_with_provider<R: Runtime>(
                         chunk.chunk_id,
                         e
                     );
-
-                    let _ = app.emit(
-                        "transcription-error",
-                        &serde_json::json!({
-                            "error": e.to_string(),
-                            "userMessage": format!("Transcription failed: {}", e),
-                            "actionable": false
-                        }),
-                    );
-
                     Err(e)
                 }
             }

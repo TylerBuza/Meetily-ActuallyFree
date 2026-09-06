@@ -20,7 +20,7 @@ use super::audio_processing::{audio_to_mono, resample, resample_audio};
 use super::ffmpeg::find_ffmpeg_path;
 
 /// Extensions requiring ffmpeg pre-conversion (Symphonia lacks these demuxers/codecs)
-const FFMPEG_ONLY_EXTENSIONS: &[&str] = &["mkv", "webm", "wma"];
+const FFMPEG_ONLY_EXTENSIONS: &[&str] = &["mkv", "webm", "wma", "ogg"];
 
 /// Progress callback for long-running operations
 /// Returns current progress (0-100) and a message
@@ -288,12 +288,11 @@ fn convert_to_wav_with_ffmpeg(
         )
     })?;
 
-    // Create temp file in the same directory as the input to avoid cross-device issues
-    let parent_dir = input_path.parent().unwrap_or_else(|| Path::new("."));
+    // Imported media may live in a read-only directory; conversion needs no rename.
     let temp_file = tempfile::Builder::new()
         .prefix(".meetily_decode_")
         .suffix(".wav")
-        .tempfile_in(parent_dir)
+        .tempfile()
         .map_err(|e| anyhow!("Failed to create temporary WAV file: {}", e))?;
 
     let temp_path = temp_file.into_temp_path();
@@ -400,7 +399,8 @@ pub fn decode_audio_file_with_progress(
 ) -> Result<DecodedAudio> {
     info!("Decoding audio file: {}", path.display());
 
-    // FFmpeg pre-conversion for unsupported formats (MKV, WebM, WMA).
+    // OGG can contain Opus, which Symphonia cannot decode. FFmpeg handles both
+    // Opus and Vorbis, alongside MKV, WebM, and WMA.
     // If the file is in a format Symphonia can't decode, use ffmpeg to convert
     // it to a temporary WAV file first, then decode the WAV with Symphonia.
     // The _temp_wav_guard keeps the temp file alive until decoding completes,
@@ -816,10 +816,29 @@ mod tests {
         assert!(!needs_ffmpeg_conversion(Path::new("audio.wav")));
         assert!(!needs_ffmpeg_conversion(Path::new("audio.mp3")));
         assert!(!needs_ffmpeg_conversion(Path::new("audio.flac")));
-        assert!(!needs_ffmpeg_conversion(Path::new("audio.ogg")));
+        assert!(needs_ffmpeg_conversion(Path::new("audio.ogg")));
+        assert!(needs_ffmpeg_conversion(Path::new("audio.OGG")));
         assert!(!needs_ffmpeg_conversion(Path::new("audio.aac")));
         assert!(!needs_ffmpeg_conversion(Path::new("audio.m4a")));
         // No extension
         assert!(!needs_ffmpeg_conversion(Path::new("noext")));
+    }
+
+    #[test]
+    fn ogg_opus_and_vorbis_decode_with_bundled_ffmpeg() {
+        let ffmpeg = find_ffmpeg_path().expect("FFmpeg is required for the import regression test");
+        let directory = tempfile::tempdir().unwrap();
+        for codec in ["libopus", "libvorbis"] {
+            let input = directory.path().join(format!("{codec}.OGG"));
+            let output = Command::new(&ffmpeg)
+                .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=0.2", "-c:a", codec, "-y"])
+                .arg(&input)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            let decoded = decode_audio_file(&input).unwrap();
+            assert!(decoded.duration_seconds > 0.1);
+            assert!(decoded.samples.iter().any(|sample| sample.abs() > 0.001));
+        }
     }
 }
