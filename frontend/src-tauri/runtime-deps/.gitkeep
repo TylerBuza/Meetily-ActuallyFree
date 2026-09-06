@@ -1,0 +1,2 @@
+# Placeholder so the bundler's "runtime-deps/*" resource glob resolves on
+# Linux/macOS, where scripts/stage-runtime-deps.ps1 (Windows-only) never runs.
