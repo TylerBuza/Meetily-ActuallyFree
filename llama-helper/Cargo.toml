@@ -14,6 +14,7 @@ encoding_rs = "0.8"
 default = []
 metal = ["llama-cpp-2/metal"]
 cuda = ["llama-cpp-2/cuda"]
+rocm = ["llama-cpp-2/rocm"]
 vulkan = ["llama-cpp-2/vulkan"]
 
 [profile.release]
