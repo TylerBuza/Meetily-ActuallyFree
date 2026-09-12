@@ -11,7 +11,9 @@ import { exportSummaryAs, type ExportFormat } from '@/lib/exportSummary';
 import { completeSummaryMarkdown, parseSummaryData } from '@/lib/summary-markdown';
 import { displayTitle } from '@/lib/meeting-titles';
 import { useUserName } from '@/hooks/useUserName';
-import { displaySpeaker } from '@/utils/speakerUtils';
+import { displaySpeaker, splitSpeakerLabel } from '@/utils/speakerUtils';
+import { buildFrontmatter, formatSpeakerMention, type LinkStyle } from '@/lib/exportMarkdownFrontmatter';
+import { isLinkableSpeakerName } from '@/lib/speakerLabels';
 import type { Summary, Transcript } from '@/types';
 
 export type MeetingExportContent = 'transcript' | 'summary' | 'both';
@@ -51,12 +53,14 @@ export function useCopyOperations({ meeting, meetingTitle, aiSummary }: UseCopyO
     day: 'numeric',
   });
 
-  const transcriptBody = useCallback(async (): Promise<string | null> => {
-    const rows = await allTranscripts(meeting.id);
+  const transcriptBody = useCallback(async (linkStyle?: LinkStyle, sourceRows?: Transcript[]): Promise<string | null> => {
+    const rows = sourceRows ?? await allTranscripts(meeting.id);
     if (rows.length === 0) return null;
     return rows
       .map((row) => {
-        const speaker = row.speaker?.trim() ? `**${displaySpeaker(row.speaker.trim(), userName)}:** ` : '';
+        const speaker = row.speaker?.trim() ? (linkStyle
+          ? `${formatSpeakerMention(row.speaker.trim(), linkStyle, userName)} `
+          : `**${displaySpeaker(row.speaker.trim(), userName)}:** `) : '';
         return `${stamp(row.audio_start_time)}${speaker}${row.text.trim()}`;
       })
       .join('\n\n');
@@ -104,8 +108,11 @@ export function useCopyOperations({ meeting, meetingTitle, aiSummary }: UseCopyO
   }, [summaryBody, document, meeting.id]);
 
   const handleExportMeeting = useCallback(
-    async (content: MeetingExportContent, format: MeetingExportFormat): Promise<boolean> => {
+    async (content: MeetingExportContent, format: MeetingExportFormat, linkStyle: LinkStyle = 'generic'): Promise<boolean> => {
       try {
+        // Fetch once for both Markdown frontmatter and transcript content. Other
+        // formats keep their existing rendering and do not receive wikilinks.
+        const rows = format === 'md' ? await allTranscripts(meeting.id) : undefined;
         const sections: Array<[string, string]> = [];
         if (content !== 'transcript') {
           const body = summaryBody();
@@ -116,14 +123,19 @@ export function useCopyOperations({ meeting, meetingTitle, aiSummary }: UseCopyO
           sections.push(['Summary', body.replace(/^(#{1,5})(\s)/gm, '#$1$2')]);
         }
         if (content !== 'summary') {
-          const body = await transcriptBody();
+          const body = await transcriptBody(format === 'md' ? linkStyle : undefined, rows);
           if (!body) {
             toast.error('There is no transcript to export yet');
             return false;
           }
           sections.push(['Transcript', body]);
         }
-        const markdown = document(sections);
+        let markdown = document(sections);
+        if (format === 'md') {
+          const attendees = [...new Set((rows ?? []).flatMap(row => splitSpeakerLabel(row.speaker ?? '')))]
+            .filter(isLinkableSpeakerName);
+          markdown = `${buildFrontmatter({ title, meetingId: meeting.id, date: new Date(meeting.created_at), attendees, linkStyle })}\n\n${markdown}`;
+        }
         if (format === 'clipboard') {
           await navigator.clipboard.writeText(markdown);
           toast.success(content === 'both' ? 'Transcript and summary copied' : `${content === 'summary' ? 'Summary' : 'Transcript'} copied`);
@@ -139,7 +151,7 @@ export function useCopyOperations({ meeting, meetingTitle, aiSummary }: UseCopyO
         return false;
       }
     },
-    [summaryBody, transcriptBody, document, title],
+    [summaryBody, transcriptBody, document, title, meeting.id, meeting.created_at],
   );
 
   return { handleCopyTranscript, handleCopySummary, handleExportMeeting };

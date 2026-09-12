@@ -50,3 +50,12 @@ legacy callers without a meeting ID retain global cancellation behavior.
 - #22: `559f1fd`; rebased, native shutdown and ALSA ownership require review.
 - #27/#10/#8 conflict with main and require integration plus targeted checks.
 - #12 author recommends superseding with upstream; compare behavior before closing.
+
+## Markdown export #27
+
+Ported the contributor's frontmatter/link-style changes onto the current export
+hook rather than restoring the removed legacy speaker dialog. Markdown fetches
+all rows once for both attendees and body; other formats retain existing paths.
+Combined speakers are split before linking and participant collection, preserving
+#44/#45 fixes. Reserved wikilink delimiters remain plain text. Tests moved into
+the isolated-test discovery tree. Storage denial falls back to generic style.
