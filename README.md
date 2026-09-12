@@ -31,27 +31,27 @@ Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on it
 
 **Legend:** ✅ Included · ❌ Not included
 
-| Feature | Meetily Community | Meetily PRO (Paywalled) | Meetily - Actually Free |
-| --- | :---: | :---: | :---: |
-| Live recording and local transcription | ✅ | ✅ | ✅ |
-| Local and BYOK cloud summaries | ✅ | ✅ | ✅ |
-| Create custom summary templates | ❌ | ✅ | ✅ |
-| Automatic meeting joining | ❌ | ✅ | ❌ |
-| Advanced PDF and DOCX exports | ❌ | ✅ | ✅ |
-| Separate mic and system recordings | ❌ | ❌ | ✅ |
-| Calendar integration | ❌ | ✅ | ❌ |
-| Speaker identification | ❌ | ✅ | ✅ |
-| Live mic and system audio visualizations | ❌ | ❌ | ✅ |
-| Independent mic and system mute controls | ❌ | ❌ | ✅ |
-| Automatic meeting detection | ❌ | ✅ | ✅ |
-| Floating recording controls | ❌ | ❌ | ✅ |
-| Compliance audit trails | ❌ | ✅ | ❌ |
-| Chat with meetings | ❌ | ✅ | ✅ |
-| Speaker profiles | ❌ | ❌ | ✅ |
-| Dark mode | ❌ | ❌ | ✅ |
-| Windows GPU acceleration | ❌ | ✅ | ✅ |
-| Automatic GPU setup | ❌ | ❌ | ✅ |
-| No analytics transmission or license checks | ❌ | ❌ | ✅ |
+| Feature                                     | Meetily Community | Meetily PRO (Paywalled) | Meetily - Actually Free |
+| ------------------------------------------- | :---------------: | :---------------------: | :---------------------: |
+| Live recording and local transcription      |         ✅         |            ✅            |            ✅            |
+| Local and BYOK cloud summaries              |         ✅         |            ✅            |            ✅            |
+| Create custom summary templates             |         ❌         |            ✅            |            ✅            |
+| Automatic meeting joining                   |         ❌         |            ✅            |            ❌            |
+| Advanced PDF and DOCX exports               |         ❌         |            ✅            |            ✅            |
+| Separate mic and system recordings          |         ❌         |            ❌            |            ✅            |
+| Calendar integration                        |         ❌         |            ✅            |            ❌            |
+| Speaker identification                      |         ❌         |            ✅            |            ✅            |
+| Live mic and system audio visualizations    |         ❌         |            ❌            |            ✅            |
+| Independent mic and system mute controls    |         ❌         |            ❌            |            ✅            |
+| Automatic meeting detection                 |         ❌         |            ✅            |            ✅            |
+| Floating recording controls                 |         ❌         |            ❌            |            ✅            |
+| Compliance audit trails                     |         ❌         |            ✅            |            ❌            |
+| Chat with meetings                          |         ❌         |            ✅            |            ✅            |
+| Speaker profiles                            |         ❌         |            ❌            |            ✅            |
+| Dark mode                                   |         ❌         |            ❌            |            ✅            |
+| Windows GPU acceleration                    |         ❌         |            ✅            |            ✅            |
+| Automatic GPU setup                         |         ❌         |            ❌            |            ✅            |
+| No analytics transmission or license checks |         ❌         |            ❌            |            ✅            |
 
 ## Highlights
 
@@ -95,12 +95,12 @@ meetings.
 
 ## Local Data
 
-| Data | Location |
-| --- | --- |
-| Database, templates, and models | Windows/Linux: install-local when writable; macOS: `~/Library/Application Support/Meetily` |
-| Recording/onboarding preference stores | macOS: `~/Library/Application Support/com.meetily.ai` |
-| Recordings | Windows: `Music/meetily-recordings`; macOS: `Movies/meetily-recordings`; configurable in Settings |
-| Playback and retained tracks | `audio.mp4`, `mic.mp4`, `system.mp4` |
+| Data                                   | Location                                                                                          |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Database, templates, and models        | Windows/Linux: install-local when writable; macOS: `~/Library/Application Support/Meetily`        |
+| Recording/onboarding preference stores | macOS: `~/Library/Application Support/com.meetily.ai`                                             |
+| Recordings                             | Windows: `Music/meetily-recordings`; macOS: `Movies/meetily-recordings`; configurable in Settings |
+| Playback and retained tracks           | `audio.mp4`, `mic.mp4`, `system.mp4`                                                              |
 
 Use **Settings → General → Data Storage Locations** or **Settings → Recording →
 Save Location** to choose another writable recordings folder.
@@ -129,11 +129,45 @@ cd frontend
 
 Apple Silicon DMG build on macOS 14.2 or later:
 
+macOS requirements: full Xcode (not just the Command Line Tools — the audio
+layer's `cidre` dependency calls `xcodebuild` directly), Rust (`rustup`),
+Node.js, pnpm, and CMake. A GitHub-hosted CI runner ships with Xcode and
+CMake preinstalled, which is why `.github/workflows/build-macos.yml` never
+installs either — a bare local macOS machine needs both:
+
+```bash
+xcode-select --install        # if you don't already have Xcode.app itself,
+                               # install "Xcode" from the App Store instead —
+                               # the Command Line Tools alone are not enough
+xcodebuild -runFirstLaunch    # one-time setup after installing/updating Xcode
+brew install cmake
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+**Do not `brew install onnxruntime`.** If it's on your system, Cargo's
+`pkg-config` auto-detection finds and links it on every build afterward,
+which produces an app that crashes at launch (`Library not loaded:
+.../libonnxruntime.dylib`, a code-signing Team ID mismatch between the
+app's ad-hoc signature and Homebrew's). Let `ort-sys` fetch and vendor its
+own redistributable copy instead, the same way CI does — that's the default
+behavior as long as no system `onnxruntime` is present to be auto-detected.
+If you've already installed it and hit the crash, either `brew uninstall
+onnxruntime`, or keep it and force the correct path with
+`LIBONNXRUNTIME_NO_PKG_CONFIG=1 ./scripts/build-macos-apple-silicon.sh` —
+either way, do a full clean rebuild afterward
+(`rm -rf ../target/aarch64-apple-darwin`), since Cargo's build cache won't
+detect the change on its own and will keep linking the stale path.
+
 ```bash
 cd frontend
 pnpm install
 ./scripts/build-macos-apple-silicon.sh
 ```
+
+The resulting DMG is ad-hoc signed and not notarized, same as an unsigned CI
+build — macOS Gatekeeper will block it on first open. Control-click the
+installed app and choose Open (rather than double-clicking) to get past
+that the first time.
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for implementation details and the
 [`macOS release runbook`](.github/workflows/MACOS_RELEASE.md) for the native

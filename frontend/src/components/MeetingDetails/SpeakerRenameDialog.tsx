@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Unlink, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { isGeneratedSpeakerLabel } from '@/lib/speakerLabels';
 
 interface SpeakerRenameDialogProps {
   open: boolean;
@@ -21,10 +22,6 @@ interface SpeakerRenameResult {
   speaker: string;
   count: number;
   removedName: boolean;
-}
-
-function isGeneratedSpeakerLabel(value: string | null): boolean {
-  return !!value && /^speaker \d+$/i.test(value.trim());
 }
 
 /**

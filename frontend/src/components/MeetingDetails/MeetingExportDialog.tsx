@@ -12,6 +12,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import type { MeetingExportContent, MeetingExportFormat } from '@/hooks/meeting-details/useCopyOperations';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import type { LinkStyle } from '@/lib/exportMarkdownFrontmatter';
 
 const contentOptions: Array<{ value: MeetingExportContent; label: string; description: string }> = [
   { value: 'transcript', label: 'Transcript', description: 'Everything said, with timestamps' },
@@ -33,6 +35,18 @@ const formatOptions: Array<{
   { value: 'clipboard', label: 'Clipboard', description: 'Copy formatted content', icon: Clipboard },
 ];
 
+const LINK_STYLE_STORAGE_KEY = 'meetily_export_link_style';
+
+const linkStyleOptions: Array<{ value: LinkStyle; label: string; description: string }> = [
+  { value: 'generic', label: 'Generic Markdown', description: 'Plain links, works everywhere' },
+  { value: 'obsidian', label: 'Obsidian', description: 'Wikilinks to identified speakers' },
+];
+
+function loadStoredLinkStyle(): LinkStyle {
+  if (typeof window === 'undefined') return 'generic';
+  return window.localStorage.getItem(LINK_STYLE_STORAGE_KEY) === 'obsidian' ? 'obsidian' : 'generic';
+}
+
 export function MeetingExportDialog({
   open,
   onOpenChange,
@@ -44,17 +58,19 @@ export function MeetingExportDialog({
   onOpenChange: (open: boolean) => void;
   hasTranscript: boolean;
   hasSummary: boolean;
-  onExport: (content: MeetingExportContent, format: MeetingExportFormat) => Promise<boolean>;
+  onExport: (content: MeetingExportContent, format: MeetingExportFormat, linkStyle: LinkStyle) => Promise<boolean>;
 }) {
   const [step, setStep] = useState<'content' | 'format'>('content');
   const [content, setContent] = useState<MeetingExportContent>('both');
   const [exporting, setExporting] = useState(false);
+  const [linkStyle, setLinkStyle] = useState<LinkStyle>('generic');
 
   useEffect(() => {
     if (!open) return;
     setStep('content');
     setContent(hasTranscript && hasSummary ? 'both' : hasTranscript ? 'transcript' : 'summary');
     setExporting(false);
+    setLinkStyle(loadStoredLinkStyle());
   }, [open, hasTranscript, hasSummary]);
 
   const isAvailable = (value: MeetingExportContent) => {
@@ -63,9 +79,16 @@ export function MeetingExportDialog({
     return hasTranscript && hasSummary;
   };
 
+  const selectLinkStyle = (value: LinkStyle) => {
+    setLinkStyle(value);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(LINK_STYLE_STORAGE_KEY, value);
+    }
+  };
+
   const exportAs = async (format: MeetingExportFormat) => {
     setExporting(true);
-    const succeeded = await onExport(content, format);
+    const succeeded = await onExport(content, format, linkStyle);
     setExporting(false);
     if (succeeded) onOpenChange(false);
   };
@@ -103,27 +126,46 @@ export function MeetingExportDialog({
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-2">
-            {formatOptions.map((option) => {
-              const Icon = option.icon;
-              return (
-                <Button
-                  key={option.value}
-                  type="button"
-                  variant="outline"
-                  className="h-auto justify-start px-3 py-3 text-left"
-                  disabled={exporting}
-                  onClick={() => void exportAs(option.value)}
-                >
-                  <Icon size={17} />
-                  <span>
-                    <span className="block text-sm font-semibold">{option.label}</span>
-                    <span className="block text-[11px] font-normal opacity-70">{option.description}</span>
-                  </span>
-                </Button>
-              );
-            })}
-          </div>
+          <>
+            <div className="mb-3">
+              <label htmlFor="export-link-style" className="mb-1 block text-xs font-medium opacity-70">
+                Markdown link style
+              </label>
+              <Select value={linkStyle} onValueChange={(value) => selectLinkStyle(value as LinkStyle)}>
+                <SelectTrigger id="export-link-style">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {linkStyleOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label} — {option.description}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {formatOptions.map((option) => {
+                const Icon = option.icon;
+                return (
+                  <Button
+                    key={option.value}
+                    type="button"
+                    variant="outline"
+                    className="h-auto justify-start px-3 py-3 text-left"
+                    disabled={exporting}
+                    onClick={() => void exportAs(option.value)}
+                  >
+                    <Icon size={17} />
+                    <span>
+                      <span className="block text-sm font-semibold">{option.label}</span>
+                      <span className="block text-[11px] font-normal opacity-70">{option.description}</span>
+                    </span>
+                  </Button>
+                );
+              })}
+            </div>
+          </>
         )}
 
         <DialogFooter>

@@ -5,6 +5,8 @@ import { toast } from 'sonner';
 import Analytics from '@/lib/analytics';
 import { invoke as invokeTauri } from '@tauri-apps/api/core';
 import { exportSummaryAs, ExportFormat } from '@/lib/exportSummary';
+import { buildFrontmatter, formatSpeakerMention, LinkStyle } from '@/lib/exportMarkdownFrontmatter';
+import { isLinkableSpeakerName } from '@/lib/speakerLabels';
 
 export type MeetingExportContent = 'transcript' | 'summary' | 'both';
 export type MeetingExportFormat = ExportFormat | 'clipboard';
@@ -274,7 +276,9 @@ export function useCopyOperations({
     return header + metadata + summaryMarkdown;
   }, [aiSummary, meetingTitle, meeting, blockNoteSummaryRef]);
 
-  const getTranscriptMarkdown = useCallback(async (): Promise<string | null> => {
+  const getTranscriptMarkdown = useCallback(async (
+    linkStyle: LinkStyle = 'generic',
+  ): Promise<{ markdown: string; attendees: string[] } | null> => {
     const allTranscripts = await fetchAllTranscripts(meeting.id);
     if (!allTranscripts.length) return null;
 
@@ -286,9 +290,16 @@ export function useCopyOperations({
       return `[${minutes.toString().padStart(2, '0')}:${remainder.toString().padStart(2, '0')}]`;
     };
 
+    const attendees = Array.from(new Set(
+      allTranscripts
+        .map((t) => t.speaker?.trim())
+        .filter((s): s is string => isLinkableSpeakerName(s)),
+    ));
+
     const body = allTranscripts
       .map((transcript) => {
-        const speaker = transcript.speaker ? ` **${transcript.speaker}:**` : '';
+        const speakerName = transcript.speaker?.trim();
+        const speaker = speakerName ? ` ${formatSpeakerMention(speakerName, linkStyle)}` : '';
         return `${formatTime(transcript.audio_start_time, transcript.timestamp)}${speaker} ${transcript.text}`;
       })
       .join('\n\n');
@@ -296,7 +307,8 @@ export function useCopyOperations({
       year: 'numeric', month: 'long', day: 'numeric',
     });
 
-    return `# Meeting Transcript: ${meetingTitle}\n\n**Meeting ID:** ${meeting.id}\n**Date:** ${date}\n\n---\n\n${body}`;
+    const markdown = `# Meeting Transcript: ${meetingTitle}\n\n**Meeting ID:** ${meeting.id}\n**Date:** ${date}\n\n---\n\n${body}`;
+    return { markdown, attendees };
   }, [fetchAllTranscripts, meeting.id, meeting.created_at, meetingTitle]);
 
   // Export summary to a file (Markdown, PDF, or DOCX)
@@ -323,12 +335,17 @@ export function useCopyOperations({
   const handleExportMeeting = useCallback(async (
     content: MeetingExportContent,
     format: MeetingExportFormat,
+    linkStyle: LinkStyle = 'generic',
   ): Promise<boolean> => {
     try {
-      const transcriptMarkdown = content === 'summary' ? null : await getTranscriptMarkdown();
+      // Wikilinks/frontmatter only make sense in the actual .md file — every
+      // other format (including clipboard) always gets the plain rendering.
+      const effectiveLinkStyle: LinkStyle = format === 'markdown' ? linkStyle : 'generic';
+
+      const transcriptResult = content === 'summary' ? null : await getTranscriptMarkdown(effectiveLinkStyle);
       const summaryMarkdown = content === 'transcript' ? null : await getSummaryMarkdown();
 
-      if (content !== 'summary' && !transcriptMarkdown) {
+      if (content !== 'summary' && !transcriptResult) {
         toast.error('No transcript content available to export');
         return false;
       }
@@ -337,11 +354,26 @@ export function useCopyOperations({
         return false;
       }
 
-      const markdown = content === 'transcript'
+      const transcriptMarkdown = transcriptResult?.markdown ?? null;
+      const attendees = transcriptResult?.attendees ?? [];
+
+      let markdown = content === 'transcript'
         ? transcriptMarkdown!
         : content === 'summary'
           ? summaryMarkdown!
           : `${transcriptMarkdown!}\n\n---\n\n${summaryMarkdown!}`;
+
+      if (format === 'markdown') {
+        const frontmatter = buildFrontmatter({
+          title: String(meetingTitle || meeting?.title || 'Untitled meeting'),
+          meetingId: meeting.id,
+          date: new Date(meeting.created_at),
+          attendees,
+          linkStyle: effectiveLinkStyle,
+        });
+        markdown = `${frontmatter}\n${markdown}`;
+      }
+
       const baseName = `${String(meetingTitle || meeting?.title || 'meeting')}-${content}`;
 
       if (format === 'clipboard') {
