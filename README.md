@@ -36,6 +36,7 @@ Compared with Meetily Community `v0.4.0` and the PRO advantages advertised on it
 | --- | :---: | :---: | :---: |
 | Live recording and local transcription | ✅ | ✅ | ✅ |
 | Local and BYOK cloud summaries | ✅ | ✅ | ✅ |
+| Summaries through a Claude subscription (Claude Code CLI) | ❌ | ❌ | ✅ |
 | Create custom summary templates | ❌ | ✅ | ✅ |
 | Automatic meeting joining | ❌ | ✅ | ❌ |
 | Advanced PDF and DOCX exports | ❌ | ✅ | ✅ |

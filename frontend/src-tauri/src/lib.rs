@@ -37,6 +37,7 @@ pub mod analytics;
 pub mod api;
 pub mod app_update;
 pub mod audio;
+pub mod claude_cli;
 pub mod config;
 pub mod console_utils;
 pub mod crash_report;
@@ -730,6 +731,11 @@ pub fn run() {
             console_utils::show_console,
             console_utils::hide_console,
             console_utils::toggle_console,
+            claude_cli::commands::claude_cli_get_status,
+            claude_cli::commands::claude_cli_list_models,
+            claude_cli::commands::claude_cli_get_path,
+            claude_cli::commands::claude_cli_save_path,
+            claude_cli::commands::claude_cli_test_connection,
             ollama::get_ollama_models,
             ollama::pull_ollama_model,
             ollama::delete_ollama_model,

@@ -2,8 +2,9 @@
 //!
 //! Answers ad-hoc questions during an active meeting using the live transcript as
 //! context. Reuses the user's configured model provider — local Ollama, the bundled
-//! local model (BuiltInAI), or any BYOK cloud provider (OpenAI / Claude / Groq /
-//! OpenRouter / custom OpenAI-compatible endpoints such as Gemini).
+//! local model (BuiltInAI), the signed-in Claude Code CLI, or any BYOK cloud
+//! provider (OpenAI / Claude / Groq / OpenRouter / custom OpenAI-compatible
+//! endpoints such as Gemini).
 //!
 //! This is a *consensual* meeting-assistant feature: it operates on the transcript the
 //! app is already capturing for the user's own meeting notes. It does not hide itself
@@ -26,6 +27,7 @@ struct ResolvedAssistantModel {
     api_key: String,
     ollama_endpoint: Option<String>,
     custom_openai_endpoint: Option<String>,
+    claude_cli_path: Option<String>,
     custom_openai_max_tokens: Option<u32>,
     custom_openai_temperature: Option<f32>,
     custom_openai_top_p: Option<f32>,
@@ -42,7 +44,10 @@ async fn resolve_assistant_model(pool: &SqlitePool) -> Result<ResolvedAssistantM
     let provider = LLMProvider::from_str(&provider_name)?;
     let api_key = if matches!(
         provider,
-        LLMProvider::Ollama | LLMProvider::BuiltInAI | LLMProvider::CustomOpenAI
+        LLMProvider::Ollama
+            | LLMProvider::BuiltInAI
+            | LLMProvider::ClaudeCli
+            | LLMProvider::CustomOpenAI
     ) {
         String::new()
     } else {
@@ -56,6 +61,13 @@ async fn resolve_assistant_model(pool: &SqlitePool) -> Result<ResolvedAssistantM
     let ollama_endpoint = (provider == LLMProvider::Ollama)
         .then(|| config.ollama_endpoint.clone())
         .flatten();
+    let claude_cli_path = if provider == LLMProvider::ClaudeCli {
+        SettingsRepository::get_claude_cli_path(pool)
+            .await
+            .map_err(|e| format!("Failed to read the Claude Code CLI path: {}", e))?
+    } else {
+        None
+    };
     let custom = if provider == LLMProvider::CustomOpenAI {
         Some(
             SettingsRepository::get_custom_openai_config(pool)
@@ -91,6 +103,7 @@ async fn resolve_assistant_model(pool: &SqlitePool) -> Result<ResolvedAssistantM
         api_key: custom_openai_api_key.unwrap_or(api_key),
         ollama_endpoint,
         custom_openai_endpoint,
+        claude_cli_path,
         custom_openai_max_tokens,
         custom_openai_temperature,
         custom_openai_top_p,
@@ -120,6 +133,7 @@ async fn generate_assistant_answer(
             .or(Some(default_temperature)),
         model.custom_openai_top_p,
         Some(&model.app_data_dir),
+        model.claude_cli_path.as_deref(),
         None,
     )
     .await

@@ -84,6 +84,8 @@ pub struct ModelConfig {
     pub ollama_endpoint: Option<String>,
     #[serde(rename = "summaryMaxTokens")]
     pub summary_max_tokens: Option<i64>,
+    #[serde(rename = "claudeCliPath")]
+    pub claude_cli_path: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -548,6 +550,7 @@ pub async fn api_get_model_config<R: Runtime>(
                         api_key,
                         ollama_endpoint: config.ollama_endpoint,
                         summary_max_tokens: config.summary_max_tokens,
+                        claude_cli_path: config.claude_cli_path,
                     }))
                 }
                 Err(e) => {
@@ -581,15 +584,17 @@ pub async fn api_save_model_config<R: Runtime>(
     api_key: Option<String>,
     ollama_endpoint: Option<String>,
     summary_max_tokens: Option<i64>,
+    claude_cli_path: Option<String>,
     _auth_token: Option<String>,
 ) -> Result<serde_json::Value, String> {
     log_info!(
-        "💾 api_save_model_config called (native): provider='{}', model='{}', whisperModel='{}', ollamaEndpoint={:?}, summaryMaxTokens={:?}",
+        "💾 api_save_model_config called (native): provider='{}', model='{}', whisperModel='{}', ollamaEndpoint={:?}, summaryMaxTokens={:?}, claudeCliPath={:?}",
         &provider,
         &model,
         &whisper_model,
         &ollama_endpoint,
-        &summary_max_tokens
+        &summary_max_tokens,
+        &claude_cli_path
     );
     let pool = state.db_manager.pool();
 
@@ -611,6 +616,17 @@ pub async fn api_save_model_config<R: Runtime>(
     {
         log_error!("❌ Failed to save model config to database: {}", e);
         return Err(e.to_string());
+    }
+
+    // The Claude Code CLI path is only meaningful for that provider, but it is
+    // saved whenever it is sent so the override survives switching away and back.
+    if provider == "claude-cli" {
+        if let Err(e) =
+            SettingsRepository::save_claude_cli_path(pool, claude_cli_path.as_deref()).await
+        {
+            log_error!("❌ Failed to save Claude Code CLI path: {}", e);
+            return Err(e.to_string());
+        }
     }
 
     // Skip API key saving for custom-openai provider (it uses customOpenAIConfig JSON instead)
