@@ -7,7 +7,7 @@ use std::slice;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use sysinfo::{Pid, System};
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Runtime};
 use tokio_util::sync::CancellationToken;
 use windows::core::Interface;
 use windows::Win32::Devices::Properties::DEVPKEY_Device_FriendlyName;
@@ -145,9 +145,9 @@ pub fn start_monitoring<R: Runtime>(app: AppHandle<R>, captured_device: String) 
             if state.active.as_ref().map(|handle| handle.generation) != Some(generation) {
                 break;
             }
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.emit("recording-audio-route-warning", warning);
-            }
+            // Addressed by label so this monitoring task, which runs off the
+            // main thread, never clones a window handle. See `crate::main_thread`.
+            let _ = app.emit_to("main", "recording-audio-route-warning", warning);
         }
 
         if let Ok(mut state) = monitor_state().lock() {

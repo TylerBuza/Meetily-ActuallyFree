@@ -117,10 +117,14 @@ fn toggle_recording_handler<R: Runtime>(app: &AppHandle<R>) {
             set_tray_state(&app_clone, RecordingState::Starting);
 
             log::info!("Emitting start recording event from tray");
-            if let Some(window) = app_clone.get_webview_window("main") {
-                let _ = window.eval("sessionStorage.setItem('autoStartRecording', 'true')"); // Set the flag to start recording automatically
-                let _ = window.eval("window.location.assign('/')");
-            }
+            // This runs in a spawned task, so the handle lookup has to happen on
+            // the main thread. See `crate::main_thread`.
+            let _ = crate::main_thread::on_main_thread(&app_clone, |app| {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.eval("sessionStorage.setItem('autoStartRecording', 'true')"); // Set the flag to start recording automatically
+                    let _ = window.eval("window.location.assign('/')");
+                }
+            });
         }
     });
 }

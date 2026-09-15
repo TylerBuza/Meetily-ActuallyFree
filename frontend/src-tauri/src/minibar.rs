@@ -19,6 +19,8 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 
+use crate::main_thread::on_main_thread;
+
 const MINIBAR_LABEL: &str = "minibar";
 const MINIBAR_WIDTH: f64 = 580.0;
 const MINIBAR_HEIGHT: f64 = 76.0;
@@ -26,6 +28,13 @@ const IPC_CLOSE_DELAY: Duration = Duration::from_millis(500);
 
 // Serialize window lifecycle changes so a queued minimize request cannot race a
 // recording stop and recreate the bar after native shutdown hid it.
+//
+// Only ever locked on the main thread, from inside an `on_main_thread` closure,
+// which is also where every window handle below is looked up: cloning one off
+// the main thread corrupts a non-atomic refcount inside Tauri's runtime context
+// and aborts the process. See `crate::main_thread` for the mechanism. Keeping
+// the lock main-thread-only is also what stops it deadlocking against that
+// marshalling — a background thread never holds it while the main thread waits.
 static MINIBAR_LIFECYCLE: Mutex<()> = Mutex::new(());
 static MAIN_HIDDEN_BY_MINIBAR: AtomicBool = AtomicBool::new(false);
 static MINIBAR_GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -79,16 +88,25 @@ pub fn schedule_close_after_ipc<R: Runtime>(app: AppHandle<R>) {
     let generation = MINIBAR_GENERATION.load(Ordering::SeqCst);
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(IPC_CLOSE_DELAY).await;
-        let _lifecycle = MINIBAR_LIFECYCLE
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if MINIBAR_GENERATION.load(Ordering::SeqCst) != generation
-            || MAIN_HIDDEN_BY_MINIBAR.load(Ordering::SeqCst)
-        {
-            return;
-        }
-        if let Err(error) = close_minibar_locked(&app) {
-            log::warn!("Failed to clean up compact recording bar: {}", error);
+        let outcome = on_main_thread(&app, move |app| {
+            let _lifecycle = MINIBAR_LIFECYCLE
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if MINIBAR_GENERATION.load(Ordering::SeqCst) != generation
+                || MAIN_HIDDEN_BY_MINIBAR.load(Ordering::SeqCst)
+            {
+                return Ok(false);
+            }
+            close_minibar_locked(app)
+        });
+        match outcome {
+            Ok(Err(error)) => {
+                log::warn!("Failed to clean up compact recording bar: {}", error);
+            }
+            Err(error) => {
+                log::warn!("Deferred compact bar cleanup never ran: {}", error);
+            }
+            Ok(Ok(_)) => {}
         }
     });
 }
@@ -97,45 +115,51 @@ pub fn schedule_close_after_ipc<R: Runtime>(app: AppHandle<R>) {
 /// frontend event reaching the dynamically-created webview. A minibar-origin
 /// stop hides the issuing webview but leaves destruction until after IPC ends.
 pub fn close_for_recording_stop<R: Runtime>(app: &AppHandle<R>, restore_main: bool) {
-    let _lifecycle = MINIBAR_LIFECYCLE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let hidden_by_minibar = MAIN_HIDDEN_BY_MINIBAR.load(Ordering::SeqCst);
-    if restore_main {
-        MINIBAR_GENERATION.fetch_add(1, Ordering::SeqCst);
-        match hide_minibar_locked(app) {
-            Ok(_) => {}
-            Err(error) => {
-                log::warn!("Failed to hide compact recording bar: {}", error);
+    let marshalled = on_main_thread(app, move |app| {
+        let _lifecycle = MINIBAR_LIFECYCLE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let hidden_by_minibar = MAIN_HIDDEN_BY_MINIBAR.load(Ordering::SeqCst);
+        if restore_main {
+            MINIBAR_GENERATION.fetch_add(1, Ordering::SeqCst);
+            match hide_minibar_locked(app) {
+                Ok(_) => {}
+                Err(error) => {
+                    log::warn!("Failed to hide compact recording bar: {}", error);
+                }
             }
+            MAIN_HIDDEN_BY_MINIBAR.store(false, Ordering::SeqCst);
+            if hidden_by_minibar {
+                restore_main_window(app);
+            }
+            return;
         }
-        MAIN_HIDDEN_BY_MINIBAR.store(false, Ordering::SeqCst);
-        if hidden_by_minibar {
+
+        let minibar_closed = match close_minibar_locked(app) {
+            Ok(_) => {
+                MAIN_HIDDEN_BY_MINIBAR.store(false, Ordering::SeqCst);
+                true
+            }
+            Err(error) => {
+                // Preserve ownership so an Expand/retry can clean up the surviving
+                // webview. Also recover the hidden main window on this exceptional
+                // path; leaving both the app and its failed overlay unreachable is
+                // worse than focusing main for a tray-origin stop.
+                log::warn!("Failed to close compact recording bar: {}", error);
+                false
+            }
+        };
+
+        // Only a Stop pressed in the compact bar restores the window it hid. A
+        // main-window or tray stop must not unexpectedly show or focus `main`, unless
+        // native destruction failed and main is the only reliable recovery surface.
+        if !minibar_closed && hidden_by_minibar {
             restore_main_window(app);
         }
-        return;
-    }
+    });
 
-    let minibar_closed = match close_minibar_locked(app) {
-        Ok(_) => {
-            MAIN_HIDDEN_BY_MINIBAR.store(false, Ordering::SeqCst);
-            true
-        }
-        Err(error) => {
-            // Preserve ownership so an Expand/retry can clean up the surviving
-            // webview. Also recover the hidden main window on this exceptional
-            // path; leaving both the app and its failed overlay unreachable is
-            // worse than focusing main for a tray-origin stop.
-            log::warn!("Failed to close compact recording bar: {}", error);
-            false
-        }
-    };
-
-    // Only a Stop pressed in the compact bar restores the window it hid. A
-    // main-window or tray stop must not unexpectedly show or focus `main`, unless
-    // native destruction failed and main is the only reliable recovery surface.
-    if !minibar_closed && hidden_by_minibar {
-        restore_main_window(app);
+    if let Err(error) = marshalled {
+        log::warn!("Compact bar teardown never reached the main thread: {error}");
     }
 }
 
@@ -149,93 +173,100 @@ pub async fn enter_compact_mode<R: Runtime>(
     elapsed_seconds: Option<u64>,
 ) -> Result<(), String> {
     let focus_bar = elapsed_seconds.is_some();
-    let _lifecycle = MINIBAR_LIFECYCLE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    on_main_thread(&app, move |app| -> Result<(), String> {
+        let _lifecycle = MINIBAR_LIFECYCLE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    // The minimize callback is asynchronous, so its earlier recording check
-    // can become stale while shutdown starts. Recheck under the window lock.
-    if !crate::audio::recording_commands::can_enter_compact_mode() {
-        return Ok(());
-    }
-    MINIBAR_GENERATION.fetch_add(1, Ordering::SeqCst);
+        // The minimize callback is asynchronous, so its earlier recording check
+        // can become stale while shutdown starts. Recheck under the window lock.
+        if !crate::audio::recording_commands::can_enter_compact_mode() {
+            return Ok(());
+        }
+        MINIBAR_GENERATION.fetch_add(1, Ordering::SeqCst);
 
-    // Reuse the window if it already exists. Do not send a new elapsed seed:
-    // the webview reads native monotonic duration, and reseeding caused timer
-    // jumps when duplicate minimize events arrived.
-    let bar = if let Some(existing) = app.get_webview_window(MINIBAR_LABEL) {
-        existing
-    } else {
-        let window =
-            WebviewWindowBuilder::new(&app, MINIBAR_LABEL, WebviewUrl::App("minibar".into()))
-                .title("Recording")
-                .inner_size(MINIBAR_WIDTH, MINIBAR_HEIGHT)
-                .resizable(false)
-                .decorations(false) // frameless: the bar draws its own chrome
-                .transparent(true) // lets the rounded corners read as rounded
-                .always_on_top(true) // the point of compact mode
-                .skip_taskbar(true) // it's an overlay, not a second app entry
-                .shadow(false)
-                .visible(false) // reveal only after main is hidden
-                .build()
-                .map_err(|e| format!("Failed to create compact bar: {}", e))?;
+        // Reuse the window if it already exists. Do not send a new elapsed seed:
+        // the webview reads native monotonic duration, and reseeding caused timer
+        // jumps when duplicate minimize events arrived.
+        let bar = if let Some(existing) = app.get_webview_window(MINIBAR_LABEL) {
+            existing
+        } else {
+            let window =
+                WebviewWindowBuilder::new(app, MINIBAR_LABEL, WebviewUrl::App("minibar".into()))
+                    .title("Recording")
+                    .inner_size(MINIBAR_WIDTH, MINIBAR_HEIGHT)
+                    .resizable(false)
+                    .decorations(false) // frameless: the bar draws its own chrome
+                    .transparent(true) // lets the rounded corners read as rounded
+                    .always_on_top(true) // the point of compact mode
+                    .skip_taskbar(true) // it's an overlay, not a second app entry
+                    .shadow(false)
+                    .visible(false) // reveal only after main is hidden
+                    .build()
+                    .map_err(|e| format!("Failed to create compact bar: {}", e))?;
 
-        // Park it top-centre, clear of the title bars of whatever is behind it.
-        if let Ok(Some(monitor)) = window.primary_monitor() {
-            let size = monitor.size();
-            let scale = monitor.scale_factor();
-            let screen_w = size.width as f64 / scale;
-            let x = (screen_w - MINIBAR_WIDTH) / 2.0;
-            let _ = window.set_position(tauri::LogicalPosition::new(x.max(0.0), 12.0));
+            // Park it top-centre, clear of the title bars of whatever is behind it.
+            if let Ok(Some(monitor)) = window.primary_monitor() {
+                let size = monitor.size();
+                let scale = monitor.scale_factor();
+                let screen_w = size.width as f64 / scale;
+                let x = (screen_w - MINIBAR_WIDTH) / 2.0;
+                let _ = window.set_position(tauri::LogicalPosition::new(x.max(0.0), 12.0));
+            }
+
+            window
+        };
+
+        if let Some(main) = app.get_webview_window("main") {
+            if let Err(error) = main.hide() {
+                let _ = close_minibar_locked(app);
+                return Err(error.to_string());
+            }
+            MAIN_HIDDEN_BY_MINIBAR.store(true, Ordering::SeqCst);
         }
 
-        window
-    };
-
-    if let Some(main) = app.get_webview_window("main") {
-        if let Err(error) = main.hide() {
-            let _ = close_minibar_locked(&app);
+        if let Err(error) = bar.show() {
+            let hidden_by_minibar = MAIN_HIDDEN_BY_MINIBAR.swap(false, Ordering::SeqCst);
+            let _ = close_minibar_locked(app);
+            if hidden_by_minibar {
+                restore_main_window(app);
+            }
             return Err(error.to_string());
         }
-        MAIN_HIDDEN_BY_MINIBAR.store(true, Ordering::SeqCst);
-    }
-
-    if let Err(error) = bar.show() {
-        let hidden_by_minibar = MAIN_HIDDEN_BY_MINIBAR.swap(false, Ordering::SeqCst);
-        let _ = close_minibar_locked(&app);
-        if hidden_by_minibar {
-            restore_main_window(&app);
+        if focus_bar {
+            let _ = bar.set_focus();
         }
-        return Err(error.to_string());
-    }
-    if focus_bar {
-        let _ = bar.set_focus();
-    }
 
-    log::info!("Entered compact recording mode");
-    Ok(())
+        log::info!("Entered compact recording mode");
+        Ok(())
+    })?
 }
 
 /// Close the compact bar and bring the main window back.
 #[tauri::command]
 pub async fn exit_compact_mode<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    let _lifecycle = MINIBAR_LIFECYCLE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    MINIBAR_GENERATION.fetch_add(1, Ordering::SeqCst);
-    hide_minibar_locked(&app)?;
-    if MAIN_HIDDEN_BY_MINIBAR.swap(false, Ordering::SeqCst) {
-        restore_main_window(&app);
-    }
-    schedule_close_after_ipc(app.clone());
-    log::info!("Left compact recording mode");
-    Ok(())
+    on_main_thread(&app, move |app| -> Result<(), String> {
+        let _lifecycle = MINIBAR_LIFECYCLE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        MINIBAR_GENERATION.fetch_add(1, Ordering::SeqCst);
+        hide_minibar_locked(app)?;
+        if MAIN_HIDDEN_BY_MINIBAR.swap(false, Ordering::SeqCst) {
+            restore_main_window(app);
+        }
+        // Cloning here is safe: this closure body runs on the main thread.
+        schedule_close_after_ipc(app.clone());
+        log::info!("Left compact recording mode");
+        Ok(())
+    })?
 }
 
 /// Whether compact mode is currently active.
 #[tauri::command]
 pub async fn is_compact_mode<R: Runtime>(app: AppHandle<R>) -> Result<bool, String> {
-    Ok(app.get_webview_window(MINIBAR_LABEL).is_some())
+    on_main_thread(&app, |app| {
+        app.get_webview_window(MINIBAR_LABEL).is_some()
+    })
 }
 
 /// Stop the recording from the compact bar. Native shutdown owns both window
@@ -250,8 +281,12 @@ pub async fn stop_recording_from_minibar<R: Runtime>(app: AppHandle<R>) -> Resul
         .to_string_lossy()
         .to_string();
 
+    // `stop_recording_from_compact` needs an owned handle and `app` is still
+    // needed afterwards, so take the clone on the main thread rather than here.
+    let for_stop = on_main_thread(&app, |app| app.clone())?;
+
     let outcome = crate::audio::recording_commands::stop_recording_from_compact(
-        app.clone(),
+        for_stop,
         crate::audio::recording_commands::RecordingArgs { save_path },
     )
     .await;

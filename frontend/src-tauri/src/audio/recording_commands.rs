@@ -149,9 +149,10 @@ fn start_windows_audio_route_monitor<R: Runtime>(
             device
         ),
     };
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.emit("recording-audio-route-warning", warning);
-    }
+    // `emit_to` addresses the window by label, so this never clones a window
+    // handle — which off the main thread would race a non-atomic refcount inside
+    // Tauri's runtime context. See `crate::main_thread`.
+    let _ = app.emit_to("main", "recording-audio-route-warning", warning);
 }
 
 // ============================================================================

@@ -134,12 +134,16 @@ pub fn show_toast<R: tauri::Runtime>(
                 Some(_) => false,
             };
             if do_start {
-                // Bring the app forward, then ask the frontend to start.
-                if let Some(win) = app_click.get_webview_window("main") {
-                    let _ = win.unminimize();
-                    let _ = win.show();
-                    let _ = win.set_focus();
-                }
+                // Bring the app forward, then ask the frontend to start. This
+                // callback arrives on a WinRT thread pool thread, so the handle
+                // lookup is marshalled. See `crate::main_thread`.
+                let _ = crate::main_thread::on_main_thread(&app_click, |app| {
+                    if let Some(win) = app.get_webview_window("main") {
+                        let _ = win.unminimize();
+                        let _ = win.show();
+                        let _ = win.set_focus();
+                    }
+                });
                 let _ = app_click.emit("start-recording-from-notification", ());
             }
             Ok(())

@@ -50,6 +50,7 @@ pub mod anthropic;
 pub mod groq;
 pub mod openrouter;
 pub mod live_assistant;
+pub mod main_thread;
 pub mod meeting_detection;
 pub mod minibar;
 pub mod parakeet_engine;
