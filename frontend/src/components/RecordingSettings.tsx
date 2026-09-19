@@ -343,6 +343,9 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
                 Open Folder
               </button>
             </div>
+            <div className="mt-2 text-xs text-gray-500">
+              New recordings are saved here. Existing recordings stay in their current folder.
+            </div>
           </div>
 
           <div className="p-4 border rounded-lg bg-blue-50">

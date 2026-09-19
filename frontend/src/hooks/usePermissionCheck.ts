@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { usePlatform } from './usePlatform';
+import { SystemAudioProbe } from '@/lib/system-audio-probe';
 
 export interface PermissionStatus {
   hasMicrophone: boolean;
@@ -80,11 +81,17 @@ export function usePermissionCheck() {
         await invoke('trigger_microphone_permission');
         let systemAudioDetected: boolean | null = null;
         if (platform === 'macos') {
-          systemAudioDetected = await invoke<boolean>('trigger_system_audio_permission_command');
-          window.sessionStorage.setItem(
-            MACOS_SYSTEM_AUDIO_VERIFIED_KEY,
-            String(systemAudioDetected),
-          );
+          const probe = await invoke<SystemAudioProbe>('trigger_system_audio_permission_command');
+          // Only a conclusive probe may downgrade availability. An inconclusive
+          // result must not be cached, because checkPermissions treats a stored
+          // 'false' as unavailable for the rest of the session.
+          systemAudioDetected = probe.detected || !probe.conclusive;
+          if (probe.detected || probe.conclusive) {
+            window.sessionStorage.setItem(
+              MACOS_SYSTEM_AUDIO_VERIFIED_KEY,
+              String(probe.detected),
+            );
+          }
         }
 
         await new Promise(resolve => setTimeout(resolve, 1000));

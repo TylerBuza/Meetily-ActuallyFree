@@ -298,9 +298,12 @@ impl CoreAudioCapture {
 
     /// Start the real tap briefly and report whether audible samples arrive.
     /// A running all-zero stream is indistinguishable from denied permission,
-    /// so callers should ask the user to play audio while this probe runs.
-    pub fn probe(self, duration: Duration) -> Result<bool> {
+    /// so the caller must make audio play while this probe runs. `on_listening`
+    /// fires once the tap is actually consuming, so a caller-generated sound
+    /// cannot finish before there is anything to capture it.
+    pub fn probe(self, duration: Duration, on_listening: impl FnOnce()) -> Result<bool> {
         let mut stream = self.stream()?;
+        on_listening();
         let deadline = Instant::now() + duration;
         let mut sample_count = 0usize;
         let mut peak = 0.0f32;

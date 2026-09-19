@@ -409,11 +409,20 @@ pub async fn get_default_recordings_folder_path() -> Result<String, String> {
 pub async fn select_recording_folder<R: Runtime>(
     app: AppHandle<R>,
 ) -> Result<Option<String>, String> {
+    let current = load_recording_preferences(&app)
+        .await
+        .map(|prefs| prefs.save_folder)
+        .unwrap_or_else(|_| get_default_recordings_folder());
+
     tauri::async_runtime::spawn_blocking(move || {
-        Ok(app
+        let mut dialog = app
             .dialog()
             .file()
-            .set_title("Choose recordings folder")
+            .set_title("Choose recordings folder");
+        if current.is_dir() {
+            dialog = dialog.set_directory(&current);
+        }
+        Ok(dialog
             .blocking_pick_folder()
             .map(|path| path.to_string()))
     })

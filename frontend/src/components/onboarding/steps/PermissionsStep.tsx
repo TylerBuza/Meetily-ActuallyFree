@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { OnboardingContainer } from '../OnboardingContainer';
 import { PermissionRow } from '../shared';
 import { useOnboarding } from '@/contexts/OnboardingContext';
+import { SystemAudioProbe, systemAudioProbeMessage } from '@/lib/system-audio-probe';
 
 export function PermissionsStep() {
   const { setPermissionStatus, setPermissionsSkipped, permissions, completeOnboarding } = useOnboarding();
@@ -72,18 +73,17 @@ export function PermissionsStep() {
     setIsPending(true);
     try {
       console.log('[PermissionsStep] Triggering Audio Capture permission...');
-      // Backend creates Core Audio tap, captures audio, and verifies it's not silence
-      // Returns true if permission granted and audio verified, false if denied (silence)
-      const granted = await invoke<boolean>('trigger_system_audio_permission_command');
-      console.log('[PermissionsStep] System audio permission result:', granted);
+      const probe = await invoke<SystemAudioProbe>('trigger_system_audio_permission_command');
+      console.log('[PermissionsStep] System audio permission result:', probe);
 
-      if (granted) {
+      if (probe.detected) {
         setPermissionStatus('systemAudio', 'authorized');
-        console.log('[PermissionsStep] Audio Capture permission verified - audio is not silence');
-      } else {
-        // Permission was denied (audio is silence)
+      } else if (probe.conclusive) {
         setPermissionStatus('systemAudio', 'denied');
-        console.log('[PermissionsStep] Audio Capture permission denied - audio is silence');
+      } else {
+        // The test sound was never audible, so silence proves nothing here.
+        setPermissionStatus('systemAudio', 'not_determined');
+        console.log('[PermissionsStep]', systemAudioProbeMessage(probe));
       }
     } catch (err) {
       console.error('[PermissionsStep] Failed to request system audio permission:', err);

@@ -6,6 +6,7 @@ import { listen } from '@tauri-apps/api/event';
 import { useOnboarding } from '@/contexts/OnboardingContext';
 import { usePlatform } from '@/hooks/usePlatform';
 import { MACOS_SYSTEM_AUDIO_VERIFIED_KEY } from '@/hooks/usePermissionCheck';
+import { SystemAudioProbe, systemAudioProbeMessage } from '@/lib/system-audio-probe';
 import { OnboardingContainer } from '../OnboardingContainer';
 import { Mic, Volume2, RefreshCw } from 'lucide-react';
 
@@ -95,17 +96,22 @@ export function AudioTestStep() {
           if (!active.current || run !== meterRun.current) return;
 
           if (isMacOS && sys) {
-            setStatus('Testing native system audio… Play a video now.');
+            setStatus('Testing native system audio… Meetily will play a test sound.');
             try {
-              const detected = await invoke<boolean>('trigger_system_audio_permission_command');
+              const probe = await invoke<SystemAudioProbe>('trigger_system_audio_permission_command');
               if (!active.current || run !== meterRun.current) return;
-              window.sessionStorage.setItem(MACOS_SYSTEM_AUDIO_VERIFIED_KEY, String(detected));
-              setSysHeard(detected);
-              setSysRms(detected ? 0.2 : 0);
-              if (!detected) {
-                setError(
-                  'System audio was not detected. Play audio, grant Audio Capture permission if prompted, then click Retest audio.',
+              // An inconclusive probe must not cache 'false': that value marks
+              // system audio unavailable for the rest of the session.
+              if (probe.detected || probe.conclusive) {
+                window.sessionStorage.setItem(
+                  MACOS_SYSTEM_AUDIO_VERIFIED_KEY,
+                  String(probe.detected),
                 );
+              }
+              setSysHeard(probe.detected);
+              setSysRms(probe.detected ? 0.2 : 0);
+              if (!probe.detected) {
+                setError(`${systemAudioProbeMessage(probe)} Then click Retest audio.`);
               }
             } catch (systemError) {
               if (!active.current || run !== meterRun.current) return;

@@ -105,16 +105,55 @@ if [ ! -d "$HELPER_DIR" ]; then
 fi
 
 # Determine llama-helper features
-# Note: llama-cpp-2 does NOT support coreml, only metal/cuda/vulkan
-# So for macOS Apple Silicon (which returns 'coreml' for Whisper), use 'metal' for llama-helper
+# Note: llama-cpp-2 supports neither coreml (use metal instead) nor the
+# `hipblas` name the Tauri transcription crate uses for AMD HIP (use `rocm`).
 HELPER_FEATURES=""
 if [ -n "$TAURI_GPU_FEATURE" ]; then
     LLAMA_FEATURE="$TAURI_GPU_FEATURE"
     if [ "$LLAMA_FEATURE" = "coreml" ]; then
         LLAMA_FEATURE="metal"
         echo -e "${YELLOW}   Note: llama-cpp-2 doesn't support CoreML, using Metal instead${NC}"
+    elif [ "$LLAMA_FEATURE" = "hipblas" ]; then
+        LLAMA_FEATURE="rocm"
+        echo -e "${YELLOW}   Note: llama-cpp-2 uses the ROCm feature for HIP acceleration${NC}"
     fi
     HELPER_FEATURES="--features $LLAMA_FEATURE"
+fi
+
+if [ "$TAURI_GPU_FEATURE" = "hipblas" ] && [ -z "$ROCM_PATH" ] && [ -z "$HIP_PATH" ]; then
+    for candidate in /opt/rocm /usr/local/rocm /usr/lib64/rocm /usr/lib/rocm; do
+        if [ -d "$candidate/lib" ]; then
+            export ROCM_PATH="$candidate"
+            break
+        fi
+    done
+fi
+
+if [ "$TAURI_GPU_FEATURE" = "hipblas" ]; then
+    if [ -n "$ROCM_PATH" ]; then
+        echo -e "   Using ROCm SDK at $ROCM_PATH"
+    elif [ -n "$HIP_PATH" ]; then
+        echo -e "   Using HIP SDK at $HIP_PATH"
+    else
+        echo -e "${RED}❌ ROCm SDK not found; set ROCM_PATH or HIP_PATH${NC}"
+        exit 1
+    fi
+
+    # Fedora keeps ROCm's CMake package in /usr/lib64/cmake while the
+    # compiler and libraries live below /usr/lib64/rocm.
+    SDK_PATH="${ROCM_PATH:-$HIP_PATH}"
+    if [ -z "$CMAKE_HIP_COMPILER_ROCM_ROOT" ] && [ -f "$SDK_PATH/lib/cmake/hip-lang/hip-lang-config.cmake" ]; then
+        export CMAKE_HIP_COMPILER_ROCM_ROOT="$SDK_PATH"
+    elif [ -z "$CMAKE_HIP_COMPILER_ROCM_ROOT" ]; then
+        SDK_PARENT="$(dirname "$(dirname "$SDK_PATH")")"
+        if [ -f "$SDK_PARENT/lib64/cmake/hip-lang/hip-lang-config.cmake" ]; then
+            export CMAKE_HIP_COMPILER_ROCM_ROOT="$SDK_PARENT"
+        fi
+    fi
+
+    if [ -n "$CMAKE_HIP_COMPILER_ROCM_ROOT" ]; then
+        echo -e "   Using HIP CMake root at $CMAKE_HIP_COMPILER_ROCM_ROOT"
+    fi
 fi
 
 echo -e "   Building in $HELPER_DIR with features: ${HELPER_FEATURES:-none}"

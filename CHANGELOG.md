@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Parakeet Vocabulary
+
+- Added contextual phrase boosting and conservative glossary correction to the
+  local Parakeet TDT decoder.
+- Applied global and meeting-specific vocabulary to live transcription,
+  imports, manual retranscription, and automatic post-call enhancement.
+- Made vocabulary controls available for both Parakeet and Whisper.
+
+### macOS Audio Capture
+
+- The system-audio permission probe now plays its own short test sound, so
+  Recheck no longer requires other audio to already be playing.
+- The probe reports whether its result can be trusted. Silence is never
+  presented as a denied capture tap on its own: a missing player, a muted or
+  unreadable output, or a tap that cannot be opened are all reported as
+  inconclusive rather than denied.
+
+### Linux
+
+- Added AMD ROCm/HIP acceleration for the llama helper on Linux.
+
 ## 0.2.16 - 2026-09-18
 
 ### Selective Upstream Integration

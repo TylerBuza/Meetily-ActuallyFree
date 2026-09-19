@@ -147,6 +147,15 @@ fn detect_vram_gb() -> f32 {
         }
     }
 
+    #[cfg(feature = "rocm")]
+    {
+        // AMD APUs expose their GPU-accessible shared memory through rocminfo.
+        if let Some(vram) = detect_rocm_vram() {
+            eprintln!("ROCm GPU memory detected: {:.2} GB", vram);
+            return vram;
+        }
+    }
+
     /// TODO: Vulkan VRAM detection
 
     eprintln!("VRAM detection not available, using conservative estimate");
@@ -186,6 +195,109 @@ fn detect_cuda_vram() -> Option<f32> {
         }
     }
     None
+}
+
+/// Largest GPU memory pool, in KB, from `rocminfo` output.
+///
+/// Pool sizes are printed with a parenthesised hexadecimal repeat of the same
+/// value, e.g. `Size: 24538072(0x1766bd8) KB`, so the token cannot be parsed as
+/// an integer directly. Only pools belonging to a GPU agent are considered: CPU
+/// agents advertise host memory that is not usable as VRAM. Cache lines such as
+/// `L1: 32(0x20) KB` do not begin with `Size:` and are therefore skipped.
+#[cfg(feature = "rocm")]
+fn parse_rocminfo_vram_kb(stdout: &str) -> Option<u64> {
+    let mut in_gpu_agent = false;
+    let mut largest_pool_kb = 0_u64;
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("Agent ") {
+            in_gpu_agent = false;
+        } else if trimmed.starts_with("Device Type:") {
+            in_gpu_agent = trimmed.ends_with("GPU");
+        } else if in_gpu_agent && trimmed.starts_with("Size:") && trimmed.ends_with("KB") {
+            if let Some(size_kb) = trimmed
+                .split_whitespace()
+                .nth(1)
+                .map(|value| value.split('(').next().unwrap_or(value))
+                .and_then(|value| value.parse::<u64>().ok())
+            {
+                largest_pool_kb = largest_pool_kb.max(size_kb);
+            }
+        }
+    }
+
+    (largest_pool_kb > 0).then_some(largest_pool_kb)
+}
+
+#[cfg(feature = "rocm")]
+fn detect_rocm_vram() -> Option<f32> {
+    let output = std::process::Command::new("rocminfo").output().ok()?;
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    parse_rocminfo_vram_kb(&stdout).map(|kb| kb as f32 / (1024.0 * 1024.0))
+}
+
+#[cfg(all(test, feature = "rocm"))]
+mod rocm_vram_tests {
+    use super::parse_rocminfo_vram_kb;
+
+    /// Trimmed to the fields the parser inspects, but the `Size:` lines are
+    /// copied verbatim from `rocminfo` on a Strix Halo system.
+    const SAMPLE: &str = "\
+Agent 1
+  Name:                    AMD Ryzen AI MAX+ PRO 395
+  Device Type:             CPU
+  Pool Info:
+    Pool 1
+      Size:                    49076144(0x2ecd7b0) KB
+Agent 2
+  Name:                    gfx1151
+  Device Type:             GPU
+  Cache Info:
+    L1:                      32(0x20) KB
+    L2:                      2048(0x800) KB
+  Pool Info:
+    Pool 1
+      Size:                    24538072(0x1766bd8) KB
+    Pool 2
+      Size:                    24538072(0x1766bd8) KB
+";
+
+    #[test]
+    fn parses_size_despite_hexadecimal_suffix() {
+        assert_eq!(parse_rocminfo_vram_kb(SAMPLE), Some(24_538_072));
+    }
+
+    #[test]
+    fn ignores_cpu_agent_pools() {
+        // The CPU pool is larger; picking it up would overstate usable VRAM.
+        let vram_kb = parse_rocminfo_vram_kb(SAMPLE).expect("a GPU pool");
+        assert!(vram_kb < 49_076_144, "CPU host memory leaked into VRAM");
+    }
+
+    #[test]
+    fn ignores_gpu_cache_sizes() {
+        // L1/L2 are also reported in KB; they must not win when pools are absent.
+        let cache_only = "\
+Agent 2
+  Device Type:             GPU
+  Cache Info:
+    L1:                      32(0x20) KB
+";
+        assert_eq!(parse_rocminfo_vram_kb(cache_only), None);
+    }
+
+    #[test]
+    fn returns_none_when_no_gpu_agent_present() {
+        let cpu_only = "\
+Agent 1
+  Device Type:             CPU
+  Pool Info:
+    Pool 1
+      Size:                    49076144(0x2ecd7b0) KB
+";
+        assert_eq!(parse_rocminfo_vram_kb(cpu_only), None);
+    }
 }
 
 /// Calculate safe GPU layer count based on VRAM, model file size, and context size
