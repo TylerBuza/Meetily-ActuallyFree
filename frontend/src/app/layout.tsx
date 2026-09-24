@@ -93,6 +93,13 @@ export default function RootLayout({
   useEffect(() => {
     let cancelled = false
 
+    // Safety timeout: Never stay stuck on blank startup screen if an invoke takes too long
+    const safetyTimer = setTimeout(() => {
+      if (!cancelled) {
+        setStartupResolved(true);
+      }
+    }, 2500);
+
     const initializeStartup = async () => {
       setStartupResolved(false)
       setStartupError(null)
@@ -107,14 +114,19 @@ export default function RootLayout({
           setShowOnboarding(true)
         } else {
           console.log('[Layout] Onboarding completed, showing main app')
-          const report = await getPendingCrashReport()
-          if (!cancelled) setPendingCrashReport(report)
+          try {
+            const report = await getPendingCrashReport()
+            if (!cancelled) setPendingCrashReport(report)
+          } catch (e) {
+            console.warn('[Layout] Crash report check failed:', e)
+          }
         }
       } catch (error) {
-        console.error('[Layout] Failed to resolve startup state:', error)
+        console.warn('[Layout] Could not resolve Tauri startup state, defaulting to main app:', error)
         if (cancelled) return
-        setStartupError('Meetily could not verify local startup and crash-report state.')
+        setOnboardingCompleted(true)
       } finally {
+        clearTimeout(safetyTimer)
         if (!cancelled) setStartupResolved(true)
       }
     }
@@ -122,6 +134,7 @@ export default function RootLayout({
     initializeStartup()
     return () => {
       cancelled = true
+      clearTimeout(safetyTimer)
     }
   }, [startupAttempt])
 
@@ -354,7 +367,12 @@ export default function RootLayout({
     <html lang="en" className="dark">
       <body className={`${sourceSans3.variable} font-sans antialiased`}>
         {!startupResolved ? (
-          <div className="h-screen bg-[var(--af-bg)]" />
+          <div className="flex h-screen items-center justify-center bg-[var(--af-bg)]">
+            <div className="flex flex-col items-center gap-3">
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+              <span className="text-xs text-[var(--af-text-2)] font-medium">Starting Meetily…</span>
+            </div>
+          </div>
         ) : startupError ? (
           <div className="flex h-screen items-center justify-center bg-[var(--af-bg)] px-6">
             <div className="max-w-md rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] p-6 text-center shadow-xl">
@@ -365,14 +383,6 @@ export default function RootLayout({
               </Button>
             </div>
           </div>
-        ) : pendingCrashReport ? (
-          <>
-            <div className="h-screen bg-[var(--af-bg)]" />
-            <CrashReportDialog
-              report={pendingCrashReport}
-              onResolved={() => setPendingCrashReport(null)}
-            />
-          </>
         ) : (
           <AnalyticsProvider>
             <RecordingStateProvider>
@@ -405,6 +415,13 @@ export default function RootLayout({
                                   handleImportDialogClose={handleImportDialogClose}
                                   importFilePath={importFilePath}
                                 />
+                                {/* Non-blocking crash report overlay */}
+                                {pendingCrashReport && (
+                                  <CrashReportDialog
+                                    report={pendingCrashReport}
+                                    onResolved={() => setPendingCrashReport(null)}
+                                  />
+                                )}
                               </ImportDialogProvider>
                             </UpdateCheckProvider>
                           </RecordingPostProcessingProvider>
