@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use silero_rs::{VadConfig, VadSession, VadTransition};
-use log::{debug, info, warn};
+use log::{debug, info, warn, error};
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -169,8 +169,23 @@ impl ContinuousVadProcessor {
         // Previous: capped at 400ms, causing VAD to fragment 5-second speech into 40ms segments
         // New: Use full redemption_time from pipeline (2000ms) to bridge natural pauses
         config.redemption_time = Duration::from_millis(redemption_time_ms as u64);
-        config.pre_speech_pad = Duration::from_millis(300);   // Pre-speech padding for context
-        config.post_speech_pad = Duration::from_millis(400);  // Increased: more context at end
+        let pre_pad_ms = (redemption_time_ms as u64 / 2).max(100).min(300);
+        config.pre_speech_pad = Duration::from_millis(pre_pad_ms);
+
+        // CRITICAL SILERO PANIC PREVENTION:
+        // In silero-rs, speech_end_with_pad_ms is computed as:
+        //   speech_end_ms + post_speech_pad
+        // Since speech_end_ms = (processed_samples - silent_samples), and speech end is
+        // triggered when silent_samples >= redemption_time, if post_speech_pad > redemption_time,
+        // speech_end_with_pad points beyond total processed audio into the future!
+        // silero-rs slices &session_audio[speech_start_idx..speech_end_idx] without bounds checking,
+        // causing a panic: "range end index ... out of range for slice of length ...".
+        // To strictly prevent this, post_speech_pad MUST be less than redemption_time.
+        let post_pad_ms = (redemption_time_ms as u64 / 2)
+            .max(50)
+            .min(250)
+            .min(redemption_time_ms.saturating_sub(60) as u64);
+        config.post_speech_pad = Duration::from_millis(post_pad_ms);
 
         // CRITICAL FIX: Increased min_speech_time to prevent tiny 40ms fragments
         // Previous: 100ms allowed too-short segments that Whisper rejects
@@ -346,8 +361,31 @@ impl ContinuousVadProcessor {
     }
 
     fn process_chunk(&mut self, chunk: &[f32]) -> Result<()> {
-        let transitions = self.session.process(chunk)
-            .map_err(|e| anyhow!("VAD processing failed: {}", e))?;
+        let transitions_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.session.process(chunk)
+        }));
+
+        let transitions = match transitions_result {
+            Ok(Ok(t)) => t,
+            Ok(Err(e)) => return Err(anyhow!("VAD processing failed: {}", e)),
+            Err(panic_err) => {
+                let panic_msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = panic_err.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "unknown panic".to_string()
+                };
+                error!("VAD: Silero session panicked: {}. Recreating session safely to prevent pipeline crash.", panic_msg);
+                if let Ok(new_session) = VadSession::new(self.config) {
+                    self.session = new_session;
+                    self.session_start_sample = self.processed_samples;
+                } else {
+                    self.session.reset();
+                }
+                Vec::new()
+            }
+        };
 
         // Log transitions for debugging
         if !transitions.is_empty() {
@@ -926,6 +964,29 @@ mod tests {
                 seg.end_timestamp_ms
             );
         }
+    }
+
+    #[test]
+    fn test_speech_followed_by_pause_realtime_vad() {
+        // Test speech followed by a pause under 350ms real-time redemption:
+        // Must transition cleanly from speech to pause without out-of-bounds slicing in silero-rs!
+        let speech = generate_test_audio_with_speech(2.0, 16000);
+        let silence = vec![0.0f32; 16000]; // 1 second of silence
+        let mut audio = speech;
+        audio.extend(silence);
+
+        let mut processor = ContinuousVadProcessor::new_with_thresholds(16000, 350, 0.20, 0.10)
+            .expect("Failed to create processor");
+
+        let mut all_segments = Vec::new();
+        for chunk in audio.chunks(1600) {
+            let segments = processor.process_audio(chunk).expect("process_audio failed");
+            all_segments.extend(segments);
+        }
+        let final_segments = processor.flush().expect("flush failed");
+        all_segments.extend(final_segments);
+
+        assert!(!all_segments.is_empty(), "Expected at least 1 speech segment from speech + pause");
     }
 }
 
