@@ -1,6 +1,7 @@
 'use client'
 
 import './globals.css'
+import dynamic from 'next/dynamic'
 import { Source_Sans_3 } from 'next/font/google'
 import Sidebar from '@/components/Sidebar'
 import { SidebarProvider } from '@/components/Sidebar/SidebarProvider'
@@ -18,19 +19,58 @@ import { OllamaDownloadProvider } from '@/contexts/OllamaDownloadContext'
 import { TranscriptProvider } from '@/contexts/TranscriptContext'
 import { ConfigProvider, useConfig } from '@/contexts/ConfigContext'
 import { OnboardingProvider } from '@/contexts/OnboardingContext'
-import { OnboardingFlow } from '@/components/onboarding'
 import { loadBetaFeatures } from '@/types/betaFeatures'
 import { DownloadProgressToastProvider } from '@/components/shared/DownloadProgressToast'
 import { UpdateCheckProvider } from '@/components/UpdateCheckProvider'
 import { RecordingPostProcessingProvider } from '@/contexts/RecordingPostProcessingProvider'
-import { ImportAudioDialog, ImportDropOverlay } from '@/components/ImportAudio'
 import { ImportDialogProvider } from '@/contexts/ImportDialogContext'
 import { isAudioExtension, getAudioFormatsDisplayList } from '@/constants/audioFormats'
-import GlobalSearchDialog from '@/components/GlobalSearchDialog'
-import CrashReportDialog from '@/components/CrashReportDialog'
 import { getPendingCrashReport, type PendingCrashReport } from '@/services/crashReportService'
 import { Button } from '@/components/ui/button'
 
+// Dynamically import heavy dialogs and onboarding wizard so app/layout.js stays lightweight
+// and cold-compiles quickly without timing out on slow startup or high CPU load.
+const OnboardingFlow = dynamic(
+  () => import('@/components/onboarding').then((mod) => mod.OnboardingFlow),
+  { ssr: false }
+)
+const ImportAudioDialog = dynamic(
+  () => import('@/components/ImportAudio').then((mod) => mod.ImportAudioDialog),
+  { ssr: false }
+)
+const ImportDropOverlay = dynamic(
+  () => import('@/components/ImportAudio').then((mod) => mod.ImportDropOverlay),
+  { ssr: false }
+)
+const GlobalSearchDialog = dynamic(
+  () => import('@/components/GlobalSearchDialog'),
+  { ssr: false }
+)
+const CrashReportDialog = dynamic(
+  () => import('@/components/CrashReportDialog'),
+  { ssr: false }
+)
+
+// Global safety handler for ChunkLoadError (e.g. Next.js on-demand compilation timeout while cargo builds)
+if (typeof window !== 'undefined') {
+  const handleChunkError = (err: any) => {
+    const message = err?.message || err?.reason?.message || '';
+    const name = err?.name || err?.reason?.name || '';
+    if (name === 'ChunkLoadError' || /loading chunk .* failed/i.test(message)) {
+      const storageKey = 'meetily_chunk_reload_timestamp';
+      const lastReload = sessionStorage.getItem(storageKey);
+      const now = Date.now();
+      if (!lastReload || now - parseInt(lastReload, 10) > 10000) {
+        sessionStorage.setItem(storageKey, String(now));
+        console.warn('ChunkLoadError detected; refreshing page to recover compiled chunk...');
+        window.location.reload();
+      }
+    }
+  };
+
+  window.addEventListener('error', handleChunkError);
+  window.addEventListener('unhandledrejection', handleChunkError);
+}
 
 const sourceSans3 = Source_Sans_3({
   subsets: ['latin'],
