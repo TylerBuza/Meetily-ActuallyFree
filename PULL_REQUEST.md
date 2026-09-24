@@ -1,52 +1,53 @@
 ## Description
 
-This PR introduces end-to-end speaker diarization support using NVIDIA Parakeet + Nemotron-3 (Sortformer architecture), an interactive post-meeting speaker renaming modal with live audio snippet playback, resilient SQLite database migrations, and critical fixes for Windows CUDA GPU builds and WebView2 UI initialization.
+This PR integrates on-device speaker diarization using the **NVIDIA Nemotron-3 Diarization model** (Sortformer v3 architecture) alongside NVIDIA Parakeet STT, introduces automated sentence-level turn splitting for multi-speaker recognition blocks, adds acoustic bleed filtering for dual-track recordings, provides a dedicated Diarization settings management UI, and resolves critical Windows CUDA 13.3 / MSVC build compatibility issues.
 
 ### Reference Links:
 - **Nemotron-3 Diarization Model**: [nvidia/Nemotron-3-Diarization on Hugging Face](https://huggingface.co/nvidia/Nemotron-3-Diarization)
-- **Official Announcement & Technical Blog**: [Know Who Spoke When: Build Real-Time, Multi-Speaker AI with NVIDIA Nemotron 3 Diarization](https://huggingface.co/blog/nvidia-nemotron-3-diarization)
+- **Technical Blog & Integration Guide**: [Know Who Spoke When: Build Real-Time, Multi-Speaker AI with NVIDIA Nemotron 3 Diarization](https://huggingface.co/blog/nvidia-nemotron-3-diarization)
 
 ---
 
 ### Beta Status & Reviewer Note:
 > [!NOTE]
-> **Beta Feature Notice**: This diarization implementation is in early stages and should be considered **Beta**.
-> If preferred during review, the new **Diarization settings** panel can be easily relocated under the **Beta** settings tab instead of general settings. Feedback on UI placement and default thresholds is very welcome!
+> **Beta Feature Notice**: Diarization is in early stages and should be considered **Beta**.
+> If preferred during review, the new **Diarization settings** panel can be easily relocated under a **Beta** settings tab instead of general settings. Feedback on default detection thresholds and UI placement is very welcome!
 
 ---
 
 ### Key Changes:
 
-#### 1. NVIDIA Parakeet + Nemotron-3 Diarization Engine
-- **Turn Splitting & Segmentation**: Added sentence-level speaker boundary detection for conversations where participants speak sequentially or interrupt each other within the same STT recognition chunk. Large transcript blocks are automatically segmented into distinct chronological turns instead of being lumped into compound labels.
-- **Acoustic Bleed Filtering**: Dual-track recordings now filter low-volume microphone bleed of remote participant voices, preventing false `"You + Speaker 1"` compound attributions on guest turns.
-- **Word-Level Alignment**: Implemented timestamp alignment between Parakeet CTC token timings and Nemotron-3 speaker activity segments.
-- **Sliding FIFO Buffer & Speaker Cache (`spkcache`)**: Implemented sliding-window audio chunk buffering with long-term speaker embedding memory to maintain consistent speaker identities across conversational pauses.
-- **Native Tauri Commands**: Added backend commands for audio feature extraction, speaker diarization inference, and per-speaker WAV snippet extraction.
+#### 1. NVIDIA Nemotron-3 Diarization Engine (Sortformer v3)
+- **On-Device ONNX Runtime Execution**: Implemented the Nemotron-3 Diarization engine (`nemotron3_diar_v3.onnx`) with Mel preprocessor (`nemo128.onnx`), supporting up to 8 concurrent speakers.
+- **Sliding FIFO Buffer & Speaker Cache (`spkcache`)**: Implemented sliding-window audio chunk buffering (FIFO max 264 frames) with long-term speaker embedding memory to maintain speaker identity continuity across conversational pauses.
+- **Automated Model Manager**: Added automated downloader with progress reporting, integrity checks, and local file verification in `diarization/download.rs`.
 
-#### 2. Speaker Renaming Modal with Live Audio Preview
-- **Interactive Modal (`SpeakerRenameModal.tsx`)**: Easily accessed via the "Rename Speakers" button in the meeting details view.
-- **Live Audio Playback**: Users can listen to a short audio snippet for any detected speaker directly inside the modal to accurately verify identity before renaming.
-- **Global Transcript Updating**: Renaming updates all corresponding turns across the entire meeting transcript, updating both the SQLite database and client-side virtualized transcript view instantly.
+#### 2. Sentence-Level Turn Splitting & Chronological Segmentation
+- **Sub-Chunk Boundary Splitting**: Solved the issue where sequential speech from multiple speakers within a single STT chunk was lumped into compound labels (`"Speaker 1 + Speaker 2"`). 
+- **Database Turn Splitting**: Transcripts are segmented at speaker boundaries into individual chronological turns with accurate audio start/end timestamps and distinct speaker assignments.
+- **Simultaneous Overlap vs. Alternation**: Added high-confidence thresholds (minimum 40% duration and 1.5s concurrent overlap) to distinguish genuine simultaneous cross-talk from rapid conversational turn-taking.
 
-#### 3. SQLite Database Resilience & Self-Healing Migrations
-- Added self-healing schema migration logic in `database/manager.rs` to handle legacy schemas, missing columns, or orphaned transcript entries gracefully without app crashes.
-- Added database methods for cascading speaker rename updates across meetings and transcripts.
+#### 3. Dual-Track Acoustic Bleed Filtering
+- **Microphone Bleed Suppression**: Dual-track recordings (mic + system loopback) now filter low-volume microphone bleed of remote participant voices, preventing false `"You + Speaker 1"` compound labels during remote speaker turns.
+- **Source Track Affinity**: Track hints (user mic vs. remote system audio) are preserved and prioritized during speaker clustering.
 
-#### 4. Windows Build Reliability & CUDA 13+ GPU Acceleration
-- **CUDA 13.x & MSVC Preprocessor Fix**: Resolved MSVC C1001 compiler crashes during ONNX / CCCL compilation under CUDA 13.3 by configuring `/Zc:preprocessor` and `-DCCCL_IGNORE_MSVC_TRADITIONAL_PREPROCESSOR_WARNING` across Cargo `.cargo/config.toml`, `build-gpu.bat`, and `tauri-auto.js`.
-- **GPU Auto-Detection**: Fixed a version-checking bug in `scripts/auto-detect-gpu.js` that previously forced fallback to CPU builds on CUDA 13+ environments.
-- **Hardware Support**: Tested and validated on modern NVIDIA hardware (including RTX 50-series Blackwell architecture) with native ONNX Runtime CUDA Execution Provider.
+#### 4. Diarization Settings Panel (`DiarizationSettings.tsx`)
+- **Interactive Management UI**: Added a dedicated Diarization panel in Settings.
+- **Model Downloader & Status**: Users can download, verify, and inspect the Nemotron-3 ONNX model status directly from the app.
+- **Configurable Parameters**: Configurable sliders for detection sensitivity threshold and maximum speaker count.
 
-#### 5. Windows WebView2 Startup & UI Responsiveness Fixes
-- **WebView2 Race Condition Fix**: Created `check-or-start-dev.js` and `"dev:ready"` pre-warming script to ensure Next.js has completed compiling the root route before Tauri attaches the WebView2 window.
-- **Process Cleanup**: Updated `dev-gpu.bat` and `build-gpu.bat` to terminate orphaned `msedgewebview2.exe` background processes that previously locked the `EBWebView` cache directory.
-- **Window Activation & Focus**: Added explicit window focus flags in `tauri.conf.json`, startup focus triggers in `lib.rs`, and a client-side pointer-events recovery watchdog in `app/layout.tsx`.
+#### 5. Windows Build Reliability & CUDA 13.3 GPU Acceleration
+- **CUDA 13.3 & MSVC Modern Preprocessor Fix**: Resolved MSVC compiler fatal errors (`C1001` compiler crash and `C1189` CUB C++17 requirement) by properly configuring `--std=c++17`, `/Zc:preprocessor`, and `-DCCCL_IGNORE_DEPRECATED_CPP_DIALECT` across `.cargo/config.toml`, `build-gpu.bat`, `dev-gpu.bat`, and `tauri-auto.js`.
+- **Target Architectures**: Configured `CMAKE_CUDA_ARCHITECTURES="75;80;86;89;120"` to support modern NVIDIA hardware (RTX 20, 30, 40, and 50-series Blackwell) while avoiding deprecated Maxwell architectures (`compute_52`) that caused CMake compiler checks to fail under CUDA 13.
+- **GPU Auto-Detection**: Corrected release version checking in `auto-detect-gpu.js` to ensure CUDA 13+ environments are properly recognized as GPU-accelerated.
+
+#### 6. Transcription Engine Polish
+- Cleaned up transcription engine selection in settings, retranscription dialogs, and audio import to reliably use Parakeet (recommended for live) and Whisper (with vocabulary hints for post-call).
 
 ---
 
 ## Related Issue
-Addresses speaker diarization integration, speaker identification workflows, Windows CUDA GPU acceleration, and Windows WebView2 UI responsiveness.
+Addresses speaker diarization integration, multi-speaker turn segmentation, Windows CUDA GPU acceleration, and build compatibility with CUDA 13.3.
 
 ---
 
@@ -61,21 +62,19 @@ Addresses speaker diarization integration, speaker identification workflows, Win
 ---
 
 ## Testing
-- [x] Manual testing performed on Windows 11 with NVIDIA CUDA acceleration (RTX 5080, CUDA 13.3).
-- [x] Verified full production release build compilation (`build-gpu.bat` / Next.js export / Tauri NSIS bundle).
-- [x] Verified Parakeet + Nemotron-3 word-level alignment and speaker assignment.
-- [x] Verified speaker renaming modal with live WAV playback and transcript persistence.
-- [x] Verified dev server pre-warming and eliminated blank/frozen UI state on launch.
-- [x] Verified SQLite database migration and self-healing with existing user databases.
-- [x] Verified GPU execution provider correctly active at runtime without fallback warning banner.
+- [x] Tested on Windows 11 with an NVIDIA RTX 5080 (Blackwell architecture, CUDA 13.3).
+- [x] Verified full production release build compilation (`build-gpu.bat` / Next.js static export / Tauri NSIS bundle).
+- [x] Verified Nemotron-3 model downloading and ONNX Runtime execution.
+- [x] Verified turn splitting and speaker attribution on multi-speaker meeting recordings.
+- [x] Verified CUDA execution provider correctly active at runtime without CPU fallback warnings.
 
 ---
 
 ## Checklist
 - [x] Code follows project style guidelines.
 - [x] Self-reviewed the code changes.
-- [x] Added comments for complex diarization math, FIFO buffer management, and window lifecycle logic.
-- [x] Verified local TypeScript compilation (`next build` static export succeeded with 0 errors).
+- [x] Added comments for diarization math, FIFO buffer management, and speaker caching.
+- [x] Verified TypeScript compilation (`pnpm tsc --noEmit` succeeded with 0 errors).
 - [x] Verified Rust compilation (`cargo check --features cuda` and release build succeeded).
 - [x] No merge conflicts with base branch.
 
@@ -87,12 +86,12 @@ Addresses speaker diarization integration, speaker identification workflows, Win
   cd frontend
   build-gpu.bat
   ```
-- Binary outputs:
+- Output binaries:
   - Portable EXE: `target\release\meetily.exe`
-  - Windows Installer: `target\release\bundle\nsis\meetily_*_x64-setup.exe`
+  - Windows Setup Installer: `target\release\bundle\nsis\Meetily - Actually Free_0.2.16_x64-setup.exe`
 
 ---
 
 ## AI Disclaimer
 > [!NOTE]
-> **AI Disclaimer**: This feature and pull request were developed with AI assistance, but have been thoroughly and rigorously tested end-to-end by myself on Windows with an active NVIDIA GPU and CUDA environment.
+> **AI Disclaimer**: This feature and pull request were developed with AI assistance, but have been thoroughly and rigorously tested end-to-end on Windows with an active NVIDIA GPU and CUDA environment.
