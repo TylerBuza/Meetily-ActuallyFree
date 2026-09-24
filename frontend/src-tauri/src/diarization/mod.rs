@@ -1055,7 +1055,7 @@ pub async fn diarize_meeting(
 
         // 2nd pass: handle merged speakers (if user merged multiple clusters into the same manual name)
         for (spk, name, overlap) in &cluster_overlaps {
-            if !assigned_clusters.contains(spk) && *overlap >= 0.5 {
+            if !assigned_clusters.contains(spk) && *overlap > 0.1 {
                 cluster_to_manual_name.insert(*spk, name.clone());
                 assigned_clusters.insert(*spk);
             }
@@ -1068,34 +1068,26 @@ pub async fn diarize_meeting(
     }
 
     // Assign each transcript from the offline source-track result. Custom names
-    // are preserved, but transient live labels (You/Guest/Speaker N) are refined.
+    // are mapped to acoustic voice clusters, allowing the diarization engine to
+    // accurately re-identify speakers across all segments while preserving manual names.
     // If multiple source-track speakers overlap the transcript, persist a label
-    // such as "You + Speaker 1" instead of falsely choosing only one voice.
+    // such as "Chris Hemsworth + Scarlett Johansson" or "You + Speaker 1".
     let mut assignments: Vec<(String, String)> = Vec::new();
     let mut updates: Vec<(String, Option<String>)> = Vec::new();
     let mut preserved = 0u32;
     for (id, start, end, existing) in rows {
-        if let Some(ref live) = existing {
-            let live_trim = live.trim();
-            if !live_trim.is_empty() {
-                let is_generated = live_trim.split(" + ").all(|part| {
-                    part.eq_ignore_ascii_case("guest")
-                        || part.eq_ignore_ascii_case("you")
-                        || part.to_ascii_lowercase().starts_with("speaker ")
-                });
-                let is_named = !is_generated;
-                if is_named {
-                    preserved += 1;
-                    assignments.push((id, live_trim.to_string()));
-                    continue;
-                }
-            }
-        }
-
         let (s, e) = match (start, end) {
             (Some(s), Some(e)) if e > s => (s as f32, e as f32),
             _ => {
-                updates.push((id, None));
+                let fallback = existing
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|str| !str.is_empty())
+                    .map(str::to_string);
+                if let Some(ref label) = fallback {
+                    assignments.push((id.clone(), label.clone()));
+                }
+                updates.push((id, fallback));
                 continue;
             }
         };
@@ -1181,8 +1173,16 @@ pub async fn diarize_meeting(
                             || (allow_remote_source_hint
                                 && speaker.eq_ignore_ascii_case("guest")))
                 })
-                .map(str::to_string);
+                .map(str::to_string)
+                .or_else(|| {
+                    existing
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                });
             if let Some(ref label) = source_hint {
+                preserved += 1;
                 assignments.push((id.clone(), label.clone()));
             }
             updates.push((id, source_hint));
@@ -1254,7 +1254,7 @@ pub async fn diarize_meeting(
 
     if preserved > 0 {
         log::info!(
-            "🧑‍🤝‍🧑 Preserved {} live speaker label(s); offline only filled gaps",
+            "🧑‍🤝‍🧑 Preserved {} speaker label(s) where diarization had no overlap",
             preserved
         );
     }
