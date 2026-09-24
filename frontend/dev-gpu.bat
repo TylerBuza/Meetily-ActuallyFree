@@ -38,10 +38,17 @@ for /f "tokens=5" %%a in ('netstat -aon ^| findstr :3118 2^>nul') do (
 
 REM Set libclang path for whisper-rs-sys
 set "LIBCLANG_PATH=C:\Program Files\LLVM\bin"
+set "BINDGEN_EXTRA_CLANG_ARGS=-I""C:/Program Files/LLVM/lib/clang/18/include"""
 
 REM Try to find and setup Visual Studio environment
 echo 🔧 Setting up Visual Studio environment...
-if exist "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" (
+if exist "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat" (
+    echo    Using Visual Studio 18 Build Tools
+    call "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
+) else if exist "C:\Program Files\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat" (
+    echo    Using Visual Studio 18 Build Tools
+    call "C:\Program Files\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
+) else if exist "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" (
     echo    Using Visual Studio 2022 Build Tools
     call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
 
