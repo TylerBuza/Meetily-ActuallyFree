@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- Add a **Claude Code CLI** summary provider. Summaries and the live assistant can
+  now run through the `claude` command installed on your computer, so they draw on
+  a Claude subscription instead of a pay-as-you-go API key. Model Settings detects
+  the executable, shows the signed-in account and plan, warns when
+  `ANTHROPIC_API_KEY` would override the subscription, and can send a test call.
+  Nothing is bundled and no key is stored — the CLI owns sign-in.
+
 ## 0.2.16 - 2026-09-18
 
 ### Selective Upstream Integration

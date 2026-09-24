@@ -8,10 +8,35 @@ import Analytics from '@/lib/analytics';
 import { isOllamaNotInstalledError } from '@/lib/utils';
 import { BuiltInModelInfo } from '@/lib/builtin-ai';
 import {
+  CLAUDE_CODE_INSTALL_URL,
+  claudeCliBlockingReason,
+  getClaudeCliStatus,
+} from '@/lib/claude-cli';
+import {
   detectAndCacheSummaryLanguage,
   readMeetingSummaryLanguage,
   readCachedDetectedSummaryLanguage,
 } from '@/lib/summary-language-preferences';
+
+/**
+ * The Claude Code CLI provider depends on software outside this app, so it can
+ * be missing or signed out at any time. Checking up front turns that into an
+ * actionable message instead of a backend failure part-way through a summary.
+ *
+ * Returns null when summaries can run.
+ */
+async function claudeCliPreflight(): Promise<{ message: string; installed: boolean } | null> {
+  try {
+    const status = await getClaudeCliStatus();
+    const message = claudeCliBlockingReason(status);
+    return message ? { message, installed: status.installed } : null;
+  } catch (error) {
+    return {
+      message: error instanceof Error ? error.message : String(error),
+      installed: false,
+    };
+  }
+}
 
 async function resolveSummaryLanguage(
   meetingId: string,
@@ -747,6 +772,30 @@ export function useSummaryGeneration({
       }
     }
 
+    // Check the Claude Code CLI is installed and signed in
+    if (modelConfig.provider === 'claude-cli') {
+      const problem = await claudeCliPreflight();
+      if (!isCurrentRequest()) return false;
+
+      if (problem) {
+        setSummaryStatus('error');
+        setSummaryError(problem.message);
+        toast.error('Claude Code CLI is not ready', {
+          description: problem.message,
+          duration: 7000,
+          action: problem.installed
+            ? undefined
+            : {
+                label: 'Install',
+                onClick: () =>
+                  invokeTauri('open_external_url', { url: CLAUDE_CODE_INSTALL_URL }),
+              },
+        });
+        onOpenModelSettings?.();
+        return false;
+      }
+    }
+
     // Check if built-in AI provider has models available
     if (modelConfig.provider === 'builtin-ai') {
       try {
@@ -881,6 +930,22 @@ export function useSummaryGeneration({
       setSummaryStatus('idle');
       toast.error('No transcripts available for summary regeneration');
       return;
+    }
+
+    if (modelConfig.provider === 'claude-cli') {
+      const problem = await claudeCliPreflight();
+      if (!isCurrentRequest()) return;
+
+      if (problem) {
+        setSummaryStatus('error');
+        setSummaryError(problem.message);
+        toast.error('Claude Code CLI is not ready', {
+          description: problem.message,
+          duration: 7000,
+        });
+        onOpenModelSettings?.();
+        return;
+      }
     }
 
     if (modelConfig.provider === 'ollama') {

@@ -104,7 +104,8 @@ export function SettingsModals({
                       }}
                     >
                       <option value="builtin-ai">Built-in AI</option>
-                      <option value="claude">Claude</option>
+                      <option value="claude">Claude (API key)</option>
+                      <option value="claude-cli">Claude Code CLI (subscription)</option>
                       <option value="groq">Groq</option>
                       <option value="ollama">Ollama</option>
                       <option value="openrouter">OpenRouter</option>
