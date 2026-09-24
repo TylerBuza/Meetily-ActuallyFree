@@ -1,78 +1,77 @@
+# feat: NVIDIA Nemotron-3 Diarization Engine, Sentence-Level Turn Splitting, and Windows CUDA 13.3 Support
+
 ## Description
 
-This PR integrates on-device speaker diarization using the **NVIDIA Nemotron-3 Diarization model** (Sortformer v3 architecture) alongside NVIDIA Parakeet STT, introduces automated sentence-level turn splitting for multi-speaker recognition blocks, adds acoustic bleed filtering for dual-track recordings, provides a dedicated Diarization settings management UI, and resolves critical Windows CUDA 13.3 / MSVC build compatibility issues.
+This PR enhances **Meetily-ActuallyFree**'s on-device speaker diarization capabilities by introducing the **NVIDIA Nemotron-3 Diarization model** (Sortformer v3 architecture) alongside the pre-existing Pyannote engine. It also adds sentence-level chronological speaker turn splitting to eliminate compound speaker labels, adds acoustic bleed filtering for dual-track recordings, enhances the Diarization Settings UI with model switching and fine-tuning controls, and resolves build and runtime compatibility issues for Windows with CUDA 13.3 and Visual Studio 18.
 
-### Reference Links:
+### References & Background:
 - **Nemotron-3 Diarization Model**: [nvidia/Nemotron-3-Diarization on Hugging Face](https://huggingface.co/nvidia/Nemotron-3-Diarization)
-- **Technical Blog & Integration Guide**: [Know Who Spoke When: Build Real-Time, Multi-Speaker AI with NVIDIA Nemotron 3 Diarization](https://huggingface.co/blog/nvidia-nemotron-3-diarization)
-
----
-
-### Beta Status & Reviewer Note:
-> [!NOTE]
-> **Beta Feature Notice**: Diarization is in early stages and should be considered **Beta**.
-> If preferred during review, the new **Diarization settings** panel can be easily relocated under a **Beta** settings tab instead of general settings. Feedback on default detection thresholds and UI placement is very welcome!
+- **Technical Overview**: [Know Who Spoke When: Build Real-Time, Multi-Speaker AI with NVIDIA Nemotron 3 Diarization](https://huggingface.co/blog/nvidia-nemotron-3-diarization)
 
 ---
 
 ### Key Changes:
 
 #### 1. NVIDIA Nemotron-3 Diarization Engine (Sortformer v3)
-- **On-Device ONNX Runtime Execution**: Implemented the Nemotron-3 Diarization engine (`nemotron3_diar_v3.onnx`) with Mel preprocessor (`nemo128.onnx`), supporting up to 8 concurrent speakers.
-- **Sliding FIFO Buffer & Speaker Cache (`spkcache`)**: Implemented sliding-window audio chunk buffering (FIFO max 264 frames) with long-term speaker embedding memory to maintain speaker identity continuity across conversational pauses.
-- **Automated Model Manager**: Added automated downloader with progress reporting, integrity checks, and local file verification in `diarization/download.rs`.
+- **On-Device ONNX Runtime Execution**: Added `nemotron.rs` implementing NVIDIA Sortformer v3 (`nemotron3_diar_v3.onnx` + Mel preprocessor `nemo128.onnx`), supporting up to 8 concurrent speakers fully offline.
+- **Sliding FIFO Buffer & Speaker Cache (`spkcache`)**: Implemented sliding-window chunk buffering (264 frames FIFO) with long-term speaker embedding caching to maintain speaker identity continuity across conversational pauses.
+- **Dual-Engine Architecture**: Integrated Nemotron-3 alongside the existing Pyannote (`segmentation-3.0`) pipeline in `diarization/mod.rs` and `diarization/online.rs`, allowing users to switch between engines seamlessly.
+- **Model Downloader**: Added download and integrity verification support for Nemotron-3 assets in `diarization/download.rs`.
 
 #### 2. Sentence-Level Turn Splitting & Chronological Segmentation
-- **Sub-Chunk Boundary Splitting**: Solved the issue where sequential speech from multiple speakers within a single STT chunk was lumped into compound labels (`"Speaker 1 + Speaker 2"`). 
-- **Database Turn Splitting**: Transcripts are segmented at speaker boundaries into individual chronological turns with accurate audio start/end timestamps and distinct speaker assignments.
-- **Simultaneous Overlap vs. Alternation**: Added high-confidence thresholds (minimum 40% duration and 1.5s concurrent overlap) to distinguish genuine simultaneous cross-talk from rapid conversational turn-taking.
+- **Sub-Chunk Transition Detection**: Solved the issue where sequential speech from multiple speakers within a single STT chunk was lumped into compound labels (e.g. `"Speaker 1 + Speaker 2"`).
+- **Database Turn Segmentation**: Uses sentence-boundary chunking (`split_sentences_into_chunks`) to segment transcripts into separate chronological turns with accurate audio start/end timestamps and distinct speaker assignments.
+- **True Overlap vs. Alternation**: Added confidence thresholds (minimum 40% duration and 1.5s concurrent overlap) so compound labels are only applied when speakers genuinely talk simultaneously.
 
 #### 3. Dual-Track Acoustic Bleed Filtering
-- **Microphone Bleed Suppression**: Dual-track recordings (mic + system loopback) now filter low-volume microphone bleed of remote participant voices, preventing false `"You + Speaker 1"` compound labels during remote speaker turns.
-- **Source Track Affinity**: Track hints (user mic vs. remote system audio) are preserved and prioritized during speaker clustering.
+- **Microphone Bleed Suppression**: Dual-track recordings (microphone + system loopback) now filter out low-volume microphone bleed of remote participant voices, preventing false `"You + Speaker 1"` attributions during remote speaker turns.
+- **Source Track Affinity**: Track hints (user mic vs. remote audio) are preserved and prioritized during speaker clustering.
 
-#### 4. Diarization Settings Panel (`DiarizationSettings.tsx`)
-- **Interactive Management UI**: Added a dedicated Diarization panel in Settings.
-- **Model Downloader & Status**: Users can download, verify, and inspect the Nemotron-3 ONNX model status directly from the app.
-- **Configurable Parameters**: Configurable sliders for detection sensitivity threshold and maximum speaker count.
+#### 4. Diarization Settings UI Updates (`DiarizationSettings.tsx`)
+- **Engine Selector**: Users can switch between **Pyannote (Bundled / Lightweight)** and **NVIDIA Nemotron-3 (Sortformer v3)**.
+- **Nemotron-3 Model Downloader**: Download progress bar and status indicator for Nemotron-3 ONNX assets.
+- **Fine-Tuning Controls**: Interactive sliders for Nemotron-3 Max Speakers (2 to 8) and Speech Detection Threshold (0.10 to 0.90).
+- **Model Directory Launcher**: Added "Open in Explorer" button to view and manage downloaded ONNX models.
+- **Dark Mode / Theming Polish**: Updated layout and styling with `var(--af-*)` theme tokens and dark mode colors.
 
-#### 5. Windows Build Reliability & CUDA 13.3 GPU Acceleration
-- **CUDA 13.3 & MSVC Modern Preprocessor Fix**: Resolved MSVC compiler fatal errors (`C1001` compiler crash and `C1189` CUB C++17 requirement) by properly configuring `--std=c++17`, `/Zc:preprocessor`, and `-DCCCL_IGNORE_DEPRECATED_CPP_DIALECT` across `.cargo/config.toml`, `build-gpu.bat`, `dev-gpu.bat`, and `tauri-auto.js`.
-- **Target Architectures**: Configured `CMAKE_CUDA_ARCHITECTURES="75;80;86;89;120"` to support modern NVIDIA hardware (RTX 20, 30, 40, and 50-series Blackwell) while avoiding deprecated Maxwell architectures (`compute_52`) that caused CMake compiler checks to fail under CUDA 13.
-- **GPU Auto-Detection**: Corrected release version checking in `auto-detect-gpu.js` to ensure CUDA 13+ environments are properly recognized as GPU-accelerated.
+#### 5. Windows CUDA 13.3 & Visual Studio 18 GPU Build Compatibility
+- **MSVC Modern Preprocessor**: Configured `/Zc:preprocessor`, `--std=c++17`, `-DCCCL_IGNORE_DEPRECATED_CPP_DIALECT`, and `-DCCCL_IGNORE_MSVC_TRADITIONAL_PREPROCESSOR_WARNING` across `.cargo/config.toml`, `build-gpu.bat`, `dev-gpu.bat`, and `tauri-auto.js` to fix MSVC fatal compiler errors (`C1001` and `C1189`).
+- **Target Architectures**: Configured `CMAKE_CUDA_ARCHITECTURES="75;80;86;89;120"` to support modern NVIDIA GPUs (RTX 20, 30, 40, and 50-series Blackwell) while removing deprecated architectures (`compute_52`) that cause CMake failures on CUDA 13.
+- **Environment Detection**: Added detection for Visual Studio 18 Build Tools and updated CUDA release detection in `auto-detect-gpu.js` to prevent accidental CPU fallback on CUDA 13+.
 
-#### 6. Transcription Engine Polish
-- Cleaned up transcription engine selection in settings, retranscription dialogs, and audio import to reliably use Parakeet (recommended for live) and Whisper (with vocabulary hints for post-call).
+#### 6. UI Polish & Application Resilience
+- **Transcript Settings**: Refined `TranscriptSettings.tsx`, `ParakeetModelManager.tsx`, and `WhisperModelManager.tsx` with clean responsive cards, dark mode styling, and robust model loading fallbacks.
+- **Startup Safety Watchdog**: Added a safety timer in `layout.tsx` to prevent blank startup screens if an invoke times out, and converted crash reporting into a non-blocking overlay.
 
 ---
 
 ## Related Issue
-Addresses speaker diarization integration, multi-speaker turn segmentation, Windows CUDA GPU acceleration, and build compatibility with CUDA 13.3.
+Enhances offline speaker diarization, resolves multi-speaker turn segmentation, and fixes Windows CUDA 13.3 compilation.
 
 ---
 
 ## Type of Change
-- [x] Bug fix (non-breaking change which fixes an issue)
 - [x] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+- [x] Bug fix (non-breaking change which fixes an issue)
 - [x] Performance improvement
 - [x] Code refactoring
-- [ ] Documentation update
 
 ---
 
 ## Testing
-- [x] Tested on Windows 11 with an NVIDIA RTX 5080 (Blackwell architecture, CUDA 13.3).
+- [x] Tested on Windows 11 with NVIDIA RTX 5080 (Blackwell architecture, CUDA 13.3).
 - [x] Verified full production release build compilation (`build-gpu.bat` / Next.js static export / Tauri NSIS bundle).
-- [x] Verified Nemotron-3 model downloading and ONNX Runtime execution.
-- [x] Verified turn splitting and speaker attribution on multi-speaker meeting recordings.
+- [x] Verified Nemotron-3 model downloading, SHA-256 verification, and ONNX Runtime execution.
+- [x] Verified switching between Pyannote and Nemotron-3 engines in Settings.
+- [x] Verified sentence-level turn splitting on multi-speaker meeting recordings.
 - [x] Verified CUDA execution provider correctly active at runtime without CPU fallback warnings.
+- [x] Verified TypeScript compilation (`pnpm tsc --noEmit` passed with 0 errors).
 
 ---
 
 ## Checklist
 - [x] Code follows project style guidelines.
-- [x] Self-reviewed the code changes.
+- [x] Self-reviewed the code changes against `TylerBuza/Meetily-ActuallyFree:main`.
 - [x] Added comments for diarization math, FIFO buffer management, and speaker caching.
 - [x] Verified TypeScript compilation (`pnpm tsc --noEmit` succeeded with 0 errors).
 - [x] Verified Rust compilation (`cargo check --features cuda` and release build succeeded).
@@ -80,18 +79,6 @@ Addresses speaker diarization integration, multi-speaker turn segmentation, Wind
 
 ---
 
-## Additional Notes
-- To build the release version on Windows with CUDA acceleration:
-  ```cmd
-  cd frontend
-  build-gpu.bat
-  ```
-- Output binaries:
-  - Portable EXE: `target\release\meetily.exe`
-  - Windows Setup Installer: `target\release\bundle\nsis\Meetily - Actually Free_0.2.16_x64-setup.exe`
-
----
-
 ## AI Disclaimer
 > [!NOTE]
-> **AI Disclaimer**: This feature and pull request were developed with AI assistance, but have been thoroughly and rigorously tested end-to-end on Windows with an active NVIDIA GPU and CUDA environment.
+> **AI Disclaimer**: This feature and pull request were developed with AI assistance, and thoroughly tested end-to-end on Windows with an active NVIDIA GPU and CUDA environment.
