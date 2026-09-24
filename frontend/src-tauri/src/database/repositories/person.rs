@@ -418,7 +418,7 @@ impl PeopleRepository {
         })
     }
 
-    async fn reconcile_speaker_identity(
+    pub(crate) async fn reconcile_speaker_identity(
         tx: &mut Transaction<'_, Sqlite>,
         meeting_id: &str,
         from: &str,

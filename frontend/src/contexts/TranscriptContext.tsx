@@ -521,6 +521,10 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
       return next;
     });
 
+    transcriptsRef.current = transcriptsRef.current.map(t =>
+      t.speaker?.trim() === trimmedOld ? { ...t, speaker: trimmedNew } : t
+    );
+
     setTranscripts(prev =>
       prev.map(t => (t.speaker?.trim() === trimmedOld ? { ...t, speaker: trimmedNew } : t))
     );
@@ -552,6 +556,10 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
       speakerMapRef.current = next;
       return next;
     });
+
+    transcriptsRef.current = transcriptsRef.current.map(t =>
+      t.speaker?.trim() === trimmedSource ? { ...t, speaker: trimmedTarget } : t
+    );
 
     setTranscripts(prev =>
       prev.map(t => (t.speaker?.trim() === trimmedSource ? { ...t, speaker: trimmedTarget } : t))
