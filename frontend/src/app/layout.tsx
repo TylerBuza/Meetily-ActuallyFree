@@ -3,9 +3,7 @@
 import './globals.css'
 import dynamic from 'next/dynamic'
 import { Source_Sans_3 } from 'next/font/google'
-import Sidebar from '@/components/Sidebar'
 import { SidebarProvider } from '@/components/Sidebar/SidebarProvider'
-import MainContent from '@/components/MainContent'
 import AnalyticsProvider from '@/components/AnalyticsProvider'
 import { Toaster, toast } from 'sonner'
 import "sonner/dist/styles.css"
@@ -51,26 +49,47 @@ const CrashReportDialog = dynamic(
   { ssr: false }
 )
 
-// Global safety handler for ChunkLoadError (e.g. Next.js on-demand compilation timeout while cargo builds)
-if (typeof window !== 'undefined') {
-  const handleChunkError = (err: any) => {
-    const message = err?.message || err?.reason?.message || '';
-    const name = err?.name || err?.reason?.name || '';
-    if (name === 'ChunkLoadError' || /loading chunk .* failed/i.test(message)) {
-      const storageKey = 'meetily_chunk_reload_timestamp';
-      const lastReload = sessionStorage.getItem(storageKey);
-      const now = Date.now();
-      if (!lastReload || now - parseInt(lastReload, 10) > 10000) {
-        sessionStorage.setItem(storageKey, String(now));
-        console.warn('ChunkLoadError detected; refreshing page to recover compiled chunk...');
-        window.location.reload();
-      }
-    }
-  };
+const Sidebar = dynamic(
+  () => import('@/components/Sidebar'),
+  { ssr: false }
+)
+const MainContent = dynamic(
+  () => import('@/components/MainContent'),
+  { ssr: false }
+)
 
-  window.addEventListener('error', handleChunkError);
-  window.addEventListener('unhandledrejection', handleChunkError);
-}
+// Early inline handler executed in <head> before chunk scripts evaluate.
+// Catches ChunkLoadError (such as on-demand compilation delay on cold launch)
+// and reloads the window after a brief pause so pre-compiled chunks load instantly.
+const inlineChunkErrorHandler = `
+(function() {
+  var RELOAD_KEY = 'meetily_chunk_reload';
+  function handleChunkError(e) {
+    try {
+      var msg = (e && e.message) || (e && e.reason && e.reason.message) || '';
+      var name = (e && e.name) || (e && e.reason && e.reason.name) || '';
+      var isChunkError = name === 'ChunkLoadError' ||
+        /loading chunk .* failed/i.test(msg) ||
+        /timeout: .*_next\\/static/i.test(msg) ||
+        /failed to fetch .*_next\\/static/i.test(msg);
+
+      if (isChunkError) {
+        var last = sessionStorage.getItem(RELOAD_KEY);
+        var now = Date.now();
+        if (!last || (now - parseInt(last, 10)) > 3000) {
+          sessionStorage.setItem(RELOAD_KEY, String(now));
+          console.warn('[Meetily] ChunkLoadError detected in WebView2. Reloading in 300ms...');
+          setTimeout(function() {
+            window.location.reload();
+          }, 300);
+        }
+      }
+    } catch (_) {}
+  }
+  window.addEventListener('error', handleChunkError, true);
+  window.addEventListener('unhandledrejection', handleChunkError, true);
+})();
+`;
 
 const sourceSans3 = Source_Sans_3({
   subsets: ['latin'],
@@ -396,6 +415,9 @@ export default function RootLayout({
   if (typeof window !== 'undefined' && window.location.pathname.startsWith('/minibar')) {
     return (
       <html lang="en" className="dark minibar-window">
+        <head>
+          <script dangerouslySetInnerHTML={{ __html: inlineChunkErrorHandler }} />
+        </head>
         <body className={`${sourceSans3.variable} font-sans antialiased bg-transparent`}>
           {children}
         </body>
@@ -405,6 +427,9 @@ export default function RootLayout({
 
   return (
     <html lang="en" className="dark">
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: inlineChunkErrorHandler }} />
+      </head>
       <body className={`${sourceSans3.variable} font-sans antialiased`}>
         {!startupResolved ? (
           <div className="flex h-screen items-center justify-center bg-[var(--af-bg)]">
