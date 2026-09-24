@@ -100,7 +100,7 @@ async fn start_retranscription<R: Runtime>(
     provider: Option<String>,
     initial_prompt: Option<String>,
 ) -> Result<RetranscriptionResult> {
-    let use_parakeet = matches!(provider.as_deref(), Some("parakeet") | Some("qwen") | Some("qwen3") | Some("qwen3-asr"));
+    let use_parakeet = matches!(provider.as_deref(), Some("parakeet"));
     let batch_lease = super::common::acquire_stt_batch_lease().await;
     let result = run_retranscription(
         app.clone(),
@@ -248,7 +248,7 @@ async fn run_retranscription<R: Runtime>(
     let sources = find_retranscription_sources(&folder_path, &audio_path);
 
     // Determine which provider to use (default to whisper)
-    let use_parakeet = matches!(provider.as_deref(), Some("parakeet") | Some("qwen") | Some("qwen3") | Some("qwen3-asr"));
+    let use_parakeet = matches!(provider.as_deref(), Some("parakeet"));
 
     info!(
         "Starting retranscription for meeting {} with language {:?}, model {:?}, provider {:?}",
@@ -751,7 +751,7 @@ async fn get_or_init_parakeet<R: Runtime>(
         Some(e) => {
             // Determine which model to use
             let target_model = match requested_model {
-                Some(model) if !model.to_lowercase().contains("qwen") && !model.is_empty() => {
+                Some(model) if !model.is_empty() => {
                     model.to_string()
                 }
                 _ => get_configured_parakeet_model(app).await?,
@@ -830,7 +830,7 @@ async fn get_configured_parakeet_model<R: Runtime>(app: &AppHandle<R>) -> Result
         Some((provider, model)) => {
             info!("Found transcript config: provider={}, model={}", provider, model);
 
-            if provider == "parakeet" && !model.to_lowercase().contains("qwen") {
+            if provider == "parakeet" {
                 Ok(model)
             } else {
                 // Default to configured Parakeet model

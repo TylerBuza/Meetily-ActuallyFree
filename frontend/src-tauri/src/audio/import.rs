@@ -841,7 +841,7 @@ async fn get_or_init_parakeet<R: Runtime>(
     match engine {
         Some(e) => {
             let target_model = match requested_model {
-                Some(model) if !model.to_lowercase().contains("qwen") && !model.is_empty() => {
+                Some(model) if !model.is_empty() => {
                     model.to_string()
                 }
                 _ => get_configured_model(app, "parakeet").await?,

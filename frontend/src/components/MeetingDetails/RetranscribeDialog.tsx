@@ -59,7 +59,7 @@ interface WhisperVocabularyConfig {
 }
 
 interface PostCallTranscriptConfig {
-  provider: 'live' | 'whisper' | 'parakeet' | 'qwen';
+  provider: 'live' | 'whisper' | 'parakeet';
   model: string;
 }
 

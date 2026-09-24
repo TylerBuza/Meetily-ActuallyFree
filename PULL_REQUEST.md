@@ -1,6 +1,6 @@
 ## Description
 
-This PR introduces end-to-end speaker diarization support using NVIDIA Parakeet + Nemotron-3 (Sortformer architecture), an interactive post-meeting speaker renaming modal with live audio snippet playback, and critical stability fixes for Windows builds and UI initialization.
+This PR introduces end-to-end speaker diarization support using NVIDIA Parakeet + Nemotron-3 (Sortformer architecture), an interactive post-meeting speaker renaming modal with live audio snippet playback, resilient SQLite database migrations, and critical fixes for Windows CUDA GPU builds and WebView2 UI initialization.
 
 ### Reference Links:
 - **Nemotron-3 Diarization Model**: [nvidia/Nemotron-3-Diarization on Hugging Face](https://huggingface.co/nvidia/Nemotron-3-Diarization)
@@ -10,7 +10,7 @@ This PR introduces end-to-end speaker diarization support using NVIDIA Parakeet 
 
 ### Beta Status & Reviewer Note:
 > [!NOTE]
-> **Beta Feature Notice**: This implementation is in early stages and should be considered **Beta**.
+> **Beta Feature Notice**: This diarization implementation is in early stages and should be considered **Beta**.
 > If preferred during review, the new **Diarization settings** panel can be easily relocated under the **Beta** settings tab instead of general settings. Feedback on UI placement and default thresholds is very welcome!
 
 ---
@@ -24,20 +24,21 @@ This PR introduces end-to-end speaker diarization support using NVIDIA Parakeet 
 - **Sliding FIFO Buffer & Speaker Cache (`spkcache`)**: Implemented sliding-window audio chunk buffering with long-term speaker embedding memory to maintain consistent speaker identities across conversational pauses.
 - **Native Tauri Commands**: Added backend commands for audio feature extraction, speaker diarization inference, and per-speaker WAV snippet extraction.
 
-#### 2. Qwen3-ASR Engine Integration (0.6B & 1.7B)
-- **Live & Post-Call Transcription**: Added Alibaba's Qwen3-ASR models as selectable transcription engines in settings, post-call processing, and retranscription dialogs.
-- **Verified ONNX Model Management**: Automated downloads with SHA256 integrity verification, pause/resume download state, and model deletion support directly in the settings UI.
-
-#### 3. Speaker Renaming Modal with Live Audio Preview
+#### 2. Speaker Renaming Modal with Live Audio Preview
 - **Interactive Modal (`SpeakerRenameModal.tsx`)**: Easily accessed via the "Rename Speakers" button in the meeting details view.
 - **Live Audio Playback**: Users can listen to a short audio snippet for any detected speaker directly inside the modal to accurately verify identity before renaming.
 - **Global Transcript Updating**: Renaming updates all corresponding turns across the entire meeting transcript, updating both the SQLite database and client-side virtualized transcript view instantly.
 
-#### 4. SQLite Database Resilience & Self-Healing Migrations
+#### 3. SQLite Database Resilience & Self-Healing Migrations
 - Added self-healing schema migration logic in `database/manager.rs` to handle legacy schemas, missing columns, or orphaned transcript entries gracefully without app crashes.
 - Added database methods for cascading speaker rename updates across meetings and transcripts.
 
-#### 5. Windows Build & UI Startup Reliability Fixes
+#### 4. Windows Build Reliability & CUDA 13+ GPU Acceleration
+- **CUDA 13.x & MSVC Preprocessor Fix**: Resolved MSVC C1001 compiler crashes during ONNX / CCCL compilation under CUDA 13.3 by configuring `/Zc:preprocessor` and `-DCCCL_IGNORE_MSVC_TRADITIONAL_PREPROCESSOR_WARNING` across Cargo `.cargo/config.toml`, `build-gpu.bat`, and `tauri-auto.js`.
+- **GPU Auto-Detection**: Fixed a version-checking bug in `scripts/auto-detect-gpu.js` that previously forced fallback to CPU builds on CUDA 13+ environments.
+- **Hardware Support**: Tested and validated on modern NVIDIA hardware (including RTX 50-series Blackwell architecture) with native ONNX Runtime CUDA Execution Provider.
+
+#### 5. Windows WebView2 Startup & UI Responsiveness Fixes
 - **WebView2 Race Condition Fix**: Created `check-or-start-dev.js` and `"dev:ready"` pre-warming script to ensure Next.js has completed compiling the root route before Tauri attaches the WebView2 window.
 - **Process Cleanup**: Updated `dev-gpu.bat` and `build-gpu.bat` to terminate orphaned `msedgewebview2.exe` background processes that previously locked the `EBWebView` cache directory.
 - **Window Activation & Focus**: Added explicit window focus flags in `tauri.conf.json`, startup focus triggers in `lib.rs`, and a client-side pointer-events recovery watchdog in `app/layout.tsx`.
@@ -45,7 +46,7 @@ This PR introduces end-to-end speaker diarization support using NVIDIA Parakeet 
 ---
 
 ## Related Issue
-Addresses speaker diarization integration, speaker identification workflows, and Windows WebView2 UI responsiveness.
+Addresses speaker diarization integration, speaker identification workflows, Windows CUDA GPU acceleration, and Windows WebView2 UI responsiveness.
 
 ---
 
@@ -60,12 +61,13 @@ Addresses speaker diarization integration, speaker identification workflows, and
 ---
 
 ## Testing
-- [x] Manual testing performed on Windows 11 with NVIDIA CUDA acceleration.
+- [x] Manual testing performed on Windows 11 with NVIDIA CUDA acceleration (RTX 5080, CUDA 13.3).
 - [x] Verified full production release build compilation (`build-gpu.bat` / Next.js export / Tauri NSIS bundle).
 - [x] Verified Parakeet + Nemotron-3 word-level alignment and speaker assignment.
 - [x] Verified speaker renaming modal with live WAV playback and transcript persistence.
 - [x] Verified dev server pre-warming and eliminated blank/frozen UI state on launch.
 - [x] Verified SQLite database migration and self-healing with existing user databases.
+- [x] Verified GPU execution provider correctly active at runtime without fallback warning banner.
 
 ---
 

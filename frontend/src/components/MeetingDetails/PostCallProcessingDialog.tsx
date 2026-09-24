@@ -51,12 +51,12 @@ interface RetranscriptionError {
 }
 
 interface ModelChoice {
-  provider: 'whisper' | 'parakeet' | 'qwen';
+  provider: 'whisper' | 'parakeet';
   name: string;
 }
 
 interface PostCallTranscriptConfig {
-  provider: 'live' | 'whisper' | 'parakeet' | 'qwen';
+  provider: 'live' | 'whisper' | 'parakeet';
   model: string;
 }
 
@@ -64,17 +64,9 @@ async function resolveEnhancementModel(
   configuredProvider?: string,
   configuredModel?: string,
 ): Promise<ModelChoice> {
-  if (configuredProvider === 'qwen' || configuredProvider === 'qwen3' || configuredProvider === 'qwen3-asr') {
-    return {
-      provider: 'qwen',
-      name: configuredModel || 'Qwen3-ASR-1.7B',
-    };
-  }
-
-  const [whisperModels, parakeetModels, qwenModels] = await Promise.all([
+  const [whisperModels, parakeetModels] = await Promise.all([
     invoke<RawModelInfo[]>('whisper_get_available_models').catch(() => []),
     invoke<RawModelInfo[]>('parakeet_get_available_models').catch(() => []),
-    invoke<RawModelInfo[]>('qwen_get_available_models').catch(() => []),
   ]);
   const available: ModelChoice[] = [
     ...parakeetModels
@@ -83,9 +75,6 @@ async function resolveEnhancementModel(
     ...whisperModels
       .filter((model) => model.status === 'Available')
       .map((model) => ({ provider: 'whisper' as const, name: model.name })),
-    ...qwenModels
-      .filter((model) => model.status === 'Available')
-      .map((model) => ({ provider: 'qwen' as const, name: model.name })),
   ];
   const normalizedProvider = configuredProvider === 'localWhisper'
     ? 'whisper'
@@ -94,7 +83,7 @@ async function resolveEnhancementModel(
     (model) => model.provider === normalizedProvider && model.name === configuredModel,
   );
   if (configured) return configured;
-  if (normalizedProvider === 'whisper' || normalizedProvider === 'parakeet' || normalizedProvider === 'qwen') {
+  if (normalizedProvider === 'whisper' || normalizedProvider === 'parakeet') {
     const sameProvider = available.find((model) => model.provider === normalizedProvider);
     if (sameProvider) return sameProvider;
     throw new Error(`No downloaded ${normalizedProvider} model is available for enhancement.`);

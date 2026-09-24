@@ -9,7 +9,7 @@ export interface RawModelInfo {
 }
 
 export interface ModelOption {
-  provider: 'whisper' | 'parakeet' | 'qwen';
+  provider: 'whisper' | 'parakeet';
   name: string;
   displayName: string;
   size_mb: number;
@@ -21,7 +21,7 @@ interface TranscriptModelConfig {
 }
 
 /**
- * Custom hook for fetching and managing transcription models (Whisper, Parakeet, and Qwen3-ASR).
+ * Custom hook for fetching and managing transcription models (Whisper and Parakeet).
  *
  * This hook centralizes the model fetching logic that was previously duplicated
  * in ImportAudioDialog and RetranscribeDialog components.
@@ -33,7 +33,6 @@ export function useTranscriptionModels(transcriptModelConfig: TranscriptModelCon
   const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
   const [hasWhisperModel, setHasWhisperModel] = useState(false);
   const [hasParakeetModel, setHasParakeetModel] = useState(false);
-  const [hasQwenModel, setHasQwenModel] = useState(true);
   const [selectedModelKey, setSelectedModelKey] = useState<string>('');
   const [loadingModels, setLoadingModels] = useState(false);
   // Track whether the user has manually changed the model selection
@@ -85,24 +84,6 @@ export function useTranscriptionModels(transcriptModelConfig: TranscriptModelCon
       setHasParakeetModel(false);
     }
 
-    // Fetch Qwen3-ASR models
-    try {
-      const qwenRaw = await invoke<Array<{ name: string; size_mb: number; status: string }>>('qwen_get_available_models');
-      const availableQwen = qwenRaw
-        .filter((m) => m.status === 'Available')
-        .map((m) => ({
-          provider: 'qwen' as const,
-          name: m.name,
-          displayName: `🌟 Qwen3: ${m.name}`,
-          size_mb: m.size_mb,
-        }));
-      setHasQwenModel(availableQwen.length > 0);
-      allModels.push(...availableQwen);
-    } catch (err) {
-      console.error('Failed to fetch Qwen models:', err);
-      setHasQwenModel(false);
-    }
-
     setAvailableModels(allModels);
 
     // Set default model based on user's saved configuration
@@ -115,14 +96,11 @@ export function useTranscriptionModels(transcriptModelConfig: TranscriptModelCon
     const configuredMatch = allModels.find(
       (m) =>
         ((configuredProvider === 'localWhisper' || configuredProvider === 'whisper') && m.provider === 'whisper' && m.name === configuredModel) ||
-        (configuredProvider === 'parakeet' && m.provider === 'parakeet' && m.name === configuredModel) ||
-        ((configuredProvider === 'qwen' || configuredProvider === 'qwen3' || configuredProvider === 'qwen3-asr') && m.provider === 'qwen' && m.name === configuredModel)
+        (configuredProvider === 'parakeet' && m.provider === 'parakeet' && m.name === configuredModel)
     );
     const normalizedProvider = configuredProvider === 'localWhisper'
       ? 'whisper'
-      : (configuredProvider === 'qwen3' || configuredProvider === 'qwen3-asr')
-        ? 'qwen'
-        : configuredProvider;
+      : configuredProvider;
     const configuredProviderMatch = allModels.find((model) => model.provider === normalizedProvider);
 
     // Only set default model if user hasn't manually selected one
@@ -154,7 +132,6 @@ export function useTranscriptionModels(transcriptModelConfig: TranscriptModelCon
     loadingModels,
     hasWhisperModel,
     hasParakeetModel,
-    hasQwenModel,
     fetchModels,
     resetSelection,
   };

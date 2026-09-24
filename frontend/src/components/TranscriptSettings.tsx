@@ -1,18 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { BookOpen, Check, CheckCircle2, ChevronDown, Clock3, Languages, Loader2, Radio, Sparkles, Zap } from 'lucide-react';
+import { BookOpen, Check, CheckCircle2, ChevronDown, Clock3, Languages, Loader2, Radio, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { Textarea } from './ui/textarea';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { ModelManager } from './WhisperModelManager';
 import { ParakeetModelManager } from './ParakeetModelManager';
-import { QwenModelManager } from './QwenModelManager';
 import type { RawModelInfo } from '@/hooks/useTranscriptionModels';
 import { isVisibleParakeetModel } from '@/lib/parakeet';
 
 export interface TranscriptModelProps {
-    provider: 'localWhisper' | 'parakeet' | 'qwen' | 'deepgram' | 'elevenLabs' | 'groq' | 'openai';
+    provider: 'localWhisper' | 'parakeet' | 'deepgram' | 'elevenLabs' | 'groq' | 'openai';
     model: string;
     apiKey?: string | null;
 }
@@ -29,12 +28,12 @@ interface WhisperVocabularyConfig {
 }
 
 interface PostCallTranscriptConfig {
-    provider: 'live' | 'whisper' | 'parakeet' | 'qwen';
+    provider: 'live' | 'whisper' | 'parakeet';
     model: string;
 }
 
 interface InstalledModel {
-    provider: 'whisper' | 'parakeet' | 'qwen';
+    provider: 'whisper' | 'parakeet';
     name: string;
 }
 
@@ -64,14 +63,10 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
     const postCallSectionRef = useRef<HTMLDivElement>(null);
 
     const refreshInstalledModels = useCallback(async () => {
-        const [whisperModels, parakeetModels, qwenModels] = await Promise.all([
+        const [whisperModels, parakeetModels] = await Promise.all([
             invoke<RawModelInfo[]>('whisper_get_available_models').catch(() => []),
             invoke<RawModelInfo[]>('parakeet_get_available_models').catch(() => []),
-            invoke<Array<{ name: string; status: string }>>('qwen_get_available_models').catch(() => []),
         ]);
-        const availableQwen = (qwenModels || [])
-            .filter((model) => model.status === 'Available')
-            .map((model) => ({ provider: 'qwen' as const, name: model.name }));
         setInstalledModels([
             ...parakeetModels
                 .filter((model) => model.status === 'Available' && isVisibleParakeetModel(model.name))
@@ -79,10 +74,6 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
             ...whisperModels
                 .filter((model) => model.status === 'Available')
                 .map((model) => ({ provider: 'whisper' as const, name: model.name })),
-            ...(availableQwen.length > 0 ? availableQwen : [
-                { provider: 'qwen' as const, name: 'Qwen3-ASR-0.6B' },
-                { provider: 'qwen' as const, name: 'Qwen3-ASR-1.7B' },
-            ]),
         ]);
     }, []);
 
@@ -125,7 +116,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
             });
     }, []);
 
-    const saveLiveConfig = async (provider: 'localWhisper' | 'parakeet' | 'qwen', model: string): Promise<boolean> => {
+    const saveLiveConfig = async (provider: 'localWhisper' | 'parakeet', model: string): Promise<boolean> => {
         if (liveSaveInFlightRef.current) return false;
         liveSaveInFlightRef.current = true;
         setIsSavingLive(true);
@@ -216,20 +207,6 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
         return saved;
     };
 
-    const handleLiveQwenModelSelect = async (modelName: string) => {
-        if (!modelName) return;
-        const saved = await saveLiveConfig('qwen', modelName);
-        void refreshInstalledModels();
-        return saved;
-    };
-
-    const handlePostCallQwenSelect = async (modelName: string) => {
-        if (!modelName) return;
-        const saved = await savePostCallConfig({ provider: 'qwen', model: modelName });
-        void refreshInstalledModels();
-        return saved;
-    };
-
     const saveVocabulary = async () => {
         setIsSavingVocabulary(true);
         setVocabularySaved(false);
@@ -251,7 +228,6 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
 
     const installedWhisperModels = installedModels.filter((model) => model.provider === 'whisper');
     const installedParakeetModel = installedModels.find((model) => model.provider === 'parakeet');
-    const installedQwenModels = installedModels.filter((model) => model.provider === 'qwen');
 
     const liveWhisperModel = installedWhisperModels.find((model) => model.name === transcriptModelConfig.model)
         || (postCallConfig.provider === 'whisper'
@@ -259,12 +235,8 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
             : undefined)
         || installedWhisperModels[0];
 
-    const liveQwenModel = installedQwenModels.find((model) => model.name === transcriptModelConfig.model)
-        || installedQwenModels.find((model) => model.name === 'Qwen3-ASR-0.6B')
-        || installedQwenModels[0];
-
     const effectivePostCallProvider = postCallConfig.provider === 'live'
-        ? (uiProvider === 'localWhisper' ? 'whisper' : uiProvider === 'qwen' ? 'qwen' : 'parakeet')
+        ? (uiProvider === 'localWhisper' ? 'whisper' : 'parakeet')
         : postCallConfig.provider;
 
     const effectivePostCallModel = postCallConfig.provider === 'live'
@@ -273,10 +245,6 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
 
     const postCallWhisperModel = installedWhisperModels.find((model) => model.name === effectivePostCallModel)
         || installedWhisperModels[0];
-
-    const postCallQwenModel = installedQwenModels.find((model) => model.name === effectivePostCallModel)
-        || installedQwenModels.find((model) => model.name === 'Qwen3-ASR-1.7B')
-        || installedQwenModels[0];
 
     const whisperIsActive = uiProvider === 'localWhisper' || postCallConfig.provider === 'whisper';
     const openWhisperManager = () => {
@@ -293,7 +261,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                     <div className="min-w-0 flex-1">
                         <h3 className="font-semibold text-base text-slate-900 dark:text-slate-100">Live transcription</h3>
                         <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-                            Choose the model used while recording. Select between ultra-fast Parakeet, next-generation Qwen3-ASR, or multilingual Whisper.
+                            Choose the model used while recording. Select between ultra-fast Parakeet or multilingual Whisper.
                         </p>
                     </div>
                 </div>
@@ -412,73 +380,6 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                 Install Whisper for post-call or live use
                             </Button>
                         )}
-                    </div>
-
-                    {/* Qwen3-ASR Live Card */}
-                    <div
-                        className={`space-y-3 rounded-xl p-4 transition-all cursor-pointer ${uiProvider === 'qwen'
-                            ? 'border-2 border-purple-600 dark:border-purple-400 bg-purple-50/90 dark:bg-purple-950/40 ring-2 ring-purple-500/30 dark:ring-purple-400/30 shadow-md'
-                            : 'border-2 border-slate-200 dark:border-slate-700/80 bg-slate-50/70 dark:bg-[#151922] hover:border-purple-400/80 dark:hover:border-purple-500/70 hover:bg-slate-100/80 dark:hover:bg-[#1c2333]'}`}
-                        role="button"
-                        tabIndex={0}
-                        aria-pressed={uiProvider === 'qwen'}
-                        onClick={() => {
-                            if (!isSavingLive) {
-                                void saveLiveConfig('qwen', liveQwenModel?.name || 'Qwen3-ASR-0.6B');
-                            }
-                        }}
-                        onKeyDown={(event) => {
-                            if (!isSavingLive && (event.key === 'Enter' || event.key === ' ')) {
-                                event.preventDefault();
-                                void saveLiveConfig('qwen', liveQwenModel?.name || 'Qwen3-ASR-0.6B');
-                            }
-                        }}
-                    >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div className="flex min-w-0 items-start gap-3">
-                                <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-purple-500 dark:text-purple-400" />
-                                <div>
-                                    <div className="flex flex-wrap items-center gap-2">
-                                        <h4 className="font-semibold text-slate-900 dark:text-slate-100">Qwen3-ASR</h4>
-                                        <span className="rounded-full bg-purple-500/15 border border-purple-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-purple-600 dark:text-purple-300">
-                                            New · 0.6B & 1.7B
-                                        </span>
-                                        <span className="rounded-full bg-blue-500/15 border border-blue-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-300">
-                                            52 Languages
-                                        </span>
-                                    </div>
-                                    <p className="mt-1 text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-                                        Alibaba&apos;s open-source speech model family. Offers 0.6B (streaming/live optimized, 2000x real-time throughput) and 1.7B (SOTA accuracy, multilingual & accented speech).
-                                    </p>
-                                </div>
-                            </div>
-                            {uiProvider === 'qwen' ? (
-                                <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-purple-500/50 bg-purple-500/20 px-2.5 py-1 text-xs font-semibold text-purple-700 dark:text-purple-300 shadow-sm">
-                                    <CheckCircle2 className="h-3.5 w-3.5" /> Selected for live
-                                </span>
-                            ) : (
-                                <span className="inline-flex shrink-0 items-center rounded-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-1 text-xs font-medium text-slate-700 dark:text-slate-200 hover:border-purple-500 hover:text-purple-600 dark:hover:text-purple-300 transition-colors">
-                                    Click to select
-                                </span>
-                            )}
-                        </div>
-                        {liveQwenModel && (
-                            <div className="flex items-center gap-2 pt-1 text-xs text-slate-500 dark:text-slate-400">
-                                <span>Active live model: <strong className="text-slate-800 dark:text-slate-200">{liveQwenModel.name}</strong></span>
-                            </div>
-                        )}
-                        <div
-                            className={`pt-2 ${isSavingLive ? 'pointer-events-none opacity-70' : ''}`}
-                            onClick={(event) => event.stopPropagation()}
-                            onKeyDown={(event) => event.stopPropagation()}
-                        >
-                            <QwenModelManager
-                                selectedModel={uiProvider === 'qwen' ? transcriptModelConfig.model : undefined}
-                                onModelSelect={handleLiveQwenModelSelect}
-                                mode="live"
-                                showFooterBanner={false}
-                            />
-                        </div>
                     </div>
                 </div>
             </section>
@@ -604,73 +505,6 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                             ) : (
                                 <span className="text-xs text-slate-500 dark:text-slate-400">Install Parakeet above</span>
                             )}
-                        </div>
-                    </div>
-
-                    {/* Qwen3-ASR Post-call Card */}
-                    <div
-                        className={`space-y-3 rounded-xl p-4 transition-all cursor-pointer ${effectivePostCallProvider === 'qwen'
-                            ? 'border-2 border-purple-600 dark:border-purple-400 bg-purple-50/90 dark:bg-purple-950/40 ring-2 ring-purple-500/30 dark:ring-purple-400/30 shadow-md'
-                            : 'border-2 border-slate-200 dark:border-slate-700/80 bg-slate-50/70 dark:bg-[#151922] hover:border-purple-400/80 dark:hover:border-purple-500/70 hover:bg-slate-100/80 dark:hover:bg-[#1c2333]'}`}
-                        role="button"
-                        tabIndex={0}
-                        aria-pressed={effectivePostCallProvider === 'qwen'}
-                        onClick={() => {
-                            if (!isLoadingPostCall && !isSavingPostCall) {
-                                void savePostCallConfig({ provider: 'qwen', model: postCallQwenModel?.name || 'Qwen3-ASR-1.7B' });
-                            }
-                        }}
-                        onKeyDown={(event) => {
-                            if (!isLoadingPostCall && !isSavingPostCall && (event.key === 'Enter' || event.key === ' ')) {
-                                event.preventDefault();
-                                void savePostCallConfig({ provider: 'qwen', model: postCallQwenModel?.name || 'Qwen3-ASR-1.7B' });
-                            }
-                        }}
-                    >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div className="flex min-w-0 items-start gap-3">
-                                <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-purple-500 dark:text-purple-400" />
-                                <div>
-                                    <div className="flex flex-wrap items-center gap-2">
-                                        <h4 className="font-semibold text-slate-900 dark:text-slate-100">Qwen3-ASR</h4>
-                                        <span className="rounded-full bg-purple-500/15 border border-purple-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-purple-600 dark:text-purple-300">
-                                            SOTA Accuracy (1.7B / 0.6B)
-                                        </span>
-                                        <span className="rounded-full bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
-                                            Accents & Noise Robust
-                                        </span>
-                                    </div>
-                                    <p className="mt-1 text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-                                        State-of-the-art multilingual accuracy. Qwen3-ASR excels at noisy recordings, multiple speaker accents, and complex conversational speech across 52 languages.
-                                    </p>
-                                </div>
-                            </div>
-                            {effectivePostCallProvider === 'qwen' ? (
-                                <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-purple-500/50 bg-purple-500/20 px-2.5 py-1 text-xs font-semibold text-purple-700 dark:text-purple-300 shadow-sm">
-                                    <CheckCircle2 className="h-3.5 w-3.5" /> Selected for post-call
-                                </span>
-                            ) : (
-                                <span className="inline-flex shrink-0 items-center rounded-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-1 text-xs font-medium text-slate-700 dark:text-slate-200 hover:border-purple-500 hover:text-purple-600 dark:hover:text-purple-300 transition-colors">
-                                    Click to select
-                                </span>
-                            )}
-                        </div>
-                        {postCallQwenModel && (
-                            <p className="text-xs text-slate-500 dark:text-slate-400">
-                                Default post-call model: <strong className="text-slate-800 dark:text-slate-200">{postCallQwenModel.name}</strong>
-                            </p>
-                        )}
-                        <div
-                            className={`pt-2 ${isSavingPostCall ? 'pointer-events-none opacity-70' : ''}`}
-                            onClick={(event) => event.stopPropagation()}
-                            onKeyDown={(event) => event.stopPropagation()}
-                        >
-                            <QwenModelManager
-                                selectedModel={effectivePostCallProvider === 'qwen' ? effectivePostCallModel : undefined}
-                                onModelSelect={handlePostCallQwenSelect}
-                                mode="post-call"
-                                showFooterBanner={false}
-                            />
                         </div>
                     </div>
                 </div>

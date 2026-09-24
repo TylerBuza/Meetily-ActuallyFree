@@ -47,6 +47,17 @@ if (platform === 'linux' && feature === 'cuda') {
   env.CMAKE_POSITION_INDEPENDENT_CODE = 'ON';
 }
 
+if (platform === 'win32' && feature === 'cuda') {
+  console.log('🪟 Windows/CUDA detected: Setting CMAKE and CCCL flags for NVIDIA GPU');
+  env.CMAKE_CUDA_ARCHITECTURES = '75;80;86;89;120';
+  env.CMAKE_CUDA_STANDARD = '17';
+  const ccclFlags = '-DCCCL_IGNORE_MSVC_TRADITIONAL_PREPROCESSOR_WARNING -DCCCL_IGNORE_DEPRECATED_CPP_DIALECT';
+  const zcFlag = '/Zc:preprocessor';
+  env.CMAKE_CUDA_FLAGS = (env.CMAKE_CUDA_FLAGS ? env.CMAKE_CUDA_FLAGS + ' ' : '') + `--std=c++17 ${ccclFlags} -Xcompiler="${zcFlag}"`;
+  env.CL = (env.CL ? env.CL + ' ' : '') + `${ccclFlags} ${zcFlag}`;
+  env._CL_ = (env._CL_ ? env._CL_ + ' ' : '') + `${ccclFlags} ${zcFlag}`;
+}
+
 // Build the tauri command
 let tauriCmd = `tauri ${command}`;
 if (feature && feature !== 'none') {
