@@ -34,9 +34,19 @@ use anyhow::Result;
 #[cfg(any(target_os = "macos", test))]
 use anyhow::{anyhow, Context};
 
-/// Hot source gains for the live capture path (f32 bits). Updated whenever prefs save.
 static MIC_GAIN_BITS: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(1.0f32.to_bits()));
 static SYSTEM_GAIN_BITS: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(1.0f32.to_bits()));
+static REAL_TIME_TRANSCRIPTION: Lazy<std::sync::atomic::AtomicBool> =
+    Lazy::new(|| std::sync::atomic::AtomicBool::new(false));
+
+/// Whether fast real-time transcription is enabled (shorter VAD pause time and max utterance capping).
+pub fn is_real_time_transcription() -> bool {
+    REAL_TIME_TRANSCRIPTION.load(Ordering::Relaxed)
+}
+
+pub fn set_real_time_transcription(enabled: bool) {
+    REAL_TIME_TRANSCRIPTION.store(enabled, Ordering::Relaxed);
+}
 
 /// Current mic gain multiplier (0.5–3.0). Applied after mic loudness normalize.
 pub fn mic_gain() -> f32 {
@@ -76,6 +86,10 @@ pub struct RecordingPreferences {
     /// Gain applied to system audio before meters, VAD, retained tracks, and mixing.
     #[serde(default = "default_system_gain")]
     pub system_gain: f32,
+    /// Faster real-time streaming mode: cuts audio segments frequently (~3.5s) with
+    /// fast pause detection (350ms) to reduce latency, prevent memory bloat, and separate rapid speakers.
+    #[serde(default)]
+    pub real_time_transcription: bool,
     #[cfg(target_os = "macos")]
     #[serde(default)]
     pub system_audio_backend: Option<String>,
@@ -99,6 +113,7 @@ impl Default for RecordingPreferences {
             preferred_system_device: None,
             mic_gain: 1.0,
             system_gain: 1.0,
+            real_time_transcription: false,
             #[cfg(target_os = "macos")]
             system_audio_backend: Some("coreaudio".to_string()),
         }
@@ -318,10 +333,11 @@ pub async fn load_recording_preferences<R: Runtime>(
 
     set_mic_gain_runtime(prefs.mic_gain);
     set_system_gain_runtime(prefs.system_gain);
-    info!("Loaded recording preferences: save_folder={:?}, auto_save={}, format={}, mic={:?}, system={:?}, mic_gain={:.2}, system_gain={:.2}",
+    set_real_time_transcription(prefs.real_time_transcription);
+    info!("Loaded recording preferences: save_folder={:?}, auto_save={}, format={}, mic={:?}, system={:?}, mic_gain={:.2}, system_gain={:.2}, real_time={}",
           prefs.save_folder, prefs.auto_save, prefs.file_format,
            prefs.preferred_mic_device, prefs.preferred_system_device, prefs.mic_gain,
-           prefs.system_gain);
+           prefs.system_gain, prefs.real_time_transcription);
     Ok(prefs)
 }
 
@@ -337,10 +353,10 @@ pub async fn save_recording_preferences<R: Runtime>(
     // next recording startup.
     ensure_recordings_directory(&preferences.save_folder)?;
 
-    info!("Saving recording preferences: save_folder={:?}, auto_save={}, format={}, mic={:?}, system={:?}, mic_gain={:.2}, system_gain={:.2}",
+    info!("Saving recording preferences: save_folder={:?}, auto_save={}, format={}, mic={:?}, system={:?}, mic_gain={:.2}, system_gain={:.2}, real_time={}",
           preferences.save_folder, preferences.auto_save, preferences.file_format,
            preferences.preferred_mic_device, preferences.preferred_system_device,
-           preferences.mic_gain, preferences.system_gain);
+           preferences.mic_gain, preferences.system_gain, preferences.real_time_transcription);
 
     // Get or create store
     let store = app
@@ -365,6 +381,7 @@ pub async fn save_recording_preferences<R: Runtime>(
 
     set_mic_gain_runtime(preferences.mic_gain);
     set_system_gain_runtime(preferences.system_gain);
+    set_real_time_transcription(preferences.real_time_transcription);
     info!("Successfully persisted recording preferences to disk");
 
     // Save backend preference to global config
@@ -626,6 +643,7 @@ mod tests {
         .expect("legacy preferences should deserialize");
 
         assert_eq!(preferences.system_gain, 1.0);
+        assert!(!preferences.real_time_transcription);
     }
 
     #[test]

@@ -13,6 +13,37 @@ pub struct SpeechSegment {
     pub confidence: f32,
 }
 
+/// Searches the trailing `search_samples` of `samples` for the window of length
+/// `sub_window_samples` with the minimum RMS energy. Returns the sample index
+/// at the center of the quietest window to provide a natural split point.
+fn find_split_point(samples: &[f32], search_samples: usize, sub_window_samples: usize) -> usize {
+    if samples.len() <= sub_window_samples {
+        return samples.len();
+    }
+    let search_start = samples.len().saturating_sub(search_samples);
+    let search_slice = &samples[search_start..];
+    if search_slice.len() <= sub_window_samples {
+        return samples.len();
+    }
+
+    let step = 160; // 10ms steps at 16kHz
+    let mut min_energy = f32::MAX;
+    let mut best_cut = samples.len();
+
+    let mut offset = 0;
+    while offset + sub_window_samples <= search_slice.len() {
+        let window = &search_slice[offset..offset + sub_window_samples];
+        let energy: f32 = window.iter().map(|&x| x * x).sum();
+        if energy < min_energy {
+            min_energy = energy;
+            best_cut = search_start + offset + (sub_window_samples / 2);
+        }
+        offset += step;
+    }
+
+    best_cut
+}
+
 /// Processes audio in 30ms chunks but returns complete speech segments
 pub struct ContinuousVadProcessor {
     session: VadSession,
@@ -28,9 +59,23 @@ pub struct ContinuousVadProcessor {
     speech_start_sample: usize,
     // State tracking for smart logging
     last_logged_state: bool,
+    // Maximum samples of continuous speech before force-splitting at a quiet dip (0 = disabled)
+    max_speech_samples: usize,
 }
 
 impl ContinuousVadProcessor {
+    /// Set maximum speech segment duration in milliseconds before force-splitting.
+    /// In real-time streaming mode, this is typically 3500ms (~3.5s).
+    /// In standard mode, this is typically 6000ms (~6.0s) to prevent memory buildup.
+    /// Pass 0 to disable capping.
+    pub fn set_max_speech_duration_ms(&mut self, duration_ms: u32) {
+        if duration_ms == 0 {
+            self.max_speech_samples = 0;
+        } else {
+            self.max_speech_samples = (duration_ms as usize * 16000) / 1000;
+        }
+    }
+
     /// Whether speech has started but has not yet crossed the redemption-time
     /// silence boundary. Live capture uses this to advance only an unfinished
     /// utterance when an audio backend suppresses exact-zero callbacks.
@@ -143,8 +188,17 @@ impl ContinuousVadProcessor {
         // VAD uses 30ms chunks at 16kHz (480 samples)
         let vad_chunk_size = (VAD_SAMPLE_RATE as f32 * 0.03) as usize; // 480 samples
 
-        info!("VAD processor created: input={}Hz, vad={}Hz, chunk_size={} samples",
-              input_sample_rate, VAD_SAMPLE_RATE, vad_chunk_size);
+        // Cap continuous speech to prevent unbounded buffers, memory bloat, and speaker merging:
+        // <= 400ms redemption (real-time streaming): cap at 3.5s (56,000 samples at 16kHz)
+        // > 400ms redemption (standard mode): cap at 6.0s (96,000 samples at 16kHz)
+        let max_speech_samples = if redemption_time_ms <= 400 {
+            56_000
+        } else {
+            96_000
+        };
+
+        info!("VAD processor created: input={}Hz, vad={}Hz, chunk_size={} samples, max_speech={:.1}s",
+              input_sample_rate, VAD_SAMPLE_RATE, vad_chunk_size, max_speech_samples as f32 / 16000.0);
 
         Ok(Self {
             session,
@@ -160,6 +214,7 @@ impl ContinuousVadProcessor {
             speech_start_sample: 0,
             // Initialize state tracking
             last_logged_state: false,
+            max_speech_samples,
         })
     }
 
@@ -291,14 +346,6 @@ impl ContinuousVadProcessor {
     }
 
     fn process_chunk(&mut self, chunk: &[f32]) -> Result<()> {
-        // Track accumulated speech buffer size to detect memory issues
-        let current_speech_size = self.current_speech.len();
-        if current_speech_size > 1_000_000 {
-            // More than ~62 seconds of accumulated speech at 16kHz
-            warn!("VAD: Accumulated speech buffer is large: {} samples ({:.1}s) - possible memory issue",
-                  current_speech_size, current_speech_size as f64 / 16000.0);
-        }
-
         let transitions = self.session.process(chunk)
             .map_err(|e| anyhow!("VAD processing failed: {}", e))?;
 
@@ -311,50 +358,61 @@ impl ContinuousVadProcessor {
         for transition in transitions {
             match transition {
                 VadTransition::SpeechStart { timestamp_ms } => {
-                    // Only log if state changed
-                    if !self.last_logged_state {
-                        debug!("VAD: Speech started at {}ms", timestamp_ms);
-                        self.last_logged_state = true;
+                    // Only initialize start if not already in continuous speech (avoids wiping buffer after a split)
+                    if !self.in_speech {
+                        if !self.last_logged_state {
+                            debug!("VAD: Speech started at {}ms", timestamp_ms);
+                            self.last_logged_state = true;
+                        }
+                        self.in_speech = true;
+                        // Use 16000 (VAD processing rate) since processed_samples counts 16kHz samples
+                        self.speech_start_sample =
+                            self.session_start_sample + (timestamp_ms * 16000 / 1000);
+                        self.current_speech.clear();
                     }
-                    self.in_speech = true;
-                    // Use 16000 (VAD processing rate) since processed_samples counts 16kHz samples
-                    self.speech_start_sample =
-                        self.session_start_sample + (timestamp_ms * 16000 / 1000);
-                    self.current_speech.clear();
                 }
-                VadTransition::SpeechEnd { start_timestamp_ms, end_timestamp_ms, samples } => {
-                    let session_offset_ms = self.session_start_sample * 1000 / 16000;
-                    let start_timestamp_ms = start_timestamp_ms + session_offset_ms;
-                    let end_timestamp_ms = end_timestamp_ms + session_offset_ms;
-                    // Only log if we were previously in speech state
+                VadTransition::SpeechEnd { start_timestamp_ms: _, end_timestamp_ms: _, samples } => {
+                    self.in_speech = false;
                     if self.last_logged_state {
-                        debug!("VAD: Speech ended at {}ms (duration: {}ms)", end_timestamp_ms, end_timestamp_ms - start_timestamp_ms);
+                        debug!("VAD: Speech ended at sample {}", self.processed_samples);
                         self.last_logged_state = false;
                     }
-                    self.in_speech = false;
 
-                    // Use samples from VAD transition if available, otherwise use accumulated samples
-                    let speech_samples = if !samples.is_empty() {
-                        samples
+                    // Use accumulated speech samples if present, otherwise fallback to transition samples
+                    let speech_samples = if !self.current_speech.is_empty() {
+                        std::mem::take(&mut self.current_speech)
                     } else {
-                        self.current_speech.clone()
+                        samples
                     };
 
                     if !speech_samples.is_empty() {
-                        let segment = SpeechSegment {
-                            samples: speech_samples,
-                            start_timestamp_ms: start_timestamp_ms as f64,
-                            end_timestamp_ms: end_timestamp_ms as f64,
-                            confidence: 0.9, // VAD confidence
-                        };
+                        let start_ms = (self.speech_start_sample as f64 / 16000.0) * 1000.0;
+                        let duration_ms = (speech_samples.len() as f64 / 16000.0) * 1000.0;
+                        let end_ms = start_ms + duration_ms;
 
                         info!("VAD: Completed speech segment: {:.1}ms duration, {} samples",
-                              end_timestamp_ms - start_timestamp_ms, segment.samples.len());
+                              duration_ms, speech_samples.len());
 
-                        self.speech_segments.push_back(segment);
+                        self.speech_segments.push_back(SpeechSegment {
+                            samples: speech_samples,
+                            start_timestamp_ms: start_ms,
+                            end_timestamp_ms: end_ms,
+                            confidence: 0.9, // VAD confidence
+                        });
                     }
 
                     self.current_speech.clear();
+
+                    // Recreate session so internal session_audio memory does not grow unbounded
+                    match VadSession::new(self.config) {
+                        Ok(session) => {
+                            self.session = session;
+                            self.session_start_sample = self.processed_samples;
+                        }
+                        Err(_e) => {
+                            self.session.reset();
+                        }
+                    }
                 }
             }
         }
@@ -362,6 +420,45 @@ impl ContinuousVadProcessor {
         // Accumulate speech if we're currently in a speech state
         if self.in_speech {
             self.current_speech.extend_from_slice(chunk);
+
+            // Cap continuous speech to max_speech_samples (e.g. 3.5s in real-time mode, 6.0s in standard mode)
+            // Splitting at the quietest 50ms window avoids mid-phoneme cuts, prevents memory issues,
+            // and lets online diarization cleanly separate rapid consecutive speakers.
+            if self.max_speech_samples > 0 && self.current_speech.len() >= self.max_speech_samples {
+                let cut_point = find_split_point(&self.current_speech, 16000, 800)
+                    .max(800)
+                    .min(self.current_speech.len());
+
+                if cut_point > 0 {
+                    let segment_samples: Vec<f32> = self.current_speech.drain(..cut_point).collect();
+                    let start_ms = (self.speech_start_sample as f64 / 16000.0) * 1000.0;
+                    let duration_ms = (segment_samples.len() as f64 / 16000.0) * 1000.0;
+                    let end_ms = start_ms + duration_ms;
+
+                    info!("VAD: Continuous speech reached max duration ({:.1}s) - streaming segment: {:.1}ms duration, {} samples",
+                          duration_ms / 1000.0, duration_ms, segment_samples.len());
+
+                    self.speech_segments.push_back(SpeechSegment {
+                        samples: segment_samples,
+                        start_timestamp_ms: start_ms,
+                        end_timestamp_ms: end_ms,
+                        confidence: 0.9,
+                    });
+
+                    self.speech_start_sample += cut_point;
+
+                    // Recreate Silero session to flush internal audio accumulation while speech continues
+                    match VadSession::new(self.config) {
+                        Ok(session) => {
+                            self.session = session;
+                            self.session_start_sample = self.speech_start_sample;
+                        }
+                        Err(_e) => {
+                            self.session.reset();
+                        }
+                    }
+                }
+            }
         }
 
         self.processed_samples += chunk.len();
@@ -782,6 +879,52 @@ mod tests {
             println!("2000ms segment {}: {:.0}ms duration", i, duration_ms);
             // Each segment should be at least 250ms (min_speech_time)
             assert!(duration_ms >= 200.0, "Segment {} too short: {:.0}ms", i, duration_ms);
+        }
+    }
+
+    #[test]
+    fn test_continuous_speech_max_capping_and_splitting() {
+        // Generate 10 seconds of unbroken speech with no pauses
+        let speech = generate_test_audio_with_speech(10.0, 16000);
+        let mut processor = ContinuousVadProcessor::new_with_thresholds(16000, 350, 0.20, 0.10)
+            .expect("Failed to create processor");
+        processor.set_max_speech_duration_ms(3500);
+
+        // Feed speech in 1-second chunks (16000 samples)
+        let mut all_segments = Vec::new();
+        for chunk in speech.chunks(16000) {
+            let segments = processor.process_audio(chunk).expect("process_audio failed");
+            all_segments.extend(segments);
+        }
+        let final_segments = processor.flush().expect("flush failed");
+        all_segments.extend(final_segments);
+
+        // With 10s of continuous speech capped at 3.5s:
+        // Must emit multiple segments (at least 2, typically 3: ~3.5s, ~3.5s, ~3.0s)
+        // instead of buffering all 10s into a single massive chunk!
+        assert!(
+            all_segments.len() >= 2,
+            "Expected continuous 10s speech to be split into >= 2 segments, got {}",
+            all_segments.len()
+        );
+
+        // Verify each segment does not exceed the cap (with small tolerance for windowing)
+        for (i, seg) in all_segments.iter().enumerate() {
+            let duration_ms = seg.end_timestamp_ms - seg.start_timestamp_ms;
+            println!("Segment {}: {:.1}ms duration, {} samples", i, duration_ms, seg.samples.len());
+            assert!(
+                duration_ms <= 4000.0,
+                "Segment {} duration {:.1}ms exceeded max limit of 4000ms",
+                i,
+                duration_ms
+            );
+            assert!(
+                seg.end_timestamp_ms > seg.start_timestamp_ms,
+                "Segment {} timestamps invalid: start={}, end={}",
+                i,
+                seg.start_timestamp_ms,
+                seg.end_timestamp_ms
+            );
         }
     }
 }
