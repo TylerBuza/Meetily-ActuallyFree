@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
-import { Unlink, UserRound } from 'lucide-react';
+import { Unlink, UserRound, GitMerge } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 
@@ -15,6 +15,10 @@ interface SpeakerRenameDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Called after a successful rename/removal so transcript and summary state can refresh. */
   onRenamed?: (rename: { from: string; to: string; count: number; removedName: boolean }) => Promise<void> | void;
+  /** Optional handler for live meeting rename (when meetingId is not yet in DB) */
+  onRenameLive?: (from: string, to: string) => Promise<void> | void;
+  /** Optional callback to open the Merge dialog for this speaker */
+  onMergeClick?: () => void;
 }
 
 interface SpeakerRenameResult {
@@ -46,6 +50,8 @@ export function SpeakerRenameDialog({
   meetingId,
   onOpenChange,
   onRenamed,
+  onRenameLive,
+  onMergeClick,
 }: SpeakerRenameDialogProps) {
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
@@ -66,7 +72,26 @@ export function SpeakerRenameDialog({
 
   const submit = async (value: string) => {
     const next = value.trim();
-    if (!meetingId || !speaker || (!next && !canRemoveName) || saving) return;
+    if (!speaker || (!next && !canRemoveName) || saving) return;
+
+    if (!meetingId) {
+      if (onRenameLive) {
+        setSaving(true);
+        try {
+          await onRenameLive(speaker, next);
+          onOpenChange(false);
+          await onRenamed?.({
+            from: speaker,
+            to: next,
+            count: 0,
+            removedName: false,
+          });
+        } finally {
+          setSaving(false);
+        }
+      }
+      return;
+    }
 
     setSaving(true);
     try {
@@ -141,6 +166,21 @@ export function SpeakerRenameDialog({
             <UserRound size={15} />
             This is me{userName ? ` — ${userName}` : ''}
           </button>
+
+          {onMergeClick && (
+            <button
+              type="button"
+              onClick={() => {
+                onOpenChange(false);
+                onMergeClick();
+              }}
+              disabled={saving}
+              className="flex w-full items-center gap-2 rounded-md border border-[var(--af-border,#e5e7eb)] px-3 py-2 text-left text-sm text-gray-600 transition-colors hover:border-blue-400 hover:text-blue-500"
+            >
+              <GitMerge size={15} />
+              Merge into another speaker…
+            </button>
+          )}
 
           {canRemoveName && (
             <button

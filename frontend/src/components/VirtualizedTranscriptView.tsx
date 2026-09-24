@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 /**
  * The transcript renderer actually used by the app — both during live recording
@@ -32,6 +32,7 @@ import { ConfidenceIndicator } from "./ConfidenceIndicator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { motion } from "framer-motion";
 import { TranscriptSegmentData } from "@/types";
+import { GitMerge } from "lucide-react";
 
 export interface VirtualizedTranscriptViewProps {
     /** Transcript segments to display */
@@ -59,11 +60,13 @@ export interface VirtualizedTranscriptViewProps {
     onLoadMore?: () => void;
 
     /**
-     * Called when a speaker label is clicked. When omitted, labels render as
-     * plain text — the live recording view has no meeting to persist against
-     * yet, so renaming is only offered on saved meetings.
+     * Called when a speaker label is clicked for renaming.
      */
     onRenameSpeaker?: (speaker: string) => void;
+    /**
+     * Called when merge action is triggered on a speaker.
+     */
+    onMergeSpeaker?: (speaker: string) => void;
 }
 
 // Threshold for enabling virtualization (below this, use simple rendering)
@@ -209,6 +212,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
     speaker,
     userName,
     onRenameSpeaker,
+    onMergeSpeaker,
 }: {
     id: string;
     timestamp: number;
@@ -220,6 +224,8 @@ const TranscriptSegment = memo(function TranscriptSegment({
     userName: string;
     /** When provided, speaker labels become clickable for renaming. */
     onRenameSpeaker?: (speaker: string) => void;
+    /** When provided, speaker can be merged into another speaker. */
+    onMergeSpeaker?: (speaker: string) => void;
 }) {
     const displayText = cleanStopWords(text) || (text.trim() === '' ? '[Silence]' : text);
 
@@ -241,20 +247,35 @@ const TranscriptSegment = memo(function TranscriptSegment({
                         className={`h-2 w-2 rounded-full shrink-0 ${speakerDot(speaker)}`}
                     />
                     {speaker && (
-                        onRenameSpeaker ? (
-                            <button
-                                type="button"
-                                onClick={() => onRenameSpeaker(speaker)}
-                                title={`Rename "${speaker}" - click to say who this is`}
-                                className={`text-xs font-semibold ${speakerColor(speaker)} rounded hover:underline`}
-                            >
-                                {label}
-                            </button>
-                        ) : (
-                            <span className={`text-xs font-semibold ${speakerColor(speaker)}`}>
-                                {label}
-                            </span>
-                        )
+                        <div className="flex items-center gap-1.5 group/speaker">
+                            {onRenameSpeaker ? (
+                                <button
+                                    type="button"
+                                    onClick={() => onRenameSpeaker(speaker)}
+                                    title={`Click to rename "${speaker}"`}
+                                    className={`text-xs font-semibold ${speakerColor(speaker)} rounded hover:underline inline-flex items-center gap-1`}
+                                >
+                                    <span>{label}</span>
+                                </button>
+                            ) : (
+                                <span className={`text-xs font-semibold ${speakerColor(speaker)}`}>
+                                    {label}
+                                </span>
+                            )}
+                            {onMergeSpeaker && (
+                                <button
+                                    type="button"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onMergeSpeaker(speaker);
+                                    }}
+                                    title={`Merge "${speaker}" into another speaker`}
+                                    className="opacity-0 group-hover/speaker:opacity-100 p-0.5 rounded text-[var(--af-text-3,#9ca3af)] hover:text-blue-600 hover:bg-blue-500/10 transition-opacity"
+                                >
+                                    <GitMerge size={12} />
+                                </button>
+                            )}
+                        </div>
                     )}
                     <Tooltip>
                         <TooltipTrigger>
@@ -304,8 +325,8 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     totalCount = 0,
     loadedCount = 0,
     onLoadMore,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     onRenameSpeaker,
+    onMergeSpeaker,
 }) => {
     // Greet the user by name when they've set one (Settings → General → Your
     // Name). Read on mount rather than at module scope so it picks up changes
@@ -494,6 +515,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         speaker={segment.speaker}
                                         userName={userName}
                                         onRenameSpeaker={onRenameSpeaker}
+                                        onMergeSpeaker={onMergeSpeaker}
                                     />
                                 </div>
                             );
@@ -556,6 +578,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         speaker={segment.speaker}
                                         userName={userName}
                                         onRenameSpeaker={onRenameSpeaker}
+                                        onMergeSpeaker={onMergeSpeaker}
                                     />
                                 </motion.div>
                             );
