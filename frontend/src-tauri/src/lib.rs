@@ -1,4 +1,4 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex as StdMutex;
 // Removed unused import
@@ -59,6 +59,7 @@ pub mod meeting_detection;
 pub mod minibar;
 pub mod parakeet_engine;
 pub mod paths;
+pub mod qwen_asr;
 pub mod state;
 pub mod summary;
 pub mod tray;
@@ -676,6 +677,12 @@ pub fn run() {
             parakeet_engine::commands::parakeet_cancel_download,
             parakeet_engine::commands::parakeet_delete_corrupted_model,
             parakeet_engine::commands::open_parakeet_models_folder,
+            // Qwen3-ASR engine commands
+            qwen_asr::qwen_get_available_models,
+            qwen_asr::qwen_download_model,
+            qwen_asr::qwen_cancel_download,
+            qwen_asr::qwen_delete_model,
+            qwen_asr::open_qwen_models_folder,
             // Parallel processing commands
             whisper_engine::parallel_commands::initialize_parallel_processor,
             whisper_engine::parallel_commands::start_parallel_processing,
@@ -753,6 +760,11 @@ pub fn run() {
             diarization::diarize_recording,
             diarization::diarize_meeting,
             diarization::rename_meeting_speaker,
+            diarization::get_diarization_engine,
+            diarization::set_diarization_engine,
+            diarization::diarization_get_status,
+            diarization::set_diarization_config,
+            diarization::open_diarization_model_directory,
             minibar::enter_compact_mode,
             minibar::exit_compact_mode,
             minibar::is_compact_mode,

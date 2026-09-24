@@ -536,12 +536,12 @@ function ModelCard({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       className={`
-        relative rounded-lg border-2 transition-all cursor-pointer
+        relative rounded-xl border-2 transition-all cursor-pointer
         ${isSelected && isAvailable
-          ? 'border-blue-500 bg-blue-50'
+          ? 'border-blue-600 dark:border-blue-400 bg-blue-50/90 dark:bg-blue-950/40 ring-2 ring-blue-500/30 dark:ring-blue-400/30 shadow-md'
           : isAvailable
-            ? 'border-[var(--af-border)] bg-[var(--af-panel-2)] hover:border-[var(--af-border-strong)]'
-            : 'border-[var(--af-border)] bg-[var(--af-panel-2)]'
+            ? 'border-slate-200 dark:border-slate-700/80 bg-white dark:bg-[#151922] hover:border-blue-400/80 dark:hover:border-blue-500/70 hover:bg-slate-50 dark:hover:bg-[#1c2333]'
+            : 'border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-[#12161f] opacity-80'
         }
         ${isAvailable ? '' : 'cursor-default'}
       `}
@@ -551,7 +551,7 @@ function ModelCard({
     >
       {/* Recommended Badge */}
       {isRecommended && (
-        <div className="absolute -top-2 -right-2 bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full font-medium">
+        <div className="absolute -top-2 -right-2 bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full font-medium shadow-sm">
           Recommended
         </div>
       )}
@@ -562,24 +562,24 @@ function ModelCard({
             {/* Model Name and Tagline */}
             <div className="flex items-center gap-2 flex-wrap mb-2">
               <span className="text-2xl">{getModelIcon(model.accuracy)}</span>
-              <h3 className="font-semibold text-gray-900">{displayName}</h3>
-              <span className="text-sm text-gray-500">•</span>
-              <span className="text-sm text-gray-500">{getModelTagline(model.name, model.speed, model.accuracy)}</span>
+              <h3 className="font-semibold text-slate-900 dark:text-slate-100">{displayName}</h3>
+              <span className="text-sm text-slate-400">•</span>
+              <span className="text-sm text-slate-500 dark:text-slate-300">{getModelTagline(model.name, model.speed, model.accuracy)}</span>
               {isSelected && isAvailable && (
                 <motion.span
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
-                  className="bg-blue-600 text-white px-2 py-0.5 rounded-full text-xs font-medium flex items-center gap-1"
+                  className="bg-blue-600 text-white px-2 py-0.5 rounded-full text-xs font-semibold flex items-center gap-1 shadow-sm"
                 >
                   ✓
                 </motion.span>
               )}
               {isQuantizedModel(model.name) && (
-                <span className={`px-2 py-0.5 rounded-full text-xs ${getModelPerformanceBadge(model.name).color === 'green'
-                  ? 'bg-green-100 text-green-700'
+                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getModelPerformanceBadge(model.name).color === 'green'
+                  ? 'bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-300 border border-green-300 dark:border-green-800'
                   : getModelPerformanceBadge(model.name).color === 'orange'
-                    ? 'bg-orange-100 text-orange-700'
-                    : 'bg-gray-100 text-gray-700'
+                    ? 'bg-orange-100 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 border border-orange-300 dark:border-orange-800'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700'
                   }`}>
                   {getModelPerformanceBadge(model.name).label}
                 </span>
@@ -587,7 +587,7 @@ function ModelCard({
             </div>
 
             {/* Model Specs */}
-            <div className="flex items-center space-x-4 text-sm text-gray-600 ml-9 mt-1.5">
+            <div className="flex items-center space-x-4 text-sm text-slate-600 dark:text-slate-300 ml-9 mt-1.5">
               <span className="flex items-center space-x-1">
                 <span>📦</span>
                 <span>{formatFileSize(model.size_mb)}</span>

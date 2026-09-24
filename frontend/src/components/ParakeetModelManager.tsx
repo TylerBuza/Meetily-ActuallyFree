@@ -479,12 +479,12 @@ function ModelCard({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       className={`
-        relative rounded-lg border-2 transition-all cursor-pointer
+        relative rounded-xl border-2 transition-all cursor-pointer
         ${isSelected && isAvailable
-          ? 'border-blue-500 bg-blue-50'
+          ? 'border-blue-600 dark:border-blue-400 bg-blue-50/90 dark:bg-blue-950/40 ring-2 ring-blue-500/30 dark:ring-blue-400/30 shadow-md'
           : isAvailable
-            ? 'border-[var(--af-border)] bg-[var(--af-panel-2)] hover:border-[var(--af-border-strong)]'
-            : 'border-[var(--af-border)] bg-[var(--af-panel-2)]'
+            ? 'border-slate-200 dark:border-slate-700/80 bg-white dark:bg-[#151922] hover:border-blue-400/80 dark:hover:border-blue-500/70 hover:bg-slate-50 dark:hover:bg-[#1c2333]'
+            : 'border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-[#12161f] opacity-80'
         }
         ${isAvailable ? '' : 'cursor-default'}
       `}
@@ -494,7 +494,7 @@ function ModelCard({
     >
       {/* Recommended Badge */}
       {isRecommended && (
-        <div className="absolute -top-2 -right-2 bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full font-medium">
+        <div className="absolute -top-2 -right-2 bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full font-medium shadow-sm">
           Recommended
         </div>
       )}
@@ -505,12 +505,12 @@ function ModelCard({
             {/* Model Name */}
             <div className="flex items-center gap-2 mb-1">
               <span className="text-2xl">{icon}</span>
-              <h3 className="font-semibold text-gray-900">{displayName}</h3>
+              <h3 className="font-semibold text-slate-900 dark:text-slate-100">{displayName}</h3>
               {isSelected && isAvailable && (
                 <motion.span
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
-                  className="bg-blue-600 text-white px-2 py-0.5 rounded-full text-xs font-medium flex items-center gap-1"
+                  className="bg-blue-600 text-white px-2 py-0.5 rounded-full text-xs font-semibold flex items-center gap-1 shadow-sm"
                 >
                   ✓
                 </motion.span>
@@ -518,7 +518,7 @@ function ModelCard({
             </div>
 
             {/* Tagline */}
-            <p className="text-sm text-gray-600 ml-9">{tagline}</p>
+            <p className="text-sm text-slate-600 dark:text-slate-300 ml-9">{tagline}</p>
           </div>
 
           {/* Status/Action */}

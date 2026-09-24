@@ -768,7 +768,7 @@ pub async fn api_save_post_call_transcript_config(
     provider: String,
     model: String,
 ) -> Result<(), String> {
-    if !matches!(provider.as_str(), "live" | "whisper" | "parakeet") {
+    if !matches!(provider.as_str(), "live" | "whisper" | "parakeet" | "qwen" | "qwen3" | "qwen3-asr") {
         return Err("Invalid post-call transcription provider".to_string());
     }
     if provider != "live" && model.trim().is_empty() {

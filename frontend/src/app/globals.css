@@ -367,6 +367,63 @@ html, body { background-color: var(--af-bg); color: var(--af-text); }
 .dark .text-green-800, .dark .text-green-700 { color: #7ee2a8 !important; }
 
 /* ============================================================
+   Selection Cards (Diarization, STT models, etc.)
+   Ensure selectable option boxes are crisp, vibrant, and
+   unmistakable in both light and dark mode.
+   ============================================================ */
+.af-select-card {
+  background-color: #ffffff !important;
+  border: 2px solid #cbd5e1 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.af-select-card:hover {
+  background-color: #f8fafc !important;
+  border-color: #94a3b8 !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+}
+.af-select-card-active-blue {
+  background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%) !important;
+  background-color: #eff6ff !important;
+  border: 2px solid #2563eb !important;
+  box-shadow: 0 0 0 1px #2563eb, 0 6px 20px rgba(37, 99, 235, 0.20) !important;
+}
+.af-select-card-active-purple {
+  background: linear-gradient(180deg, #faf5ff 0%, #f3e8ff 100%) !important;
+  background-color: #faf5ff !important;
+  border: 2px solid #9333ea !important;
+  box-shadow: 0 0 0 1px #9333ea, 0 6px 20px rgba(147, 51, 234, 0.20) !important;
+}
+
+.dark .af-select-card {
+  background: linear-gradient(180deg, #1b2333 0%, #141a27 100%) !important;
+  background-color: #161c28 !important;
+  border: 2px solid #414f68 !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35) !important;
+  color: #f1f5f9 !important;
+}
+.dark .af-select-card:hover {
+  background: linear-gradient(180deg, #222d42 0%, #192233 100%) !important;
+  background-color: #1e2638 !important;
+  border-color: #64748b !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.50) !important;
+}
+.dark .af-select-card-active-blue {
+  background: linear-gradient(180deg, rgba(37, 99, 235, 0.28) 0%, rgba(15, 23, 42, 0.85) 100%) !important;
+  background-color: #0e1e3e !important;
+  border: 2px solid #3b82f6 !important;
+  box-shadow: 0 0 0 1px #3b82f6, 0 8px 28px rgba(37, 99, 235, 0.40) !important;
+  color: #ffffff !important;
+}
+.dark .af-select-card-active-purple {
+  background: linear-gradient(180deg, rgba(168, 85, 247, 0.28) 0%, rgba(24, 10, 40, 0.85) 100%) !important;
+  background-color: #220b38 !important;
+  border: 2px solid #c084fc !important;
+  box-shadow: 0 0 0 1px #c084fc, 0 8px 28px rgba(168, 85, 247, 0.40) !important;
+  color: #ffffff !important;
+}
+
+/* ============================================================
    Polish layer
    The details that separate a designed interface from a dark
    repaint: typography rendering, consistent corners, calm

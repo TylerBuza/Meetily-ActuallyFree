@@ -94,19 +94,19 @@ export default function SettingsPage() {
   }, []);
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 max-w-full flex-col overflow-hidden bg-gray-50">
+    <div className="flex h-full min-h-0 min-w-0 max-w-full flex-col overflow-hidden bg-[var(--af-bg)] text-[var(--af-text)]">
       {/* Header */}
-      <div className="flex-shrink-0 border-b border-gray-200 bg-gray-50">
+      <div className="flex-shrink-0 border-b border-[var(--af-border)] bg-[var(--af-panel)]">
         <div className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 sm:py-6 lg:px-8">
           <div className="flex min-w-0 items-center gap-3 sm:gap-4">
             <button
               onClick={() => router.back()}
-              className="flex shrink-0 items-center gap-2 text-gray-600 transition-colors hover:text-gray-900"
+              className="flex shrink-0 items-center gap-2 text-[var(--af-text-2)] transition-colors hover:text-[var(--af-text)]"
             >
               <ArrowLeft className="h-5 w-5" />
               <span className="hidden sm:inline">Back</span>
             </button>
-            <h1 className="truncate text-2xl font-bold sm:text-3xl">Settings</h1>
+            <h1 className="truncate text-2xl font-bold sm:text-3xl text-[var(--af-text)]">Settings</h1>
           </div>
         </div>
       </div>
@@ -122,7 +122,7 @@ export default function SettingsPage() {
                 className="min-w-0 max-w-full overflow-x-auto overscroll-x-contain no-scrollbar"
                 style={{ WebkitOverflowScrolling: 'touch' }}
               >
-                <TabsList className="relative flex h-auto w-max min-w-full flex-nowrap justify-start gap-0 rounded-none border-b border-gray-200 bg-transparent p-0">
+                <TabsList className="relative flex h-auto w-max min-w-full flex-nowrap justify-start gap-0 rounded-none border-b border-[var(--af-border)] bg-transparent p-0">
                   {TABS.map((tab, index) => {
                     const Icon = tab.icon;
                     return (
@@ -130,7 +130,7 @@ export default function SettingsPage() {
                         key={tab.value}
                         value={tab.value}
                         ref={el => { tabRefs.current[index] = el; }}
-                        className="relative z-10 flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-none border-0 bg-transparent px-3 py-3 text-sm text-gray-600 shadow-none hover:text-gray-900 data-[state=active]:bg-transparent data-[state=active]:text-blue-600 data-[state=active]:shadow-none sm:gap-2 sm:px-4 sm:py-4"
+                        className="relative z-10 flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-none border-0 bg-transparent px-3 py-3 text-sm text-[var(--af-text-2)] shadow-none hover:text-[var(--af-text)] data-[state=active]:bg-transparent data-[state=active]:text-blue-500 data-[state=active]:shadow-none sm:gap-2 sm:px-4 sm:py-4 font-medium"
                       >
                         <Icon className="h-4 w-4 shrink-0" />
                         <span>{tab.label}</span>

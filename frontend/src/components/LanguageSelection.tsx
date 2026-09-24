@@ -114,11 +114,13 @@ const LANGUAGES: Language[] = [
   { code: 'su', name: 'Sundanese' },
 ];
 
+import type { TranscriptModelProps } from './TranscriptSettings';
+
 interface LanguageSelectionProps {
   selectedLanguage: string;
   onLanguageChange: (language: string) => void;
   disabled?: boolean;
-  provider?: 'localWhisper' | 'parakeet' | 'deepgram' | 'elevenLabs' | 'groq' | 'openai';
+  provider?: TranscriptModelProps['provider'];
 }
 
 export function LanguageSelection({

@@ -37,6 +37,17 @@ function detectGPU() {
     if (commandExists('nvidia-smi')) {
       const cudaPath = process.env.CUDA_PATH;
       if (cudaPath || commandExists('nvcc')) {
+        // If CUDA version is 13+ on Windows, whisper-rs-sys (whisper.cpp) fails to compile because compute_52 was removed in CUDA 13
+        if (platform === 'win32') {
+          try {
+            const nvccVer = execSync('nvcc --version', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+            const match = nvccVer.match(/release (\d+)\./);
+            if (match && parseInt(match[1], 10) >= 13) {
+              console.log('⚠️  CUDA 13+ detected on Windows: whisper.cpp does not support CUDA 13. Falling back to CPU mode.');
+              return null;
+            }
+          } catch {}
+        }
         console.log('🟢 NVIDIA GPU detected with CUDA - using CUDA acceleration');
         return 'cuda';
       } else {

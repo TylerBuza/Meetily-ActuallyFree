@@ -51,12 +51,12 @@ interface RetranscriptionError {
 }
 
 interface ModelChoice {
-  provider: 'whisper' | 'parakeet';
+  provider: 'whisper' | 'parakeet' | 'qwen';
   name: string;
 }
 
 interface PostCallTranscriptConfig {
-  provider: 'live' | 'whisper' | 'parakeet';
+  provider: 'live' | 'whisper' | 'parakeet' | 'qwen';
   model: string;
 }
 
@@ -64,17 +64,28 @@ async function resolveEnhancementModel(
   configuredProvider?: string,
   configuredModel?: string,
 ): Promise<ModelChoice> {
-  const [whisperModels, parakeetModels] = await Promise.all([
+  if (configuredProvider === 'qwen' || configuredProvider === 'qwen3' || configuredProvider === 'qwen3-asr') {
+    return {
+      provider: 'qwen',
+      name: configuredModel || 'Qwen3-ASR-1.7B',
+    };
+  }
+
+  const [whisperModels, parakeetModels, qwenModels] = await Promise.all([
     invoke<RawModelInfo[]>('whisper_get_available_models').catch(() => []),
     invoke<RawModelInfo[]>('parakeet_get_available_models').catch(() => []),
+    invoke<RawModelInfo[]>('qwen_get_available_models').catch(() => []),
   ]);
   const available: ModelChoice[] = [
-    ...whisperModels
-      .filter((model) => model.status === 'Available')
-      .map((model) => ({ provider: 'whisper' as const, name: model.name })),
     ...parakeetModels
       .filter((model) => model.status === 'Available' && isVisibleParakeetModel(model.name))
       .map((model) => ({ provider: 'parakeet' as const, name: model.name })),
+    ...whisperModels
+      .filter((model) => model.status === 'Available')
+      .map((model) => ({ provider: 'whisper' as const, name: model.name })),
+    ...qwenModels
+      .filter((model) => model.status === 'Available')
+      .map((model) => ({ provider: 'qwen' as const, name: model.name })),
   ];
   const normalizedProvider = configuredProvider === 'localWhisper'
     ? 'whisper'
@@ -83,12 +94,14 @@ async function resolveEnhancementModel(
     (model) => model.provider === normalizedProvider && model.name === configuredModel,
   );
   if (configured) return configured;
-  if (normalizedProvider === 'whisper' || normalizedProvider === 'parakeet') {
+  if (normalizedProvider === 'whisper' || normalizedProvider === 'parakeet' || normalizedProvider === 'qwen') {
     const sameProvider = available.find((model) => model.provider === normalizedProvider);
     if (sameProvider) return sameProvider;
     throw new Error(`No downloaded ${normalizedProvider} model is available for enhancement.`);
   }
-  const localDefault = available.find((model) => model.provider === 'parakeet') ?? available[0];
+  const localDefault = available.find((model) => model.provider === 'parakeet')
+    ?? available.find((model) => model.provider === 'whisper')
+    ?? available[0];
   if (localDefault) return localDefault;
   throw new Error('No downloaded transcription model is available for post-call enhancement.');
 }

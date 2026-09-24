@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { FileArchive, Loader2, Send, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -27,8 +27,15 @@ interface CrashReportDialogProps {
 type PendingAction = 'send' | 'save' | 'ignore' | null
 
 export default function CrashReportDialog({ report, onResolved }: CrashReportDialogProps) {
+  const [mounted, setMounted] = useState(false)
   const [pendingAction, setPendingAction] = useState<PendingAction>(null)
   const busy = pendingAction !== null
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  if (!mounted) return null
 
   const createZip = async () => {
     const destination = await chooseCrashReportDestination(report)

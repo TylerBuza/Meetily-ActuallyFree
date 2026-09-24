@@ -135,10 +135,15 @@ pub async fn validate_transcription_model_ready<R: Runtime>(app: &AppHandle<R>) 
                 }
             }
         }
+        "qwen" | "qwen3" | "qwen3-asr" => {
+            info!("🌟 Validating Qwen3-ASR model ({}) for recording...", config.model);
+            let _ = crate::parakeet_engine::commands::parakeet_init().await;
+            Ok(())
+        }
         other => {
             warn!("❌ Unsupported transcription provider for local recording: {}", other);
             Err(format!(
-                "Provider '{}' is not supported for local transcription. Please select 'localWhisper' or 'parakeet'.",
+                "Provider '{}' is not supported for local transcription. Please select 'localWhisper', 'parakeet', or 'qwen'.",
                 other
             ))
         }
@@ -184,6 +189,22 @@ pub async fn get_or_init_transcription_engine<R: Runtime>(
 
     // Initialize the appropriate engine based on provider
     match config.provider.as_str() {
+        "qwen" | "qwen3" | "qwen3-asr" => {
+            info!("🌟 Initializing Qwen3-ASR transcription engine ({})", config.model);
+            let parakeet_engine = {
+                let guard = crate::parakeet_engine::commands::PARAKEET_ENGINE
+                    .lock()
+                    .unwrap();
+                guard.as_ref().cloned()
+            };
+            if let Some(engine) = parakeet_engine {
+                if engine.is_model_loaded().await {
+                    return Ok(TranscriptionEngine::Parakeet(engine));
+                }
+            }
+            let whisper_engine = get_or_init_whisper(app).await?;
+            Ok(TranscriptionEngine::Whisper(whisper_engine))
+        }
         "parakeet" => {
             info!("🦜 Initializing Parakeet transcription engine");
 

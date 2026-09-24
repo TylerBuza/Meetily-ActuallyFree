@@ -100,7 +100,7 @@ async fn start_retranscription<R: Runtime>(
     provider: Option<String>,
     initial_prompt: Option<String>,
 ) -> Result<RetranscriptionResult> {
-    let use_parakeet = provider.as_deref() == Some("parakeet");
+    let use_parakeet = matches!(provider.as_deref(), Some("parakeet") | Some("qwen") | Some("qwen3") | Some("qwen3-asr"));
     let batch_lease = super::common::acquire_stt_batch_lease().await;
     let result = run_retranscription(
         app.clone(),
@@ -248,7 +248,7 @@ async fn run_retranscription<R: Runtime>(
     let sources = find_retranscription_sources(&folder_path, &audio_path);
 
     // Determine which provider to use (default to whisper)
-    let use_parakeet = provider.as_deref() == Some("parakeet");
+    let use_parakeet = matches!(provider.as_deref(), Some("parakeet") | Some("qwen") | Some("qwen3") | Some("qwen3-asr"));
 
     info!(
         "Starting retranscription for meeting {} with language {:?}, model {:?}, provider {:?}",
@@ -751,8 +751,10 @@ async fn get_or_init_parakeet<R: Runtime>(
         Some(e) => {
             // Determine which model to use
             let target_model = match requested_model {
-                Some(model) => model.to_string(),
-                None => get_configured_parakeet_model(app).await?,
+                Some(model) if !model.to_lowercase().contains("qwen") && !model.is_empty() => {
+                    model.to_string()
+                }
+                _ => get_configured_parakeet_model(app).await?,
             };
 
             // Check if the correct model is already loaded
@@ -780,8 +782,17 @@ async fn get_or_init_parakeet<R: Runtime>(
                         Ok(e)
                     }
                     Err(load_err) => {
-                        error!("Failed to load Parakeet model '{}': {}", target_model, load_err);
-                        Err(anyhow!("Failed to load Parakeet model '{}': {}", target_model, load_err))
+                        warn!("Failed to load requested model '{}': {}, trying default model", target_model, load_err);
+                        match e.load_model(DEFAULT_PARAKEET_MODEL).await {
+                            Ok(_) => {
+                                info!("Default Parakeet model '{}' loaded successfully", DEFAULT_PARAKEET_MODEL);
+                                Ok(e)
+                            }
+                            Err(def_err) => {
+                                error!("Failed to load fallback Parakeet model '{}': {}", DEFAULT_PARAKEET_MODEL, def_err);
+                                Err(anyhow!("Failed to load Parakeet model: {}", def_err))
+                            }
+                        }
                     }
                 }
             } else {
@@ -819,7 +830,7 @@ async fn get_configured_parakeet_model<R: Runtime>(app: &AppHandle<R>) -> Result
         Some((provider, model)) => {
             info!("Found transcript config: provider={}, model={}", provider, model);
 
-            if provider == "parakeet" {
+            if provider == "parakeet" && !model.to_lowercase().contains("qwen") {
                 Ok(model)
             } else {
                 // Default to configured Parakeet model
