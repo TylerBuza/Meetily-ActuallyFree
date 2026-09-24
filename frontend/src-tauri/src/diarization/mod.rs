@@ -1643,6 +1643,32 @@ fn collect_turns(models: &mut DiarizationModels, samples: &[f32]) -> Result<Vec<
     Ok(turns)
 }
 
+fn apply_source_track_hint(
+    existing: Option<&str>,
+    used_source_tracks: bool,
+    allow_remote_hint: bool,
+    labels: &mut Vec<String>,
+) {
+    if !used_source_tracks {
+        return;
+    }
+    match existing {
+        Some(speaker) if speaker.eq_ignore_ascii_case("you") => {
+            labels.retain(|label| !label.eq_ignore_ascii_case("you"));
+            labels.insert(0, "You".to_string());
+        }
+        Some(speaker) if allow_remote_hint && speaker.eq_ignore_ascii_case("guest") => {
+            let has_remote = labels.iter().any(|label| {
+                !label.eq_ignore_ascii_case("you") && !label.eq_ignore_ascii_case("guest")
+            });
+            if !has_remote && !labels.iter().any(|label| label.eq_ignore_ascii_case("guest")) {
+                labels.push("Guest".to_string());
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

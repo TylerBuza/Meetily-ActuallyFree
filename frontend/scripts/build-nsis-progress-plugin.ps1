@@ -48,7 +48,7 @@ foreach ($name in @("segmentation-3.0-fp16.onnx", "wespeaker-resnet34-LM.onnx", 
 foreach ($name in @("DirectML.dll", "cublas64_13.dll", "cublasLt64_13.dll", "cudart64_13.dll", "vc_redist.x64.exe")) {
   Add-ProgressFile "runtime-deps\$name" (Join-Path $tauri "runtime-deps\$name")
 }
-foreach ($name in @("onnxruntime.dll", "onnxruntime_providers_shared.dll", "onnxruntime-LICENSE.txt")) {
+foreach ($name in @("onnxruntime.dll", "onnxruntime_providers_shared.dll", "DirectML.dll", "onnxruntime-LICENSE.txt")) {
   Add-ProgressFile "binaries\onnxruntime\$name" (Join-Path $tauri "binaries\onnxruntime\$name")
 }
 Get-ChildItem (Join-Path $tauri "templates") -Filter "*.json" | Sort-Object Name | ForEach-Object {

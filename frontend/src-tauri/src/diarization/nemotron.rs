@@ -8,7 +8,7 @@
 
 use anyhow::{anyhow, Result};
 use ndarray::{Array1, Array2, Array3};
-use ort::execution_providers::CPUExecutionProvider;
+use ort::execution_providers::{CPUExecutionProvider, CUDAExecutionProvider, DirectMLExecutionProvider};
 use ort::inputs;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
@@ -108,7 +108,11 @@ impl NemotronDiarizationModel {
         let nemo128_path = resolve_or_fetch_nemo128(&models_dir)?;
 
         log::info!("Loading Nemotron-3 Diarization model from {:?}...", model_file);
-        let providers = vec![CPUExecutionProvider::default().build()];
+        let providers = vec![
+            CUDAExecutionProvider::default().build(),
+            DirectMLExecutionProvider::default().build(),
+            CPUExecutionProvider::default().build(),
+        ];
 
         let session = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
@@ -139,6 +143,69 @@ impl NemotronDiarizationModel {
         self.spkcache = Array3::<f32>::zeros((1, 0, 512));
         self.fifo = Array3::<f32>::zeros((1, 0, 512));
         log::info!("🔄 Reset Nemotron-3 streaming diarization state");
+    }
+
+    /// Update FIFO queue and cascade overflow into speaker cache (Sortformer architecture)
+    fn update_streaming_state(&mut self, embs: &Array3<f32>) {
+        let new_len = embs.shape()[1];
+        if new_len == 0 {
+            return;
+        }
+        let old_fifo_len = self.fifo.shape()[1];
+        let total_fifo_len = old_fifo_len + new_len;
+        let mut combined_fifo = Array3::<f32>::zeros((1, total_fifo_len, 512));
+
+        for t in 0..old_fifo_len {
+            for d in 0..512 {
+                combined_fifo[[0, t, d]] = self.fifo[[0, t, d]];
+            }
+        }
+        for t in 0..new_len {
+            for d in 0..512 {
+                combined_fifo[[0, old_fifo_len + t, d]] = embs[[0, t, d]];
+            }
+        }
+
+        if total_fifo_len > FIFO_MAX_LEN {
+            let overflow = total_fifo_len - FIFO_MAX_LEN;
+            let old_cache_len = self.spkcache.shape()[1];
+            let total_cache_len = old_cache_len + overflow;
+            let mut combined_cache = Array3::<f32>::zeros((1, total_cache_len, 512));
+
+            for t in 0..old_cache_len {
+                for d in 0..512 {
+                    combined_cache[[0, t, d]] = self.spkcache[[0, t, d]];
+                }
+            }
+            for t in 0..overflow {
+                for d in 0..512 {
+                    combined_cache[[0, old_cache_len + t, d]] = combined_fifo[[0, t, d]];
+                }
+            }
+
+            if total_cache_len > SPKCACHE_MAX_LEN {
+                let start_idx = total_cache_len - SPKCACHE_MAX_LEN;
+                let mut trimmed_cache = Array3::<f32>::zeros((1, SPKCACHE_MAX_LEN, 512));
+                for t in 0..SPKCACHE_MAX_LEN {
+                    for d in 0..512 {
+                        trimmed_cache[[0, t, d]] = combined_cache[[0, start_idx + t, d]];
+                    }
+                }
+                self.spkcache = trimmed_cache;
+            } else {
+                self.spkcache = combined_cache;
+            }
+
+            let mut trimmed_fifo = Array3::<f32>::zeros((1, FIFO_MAX_LEN, 512));
+            for t in 0..FIFO_MAX_LEN {
+                for d in 0..512 {
+                    trimmed_fifo[[0, t, d]] = combined_fifo[[0, overflow + t, d]];
+                }
+            }
+            self.fifo = trimmed_fifo;
+        } else {
+            self.fifo = combined_fifo;
+        }
     }
 
     pub fn set_max_speakers(&mut self, max: usize) {
@@ -186,68 +253,65 @@ impl NemotronDiarizationModel {
             });
         }
 
-        let (speaker_probs, embs_opt) = self.run_inference(&audio_16k)?;
+        self.reset_streaming_state();
 
-        // Update FIFO queue and cascade overflow into speaker cache (Sortformer architecture)
-        if let Some(embs) = embs_opt {
-            let new_len = embs.shape()[1];
-            if new_len > 0 {
-                let old_fifo_len = self.fifo.shape()[1];
-                let total_fifo_len = old_fifo_len + new_len;
-                let mut combined_fifo = Array3::<f32>::zeros((1, total_fifo_len, 512));
+        // Sortformer's attention positional encoding table in ONNX has a maximum of 5,000 frames (~420s).
+        // For long recordings (e.g. 40+ minute meetings), processing the audio monolithically causes:
+        // "input_shape_size == size was false. Input shape:{5000,64}, requested shape:{1,1,28544,64}".
+        // We chunk audio into 24.0-second streaming windows (~285 frames each), maintaining continuous speaker
+        // identities across chunks via the arrival-order speaker cache (`spkcache`) and FIFO queue.
+        const CHUNK_DURATION_SECS: f32 = 24.0;
+        let chunk_samples_len = (CHUNK_DURATION_SECS * 16000.0) as usize; // 384,000 samples
+        let total_samples = audio_16k.len();
 
-                for t in 0..old_fifo_len {
-                    for d in 0..512 {
-                        combined_fifo[[0, t, d]] = self.fifo[[0, t, d]];
-                    }
-                }
-                for t in 0..new_len {
-                    for d in 0..512 {
-                        combined_fifo[[0, old_fifo_len + t, d]] = embs[[0, t, d]];
-                    }
-                }
+        let mut all_chunk_probs: Vec<Array2<f32>> = Vec::new();
+        let mut total_frames = 0;
+        let mut start_idx = 0;
 
-                if total_fifo_len > FIFO_MAX_LEN {
-                    let overflow = total_fifo_len - FIFO_MAX_LEN;
-                    let old_cache_len = self.spkcache.shape()[1];
-                    let total_cache_len = old_cache_len + overflow;
-                    let mut combined_cache = Array3::<f32>::zeros((1, total_cache_len, 512));
+        while start_idx < total_samples {
+            let mut end_idx = (start_idx + chunk_samples_len).min(total_samples);
+            // If the trailing remainder is very small (< 1.0s) and we already have audio, append to this chunk
+            if total_samples - end_idx < 16000 {
+                end_idx = total_samples;
+            }
 
-                    for t in 0..old_cache_len {
-                        for d in 0..512 {
-                            combined_cache[[0, t, d]] = self.spkcache[[0, t, d]];
-                        }
-                    }
-                    for t in 0..overflow {
-                        for d in 0..512 {
-                            combined_cache[[0, old_cache_len + t, d]] = combined_fifo[[0, t, d]];
-                        }
-                    }
+            let chunk_audio = &audio_16k[start_idx..end_idx];
+            if chunk_audio.len() < 4000 {
+                // Under 250ms of audio, not enough for feature frames
+                break;
+            }
 
-                    if total_cache_len > SPKCACHE_MAX_LEN {
-                        let start_idx = total_cache_len - SPKCACHE_MAX_LEN;
-                        let mut trimmed_cache = Array3::<f32>::zeros((1, SPKCACHE_MAX_LEN, 512));
-                        for t in 0..SPKCACHE_MAX_LEN {
-                            for d in 0..512 {
-                                trimmed_cache[[0, t, d]] = combined_cache[[0, start_idx + t, d]];
-                            }
-                        }
-                        self.spkcache = trimmed_cache;
-                    } else {
-                        self.spkcache = combined_cache;
-                    }
+            let (chunk_probs, embs_opt) = self.run_inference(chunk_audio)?;
+            if let Some(ref embs) = embs_opt {
+                self.update_streaming_state(embs);
+            }
 
-                    let mut trimmed_fifo = Array3::<f32>::zeros((1, FIFO_MAX_LEN, 512));
-                    for t in 0..FIFO_MAX_LEN {
-                        for d in 0..512 {
-                            trimmed_fifo[[0, t, d]] = combined_fifo[[0, overflow + t, d]];
-                        }
-                    }
-                    self.fifo = trimmed_fifo;
-                } else {
-                    self.fifo = combined_fifo;
+            total_frames += chunk_probs.nrows();
+            all_chunk_probs.push(chunk_probs);
+
+            start_idx = end_idx;
+        }
+
+        if total_frames == 0 {
+            return Ok(DiarizationResult {
+                segments: Vec::new(),
+                num_speakers: 0,
+                duration: duration_secs,
+                user_speaker: None,
+            });
+        }
+
+        let spk_dim = self.max_speakers.min(8);
+        let mut speaker_probs = Array2::<f32>::zeros((total_frames, spk_dim));
+        let mut row_offset = 0;
+        for chunk_prob in all_chunk_probs {
+            let nrows = chunk_prob.nrows();
+            for t in 0..nrows {
+                for s in 0..spk_dim {
+                    speaker_probs[[row_offset + t, s]] = chunk_prob[[t, s]];
                 }
             }
+            row_offset += nrows;
         }
 
         let segments = self.post_process_predictions(&speaker_probs, duration_secs as f64)?;
@@ -293,35 +357,8 @@ impl NemotronDiarizationModel {
 
         let (probs, embs_opt) = self.run_inference(samples)?;
 
-        if let Some(embs) = embs_opt {
-            let new_len = embs.shape()[1];
-            if new_len > 0 {
-                let old_fifo_len = self.fifo.shape()[1];
-                let total_fifo_len = old_fifo_len + new_len;
-                let mut combined_fifo = Array3::<f32>::zeros((1, total_fifo_len, 512));
-                for t in 0..old_fifo_len {
-                    for d in 0..512 {
-                        combined_fifo[[0, t, d]] = self.fifo[[0, t, d]];
-                    }
-                }
-                for t in 0..new_len {
-                    for d in 0..512 {
-                        combined_fifo[[0, old_fifo_len + t, d]] = embs[[0, t, d]];
-                    }
-                }
-                if total_fifo_len > FIFO_MAX_LEN {
-                    let mut trimmed_fifo = Array3::<f32>::zeros((1, FIFO_MAX_LEN, 512));
-                    let overflow = total_fifo_len - FIFO_MAX_LEN;
-                    for t in 0..FIFO_MAX_LEN {
-                        for d in 0..512 {
-                            trimmed_fifo[[0, t, d]] = combined_fifo[[0, overflow + t, d]];
-                        }
-                    }
-                    self.fifo = trimmed_fifo;
-                } else {
-                    self.fifo = combined_fifo;
-                }
-            }
+        if let Some(ref embs) = embs_opt {
+            self.update_streaming_state(embs);
         }
 
         let num_frames = probs.nrows();
@@ -598,4 +635,38 @@ fn smooth_frame_sequence(sequence: &[Option<usize>], window_size: usize) -> Vec<
     }
 
     smoothed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_nemotron_multi_chunk_diarization() {
+        let _ = crate::onnx_runtime::ensure_available();
+
+        let model_path = std::path::PathBuf::from(
+            r"C:\Users\nguye\AppData\Roaming\com.meetily.ai\models\diarization\nemotron3_diar_v3.onnx",
+        );
+        if !model_path.exists() {
+            println!("Model file not found at {:?}", model_path);
+            return;
+        }
+
+        println!("Initializing NemotronDiarizationModel...");
+        let mut model = NemotronDiarizationModel::new(&model_path, 4, 0.5)
+            .expect("Failed to initialize model");
+
+        // 60 seconds of audio: spans across 3 chunks (24s + 24s + 12s)
+        println!("Running diarize on 60 seconds of multi-chunk audio...");
+        let dummy_audio = vec![0.02f32; 16000 * 60];
+        let result = model.diarize(&dummy_audio, 16000).expect("Failed to diarize 60s audio");
+        println!(
+            "Diarization result: found {} speakers, {} segments, duration {:.1}s",
+            result.num_speakers,
+            result.segments.len(),
+            result.duration
+        );
+        assert!(result.duration >= 59.9);
+    }
 }

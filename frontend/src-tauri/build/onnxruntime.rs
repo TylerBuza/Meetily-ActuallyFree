@@ -11,35 +11,50 @@ use std::{
 use std::os::windows::fs::MetadataExt;
 
 const WINDOWS_X64_TARGET: &str = "x86_64-pc-windows-msvc";
-const ARCHIVE_URL: &str = "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip";
-const ARCHIVE_SHA256: &str = "174c616efc0271194488642a72f1a514e01487da4dfe84c49296d66e40ebe0da";
-const ARCHIVE_SIZE: u64 = 72_368_545;
+const ARCHIVE_URL: &str = "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/1.22.0/microsoft.ml.onnxruntime.directml.1.22.0.nupkg";
+const ARCHIVE_SHA256: &str = "29f9872d786236b79aa83f94482f3a17c14297e4833768d6d0ed4883ee732e60";
+const ARCHIVE_SIZE: u64 = 17_898_472;
+
+const DML_ARCHIVE_URL: &str = "https://api.nuget.org/v3-flatcontainer/microsoft.ai.directml/1.15.4/microsoft.ai.directml.1.15.4.nupkg";
+const DML_ARCHIVE_SHA256: &str = "4e7cb7ddce8cf837a7a75dc029209b520ca0101470fcdf275c1f49736a3615b9";
+const DML_ARCHIVE_SIZE: u64 = 202_292_617;
 
 struct Artifact {
     archive_path: &'static str,
     output_name: &'static str,
     size: u64,
     sha256: &'static str,
+    is_dml_archive: bool,
 }
 
-const ARTIFACTS: [Artifact; 3] = [
+const ARTIFACTS: [Artifact; 4] = [
     Artifact {
-        archive_path: "onnxruntime-win-x64-1.22.0/lib/onnxruntime.dll",
+        archive_path: "runtimes/win-x64/native/onnxruntime.dll",
         output_name: "onnxruntime.dll",
-        size: 12_418_080,
-        sha256: "579b636403983254346a5c1d80bd28f1519cd1e284cd204f8d4ff41f8d711559",
+        size: 16_471_584,
+        sha256: "95366724919f4e95ecc60010912ed538ad9804b6683fbd0aad389749102834b9",
+        is_dml_archive: false,
     },
     Artifact {
-        archive_path: "onnxruntime-win-x64-1.22.0/lib/onnxruntime_providers_shared.dll",
+        archive_path: "runtimes/win-x64/native/onnxruntime_providers_shared.dll",
         output_name: "onnxruntime_providers_shared.dll",
-        size: 22_064,
-        sha256: "ba00ea1ef846c9b909c7854bc56c51051a20f9773b3e1153dda118d4b85d0b93",
+        size: 22_048,
+        sha256: "dea79756b1ef0deb317115aa5da45eca8946eafcf1be2dbd9fa3b309551faae5",
+        is_dml_archive: false,
     },
     Artifact {
-        archive_path: "onnxruntime-win-x64-1.22.0/LICENSE",
+        archive_path: "bin/x64-win/DirectML.dll",
+        output_name: "DirectML.dll",
+        size: 18_527_776,
+        sha256: "9c9e6d822561c6c41b90e6994b3e8857cf1d66dbfb1e0c4c799c7c89b4e92da1",
+        is_dml_archive: true,
+    },
+    Artifact {
+        archive_path: "LICENSE",
         output_name: "onnxruntime-LICENSE.txt",
         size: 1_094,
         sha256: "c250d6278f0b47a6439fb7592b08b58a55eb9f535aa49a1db63211c3f982b674",
+        is_dml_archive: false,
     },
 ];
 
@@ -126,13 +141,20 @@ pub fn ensure_onnxruntime_runtime() {
         process::id(),
         target
     ));
+    let temporary_dml_archive = env::temp_dir().join(format!(
+        "meetily-directml-{}-{}.zip",
+        process::id(),
+        target
+    ));
     let temporary_destination =
         destination.with_file_name(format!(".onnxruntime-{}-{}", process::id(), target));
     let _ = fs::remove_file(&temporary_archive);
+    let _ = fs::remove_file(&temporary_dml_archive);
     let _ = fs::remove_dir_all(&temporary_destination);
 
-    let result = stage_runtime(&temporary_archive, &temporary_destination);
+    let result = stage_runtime(&temporary_archive, &temporary_dml_archive, &temporary_destination);
     let _ = fs::remove_file(&temporary_archive);
+    let _ = fs::remove_file(&temporary_dml_archive);
 
     if let Err(error) = result {
         let _ = fs::remove_dir_all(&temporary_destination);
@@ -204,9 +226,16 @@ mod tests {
     }
 }
 
-fn stage_runtime(archive_path: &Path, destination: &Path) -> Result<(), String> {
-    download_archive(archive_path)?;
+fn stage_runtime(
+    archive_path: &Path,
+    dml_archive_path: &Path,
+    destination: &Path,
+) -> Result<(), String> {
+    download_archive(ARCHIVE_URL, ARCHIVE_SIZE, archive_path)?;
     verify_file(archive_path, ARCHIVE_URL, ARCHIVE_SIZE, ARCHIVE_SHA256)?;
+
+    download_archive(DML_ARCHIVE_URL, DML_ARCHIVE_SIZE, dml_archive_path)?;
+    verify_file(dml_archive_path, DML_ARCHIVE_URL, DML_ARCHIVE_SIZE, DML_ARCHIVE_SHA256)?;
 
     fs::create_dir_all(destination)
         .map_err(|error| format!("failed to create {}: {error}", destination.display()))?;
@@ -216,18 +245,34 @@ fn stage_runtime(archive_path: &Path, destination: &Path) -> Result<(), String> 
     let mut archive = zip::ZipArchive::new(archive_file)
         .map_err(|error| format!("failed to read ONNX Runtime archive: {error}"))?;
 
+    let dml_archive_file = File::open(dml_archive_path)
+        .map_err(|error| format!("failed to open {}: {error}", dml_archive_path.display()))?;
+    let mut dml_archive = zip::ZipArchive::new(dml_archive_file)
+        .map_err(|error| format!("failed to read DirectML archive: {error}"))?;
+
     for artifact in ARTIFACTS {
-        let mut source = archive.by_name(artifact.archive_path).map_err(|error| {
-            format!(
-                "missing {} in ONNX Runtime archive: {error}",
-                artifact.archive_path
-            )
-        })?;
         let output = destination.join(artifact.output_name);
         let mut file = File::create(&output)
             .map_err(|error| format!("failed to create {}: {error}", output.display()))?;
-        std::io::copy(&mut source, &mut file)
-            .map_err(|error| format!("failed to extract {}: {error}", artifact.archive_path))?;
+        if artifact.is_dml_archive {
+            let mut source = dml_archive.by_name(artifact.archive_path).map_err(|error| {
+                format!(
+                    "missing {} in DirectML archive: {error}",
+                    artifact.archive_path
+                )
+            })?;
+            std::io::copy(&mut source, &mut file)
+                .map_err(|error| format!("failed to extract {}: {error}", artifact.archive_path))?;
+        } else {
+            let mut source = archive.by_name(artifact.archive_path).map_err(|error| {
+                format!(
+                    "missing {} in ONNX Runtime archive: {error}",
+                    artifact.archive_path
+                )
+            })?;
+            std::io::copy(&mut source, &mut file)
+                .map_err(|error| format!("failed to extract {}: {error}", artifact.archive_path))?;
+        }
         verify_file(
             &output,
             artifact.output_name,
@@ -239,20 +284,20 @@ fn stage_runtime(archive_path: &Path, destination: &Path) -> Result<(), String> 
     Ok(())
 }
 
-fn download_archive(destination: &Path) -> Result<(), String> {
+fn download_archive(url: &str, expected_size: u64, destination: &Path) -> Result<(), String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(600))
         .build()
         .map_err(|error| format!("failed to create download client: {error}"))?;
     let mut response = client
-        .get(ARCHIVE_URL)
+        .get(url)
         .send()
-        .map_err(|error| format!("failed to download ONNX Runtime: {error}"))?
+        .map_err(|error| format!("failed to download archive from {url}: {error}"))?
         .error_for_status()
-        .map_err(|error| format!("ONNX Runtime download failed: {error}"))?;
+        .map_err(|error| format!("archive download failed: {error}"))?;
     let mut file = File::create(destination)
         .map_err(|error| format!("failed to create {}: {error}", destination.display()))?;
-    copy_exact(&mut response, &mut file, ARCHIVE_SIZE)
+    copy_exact(&mut response, &mut file, expected_size)
 }
 
 fn copy_exact<R: Read, W: Write>(

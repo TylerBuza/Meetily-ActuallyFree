@@ -14,6 +14,8 @@ This PR enhances **Meetily-ActuallyFree**'s on-device speaker diarization capabi
 
 #### 1. NVIDIA Nemotron-3 Diarization Engine (Sortformer v3)
 - **On-Device ONNX Runtime Execution**: Added `nemotron.rs` implementing NVIDIA Sortformer v3 (`nemotron3_diar_v3.onnx` + Mel preprocessor `nemo128.onnx`), supporting up to 8 concurrent speakers fully offline.
+- **Long-Meeting Streaming Chunking (Arbitrary Meeting Length)**: Solved Sortformer's 5,000-frame (~420s) positional encoding limitation by streaming audio in 24.0-second sliding windows (~285 frames per chunk), cascading speaker embeddings and FIFO state across chunks to support arbitrarily long meetings (e.g., 40+ minutes) without ONNX Reshape errors.
+- **DirectML & CUDA GPU Acceleration**: Packaged Microsoft's official DirectML ONNX Runtime (`Microsoft.ML.OnnxRuntime.DirectML` + `DirectML.dll`) and configured prioritized execution providers (`CUDA -> DirectML -> CPU fallback`), enabling instant GPU offloading across modern NVIDIA, AMD, and Intel GPUs.
 - **Sliding FIFO Buffer & Speaker Cache (`spkcache`)**: Implemented sliding-window chunk buffering (264 frames FIFO) with long-term speaker embedding caching to maintain speaker identity continuity across conversational pauses.
 - **Dual-Engine Architecture**: Integrated Nemotron-3 alongside the existing Pyannote (`segmentation-3.0`) pipeline in `diarization/mod.rs` and `diarization/online.rs`, allowing users to switch between engines seamlessly.
 - **Model Downloader**: Added download and integrity verification support for Nemotron-3 assets in `diarization/download.rs`.
