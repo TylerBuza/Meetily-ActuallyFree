@@ -40,6 +40,11 @@ console.log(''); // Empty line for spacing
 const platform = os.platform();
 const env = { ...process.env };
 
+// Ensure local node_modules/.bin is in PATH so tauri binary is always found
+const binDir = path.resolve(__dirname, '../node_modules/.bin');
+const pathKey = Object.keys(process.env).find(k => k.toLowerCase() === 'path') || 'PATH';
+env[pathKey] = `${binDir}${path.delimiter}${process.env[pathKey] || ''}`;
+
 if (platform === 'linux' && feature === 'cuda') {
   console.log('🐧 Linux/CUDA detected: Setting CMAKE flags for NVIDIA GPU');
   env.CMAKE_CUDA_ARCHITECTURES = '75';
@@ -47,13 +52,27 @@ if (platform === 'linux' && feature === 'cuda') {
   env.CMAKE_POSITION_INDEPENDENT_CODE = 'ON';
 }
 
+if (platform === 'win32' && feature === 'cuda') {
+  console.log('🪟 Windows/CUDA detected: Setting CMAKE and CCCL flags for NVIDIA GPU');
+  env.CMAKE_CUDA_ARCHITECTURES = '75;80;86;89;120';
+  env.CMAKE_CUDA_STANDARD = '17';
+  const ccclFlags = '-DCCCL_IGNORE_MSVC_TRADITIONAL_PREPROCESSOR_WARNING -DCCCL_IGNORE_DEPRECATED_CPP_DIALECT';
+  const zcFlag = '/Zc:preprocessor';
+  env.CMAKE_CUDA_FLAGS = (env.CMAKE_CUDA_FLAGS ? env.CMAKE_CUDA_FLAGS + ' ' : '') + `--std=c++17 ${ccclFlags} -Xcompiler="${zcFlag}"`;
+  env.CL = (env.CL ? env.CL + ' ' : '') + `${ccclFlags} ${zcFlag}`;
+  env._CL_ = (env._CL_ ? env._CL_ + ' ' : '') + `${ccclFlags} ${zcFlag}`;
+}
+
 // Build the tauri command
 let tauriCmd = `tauri ${command}`;
+const extraArgs = process.argv.slice(3).join(' ');
 if (feature && feature !== 'none') {
   tauriCmd += ` -- --features ${feature}`;
-  console.log(`🚀 Running: tauri ${command} with features: ${feature}`);
+  if (extraArgs) tauriCmd += ` ${extraArgs}`;
+  console.log(`🚀 Running: ${tauriCmd}`);
 } else {
-  console.log(`🚀 Running: tauri ${command} (CPU-only mode)`);
+  if (extraArgs) tauriCmd += ` ${extraArgs}`;
+  console.log(`🚀 Running: ${tauriCmd} (CPU-only mode)`);
 }
 console.log('');
 

@@ -365,13 +365,6 @@ export default function RootLayout({
 
   return (
     <html lang="en" className="dark">
-      <head>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `if (window.location.pathname === '/index.html' || window.location.pathname.endsWith('/index.html')) { window.location.replace('/'); }`,
-          }}
-        />
-      </head>
       <body className={`${sourceSans3.variable} font-sans antialiased`}>
         {!startupResolved ? (
           <div className="flex h-screen items-center justify-center bg-[var(--af-bg)]">

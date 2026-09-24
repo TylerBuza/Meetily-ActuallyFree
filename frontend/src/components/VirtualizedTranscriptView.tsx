@@ -33,6 +33,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { motion } from "framer-motion";
 import { TranscriptSegmentData } from "@/types";
 import { GitMerge } from "lucide-react";
+import {
+  isUserSpeaker,
+  displaySpeaker,
+  speakerKey,
+  speakerDot,
+  speakerColor,
+} from "@/utils/speakerUtils";
 
 export interface VirtualizedTranscriptViewProps {
     /** Transcript segments to display */
@@ -105,52 +112,7 @@ function cleanStopWords(text: string): string {
  * local microphone. The display name lives in settings (not in Rust) so it can
  * be changed without restarting, which is why substitution happens here.
  */
-function isUserSpeaker(speaker?: string): boolean {
-    const normalized = speaker?.trim() ?? '';
-    return /^you\b/i.test(normalized) || /\(\s*you\s*\)$/i.test(normalized);
-}
 
-function displaySpeaker(speaker: string, userName: string): string {
-    if (isUserSpeaker(speaker)) {
-        return userName ? `${userName} (You)` : 'You';
-    }
-    return speaker;
-}
-
-/** Normalize speaker keys so "You" / "you" / empty compare cleanly. */
-function speakerKey(speaker?: string): string {
-    if (isUserSpeaker(speaker)) return '__you__';
-    return (speaker ?? '').trim().toLowerCase() || '__unknown__';
-}
-
-const speakerDotPalette = [
-    'bg-purple-500',
-    'bg-emerald-500',
-    'bg-amber-500',
-    'bg-pink-500',
-    'bg-cyan-500',
-];
-
-const speakerTextPalette = [
-    'text-purple-500',
-    'text-emerald-500',
-    'text-amber-500',
-    'text-pink-500',
-    'text-cyan-500',
-];
-
-function speakerPaletteIndex(speaker: string): number {
-    const numberedSpeaker = speaker.trim().match(/^speaker\s+(\d+)$/i);
-    if (numberedSpeaker) {
-        return (Number(numberedSpeaker[1]) - 1) % speakerTextPalette.length;
-    }
-    let hash = 0;
-    const normalized = speaker.trim().toLowerCase();
-    for (let i = 0; i < normalized.length; i++) {
-        hash = (hash * 31 + normalized.charCodeAt(i)) >>> 0;
-    }
-    return hash % speakerTextPalette.length;
-}
 
 /**
  * Collapse back-to-back lines from the same speaker into one bubble when the
@@ -187,20 +149,7 @@ function mergeAdjacentSameSpeaker(
     return out;
 }
 
-/** Dot colour on the timeline rail — same mapping as the text colour. */
-function speakerDot(speaker?: string): string {
-    if (!speaker) return 'bg-gray-600';
-    if (isUserSpeaker(speaker)) return 'bg-blue-500';
-    if (/^guest\b/i.test(speaker)) return 'bg-purple-500';
-    return speakerDotPalette[speakerPaletteIndex(speaker)];
-}
 
-/** Stable colour per speaker label so each speaker reads consistently. */
-function speakerColor(speaker: string): string {
-    if (isUserSpeaker(speaker)) return 'text-blue-500';
-    if (/^guest\b/i.test(speaker)) return 'text-purple-500';
-    return speakerTextPalette[speakerPaletteIndex(speaker)];
-}
 
 const TranscriptSegment = memo(function TranscriptSegment({
     id,

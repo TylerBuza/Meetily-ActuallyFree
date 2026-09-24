@@ -13,6 +13,7 @@
         "windows": [
             {
                 "title": "Meetily - Actually Free",
+                "url": "/",
                 "width": 1100,
                 "height": 700,
                 "center": true,
