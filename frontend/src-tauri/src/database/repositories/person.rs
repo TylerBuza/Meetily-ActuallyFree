@@ -418,7 +418,7 @@ impl PeopleRepository {
         })
     }
 
-    async fn reconcile_speaker_identity(
+    pub(crate) async fn reconcile_speaker_identity(
         tx: &mut Transaction<'_, Sqlite>,
         meeting_id: &str,
         from: &str,
@@ -907,6 +907,7 @@ fn format_audio_time(seconds: f64) -> String {
     format!("{:02}:{:02}", seconds / 60, seconds % 60)
 }
 
+#[allow(dead_code)]
 pub(crate) async fn clear_meeting_speaker_mappings(
     tx: &mut Transaction<'_, Sqlite>,
     meeting_id: &str,

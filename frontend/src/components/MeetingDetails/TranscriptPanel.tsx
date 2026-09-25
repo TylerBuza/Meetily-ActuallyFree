@@ -14,12 +14,18 @@
  *   - otherwise  → converted inline from `transcripts` below
  */
 
-import { useMemo, useState } from 'react';
-import { Transcript, TranscriptSegmentData } from '@/types';
-import { Calendar, Clock } from 'lucide-react';
+import { useMemo, useState, useEffect } from 'react';
+import { Transcript, TranscriptSegmentData, DetectedSpeaker } from '@/types';
+import { Calendar, Clock, Users } from 'lucide-react';
 import { SpeakerRenameDialog } from './SpeakerRenameDialog';
 import { VirtualizedTranscriptView } from '@/components/VirtualizedTranscriptView';
 import { TranscriptButtonGroup } from './TranscriptButtonGroup';
+import { SpeakersSidebar } from '@/components/SpeakersSidebar';
+import { MergeSpeakerDialog } from '@/components/MergeSpeakerDialog';
+import { invoke } from '@tauri-apps/api/core';
+import { toast } from 'sonner';
+import { isUserSpeaker, speakerPaletteIndex } from '@/utils/speakerUtils';
+import { useConfig } from '@/contexts/ConfigContext';
 
 interface TranscriptPanelProps {
   transcripts: Transcript[];
@@ -79,7 +85,21 @@ export function TranscriptPanel({
   onRefetchTranscripts,
   onSpeakerRenamed,
 }: TranscriptPanelProps) {
+  const { showSpeakersPanel } = useConfig();
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
+  const [mergeTarget, setMergeTarget] = useState<string | null>(null);
+  const [showSpeakersSidebar, setShowSpeakersSidebar] = useState<boolean>(showSpeakersPanel);
+  const [userName, setUserName] = useState<string>('');
+
+  useEffect(() => {
+    setShowSpeakersSidebar(showSpeakersPanel);
+  }, [showSpeakersPanel]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setUserName(localStorage.getItem('meetily_user_name')?.trim() || '');
+    }
+  }, []);
 
   const convertedSegments = useMemo(() => {
     if (usePagination && segments) return segments;
@@ -108,6 +128,55 @@ export function TranscriptPanel({
       timeLabel: end ? `${fmtTime(start)} — ${fmtTime(end)}` : fmtTime(start),
     };
   }, [createdAt, convertedSegments]);
+
+  // Derived speakers list from converted segments
+  const detectedSpeakers = useMemo<DetectedSpeaker[]>(() => {
+    const map = new Map<string, { count: number; lastTime?: number }>();
+    for (const seg of convertedSegments) {
+      const spk = seg.speaker?.trim() || 'Speaker 1';
+      const existing = map.get(spk);
+      if (existing) {
+        existing.count += 1;
+        if (seg.timestamp !== undefined) {
+          existing.lastTime = Math.max(existing.lastTime ?? 0, seg.timestamp);
+        }
+      } else {
+        map.set(spk, {
+          count: 1,
+          lastTime: seg.timestamp,
+        });
+      }
+    }
+    return Array.from(map.entries()).map(([name, data]) => ({
+      id: name,
+      name,
+      isUser: isUserSpeaker(name),
+      segmentCount: data.count,
+      lastSpokeAt: data.lastTime,
+      colorIndex: speakerPaletteIndex(name),
+    }));
+  }, [convertedSegments]);
+
+  const handleMergeSpeaker = async (source: string, target: string) => {
+    if (!meetingId || !source || !target || source === target) return;
+    try {
+      await invoke('rename_meeting_speaker', {
+        meetingId,
+        from: source,
+        to: target,
+      });
+      toast.success(`Merged "${source}" into "${target}"`);
+      await onRefetchTranscripts?.();
+      onSpeakerRenamed?.({
+        from: source,
+        to: target,
+        count: 0,
+        removedName: false,
+      });
+    } catch (e: any) {
+      toast.error(`Merge failed: ${e?.message || e}`);
+    }
+  };
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--af-bg)]">
@@ -141,7 +210,25 @@ export function TranscriptPanel({
           Transcript
           <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-[var(--af-accent)]" />
         </span>
-        <div className="transcript-actions-container ml-auto min-w-0 flex-[1_1_190px] py-1">
+        <div className="transcript-actions-container ml-auto min-w-0 flex-[1_1_190px] py-1 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setShowSpeakersSidebar((prev) => !prev)}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+              showSpeakersSidebar
+                ? 'border-blue-400 bg-blue-500/10 text-blue-600 dark:text-blue-400 font-semibold'
+                : 'border-[var(--af-border)] hover:bg-[var(--af-panel-2)] text-[var(--af-text-2)]'
+            }`}
+            title="Toggle detected speakers sidebar"
+          >
+            <Users size={14} />
+            <span>Speakers</span>
+            {detectedSpeakers.length > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-blue-500/15 text-blue-600 dark:text-blue-400 font-semibold">
+                {detectedSpeakers.length}
+              </span>
+            )}
+          </button>
           <TranscriptButtonGroup
             transcriptCount={usePagination ? (totalCount ?? convertedSegments.length) : (transcripts?.length || 0)}
             onCopyTranscript={onCopyTranscript}
@@ -163,25 +250,74 @@ export function TranscriptPanel({
           await onRefetchTranscripts?.();
           onSpeakerRenamed?.(rename);
         }}
+        onMergeClick={() => {
+          if (renameTarget) {
+            const t = renameTarget;
+            setRenameTarget(null);
+            setMergeTarget(t);
+          }
+        }}
       />
 
-      {/* Transcript content */}
-      <div className="flex-1 overflow-hidden px-4 pb-4">
-        <VirtualizedTranscriptView
-          onRenameSpeaker={meetingId ? setRenameTarget : undefined}
-          segments={convertedSegments}
-          isRecording={isRecording}
-          isPaused={false}
-          isProcessing={false}
-          isStopping={false}
-          enableStreaming={false}
-          showConfidence={true}
-          disableAutoScroll={disableAutoScroll}
-          hasMore={hasMore}
-          isLoadingMore={isLoadingMore}
-          totalCount={totalCount}
-          loadedCount={loadedCount}
-          onLoadMore={onLoadMore}
+      <MergeSpeakerDialog
+        open={mergeTarget !== null}
+        sourceSpeaker={mergeTarget}
+        onOpenChange={(open) => !open && setMergeTarget(null)}
+        availableSpeakers={detectedSpeakers.map((s) => ({
+          id: s.id,
+          name: s.name,
+          isUser: s.isUser,
+          segmentCount: s.segmentCount,
+        }))}
+        onMerge={async (source, target) => {
+          await handleMergeSpeaker(source, target);
+          setMergeTarget(null);
+        }}
+      />
+
+      {/* Transcript content + Speakers sidebar */}
+      <div className="flex flex-1 overflow-hidden min-h-0">
+        <div className="flex-1 overflow-hidden px-4 pb-4">
+          <VirtualizedTranscriptView
+            onRenameSpeaker={meetingId ? setRenameTarget : undefined}
+            onMergeSpeaker={meetingId ? setMergeTarget : undefined}
+            segments={convertedSegments}
+            isRecording={isRecording}
+            isPaused={false}
+            isProcessing={false}
+            isStopping={false}
+            enableStreaming={false}
+            showConfidence={true}
+            disableAutoScroll={disableAutoScroll}
+            hasMore={hasMore}
+            isLoadingMore={isLoadingMore}
+            totalCount={totalCount}
+            loadedCount={loadedCount}
+            onLoadMore={onLoadMore}
+          />
+        </div>
+
+        <SpeakersSidebar
+          speakers={detectedSpeakers}
+          userName={userName}
+          isOpen={showSpeakersSidebar}
+          onClose={() => setShowSpeakersSidebar(false)}
+          onRenameSpeaker={async (from, to) => {
+            if (!meetingId) return;
+            try {
+              await invoke('rename_meeting_speaker', {
+                meetingId,
+                from,
+                to,
+              });
+              await onRefetchTranscripts?.();
+              onSpeakerRenamed?.({ from, to, count: 0, removedName: false });
+            } catch (e: any) {
+              toast.error(`Rename failed: ${e?.message || e}`);
+            }
+          }}
+          onMergeSpeaker={handleMergeSpeaker}
+          isRecording={false}
         />
       </div>
     </div>

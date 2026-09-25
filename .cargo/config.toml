@@ -1,16 +1,4 @@
-[target.aarch64-apple-darwin]
-rustflags = [
-    "-C", "link-arg=-mmacosx-version-min=14.2",
-]
-
-[target.x86_64-apple-darwin]
-rustflags = [
-    "-C", "link-arg=-mmacosx-version-min=14.2",
-]
-
 [env]
-MACOSX_DEPLOYMENT_TARGET = { value = "14.2", force = true }
-CMAKE_OSX_DEPLOYMENT_TARGET = "14.2"
 CMAKE_CUDA_ARCHITECTURES = { value = "75;80;86;89;120", force = true }
 CMAKE_CUDA_STANDARD = { value = "17", force = true }
 CMAKE_CUDA_FLAGS = { value = "--std=c++17 -DCCCL_IGNORE_DEPRECATED_CPP_DIALECT -DCCCL_IGNORE_MSVC_TRADITIONAL_PREPROCESSOR_WARNING -Xcompiler=\"/Zc:preprocessor\"", force = true }

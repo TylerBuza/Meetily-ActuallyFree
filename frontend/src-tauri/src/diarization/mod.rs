@@ -1,4 +1,4 @@
-﻿//! Speaker diarization ("who spoke when") for recorded meetings.
+//! Speaker diarization ("who spoke when") for recorded meetings.
 //!
 //! Pipeline (all on-device, ONNX Runtime via `ort`):
 //!   1. Load the meeting WAV, downmix to mono and resample to 16 kHz.
@@ -628,6 +628,43 @@ fn find_meeting_audio(folder_path: Option<String>, meeting_title: Option<&str>) 
     newest_audio_in(&crate::paths::install_data_root())
 }
 
+fn is_manual_speaker_label(label: &str) -> bool {
+    let trimmed = label.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let is_generated = trimmed.split(" + ").all(|part| {
+        let p = part.trim();
+        p.eq_ignore_ascii_case("guest")
+            || p.eq_ignore_ascii_case("you")
+            || p.eq_ignore_ascii_case("unknown")
+            || (p.to_ascii_lowercase().starts_with("speaker ")
+                && p[8..].trim().chars().all(|c| c.is_ascii_digit()))
+    });
+    !is_generated
+}
+
+fn extract_manual_speaker_names(label: &str) -> Vec<String> {
+    let trimmed = label.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let mut names = Vec::new();
+    for part in trimmed.split(" + ") {
+        let p = part.trim();
+        if !p.is_empty()
+            && !p.eq_ignore_ascii_case("guest")
+            && !p.eq_ignore_ascii_case("you")
+            && !p.eq_ignore_ascii_case("unknown")
+            && !(p.to_ascii_lowercase().starts_with("speaker ")
+                && p[8..].trim().chars().all(|c| c.is_ascii_digit()))
+        {
+            names.push(p.to_string());
+        }
+    }
+    names
+}
+
 fn apply_source_track_hint(
     existing: Option<&str>,
     used_source_tracks: bool,
@@ -743,7 +780,7 @@ pub async fn diarize_meeting(
 
     let source = match audio_path {
         Some(p) => PathBuf::from(p),
-        None => find_meeting_audio(folder_path, title.as_deref()).ok_or_else(|| {
+        None => find_meeting_audio(folder_path.clone(), title.as_deref()).ok_or_else(|| {
             format!(
                 "No recording found for this meeting. Looked in the meeting folder, \
                  {} and the app data folder.",
@@ -941,35 +978,108 @@ pub async fn diarize_meeting(
         log::info!("🧑‍🤝‍🧑 Speaker {} identified as the local user", u + 1);
     }
 
-    // Assign each transcript from the offline source-track result. Custom names
-    // are preserved, but transient live labels (You/Guest/Speaker N) are refined.
-    // If multiple source-track speakers overlap the transcript, persist a label
-    // such as "You + Speaker 1" instead of falsely choosing only one voice.
-    let mut assignments: Vec<(String, String)> = Vec::new();
-    let mut updates: Vec<(String, Option<String>)> = Vec::new();
-    let mut preserved = 0u32;
-    for (id, start, end, existing) in rows {
-        if let Some(ref live) = existing {
-            let live_trim = live.trim();
-            if !live_trim.is_empty() {
-                let is_generated = live_trim.split(" + ").all(|part| {
-                    part.eq_ignore_ascii_case("guest")
-                        || part.eq_ignore_ascii_case("you")
-                        || part.to_ascii_lowercase().starts_with("speaker ")
-                });
-                let is_named = !is_generated;
-                if is_named {
-                    preserved += 1;
-                    assignments.push((id, live_trim.to_string()));
-                    continue;
+    // Read registered person speakers from the database as durable identities
+    let registered_speakers: Vec<String> = sqlx::query_scalar(
+        "SELECT speaker_label FROM person_speakers WHERE meeting_id = ?",
+    )
+    .bind(&meeting_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    let mut manual_speakers_ranges: std::collections::HashMap<String, Vec<(f32, f32)>> =
+        std::collections::HashMap::new();
+
+    for (_, s_opt, e_opt, spk_opt) in &rows {
+        if let (Some(s), Some(e), Some(spk)) = (s_opt, e_opt, spk_opt) {
+            if *e > *s {
+                for name in extract_manual_speaker_names(spk) {
+                    manual_speakers_ranges
+                        .entry(name)
+                        .or_default()
+                        .push((*s as f32, *e as f32));
+                }
+            }
+        }
+    }
+
+    for label in registered_speakers {
+        if is_manual_speaker_label(&label) {
+            manual_speakers_ranges.entry(label).or_default();
+        }
+    }
+
+    // Map voice cluster index -> manual name (e.g. Cluster 1 -> "Alice")
+    let mut cluster_to_manual_name: std::collections::HashMap<usize, String> =
+        std::collections::HashMap::new();
+
+    if !manual_speakers_ranges.is_empty() {
+        let mut cluster_overlaps: Vec<(usize, String, f32)> = Vec::new();
+        for spk in 0..result.num_speakers {
+            if Some(spk) == user_speaker {
+                continue;
+            }
+            for (name, ranges) in &manual_speakers_ranges {
+                let mut total_overlap = 0.0f32;
+                for seg in &result.segments {
+                    if seg.speaker == spk {
+                        for (rs, re) in ranges {
+                            let ov = seg.end.min(*re) - seg.start.max(*rs);
+                            if ov > 0.0 {
+                                total_overlap += ov;
+                            }
+                        }
+                    }
+                }
+                if total_overlap > 0.05 {
+                    cluster_overlaps.push((spk, name.clone(), total_overlap));
                 }
             }
         }
 
+        cluster_overlaps.sort_by(|a, b| {
+            b.2.partial_cmp(&a.2)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // Greedily pair distinct clusters with distinct manual names by highest overlap (strict 1-to-1 matching)
+        let mut assigned_clusters = std::collections::HashSet::new();
+        let mut assigned_names = std::collections::HashSet::new();
+        for (spk, name, _) in &cluster_overlaps {
+            if !assigned_clusters.contains(spk) && !assigned_names.contains(name) {
+                cluster_to_manual_name.insert(*spk, name.clone());
+                assigned_clusters.insert(*spk);
+                assigned_names.insert(name.clone());
+            }
+        }
+
+        log::info!(
+            "🧑‍🤝‍🧑 Matched voice clusters to manual speaker names: {:?}",
+            cluster_to_manual_name
+        );
+    }
+
+    // Assign each transcript from the offline source-track result. Custom names
+    // are mapped to acoustic voice clusters, allowing the diarization engine to
+    // accurately re-identify speakers across all segments while preserving manual names.
+    // If multiple source-track speakers overlap the transcript, persist a label
+    // such as "Chris Hemsworth + Scarlett Johansson" or "You + Speaker 1".
+    let mut assignments: Vec<(String, String)> = Vec::new();
+    let mut updates: Vec<(String, Option<String>)> = Vec::new();
+    let mut preserved = 0u32;
+    for (id, start, end, existing) in rows {
         let (s, e) = match (start, end) {
             (Some(s), Some(e)) if e > s => (s as f32, e as f32),
             _ => {
-                updates.push((id, None));
+                let fallback = existing
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|str| !str.is_empty())
+                    .map(str::to_string);
+                if let Some(ref label) = fallback {
+                    assignments.push((id.clone(), label.clone()));
+                }
+                updates.push((id, fallback));
                 continue;
             }
         };
@@ -1016,6 +1126,9 @@ pub async fn diarize_meeting(
                 if Some(spk) == user_speaker {
                     return "You".to_string();
                 }
+                if let Some(manual_name) = cluster_to_manual_name.get(&spk) {
+                    return manual_name.clone();
+                }
                 // Keep remote numbering compact when the user owns a cluster.
                 let display = match user_speaker {
                     Some(user) if spk > user => spk,
@@ -1052,8 +1165,16 @@ pub async fn diarize_meeting(
                             || (allow_remote_source_hint
                                 && speaker.eq_ignore_ascii_case("guest")))
                 })
-                .map(str::to_string);
+                .map(str::to_string)
+                .or_else(|| {
+                    existing
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                });
             if let Some(ref label) = source_hint {
+                preserved += 1;
                 assignments.push((id.clone(), label.clone()));
             }
             updates.push((id, source_hint));
@@ -1074,9 +1195,58 @@ pub async fn diarize_meeting(
     tx.commit()
         .await
         .map_err(|e| format!("Failed to commit speaker labels: {e}"))?;
+
+    // Reconcile durable identities in person_speakers for any retained manual names
+    if !cluster_to_manual_name.is_empty() {
+        let mut person_tx = pool
+            .begin()
+            .await
+            .map_err(|e| format!("Failed to begin person reconciliation: {e}"))?;
+        for manual_name in cluster_to_manual_name.values() {
+            if crate::database::repositories::person::is_person_name(manual_name) {
+                let _ = crate::database::repositories::person::PeopleRepository::reconcile_speaker_identity(
+                    &mut person_tx,
+                    &meeting_id,
+                    manual_name,
+                    manual_name,
+                )
+                .await;
+            }
+        }
+        let _ = person_tx.commit().await;
+    }
+
+    // Update transcripts.json in the meeting folder
+    if let Some(ref folder) = folder_path {
+        let p = PathBuf::from(folder);
+        if p.is_dir() {
+            if let Ok(db_transcripts) = sqlx::query_as::<_, (String, String, String, Option<f64>, Option<f64>, Option<f64>, Option<String>)>(
+                "SELECT id, transcript, timestamp, audio_start_time, audio_end_time, duration, speaker FROM transcripts WHERE meeting_id = ? ORDER BY audio_start_time ASC"
+            )
+            .bind(&meeting_id)
+            .fetch_all(pool)
+            .await
+            {
+                let segments_to_write: Vec<crate::api::TranscriptSegment> = db_transcripts
+                    .into_iter()
+                    .map(|(tid, text, ts, s, e, d, spk)| crate::api::TranscriptSegment {
+                        id: tid,
+                        text,
+                        timestamp: ts,
+                        audio_start_time: s,
+                        audio_end_time: e,
+                        duration: d,
+                        speaker: spk,
+                    })
+                    .collect();
+                let _ = crate::audio::common::write_transcripts_json(&p, &segments_to_write);
+            }
+        }
+    }
+
     if preserved > 0 {
         log::info!(
-            "🧑‍🤝‍🧑 Preserved {} live speaker label(s); offline only filled gaps",
+            "🧑‍🤝‍🧑 Preserved {} speaker label(s) where diarization had no overlap",
             preserved
         );
     }

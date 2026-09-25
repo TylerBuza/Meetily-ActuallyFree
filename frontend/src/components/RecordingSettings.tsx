@@ -17,6 +17,8 @@ export interface RecordingPreferences {
   mic_gain?: number;
   /** System-audio gain before metering, transcription, and recording (0.5–3.0). */
   system_gain?: number;
+  /** Faster real-time streaming mode: cuts audio segments frequently (~3.5s) with fast pause detection (350ms). */
+  real_time_transcription?: boolean;
 }
 
 interface RecordingSettingsProps {
@@ -33,6 +35,7 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
     preferred_system_device: null,
     mic_gain: 1.0,
     system_gain: 1.0,
+    real_time_transcription: false,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -87,6 +90,7 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
       enabled: enabled.toString()
     });
   };
+
 
   const handleMicGainChange = async (value: number) => {
     const mic_gain = Math.min(3, Math.max(0.5, value));
@@ -227,6 +231,7 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
           className="shrink-0"
         />
       </div>
+
 
       {/* Mic gain — boost local voice after loudness normalize */}
       <div className="min-w-0 space-y-3 rounded-lg border p-4">

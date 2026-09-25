@@ -6,13 +6,14 @@
     "build": {
         "frontendDist": "../out",
         "devUrl": "http://localhost:3118",
-        "beforeDevCommand": "node node_modules/next/dist/bin/next dev -p 3118",
+        "beforeDevCommand": "node scripts/dev-runner.js",
         "beforeBuildCommand": "node node_modules/next/dist/bin/next build"
     },
     "app": {
         "windows": [
             {
                 "title": "Meetily - Actually Free",
+                "url": "/",
                 "width": 1100,
                 "height": 700,
                 "center": true,

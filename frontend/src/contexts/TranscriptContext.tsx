@@ -1,12 +1,13 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode, MutableRefObject } from 'react';
-import { Transcript, TranscriptUpdate } from '@/types';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode, MutableRefObject, useMemo } from 'react';
+import { Transcript, TranscriptUpdate, DetectedSpeaker } from '@/types';
 import { toast } from 'sonner';
 import { useRecordingState } from './RecordingStateContext';
 import { transcriptService } from '@/services/transcriptService';
 import { recordingService } from '@/services/recordingService';
 import { indexedDBService } from '@/services/indexedDBService';
+import { resolveSpeaker, isUserSpeaker, speakerPaletteIndex } from '@/utils/speakerUtils';
 
 interface TranscriptContextType {
   transcripts: Transcript[];
@@ -20,6 +21,10 @@ interface TranscriptContextType {
   clearTranscripts: () => void;
   currentMeetingId: string | null;
   markMeetingAsSaved: () => Promise<void>;
+  detectedSpeakers: DetectedSpeaker[];
+  speakerMap: Record<string, string>;
+  renameSpeaker: (oldName: string, newName: string) => void;
+  mergeSpeakers: (sourceSpeaker: string, targetSpeaker: string) => void;
 }
 
 const TranscriptContext = createContext<TranscriptContextType | undefined>(undefined);
@@ -28,6 +33,12 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
   const [meetingTitle, setMeetingTitle] = useState('+ New Call');
   const [currentMeetingId, setCurrentMeetingId] = useState<string | null>(null);
+  const [speakerMap, setSpeakerMap] = useState<Record<string, string>>({});
+  const speakerMapRef = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    speakerMapRef.current = speakerMap;
+  }, [speakerMap]);
 
   // Recording state context - provides backend-synced state
   const recordingState = useRecordingState();
@@ -37,6 +48,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
   const isUserAtBottomRef = useRef<boolean>(true);
   const transcriptContainerRef = useRef<HTMLDivElement>(null);
   const finalFlushRef = useRef<(() => void) | null>(null);
+  const transcriptBufferRef = useRef<Map<number, Transcript>>(new Map());
 
   // Keep ref updated with current transcripts
   useEffect(() => {
@@ -183,6 +195,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
     let unlistenFn: (() => void) | undefined;
     let transcriptCounter = 0;
     let transcriptBuffer = new Map<number, Transcript>();
+    transcriptBufferRef.current = transcriptBuffer;
     let lastProcessedSequence = 0;
     let processingTimer: NodeJS.Timeout | undefined;
 
@@ -303,7 +316,10 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
             return;
           }
 
-          // Create transcript for buffer with NEW timestamp fields
+          // Create transcript for buffer with NEW timestamp fields and real-time speaker resolution
+          const rawSpeaker = (update as any).source || 'Speaker 1';
+          const effectiveSpeaker = resolveSpeaker(rawSpeaker, speakerMapRef.current);
+
           const newTranscript: Transcript = {
             id: `${Date.now()}-${transcriptCounter++}`,
             text: update.text,
@@ -316,7 +332,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
             audio_start_time: update.audio_start_time,
             audio_end_time: update.audio_end_time,
             duration: update.duration,
-            speaker: (update as any).source,
+            speaker: effectiveSpeaker,
           };
 
           // Add to buffer
@@ -417,6 +433,9 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
       is_partial: update.is_partial
     });
 
+    const rawSpeaker = (update as any).source || 'Speaker 1';
+    const effectiveSpeaker = resolveSpeaker(rawSpeaker, speakerMapRef.current);
+
     const newTranscript: Transcript = {
       id: update.sequence_id ? update.sequence_id.toString() : Date.now().toString(),
       text: update.text,
@@ -428,7 +447,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
       audio_start_time: update.audio_start_time,
       audio_end_time: update.audio_end_time,
       duration: update.duration,
-      speaker: (update as any).source,
+      speaker: effectiveSpeaker,
     };
 
     setTranscripts(prev => {
@@ -485,28 +504,125 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Rename speaker across active session
+  const renameSpeaker = useCallback((oldName: string, newName: string) => {
+    const trimmedOld = oldName.trim();
+    const trimmedNew = newName.trim();
+    if (!trimmedOld || !trimmedNew || trimmedOld === trimmedNew) return;
+
+    setSpeakerMap(prev => {
+      const next = { ...prev, [trimmedOld]: trimmedNew };
+      for (const [k, v] of Object.entries(prev)) {
+        if (v === trimmedOld) {
+          next[k] = trimmedNew;
+        }
+      }
+      speakerMapRef.current = next;
+      return next;
+    });
+
+    transcriptsRef.current = transcriptsRef.current.map(t =>
+      t.speaker?.trim() === trimmedOld ? { ...t, speaker: trimmedNew } : t
+    );
+
+    setTranscripts(prev =>
+      prev.map(t => (t.speaker?.trim() === trimmedOld ? { ...t, speaker: trimmedNew } : t))
+    );
+
+    if (transcriptBufferRef.current) {
+      for (const [seqId, t] of transcriptBufferRef.current.entries()) {
+        if (t.speaker?.trim() === trimmedOld) {
+          transcriptBufferRef.current.set(seqId, { ...t, speaker: trimmedNew });
+        }
+      }
+    }
+
+    toast.success(`Renamed "${trimmedOld}" to "${trimmedNew}"`);
+  }, []);
+
+  // Merge speakers across active session
+  const mergeSpeakers = useCallback((sourceSpeaker: string, targetSpeaker: string) => {
+    const trimmedSource = sourceSpeaker.trim();
+    const trimmedTarget = targetSpeaker.trim();
+    if (!trimmedSource || !trimmedTarget || trimmedSource === trimmedTarget) return;
+
+    setSpeakerMap(prev => {
+      const next = { ...prev, [trimmedSource]: trimmedTarget };
+      for (const [k, v] of Object.entries(prev)) {
+        if (v === trimmedSource) {
+          next[k] = trimmedTarget;
+        }
+      }
+      speakerMapRef.current = next;
+      return next;
+    });
+
+    transcriptsRef.current = transcriptsRef.current.map(t =>
+      t.speaker?.trim() === trimmedSource ? { ...t, speaker: trimmedTarget } : t
+    );
+
+    setTranscripts(prev =>
+      prev.map(t => (t.speaker?.trim() === trimmedSource ? { ...t, speaker: trimmedTarget } : t))
+    );
+
+    if (transcriptBufferRef.current) {
+      for (const [seqId, t] of transcriptBufferRef.current.entries()) {
+        if (t.speaker?.trim() === trimmedSource) {
+          transcriptBufferRef.current.set(seqId, { ...t, speaker: trimmedTarget });
+        }
+      }
+    }
+
+    toast.success(`Merged "${trimmedSource}" into "${trimmedTarget}"`);
+  }, []);
+
+  // Dynamic list of detected speakers in this meeting
+  const detectedSpeakers = useMemo<DetectedSpeaker[]>(() => {
+    const map = new Map<string, { count: number; lastTime?: number }>();
+    for (const t of transcripts) {
+      const spk = t.speaker?.trim() || 'Speaker 1';
+      const existing = map.get(spk);
+      if (existing) {
+        existing.count += 1;
+        if (t.audio_start_time !== undefined) {
+          existing.lastTime = Math.max(existing.lastTime ?? 0, t.audio_start_time);
+        }
+      } else {
+        map.set(spk, {
+          count: 1,
+          lastTime: t.audio_start_time,
+        });
+      }
+    }
+
+    return Array.from(map.entries()).map(([name, data]) => ({
+      id: name,
+      name,
+      isUser: isUserSpeaker(name),
+      segmentCount: data.count,
+      lastSpokeAt: data.lastTime,
+      colorIndex: speakerPaletteIndex(name),
+    }));
+  }, [transcripts]);
+
   // Clear transcripts (used when starting new recording)
   const clearTranscripts = useCallback(() => {
     setTranscripts([]);
-    // Don't clear currentMeetingId here - it will be set by recording-started event
+    setSpeakerMap({});
+    speakerMapRef.current = {};
   }, []);
 
   // Mark current meeting as saved in IndexedDB
   const markMeetingAsSaved = useCallback(async () => {
-    // Try context state first, fallback to sessionStorage
     const meetingId = currentMeetingId || sessionStorage.getItem('indexeddb_current_meeting_id');
 
     if (!meetingId) {
       console.error('[IndexedDB] ❌ Cannot mark meeting as saved: No meeting ID available!');
-      console.error('[IndexedDB] currentMeetingId:', currentMeetingId);
-      console.error('[IndexedDB] sessionStorage:', sessionStorage.getItem('indexeddb_current_meeting_id'));
       return;
     }
 
     try {
       await indexedDBService.markMeetingSaved(meetingId);
-
-      // Clear both sources
       setCurrentMeetingId(null);
       sessionStorage.removeItem('indexeddb_current_meeting_id');
     } catch (error) {
@@ -526,6 +642,10 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
     clearTranscripts,
     currentMeetingId,
     markMeetingAsSaved,
+    detectedSpeakers,
+    speakerMap,
+    renameSpeaker,
+    mergeSpeakers,
   };
 
   return (

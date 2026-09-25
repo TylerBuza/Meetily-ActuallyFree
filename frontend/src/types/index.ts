@@ -162,3 +162,13 @@ export interface PersonProfile {
   lastSeenAt?: string;
   meetings: PersonProfileMeeting[];
 }
+
+export interface DetectedSpeaker {
+  id: string;
+  name: string;
+  isUser: boolean;
+  segmentCount: number;
+  lastSpokeAt?: number;
+  colorIndex: number;
+}
+

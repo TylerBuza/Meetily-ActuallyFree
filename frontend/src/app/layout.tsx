@@ -1,10 +1,9 @@
 'use client'
 
 import './globals.css'
+import dynamic from 'next/dynamic'
 import { Source_Sans_3 } from 'next/font/google'
-import Sidebar from '@/components/Sidebar'
 import { SidebarProvider } from '@/components/Sidebar/SidebarProvider'
-import MainContent from '@/components/MainContent'
 import AnalyticsProvider from '@/components/AnalyticsProvider'
 import { Toaster, toast } from 'sonner'
 import "sonner/dist/styles.css"
@@ -18,19 +17,79 @@ import { OllamaDownloadProvider } from '@/contexts/OllamaDownloadContext'
 import { TranscriptProvider } from '@/contexts/TranscriptContext'
 import { ConfigProvider, useConfig } from '@/contexts/ConfigContext'
 import { OnboardingProvider } from '@/contexts/OnboardingContext'
-import { OnboardingFlow } from '@/components/onboarding'
 import { loadBetaFeatures } from '@/types/betaFeatures'
 import { DownloadProgressToastProvider } from '@/components/shared/DownloadProgressToast'
 import { UpdateCheckProvider } from '@/components/UpdateCheckProvider'
 import { RecordingPostProcessingProvider } from '@/contexts/RecordingPostProcessingProvider'
-import { ImportAudioDialog, ImportDropOverlay } from '@/components/ImportAudio'
 import { ImportDialogProvider } from '@/contexts/ImportDialogContext'
 import { isAudioExtension, getAudioFormatsDisplayList } from '@/constants/audioFormats'
-import GlobalSearchDialog from '@/components/GlobalSearchDialog'
-import CrashReportDialog from '@/components/CrashReportDialog'
 import { getPendingCrashReport, type PendingCrashReport } from '@/services/crashReportService'
 import { Button } from '@/components/ui/button'
 
+// Dynamically import heavy dialogs and onboarding wizard so app/layout.js stays lightweight
+// and cold-compiles quickly without timing out on slow startup or high CPU load.
+const OnboardingFlow = dynamic(
+  () => import('@/components/onboarding').then((mod) => mod.OnboardingFlow),
+  { ssr: false }
+)
+const ImportAudioDialog = dynamic(
+  () => import('@/components/ImportAudio').then((mod) => mod.ImportAudioDialog),
+  { ssr: false }
+)
+const ImportDropOverlay = dynamic(
+  () => import('@/components/ImportAudio').then((mod) => mod.ImportDropOverlay),
+  { ssr: false }
+)
+const GlobalSearchDialog = dynamic(
+  () => import('@/components/GlobalSearchDialog'),
+  { ssr: false }
+)
+const CrashReportDialog = dynamic(
+  () => import('@/components/CrashReportDialog'),
+  { ssr: false }
+)
+
+const Sidebar = dynamic(
+  () => import('@/components/Sidebar'),
+  { ssr: false }
+)
+const MainContent = dynamic(
+  () => import('@/components/MainContent'),
+  { ssr: false }
+)
+
+// Early inline handler executed in <head> before chunk scripts evaluate.
+// Catches ChunkLoadError (such as on-demand compilation delay on cold launch)
+// and reloads the window after a brief pause so pre-compiled chunks load instantly.
+const inlineChunkErrorHandler = `
+(function() {
+  var RELOAD_KEY = 'meetily_chunk_reload';
+  function handleChunkError(e) {
+    try {
+      var msg = (e && e.message) || (e && e.reason && e.reason.message) || '';
+      var name = (e && e.name) || (e && e.reason && e.reason.name) || '';
+      var isChunkError = name === 'ChunkLoadError' ||
+        /loading chunk .* failed/i.test(msg) ||
+        /timeout: .*_next\\/static/i.test(msg) ||
+        /failed to fetch .*_next\\/static/i.test(msg);
+
+      if (isChunkError) {
+        var last = sessionStorage.getItem(RELOAD_KEY);
+        var now = Date.now();
+        if (!last || (now - parseInt(last, 10)) > 3000) {
+          sessionStorage.setItem(RELOAD_KEY, String(now));
+          console.warn('[Meetily] ChunkLoadError detected in WebView2. Reloading in 300ms...');
+          setTimeout(function() {
+            window.location.reload();
+          }, 300);
+        }
+      }
+    } catch (_) {}
+  }
+  window.addEventListener('error', handleChunkError, true);
+  window.addEventListener('unhandledrejection', handleChunkError, true);
+})();
+`;
 
 const sourceSans3 = Source_Sans_3({
   subsets: ['latin'],
@@ -93,6 +152,13 @@ export default function RootLayout({
   useEffect(() => {
     let cancelled = false
 
+    // Safety timeout: Never stay stuck on blank startup screen if an invoke takes too long
+    const safetyTimer = setTimeout(() => {
+      if (!cancelled) {
+        setStartupResolved(true);
+      }
+    }, 2500);
+
     const initializeStartup = async () => {
       setStartupResolved(false)
       setStartupError(null)
@@ -107,14 +173,19 @@ export default function RootLayout({
           setShowOnboarding(true)
         } else {
           console.log('[Layout] Onboarding completed, showing main app')
-          const report = await getPendingCrashReport()
-          if (!cancelled) setPendingCrashReport(report)
+          try {
+            const report = await getPendingCrashReport()
+            if (!cancelled) setPendingCrashReport(report)
+          } catch (e) {
+            console.warn('[Layout] Crash report check failed:', e)
+          }
         }
       } catch (error) {
-        console.error('[Layout] Failed to resolve startup state:', error)
+        console.warn('[Layout] Could not resolve Tauri startup state, defaulting to main app:', error)
         if (cancelled) return
-        setStartupError('Meetily could not verify local startup and crash-report state.')
+        setOnboardingCompleted(true)
       } finally {
+        clearTimeout(safetyTimer)
         if (!cancelled) setStartupResolved(true)
       }
     }
@@ -122,6 +193,7 @@ export default function RootLayout({
     initializeStartup()
     return () => {
       cancelled = true
+      clearTimeout(safetyTimer)
     }
   }, [startupAttempt])
 
@@ -343,6 +415,9 @@ export default function RootLayout({
   if (typeof window !== 'undefined' && window.location.pathname.startsWith('/minibar')) {
     return (
       <html lang="en" className="dark minibar-window">
+        <head>
+          <script dangerouslySetInnerHTML={{ __html: inlineChunkErrorHandler }} />
+        </head>
         <body className={`${sourceSans3.variable} font-sans antialiased bg-transparent`}>
           {children}
         </body>
@@ -352,9 +427,17 @@ export default function RootLayout({
 
   return (
     <html lang="en" className="dark">
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: inlineChunkErrorHandler }} />
+      </head>
       <body className={`${sourceSans3.variable} font-sans antialiased`}>
         {!startupResolved ? (
-          <div className="h-screen bg-[var(--af-bg)]" />
+          <div className="flex h-screen items-center justify-center bg-[var(--af-bg)]">
+            <div className="flex flex-col items-center gap-3">
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+              <span className="text-xs text-[var(--af-text-2)] font-medium">Starting Meetily…</span>
+            </div>
+          </div>
         ) : startupError ? (
           <div className="flex h-screen items-center justify-center bg-[var(--af-bg)] px-6">
             <div className="max-w-md rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] p-6 text-center shadow-xl">
@@ -365,14 +448,6 @@ export default function RootLayout({
               </Button>
             </div>
           </div>
-        ) : pendingCrashReport ? (
-          <>
-            <div className="h-screen bg-[var(--af-bg)]" />
-            <CrashReportDialog
-              report={pendingCrashReport}
-              onResolved={() => setPendingCrashReport(null)}
-            />
-          </>
         ) : (
           <AnalyticsProvider>
             <RecordingStateProvider>
@@ -405,6 +480,13 @@ export default function RootLayout({
                                   handleImportDialogClose={handleImportDialogClose}
                                   importFilePath={importFilePath}
                                 />
+                                {/* Non-blocking crash report overlay */}
+                                {pendingCrashReport && (
+                                  <CrashReportDialog
+                                    report={pendingCrashReport}
+                                    onResolved={() => setPendingCrashReport(null)}
+                                  />
+                                )}
                               </ImportDialogProvider>
                             </UpdateCheckProvider>
                           </RecordingPostProcessingProvider>

@@ -60,8 +60,16 @@ pub struct TranscriptUpdate {
 }
 
 fn should_emit_transcript(transcript: &str, _confidence: Option<f32>) -> bool {
-    // Confidence is currently a text-length heuristic, not a model probability.
-    !transcript.trim().is_empty()
+    let trimmed = transcript.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // Filter out common Whisper single-word silence hallucinations
+    let lower = trimmed.to_lowercase();
+    if lower == "you" || lower == "you." {
+        return false;
+    }
+    true
 }
 
 // NOTE: get_transcript_history and get_recording_meeting_name functions
@@ -499,14 +507,27 @@ async fn transcribe_chunk_with_provider(
         });
     }
 
-    // Calculate energy for logging/monitoring only
+    // Calculate energy
     let energy: f32 =
         speech_samples.iter().map(|&x| x * x).sum::<f32>() / speech_samples.len() as f32;
+    let rms = energy.sqrt();
+    let peak = speech_samples.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+
+    // Skip silent chunks to avoid Whisper silence hallucinations
+    if rms < 0.005 && peak < 0.01 {
+        info!(
+            "Audio chunk {} has near-zero energy (rms: {:.6}, peak: {:.6}), skipping transcription",
+            chunk.chunk_id, rms, peak
+        );
+        return Ok((String::new(), Some(1.0), false));
+    }
+
     info!(
-        "Processing speech audio chunk {} with {} samples (energy: {:.6})",
+        "Processing speech audio chunk {} with {} samples (rms: {:.6}, peak: {:.6})",
         chunk.chunk_id,
         speech_samples.len(),
-        energy
+        rms,
+        peak
     );
 
     // Transcribe using the appropriate engine (with improved error handling)
@@ -522,6 +543,17 @@ async fn transcribe_chunk_with_provider(
                 Ok((text, confidence, is_partial)) => {
                     let cleaned_text = text.trim().to_string();
                     if cleaned_text.is_empty() {
+                        return Ok((String::new(), Some(confidence), is_partial));
+                    }
+
+                    // Filter out known Whisper silence hallucinations if energy is low
+                    let lower = cleaned_text.to_lowercase();
+                    let is_hallucination = (lower == "you" || lower == "you." || lower == "thank you." || lower == "thank you" || lower == "thanks." || lower == "bye." || lower == "bye") && rms < 0.02;
+                    if is_hallucination {
+                        warn!(
+                            "Dropping suspected silence hallucination for chunk {}: '{}' (rms={:.5}, conf={:.2})",
+                            chunk.chunk_id, cleaned_text, rms, confidence
+                        );
                         return Ok((String::new(), Some(confidence), is_partial));
                     }
 

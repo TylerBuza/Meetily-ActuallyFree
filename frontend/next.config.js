@@ -6,17 +6,35 @@ const resolveFromTiptapPm = (pkg) =>
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: false, // Disabled for BlockNote compatibility
-  output: 'export',
   images: {
     unoptimized: true,
   },
-  // Add basePath configuration
   basePath: '',
   assetPrefix: '/',
+  // Only use static HTML export for production builds ('next build').
+  // In development ('next dev'), disabling export allows rewrites so Tauri's default
+  // request for /index.html is seamlessly served as / (app/page.tsx).
+  ...(process.env.NODE_ENV === 'production'
+    ? {
+        output: 'export',
+      }
+    : {
+        async rewrites() {
+          return [
+            {
+              source: '/index.html',
+              destination: '/',
+            },
+          ];
+        },
+      }),
 
   // Add webpack configuration for Tauri
   webpack: (config, { isServer }) => {
     if (!isServer) {
+      config.output = config.output || {};
+      config.output.chunkLoadTimeout = 300000;
+
       config.resolve.fallback = {
         ...config.resolve.fallback,
         fs: false,

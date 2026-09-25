@@ -4,11 +4,11 @@
     "private": true,
     "main": "electron/main.js",
     "scripts": {
-        "dev": "next dev -p 3118",
+        "dev": "node scripts/dev-runner.js",
         "build": "next build",
         "export": "next export",
         "start": "next start -p 3118",
-        "tauri": "tauri",
+        "tauri": "node scripts/tauri-auto.js",
         "tauri:dev": "node scripts/tauri-auto.js dev",
         "tauri:build": "node scripts/tauri-auto.js build",
         "tauri:dev:cpu": "tauri dev",

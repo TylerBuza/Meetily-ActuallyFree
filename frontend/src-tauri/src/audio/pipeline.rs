@@ -385,6 +385,7 @@ pub struct AudioCapture {
     channels: u16,
     chunk_counter: Arc<std::sync::atomic::AtomicU64>,
     device_type: DeviceType,
+    #[allow(dead_code)]
     recording_sender: Option<mpsc::UnboundedSender<AudioChunk>>,
     needs_resampling: bool,  // Flag if resampling is required
     // CRITICAL FIX: Persistent resampler to preserve energy across chunks
@@ -979,16 +980,19 @@ impl AudioPipeline {
         let system_enabled = system_device_name != "No System Audio";
         let _ = (mic_device_kind, system_device_kind);
 
-        // Bridge short natural pauses without adding the two-second latency used by
-        // offline retranscription.
-        let redemption_time = 800;
+        // Fast real-time streaming uses 350ms redemption and 3.5s max utterance capping.
+        // Standard mode uses 800ms redemption and 6.0s max utterance capping.
+        let is_realtime = crate::audio::recording_preferences::is_real_time_transcription();
+        let redemption_time = if is_realtime { 350 } else { 800 };
+        let max_duration_ms = if is_realtime { 3500 } else { 6000 };
 
         // One VAD per capture source so simultaneous talk is segmented independently.
         let make_vad = |label: &str, positive_threshold, negative_threshold| -> Result<ContinuousVadProcessor> {
-            let processor = ContinuousVadProcessor::new_with_thresholds(
+            let mut processor = ContinuousVadProcessor::new_with_thresholds(
                 sample_rate, redemption_time, positive_threshold, negative_threshold,
             )?;
-            info!("VAD ready for {label}: separate source segmentation");
+            processor.set_max_speech_duration_ms(max_duration_ms);
+            info!("VAD ready for {label}: separate source segmentation (redemption: {redemption_time}ms, max: {max_duration_ms}ms, real_time: {is_realtime})");
             Ok(processor)
         };
         // Headset/array microphones are usually quieter than digital loopback.
@@ -1033,7 +1037,9 @@ impl AudioPipeline {
         if self.state.is_paused() {
             return;
         }
-        let redemption = std::time::Duration::from_millis(800);
+        let is_realtime = crate::audio::recording_preferences::is_real_time_transcription();
+        let redemption_ms = if is_realtime { 350 } else { 800 };
+        let redemption = std::time::Duration::from_millis(redemption_ms);
         let mut completed = Vec::new();
         if now.duration_since(self.last_mic_input) >= redemption {
             if let Some(segment) = self.mic_vad.finalize_active_speech() {
@@ -1064,6 +1070,10 @@ impl AudioPipeline {
         transcription_sender: &mpsc::UnboundedSender<AudioChunk>,
         chunk_id_counter: &mut u64,
     ) {
+        // Dynamically adjust max speech duration if preference changed during recording
+        let is_realtime = crate::audio::recording_preferences::is_real_time_transcription();
+        vad.set_max_speech_duration_ms(if is_realtime { 3500 } else { 6000 });
+
         match vad.process_audio(samples) {
             Ok(speech_segments) => Self::enqueue_source_speech(
                 speech_segments,
