@@ -98,9 +98,7 @@ export function useTranscriptionModels(transcriptModelConfig: TranscriptModelCon
         ((configuredProvider === 'localWhisper' || configuredProvider === 'whisper') && m.provider === 'whisper' && m.name === configuredModel) ||
         (configuredProvider === 'parakeet' && m.provider === 'parakeet' && m.name === configuredModel)
     );
-    const normalizedProvider = configuredProvider === 'localWhisper'
-      ? 'whisper'
-      : configuredProvider;
+    const normalizedProvider = configuredProvider === 'localWhisper' ? 'whisper' : configuredProvider;
     const configuredProviderMatch = allModels.find((model) => model.provider === normalizedProvider);
 
     // Only set default model if user hasn't manually selected one

@@ -257,7 +257,7 @@ export function DiarizationSettings() {
                 Bundled with app
               </span>
               <span className="font-semibold text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded bg-blue-500/10 dark:bg-blue-500/20 border border-blue-500/30">
-                CPU & GPU
+                  Local CPU
               </span>
             </div>
           </button>
@@ -311,7 +311,7 @@ export function DiarizationSettings() {
               </div>
             </div>
             <p className="text-xs text-slate-600 dark:text-slate-200 leading-relaxed font-normal mt-1">
-              Streaming end-to-end multi-speaker overlap detection with continuous voice tracking.
+                Post-call speaker detection with overlapping speech support, using the shared local CPU runtime.
             </p>
             <div className="mt-3.5 pt-2.5 border-t border-slate-200/90 dark:border-slate-700 flex items-center justify-between text-[11px]">
               <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-medium">
@@ -365,7 +365,7 @@ export function DiarizationSettings() {
             <div className="mt-4 rounded-xl bg-amber-500/10 border border-amber-500/30 p-4">
               <p className="text-sm text-amber-800 dark:text-amber-200 mb-3 leading-relaxed">
                 The Nemotron-3 Diarization model (~{formatMB(downloadBytes)}) runs fully on-device.
-                Download once to install <code>nemotron3_diar_v3.onnx</code> and <code>nemo128.onnx</code>.
+                Download once to install the SHA-256 verified model and its license.
               </p>
               <Button size="sm" onClick={() => handleDownload('nemotron')} className="bg-purple-600 text-white hover:bg-purple-700">
                 <Download size={16} className="mr-1.5" />
@@ -378,27 +378,18 @@ export function DiarizationSettings() {
           <div className="mt-3.5 p-4 sm:p-5 border border-purple-400/40 dark:border-purple-500/40 rounded-xl bg-purple-50/40 dark:bg-purple-950/25 space-y-4 transition-colors">
             <div className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2 uppercase tracking-wide">
               <Sliders className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-              Nemotron-3 Fine-tuning Parameters
+              Nemotron-3 Detection Settings
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Max Speakers</span>
+                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Speaker channels</span>
                   <span className="text-xs font-mono font-bold px-2.5 py-0.5 rounded-md border border-purple-300 dark:border-purple-600/80 bg-white dark:bg-slate-900 text-purple-700 dark:text-purple-300 shadow-xs">
-                    {status?.nemotron_max_speakers ?? 4}
+                    8
                   </span>
                 </div>
-                <input
-                  type="range"
-                  min={2}
-                  max={8}
-                  step={1}
-                  value={status?.nemotron_max_speakers ?? 4}
-                  onChange={(e) => handleUpdateConfig({ nemotronMaxSpeakers: parseInt(e.target.value, 10) })}
-                  className="w-full accent-purple-600 dark:accent-purple-400 cursor-pointer"
-                />
                 <span className="text-[11px] text-slate-500 dark:text-slate-400 block mt-1">
-                  Sortformer tracks up to this number of speakers (2 to 8).
+                  Auto-detect uses Nemotron after recording. An explicit speaker count uses the bundled Pyannote engine. Live labels use the bundled engine.
                 </span>
               </div>
               <div>

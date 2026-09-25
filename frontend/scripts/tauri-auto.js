@@ -49,7 +49,7 @@ if (platform === 'linux' && feature === 'cuda') {
 
 if (platform === 'win32' && feature === 'cuda') {
   console.log('🪟 Windows/CUDA detected: Setting CMAKE and CCCL flags for NVIDIA GPU');
-  env.CMAKE_CUDA_ARCHITECTURES = '75;80;86;89;120';
+  env.CMAKE_CUDA_ARCHITECTURES ||= '75;80;86;89;90;100;120';
   env.CMAKE_CUDA_STANDARD = '17';
   const ccclFlags = '-DCCCL_IGNORE_MSVC_TRADITIONAL_PREPROCESSOR_WARNING -DCCCL_IGNORE_DEPRECATED_CPP_DIALECT';
   const zcFlag = '/Zc:preprocessor';

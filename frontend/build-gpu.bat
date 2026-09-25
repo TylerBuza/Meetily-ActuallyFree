@@ -38,8 +38,7 @@ for /f "tokens=5" %%a in ('netstat -aon ^| findstr :3118 2^>nul') do (
 
 REM Set libclang path for whisper-rs-sys
 set "LIBCLANG_PATH=C:\Program Files\LLVM\bin"
-set "BINDGEN_EXTRA_CLANG_ARGS=-I""C:/Program Files/LLVM/lib/clang/18/include"""
-set "CMAKE_CUDA_ARCHITECTURES=75;80;86;89;120"
+if not defined CMAKE_CUDA_ARCHITECTURES set "CMAKE_CUDA_ARCHITECTURES=75;80;86;89;90;100;120"
 set "CMAKE_CUDA_STANDARD=17"
 set "CMAKE_CUDA_FLAGS=--std=c++17 -DCCCL_IGNORE_DEPRECATED_CPP_DIALECT -DCCCL_IGNORE_MSVC_TRADITIONAL_PREPROCESSOR_WARNING -Xcompiler="/Zc:preprocessor""
 set "CL=/DCCCL_IGNORE_DEPRECATED_CPP_DIALECT /DCCCL_IGNORE_MSVC_TRADITIONAL_PREPROCESSOR_WARNING /Zc:preprocessor"

@@ -841,10 +841,8 @@ async fn get_or_init_parakeet<R: Runtime>(
     match engine {
         Some(e) => {
             let target_model = match requested_model {
-                Some(model) if !model.is_empty() => {
-                    model.to_string()
-                }
-                _ => get_configured_model(app, "parakeet").await?,
+                Some(model) => model.to_string(),
+                None => get_configured_model(app, "parakeet").await?,
             };
 
             let current_model = e.get_current_model().await;
@@ -863,12 +861,9 @@ async fn get_or_init_parakeet<R: Runtime>(
                     warn!("Model discovery error (continuing): {}", e);
                 }
 
-                if let Err(e_load) = e.load_model(&target_model).await {
-                    warn!("Failed to load model '{}': {}, trying default model", target_model, e_load);
-                    e.load_model(crate::config::DEFAULT_PARAKEET_MODEL)
-                        .await
-                        .map_err(|e| anyhow!("Failed to load default Parakeet model: {}", e))?;
-                }
+                e.load_model(&target_model)
+                    .await
+                    .map_err(|e| anyhow!("Failed to load model '{}': {}", target_model, e))?;
             }
 
             Ok(e)

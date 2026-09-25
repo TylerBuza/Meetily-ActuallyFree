@@ -270,6 +270,27 @@ hostnames, or device names. Do not replace it with the much broader manual
 
 ## 4. Speaker diarization ("who spoke when")
 
+The default remains the bundled Pyannote/WeSpeaker pipeline described below.
+Settings also offers optional **Nemotron-3** for post-call **Auto-detect**. An
+explicit speaker count always uses the bundled clustering engine; never simulate
+a count by truncating Nemotron's eight output channels. Live labels still use
+the existing embedder because live VAD segments are discontinuous, while Nemotron
+requires continuous audio context for its streaming state.
+
+`diarization/nemotron.rs` adapts the attributed MIT-licensed Sortformer reference
+under `diarization/sortformer/` to the same verified CPU ONNX Runtime. Its native
+feature extraction differs from Parakeet's `nemo128.onnx`; never substitute that
+preprocessor. Preserve per-speaker activity, lookahead, and speaker-aware cache
+compression. Rolling recent history alone cannot retain a long-absent speaker.
+Weights and their license download from a pinned revision with exact size and
+SHA-256 checks. Both downloaded and manually supplied models are verified before
+loading. The code license ships with the bundled diarization resources.
+
+Diarization updates speaker labels only, in one transaction. It must never
+delete split rows, shorten the original text, or infer sentence timestamps from
+character/byte proportions. Unknown local-user identity remains unknown; arrival
+order or the longest speaking duration is not evidence of "You".
+
 Implemented from scratch on the ONNX Runtime already in the build (`ort`),
 deliberately **not** by linking sherpa-onnx — that would pull in a second
 onnxruntime and risk duplicate-symbol failures at link time.

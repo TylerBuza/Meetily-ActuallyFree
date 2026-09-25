@@ -2,7 +2,7 @@
 //!
 //! Supports both:
 //! - Pyannote pipeline (segmentation-3.0 + WeSpeaker + VBx) from GitHub release assets
-//! - NVIDIA Nemotron-3 Diarization Sortformer pipeline (nemotron3_diar_v3.onnx + nemo128.onnx)
+//! - NVIDIA Nemotron-3 model and license, pinned by revision, length and SHA-256.
 //!
 //! Each file is streamed to a `.part` temporary, verified, then atomically renamed
 //! into place — a partial or corrupt download can never be mistaken for a valid model.
@@ -40,20 +40,22 @@ const PYANNOTE_ASSETS: [(&str, u64, &str); 3] = [
 ];
 
 const NEMOTRON_DOWNLOAD_URL: &str =
-    "https://huggingface.co/altunenes/parakeet-rs/resolve/main/nemotron-3-diarization/nemotron3_diar_v3.onnx";
-const NEMO128_DOWNLOAD_URL: &str =
-    "https://meetily.towardsgeneralintelligence.com/models/parakeet-tdt-0.6b-v3-onnx/nemo128.onnx";
+    "https://huggingface.co/altunenes/parakeet-rs/resolve/4d2a8bc71f5c896ec40faa59732e6716295edaf2/nemotron-3-diarization/nemotron3_diar_v3.onnx";
+const NEMOTRON_LICENSE_URL: &str =
+    "https://huggingface.co/altunenes/parakeet-rs/resolve/4d2a8bc71f5c896ec40faa59732e6716295edaf2/nemotron-3-diarization/LICENSE";
 
-const NEMOTRON_ASSETS: [(&str, u64, &str); 2] = [
+const NEMOTRON_ASSETS: [(&str, u64, &str, &str); 2] = [
     (
-        "nemo128.onnx",
-        139_764,
-        NEMO128_DOWNLOAD_URL,
+        "Nemotron-LICENSE.txt",
+        2660,
+        NEMOTRON_LICENSE_URL,
+        "14cf93aed5ee7c72516170ecb65fb6d7e54ef19217d328c8b00b78eaf61c8b36",
     ),
     (
         "nemotron3_diar_v3.onnx",
         400_506_656,
         NEMOTRON_DOWNLOAD_URL,
+        "915e4fa23b0192ed9fadeb1cdd26847df986d50c92012d177be28d0343bbe03a",
     ),
 ];
 
@@ -82,9 +84,15 @@ fn emit<R: Runtime>(app: &AppHandle<R>, p: DownloadProgress) {
 
 /// SHA-256 of a file on disk, lowercase hex.
 async fn file_sha256(path: &Path) -> Result<String> {
-    let bytes = tokio::fs::read(path).await?;
+    use tokio::io::AsyncReadExt;
+    let mut file = tokio::fs::File::open(path).await?;
     let mut hasher = Sha256::new();
-    hasher.update(&bytes);
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer).await?;
+        if count == 0 { break; }
+        hasher.update(&buffer[..count]);
+    }
     Ok(format!("{:x}", hasher.finalize()))
 }
 
@@ -152,27 +160,27 @@ pub async fn download_pyannote_models<R: Runtime>(app: &AppHandle<R>) -> Result<
     Ok(())
 }
 
-/// Download NVIDIA Nemotron-3 Diarization models (nemotron3_diar_v3.onnx & nemo128.onnx).
+/// Download the pinned NVIDIA Nemotron-3 ONNX export and its model license.
 pub async fn download_nemotron_models<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
     let dir = super::diarization_user_model_dir();
     tokio::fs::create_dir_all(&dir).await?;
 
-    let total_bytes: u64 = NEMOTRON_ASSETS.iter().map(|(_, sz, _)| *sz).sum();
+    let total_bytes: u64 = NEMOTRON_ASSETS.iter().map(|(_, sz, _, _)| *sz).sum();
     let mut completed_bytes: u64 = 0;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3600))
         .build()?;
 
-    for (index, (name, expected_size, url)) in NEMOTRON_ASSETS.iter().enumerate() {
+    for (index, (name, expected_size, url, expected_hash)) in NEMOTRON_ASSETS.iter().enumerate() {
         let dest = dir.join(name);
         let file_index = index + 1;
 
-        // If file exists and size matches closely (within 1KB) or is non-empty
+        // Only an exact length and checksum can identify a completed artifact.
         if dest.exists() {
             if let Ok(meta) = tokio::fs::metadata(&dest).await {
-                if meta.len() == *expected_size || (*name == "nemotron3_diar_v3.onnx" && meta.len() > 380_000_000) {
+                if meta.len() == *expected_size && file_sha256(&dest).await? == *expected_hash {
                     completed_bytes += expected_size;
-                    log::info!("✅ {} already present and verified by size", name);
+                    log::info!("✅ {} already present and verified by SHA-256", name);
                     emit(
                         app,
                         DownloadProgress {
@@ -193,7 +201,7 @@ pub async fn download_nemotron_models<R: Runtime>(app: &AppHandle<R>) -> Result<
         }
 
         log::info!("⬇️ Downloading {} from {} …", name, url);
-        download_single_file(app, &client, url, &dest, name, file_index, NEMOTRON_ASSETS.len(), *expected_size, None, completed_bytes, total_bytes).await?;
+        download_single_file(app, &client, url, &dest, name, file_index, NEMOTRON_ASSETS.len(), *expected_size, Some(expected_hash), completed_bytes, total_bytes).await?;
         completed_bytes += expected_size;
     }
 
@@ -242,7 +250,7 @@ async fn download_single_file<R: Runtime>(
     }
     let content_len = response.content_length().unwrap_or(expected_size);
 
-    let part = dest.with_extension("onnx.part");
+    let part = dest.with_file_name(format!("{name}.part"));
     let mut file = tokio::fs::File::create(&part).await?;
     let mut hasher = Sha256::new();
     let mut written: u64 = 0;
@@ -251,6 +259,9 @@ async fn download_single_file<R: Runtime>(
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| anyhow!("Download of {} interrupted: {}", name, e))?;
+        if chunk.len() as u64 > expected_size.saturating_sub(written) {
+            return Err(anyhow!("{name} exceeds its published size"));
+        }
         if expected_hash.is_some() {
             hasher.update(&chunk);
         }
@@ -284,6 +295,10 @@ async fn download_single_file<R: Runtime>(
         file.flush().await?;
     }
     drop(file);
+
+    if written != expected_size {
+        return Err(anyhow!("{name}: received {written} bytes, expected {expected_size}"));
+    }
 
     if let Some(hash) = expected_hash {
         emit(
@@ -342,5 +357,5 @@ pub fn total_download_bytes() -> u64 {
 
 /// Total download size in bytes for Nemotron models.
 pub fn nemotron_download_bytes() -> u64 {
-    NEMOTRON_ASSETS.iter().map(|(_, sz, _)| *sz).sum()
+    NEMOTRON_ASSETS.iter().map(|(_, sz, _, _)| *sz).sum()
 }

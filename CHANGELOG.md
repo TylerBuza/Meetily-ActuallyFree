@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Add optional NVIDIA Nemotron-3 post-call speaker Auto-detect, adapted from
+  @ampersandru's PR #34. Live labels and explicit-count diarization continue
+  using the bundled Pyannote/WeSpeaker engine.
+- Preserve transcript text, row IDs, and timing across diarization reruns;
+  speaker-label updates remain transactional. Sentence splitting requires
+  actual word alignment and is not inferred from text length.
+- Preserve overlapping speaker activity and avoid guessing the local user's
+  identity from speaking duration. Separate mic/system tracks remain authoritative.
+- Pin the optional ONNX export and license by revision, exact length and SHA-256;
+  use model-specific native feature extraction and speaker-aware cache retention.
+- Retain the shared CPU ONNX Runtime, crash-report startup gate, and full release
+  CUDA architecture set. Credit Enes Altun/parakeet-rs for the MIT-licensed
+  Sortformer reference implementation.
+
 ## 0.2.16 - 2026-09-18
 
 ### Selective Upstream Integration

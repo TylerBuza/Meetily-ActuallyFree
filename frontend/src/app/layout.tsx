@@ -93,13 +93,6 @@ export default function RootLayout({
   useEffect(() => {
     let cancelled = false
 
-    // Safety timeout: Never stay stuck on blank startup screen if an invoke takes too long
-    const safetyTimer = setTimeout(() => {
-      if (!cancelled) {
-        setStartupResolved(true);
-      }
-    }, 2500);
-
     const initializeStartup = async () => {
       setStartupResolved(false)
       setStartupError(null)
@@ -114,19 +107,14 @@ export default function RootLayout({
           setShowOnboarding(true)
         } else {
           console.log('[Layout] Onboarding completed, showing main app')
-          try {
-            const report = await getPendingCrashReport()
-            if (!cancelled) setPendingCrashReport(report)
-          } catch (e) {
-            console.warn('[Layout] Crash report check failed:', e)
-          }
+          const report = await getPendingCrashReport()
+          if (!cancelled) setPendingCrashReport(report)
         }
       } catch (error) {
-        console.warn('[Layout] Could not resolve Tauri startup state, defaulting to main app:', error)
+        console.error('[Layout] Failed to resolve startup state:', error)
         if (cancelled) return
-        setOnboardingCompleted(true)
+        setStartupError('Meetily could not verify local startup and crash-report state.')
       } finally {
-        clearTimeout(safetyTimer)
         if (!cancelled) setStartupResolved(true)
       }
     }
@@ -134,7 +122,6 @@ export default function RootLayout({
     initializeStartup()
     return () => {
       cancelled = true
-      clearTimeout(safetyTimer)
     }
   }, [startupAttempt])
 
@@ -383,6 +370,14 @@ export default function RootLayout({
               </Button>
             </div>
           </div>
+        ) : pendingCrashReport ? (
+          <>
+            <div className="h-screen bg-[var(--af-bg)]" />
+            <CrashReportDialog
+              report={pendingCrashReport}
+              onResolved={() => setPendingCrashReport(null)}
+            />
+          </>
         ) : (
           <AnalyticsProvider>
             <RecordingStateProvider>
@@ -415,13 +410,6 @@ export default function RootLayout({
                                   handleImportDialogClose={handleImportDialogClose}
                                   importFilePath={importFilePath}
                                 />
-                                {/* Non-blocking crash report overlay */}
-                                {pendingCrashReport && (
-                                  <CrashReportDialog
-                                    report={pendingCrashReport}
-                                    onResolved={() => setPendingCrashReport(null)}
-                                  />
-                                )}
                               </ImportDialogProvider>
                             </UpdateCheckProvider>
                           </RecordingPostProcessingProvider>

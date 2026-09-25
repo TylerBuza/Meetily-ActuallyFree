@@ -16,7 +16,6 @@ $candidates = @($BuildOutput | Where-Object { $_ } | ForEach-Object {
   [System.IO.Path]::GetFullPath($_)
 }) + @(
   (Join-Path $repo "target\release"),
-  (Join-Path $frontend "src-tauri\binaries\onnxruntime"),
   (Join-Path $repo ".cuda_toolkit\bin\x64"),
   (Join-Path $repo ".cuda_toolkit\bin")
 )
