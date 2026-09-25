@@ -79,11 +79,16 @@ on real meetings or proof of superiority over the default engine.
   shared ONNX Runtime and attribution license hashes, and bootstrapper payload
   verification without installation.
 
-The local candidate retains the current 0.2.16 version for qualification; it is
-not a replacement for the published release. Artifacts are under `dist/` and
+Initial qualification used a 0.2.16 candidate; the DirectML build is now versioned
+0.2.17 for local installation. It has not been published. Artifacts are under `dist/` and
 lack Authenticode signing; the updater signature is present and verified.
-No real fresh-install,
-upgrade, GUI recording soak, or real-meeting accuracy result is claimed here.
+No fresh-install, GUI recording soak, or real-meeting accuracy result is claimed
+here. The user's existing installation was upgraded locally to 0.2.17 with the
+verified NSIS payload: installer exit code 0, installed version 0.2.17, CUDA
+backend and DirectML runtime hashes matching the candidate, and pre-existing
+top-level app-data file hashes unchanged before reopening. The app reopened and
+loaded both ONNX Runtime and DirectML from its installed app-owned directory.
+The previous executable and database were backed up privately before upgrading.
 
 ## DirectML follow-up
 

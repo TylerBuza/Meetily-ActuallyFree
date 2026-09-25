@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.17 - 2026-09-25
 
 - Add optional NVIDIA Nemotron-3 post-call speaker Auto-detect, adapted from
   @ampersandru's PR #34. Live labels and explicit-count diarization continue
