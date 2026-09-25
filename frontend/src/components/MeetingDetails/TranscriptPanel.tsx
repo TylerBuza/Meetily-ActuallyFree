@@ -25,6 +25,7 @@ import { MergeSpeakerDialog } from '@/components/MergeSpeakerDialog';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import { isUserSpeaker, speakerPaletteIndex } from '@/utils/speakerUtils';
+import { useConfig } from '@/contexts/ConfigContext';
 
 interface TranscriptPanelProps {
   transcripts: Transcript[];
@@ -84,10 +85,15 @@ export function TranscriptPanel({
   onRefetchTranscripts,
   onSpeakerRenamed,
 }: TranscriptPanelProps) {
+  const { showSpeakersPanel } = useConfig();
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const [mergeTarget, setMergeTarget] = useState<string | null>(null);
-  const [showSpeakersSidebar, setShowSpeakersSidebar] = useState<boolean>(false);
+  const [showSpeakersSidebar, setShowSpeakersSidebar] = useState<boolean>(showSpeakersPanel);
   const [userName, setUserName] = useState<string>('');
+
+  useEffect(() => {
+    setShowSpeakersSidebar(showSpeakersPanel);
+  }, [showSpeakersPanel]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {

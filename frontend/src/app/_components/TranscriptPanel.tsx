@@ -55,16 +55,20 @@ export function TranscriptPanel({
     renameSpeaker,
     mergeSpeakers,
   } = useTranscripts();
-  const { transcriptModelConfig } = useConfig();
+  const { transcriptModelConfig, showSpeakersPanel } = useConfig();
   const { isRecording, isPaused } = useRecordingState();
   const { requestPermissions, isChecking, hasSystemAudio, hasMicrophone } = usePermissionCheck();
   const isLinux = useIsLinux();
 
   // Sidebar and dialog states
-  const [showSpeakersSidebar, setShowSpeakersSidebar] = useState(false);
+  const [showSpeakersSidebar, setShowSpeakersSidebar] = useState(showSpeakersPanel);
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const [mergeTarget, setMergeTarget] = useState<string | null>(null);
   const [userName, setUserName] = useState('');
+
+  useEffect(() => {
+    setShowSpeakersSidebar(showSpeakersPanel);
+  }, [showSpeakersPanel]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {

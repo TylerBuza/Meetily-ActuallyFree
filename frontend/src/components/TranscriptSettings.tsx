@@ -76,7 +76,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
         try {
             const prefs = await invoke<RecordingPreferences>('get_recording_preferences');
             await invoke('set_recording_preferences', { preferences: { ...prefs, real_time_transcription: checked } });
-            toast.success(checked ? 'Fast real-time transcription enabled' : 'Standard transcription enabled', {
+            toast.success(checked ? 'Faster transcription enabled' : 'Standard transcription enabled', {
                 description: checked
                     ? 'Audio chunks will be streamed ~3.5s with rapid pause detection.'
                     : 'Audio chunks will use standard pause detection.'
@@ -398,16 +398,18 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                     )}
                 </div>
 
-                {/* Fast Real-Time Streaming Toggle */}
+                {/* Faster Transcription Toggle */}
                 <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--af-border-strong)] bg-[var(--af-panel)] p-4">
                     <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 font-semibold">
                             <Zap className="h-4 w-4 text-amber-400" />
-                            Fast Real-Time Streaming
+                            Faster transcription
                         </div>
                         <p className="mt-1 text-xs text-[var(--af-text-2)]">
-                            Streams transcript chunks frequently (~3.5s with 350ms pause detection) instead of waiting for speech pauses.
-                            Eliminates memory buildup and cleanly separates rapid consecutive speakers.
+                            Streams transcript chunks frequently (~3.5s with rapid 350ms pause detection) for lower latency.
+                        </p>
+                        <p className="mt-1.5 text-xs text-amber-500/90 font-medium">
+                            Disclaimer: This may cause additional speakers to show up when using diarization.
                         </p>
                     </div>
                     <Switch

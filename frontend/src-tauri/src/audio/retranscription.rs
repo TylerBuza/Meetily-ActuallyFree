@@ -466,6 +466,15 @@ async fn run_retranscription<R: Runtime>(
             continue;
         }
 
+        // Skip silent segments (RMS < 0.005 and peak < 0.01) to prevent Whisper silence hallucinations (e.g. "you", "thank you")
+        let sum_sq: f32 = segment.samples.iter().map(|&x| x * x).sum();
+        let rms = (sum_sq / segment.samples.len() as f32).sqrt();
+        let peak = segment.samples.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+        if rms < 0.005 && peak < 0.01 {
+            debug!("Skipping silent segment {} with RMS {:.5}, peak {:.5}", i, rms, peak);
+            continue;
+        }
+
         // Transcribe this segment
         let (text, conf) = if use_parakeet {
             let engine = parakeet_engine.as_ref().unwrap();
@@ -490,6 +499,14 @@ async fn run_retranscription<R: Runtime>(
         // Skip empty transcripts
         let trimmed = text.trim();
         if !trimmed.is_empty() {
+            // Filter out known Whisper silence hallucinations if energy is low
+            let lower = trimmed.to_lowercase();
+            let is_hallucination = (lower == "you" || lower == "you." || lower == "thank you." || lower == "thank you" || lower == "thanks." || lower == "bye." || lower == "bye") && rms < 0.02;
+            if is_hallucination {
+                warn!("Dropping suspected silence hallucination on segment {}: '{}' (rms={:.5}, conf={:.2})", i + 1, trimmed, rms, conf);
+                continue;
+            }
+
             debug!(
                 "Segment {}/{}: {:.1}s, conf={:.2}, text='{}'",
                 i + 1, processable_count, segment_duration_sec, conf,

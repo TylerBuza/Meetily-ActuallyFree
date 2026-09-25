@@ -1042,7 +1042,7 @@ pub async fn diarize_meeting(
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        // 1st pass: greedily pair distinct clusters with distinct manual names by highest overlap
+        // Greedily pair distinct clusters with distinct manual names by highest overlap (strict 1-to-1 matching)
         let mut assigned_clusters = std::collections::HashSet::new();
         let mut assigned_names = std::collections::HashSet::new();
         for (spk, name, _) in &cluster_overlaps {
@@ -1050,14 +1050,6 @@ pub async fn diarize_meeting(
                 cluster_to_manual_name.insert(*spk, name.clone());
                 assigned_clusters.insert(*spk);
                 assigned_names.insert(name.clone());
-            }
-        }
-
-        // 2nd pass: handle merged speakers (if user merged multiple clusters into the same manual name)
-        for (spk, name, overlap) in &cluster_overlaps {
-            if !assigned_clusters.contains(spk) && *overlap > 0.1 {
-                cluster_to_manual_name.insert(*spk, name.clone());
-                assigned_clusters.insert(*spk);
             }
         }
 

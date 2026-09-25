@@ -4,8 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { listen, UnlistenFn } from "@tauri-apps/api/event"
 import { toast } from "sonner"
-import { Users, CheckCircle2, AlertCircle, FolderOpen, Download, Loader2 } from "lucide-react"
+import { Users, CheckCircle2, AlertCircle, FolderOpen, Download, Loader2, PanelRight } from "lucide-react"
 import { Button } from "./ui/button"
+import { Switch } from "./ui/switch"
+import { useConfig } from "@/contexts/ConfigContext"
 
 interface DownloadProgress {
   file: string;
@@ -28,6 +30,7 @@ function formatMB(bytes: number): string {
  * from this fork's own GitHub release, or dropped in manually.
  */
 export function DiarizationSettings() {
+  const { showSpeakersPanel, toggleShowSpeakersPanel } = useConfig();
   const [available, setAvailable] = useState<boolean | null>(null);
   const [dir, setDir] = useState<string>('');
   const [downloadSize, setDownloadSize] = useState<number>(0);
@@ -112,6 +115,24 @@ export function DiarizationSettings() {
           Models ship with the app — nothing to download.
         </p>
       )}
+
+      {/* Option to also show the speakers panel */}
+      <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center gap-2">
+            <PanelRight className="w-4 h-4 text-blue-500" />
+            Show speakers panel
+          </div>
+          <p className="mt-0.5 text-xs text-gray-500">
+            Automatically show the detected speakers sidebar when viewing transcripts.
+          </p>
+        </div>
+        <Switch
+          checked={showSpeakersPanel}
+          onCheckedChange={toggleShowSpeakersPanel}
+          className="shrink-0"
+        />
+      </div>
 
       {/* Repair path: only if the bundled models are somehow missing */}
       {available === false && !isDownloading && (

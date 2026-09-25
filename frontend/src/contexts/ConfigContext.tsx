@@ -62,6 +62,8 @@ interface ConfigContextType {
   // UI preferences
   showConfidenceIndicator: boolean;
   toggleConfidenceIndicator: (checked: boolean) => void;
+  showSpeakersPanel: boolean;
+  toggleShowSpeakersPanel: (checked: boolean) => void;
 
   // Beta features
   betaFeatures: BetaFeatures;
@@ -159,6 +161,14 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       return saved !== null ? saved === 'true' : true;
     }
     return true;
+  });
+
+  const [showSpeakersPanel, setShowSpeakersPanel] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('showSpeakersPanel');
+      return saved !== null ? saved === 'true' : false;
+    }
+    return false;
   });
 
   // Summary configs
@@ -391,6 +401,14 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     window.dispatchEvent(new CustomEvent('confidenceIndicatorChanged', { detail: checked }));
   }, []);
 
+  const toggleShowSpeakersPanel = useCallback((checked: boolean) => {
+    setShowSpeakersPanel(checked);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('showSpeakersPanel', checked.toString());
+    }
+    window.dispatchEvent(new CustomEvent('speakersPanelPreferenceChanged', { detail: checked }));
+  }, []);
+
   const toggleIsAutoSummary = useCallback((checked: boolean) => {
     setisAutoSummary(checked);
     if (typeof window !== 'undefined') {
@@ -516,6 +534,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     setSelectedLanguage: handleSetSelectedLanguage,
     showConfidenceIndicator,
     toggleConfidenceIndicator,
+    showSpeakersPanel,
+    toggleShowSpeakersPanel,
     betaFeatures,
     toggleBetaFeature,
     models,
@@ -539,6 +559,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     handleSetSelectedLanguage,
     showConfidenceIndicator,
     toggleConfidenceIndicator,
+    showSpeakersPanel,
+    toggleShowSpeakersPanel,
     betaFeatures,
     toggleBetaFeature,
     models,

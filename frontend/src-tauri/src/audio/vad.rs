@@ -110,6 +110,12 @@ impl ContinuousVadProcessor {
             }
         }
         let samples = std::mem::take(&mut self.current_speech);
+        let sum_sq: f32 = samples.iter().map(|&x| x * x).sum();
+        let rms = (sum_sq / samples.len() as f32).sqrt();
+        let peak = samples.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
+        if rms < 0.005 && peak < 0.01 {
+            return None;
+        }
         Some(SpeechSegment {
             samples,
             start_timestamp_ms: start_ms,
@@ -333,21 +339,28 @@ impl ContinuousVadProcessor {
 
         // Force end any ongoing speech
         if self.in_speech && !self.current_speech.is_empty() {
-            // processed_samples and speech_start_sample always count 16kHz samples (post-resampling)
-            let start_ms = (self.speech_start_sample as f64 / 16000.0) * 1000.0;
-            let end_ms = (self.processed_samples as f64 / 16000.0) * 1000.0;
+            let sum_sq: f32 = self.current_speech.iter().map(|&x| x * x).sum();
+            let rms = (sum_sq / self.current_speech.len() as f32).sqrt();
+            let peak = self.current_speech.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
 
-            debug!("VAD flush: Force-ending speech - start={}ms, end={}ms, duration={}ms, samples={}",
-                  start_ms, end_ms, end_ms - start_ms, self.current_speech.len());
+            if rms >= 0.005 || peak >= 0.01 {
+                let start_ms = (self.speech_start_sample as f64 / 16000.0) * 1000.0;
+                let end_ms = (self.processed_samples as f64 / 16000.0) * 1000.0;
 
-            let segment = SpeechSegment {
-                samples: self.current_speech.clone(),
-                start_timestamp_ms: start_ms,
-                end_timestamp_ms: end_ms,
-                confidence: 0.8, // Estimated confidence for forced end
-            };
+                debug!("VAD flush: Force-ending speech - start={}ms, end={}ms, duration={}ms, samples={} (rms={:.5}, peak={:.5})",
+                      start_ms, end_ms, end_ms - start_ms, self.current_speech.len(), rms, peak);
 
-            self.speech_segments.push_back(segment);
+                let segment = SpeechSegment {
+                    samples: self.current_speech.clone(),
+                    start_timestamp_ms: start_ms,
+                    end_timestamp_ms: end_ms,
+                    confidence: 0.8, // Estimated confidence for forced end
+                };
+
+                self.speech_segments.push_back(segment);
+            } else {
+                debug!("VAD flush: Dropping silent ongoing speech (rms={:.5}, peak={:.5})", rms, peak);
+            }
             self.current_speech.clear();
             self.in_speech = false;
         }
@@ -424,19 +437,27 @@ impl ContinuousVadProcessor {
                     };
 
                     if !speech_samples.is_empty() {
-                        let start_ms = (self.speech_start_sample as f64 / 16000.0) * 1000.0;
-                        let duration_ms = (speech_samples.len() as f64 / 16000.0) * 1000.0;
-                        let end_ms = start_ms + duration_ms;
+                        let sum_sq: f32 = speech_samples.iter().map(|&x| x * x).sum();
+                        let rms = (sum_sq / speech_samples.len() as f32).sqrt();
+                        let peak = speech_samples.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
 
-                        info!("VAD: Completed speech segment: {:.1}ms duration, {} samples",
-                              duration_ms, speech_samples.len());
+                        if rms >= 0.005 || peak >= 0.01 {
+                            let start_ms = (self.speech_start_sample as f64 / 16000.0) * 1000.0;
+                            let duration_ms = (speech_samples.len() as f64 / 16000.0) * 1000.0;
+                            let end_ms = start_ms + duration_ms;
 
-                        self.speech_segments.push_back(SpeechSegment {
-                            samples: speech_samples,
-                            start_timestamp_ms: start_ms,
-                            end_timestamp_ms: end_ms,
-                            confidence: 0.9, // VAD confidence
-                        });
+                            info!("VAD: Completed speech segment: {:.1}ms duration, {} samples (rms={:.5}, peak={:.5})",
+                                  duration_ms, speech_samples.len(), rms, peak);
+
+                            self.speech_segments.push_back(SpeechSegment {
+                                samples: speech_samples,
+                                start_timestamp_ms: start_ms,
+                                end_timestamp_ms: end_ms,
+                                confidence: 0.9, // VAD confidence
+                            });
+                        } else {
+                            debug!("VAD: Dropping silent segment at SpeechEnd (rms={:.5}, peak={:.5})", rms, peak);
+                        }
                     }
 
                     self.current_speech.clear();
@@ -469,31 +490,35 @@ impl ContinuousVadProcessor {
 
                 if cut_point > 0 {
                     let segment_samples: Vec<f32> = self.current_speech.drain(..cut_point).collect();
-                    let start_ms = (self.speech_start_sample as f64 / 16000.0) * 1000.0;
-                    let duration_ms = (segment_samples.len() as f64 / 16000.0) * 1000.0;
-                    let end_ms = start_ms + duration_ms;
+                    let sum_sq: f32 = segment_samples.iter().map(|&x| x * x).sum();
+                    let rms = (sum_sq / segment_samples.len() as f32).sqrt();
+                    let peak = segment_samples.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
 
-                    info!("VAD: Continuous speech reached max duration ({:.1}s) - streaming segment: {:.1}ms duration, {} samples",
-                          duration_ms / 1000.0, duration_ms, segment_samples.len());
-
-                    self.speech_segments.push_back(SpeechSegment {
-                        samples: segment_samples,
-                        start_timestamp_ms: start_ms,
-                        end_timestamp_ms: end_ms,
-                        confidence: 0.9,
-                    });
-
-                    self.speech_start_sample += cut_point;
-
-                    // Recreate Silero session to flush internal audio accumulation while speech continues
-                    match VadSession::new(self.config) {
-                        Ok(session) => {
-                            self.session = session;
-                            self.session_start_sample = self.speech_start_sample;
+                    if rms < 0.005 && peak < 0.01 {
+                        debug!("VAD: Dropping silent continuous segment (rms: {:.6}, peak: {:.6}), resetting in_speech", rms, peak);
+                        self.current_speech.clear();
+                        self.in_speech = false;
+                        self.last_logged_state = false;
+                        if let Ok(new_session) = VadSession::new(self.config) {
+                            self.session = new_session;
+                            self.session_start_sample = self.processed_samples;
                         }
-                        Err(_e) => {
-                            self.session.reset();
-                        }
+                    } else {
+                        let start_ms = (self.speech_start_sample as f64 / 16000.0) * 1000.0;
+                        let duration_ms = (segment_samples.len() as f64 / 16000.0) * 1000.0;
+                        let end_ms = start_ms + duration_ms;
+
+                        info!("VAD: Continuous speech reached max duration ({:.1}s) - streaming segment: {:.1}ms duration, {} samples (rms={:.5}, peak={:.5})",
+                              duration_ms / 1000.0, duration_ms, segment_samples.len(), rms, peak);
+
+                        self.speech_segments.push_back(SpeechSegment {
+                            samples: segment_samples,
+                            start_timestamp_ms: start_ms,
+                            end_timestamp_ms: end_ms,
+                            confidence: 0.9,
+                        });
+
+                        self.speech_start_sample += cut_point;
                     }
                 }
             }

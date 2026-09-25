@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Switch } from '@/components/ui/switch';
-import { FolderCog, FolderOpen, Zap } from 'lucide-react';
+import { FolderCog, FolderOpen } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { DeviceSelection, SelectedDevices } from '@/components/DeviceSelection';
 import Analytics from '@/lib/analytics';
@@ -91,15 +91,6 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
     });
   };
 
-  const handleRealTimeTranscriptionToggle = async (enabled: boolean) => {
-    const newPreferences = { ...preferences, real_time_transcription: enabled };
-    setPreferences(newPreferences);
-    await savePreferences(newPreferences);
-
-    await Analytics.track('real_time_transcription_toggled', {
-      enabled: enabled.toString()
-    });
-  };
 
   const handleMicGainChange = async (value: number) => {
     const mic_gain = Math.min(3, Math.max(0.5, value));
@@ -241,25 +232,6 @@ export function RecordingSettings({ onSave }: RecordingSettingsProps) {
         />
       </div>
 
-      {/* Fast Real-Time Streaming Transcription */}
-      <div className="flex min-w-0 items-start justify-between gap-3 rounded-lg border p-4 sm:items-center">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 font-medium">
-            <Zap className="h-4 w-4 text-amber-500" />
-            Fast Real-Time Transcription
-          </div>
-          <div className="text-sm text-gray-600">
-            Streams transcription chunks frequently (~3.5s with fast 350ms pause detection) instead of waiting for long pauses.
-            Prevents memory spikes and separates consecutive speakers accurately during fast-paced conversation.
-          </div>
-        </div>
-        <Switch
-          checked={preferences.real_time_transcription ?? false}
-          onCheckedChange={handleRealTimeTranscriptionToggle}
-          disabled={saving}
-          className="shrink-0"
-        />
-      </div>
 
       {/* Mic gain — boost local voice after loudness normalize */}
       <div className="min-w-0 space-y-3 rounded-lg border p-4">
