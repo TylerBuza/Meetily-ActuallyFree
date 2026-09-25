@@ -8,6 +8,7 @@ import Analytics from '@/lib/analytics';
 import { RetranscribeDialog } from './RetranscribeDialog';
 import { useConfig } from '@/contexts/ConfigContext';
 import { invoke } from '@tauri-apps/api/core';
+import { useDiarizationEngine } from '@/hooks/useDiarizationEngine';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 
@@ -40,6 +41,7 @@ export function TranscriptButtonGroup({
   const [diarizeAvailable, setDiarizeAvailable] = useState(false);
   const [isDiarizing, setIsDiarizing] = useState(false);
   const [showSpeakerDialog, setShowSpeakerDialog] = useState(false);
+  const { engine, isNemotron, error: engineError } = useDiarizationEngine(showSpeakerDialog);
   const [expectedSpeakers, setExpectedSpeakers] = useState<string>('');
 
   useEffect(() => {
@@ -85,7 +87,7 @@ export function TranscriptButtonGroup({
     try {
       const res = await invoke<{ num_speakers: number; labeled: number }>('diarize_meeting', {
         meetingId,
-        numSpeakers: expected ?? null,
+        numSpeakers: isNemotron ? null : expected ?? null,
       });
       toast.success(
         res.num_speakers > 0
@@ -102,7 +104,7 @@ export function TranscriptButtonGroup({
     } finally {
       setIsDiarizing(false);
     }
-  }, [meetingId, isDiarizing, onRefetchTranscripts]);
+  }, [meetingId, isDiarizing, isNemotron, onRefetchTranscripts]);
 
   return (
     <div className="flex w-full min-w-0 items-center justify-end">
@@ -203,6 +205,10 @@ export function TranscriptButtonGroup({
             Identify speakers
           </DialogTitle>
           <div className="mt-2 space-y-3">
+            {engineError && <p role="alert" className="text-sm text-red-400">{engineError}</p>}
+            {!engine && !engineError && <p role="status">Loading diarization settings…</p>}
+            {isNemotron && <p className="text-sm">Nemotron automatically detects up to 8 speakers. Live speaker labels use Pyannote; Nemotron refines labels after recording.</p>}
+            {engine && !isNemotron && <>
             <p className="text-sm text-gray-500">
               How many distinct voices were in this meeting, <span className="text-[var(--af-text,#374151)] font-medium">including you</span>?
               For example, you plus one other person is <span className="text-[var(--af-text,#374151)] font-medium">2</span>.
@@ -241,6 +247,7 @@ export function TranscriptButtonGroup({
                 </button>
               ))}
             </div>
+            </>}
           </div>
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => setShowSpeakerDialog(false)}>
@@ -249,13 +256,14 @@ export function TranscriptButtonGroup({
             <Button
               size="sm"
               className="bg-blue-600 text-white hover:bg-blue-700"
+              disabled={!engine}
               onClick={() => {
                 const n = parseInt(expectedSpeakers, 10);
                 handleIdentifySpeakers(Number.isFinite(n) && n > 0 ? n : undefined);
               }}
             >
               <Users size={16} className="mr-1.5" />
-              {expectedSpeakers ? `Find ${expectedSpeakers} speakers` : 'Auto-detect'}
+              {!isNemotron && expectedSpeakers ? `Find ${expectedSpeakers} speakers` : 'Auto-detect'}
             </Button>
           </div>
         </DialogContent>

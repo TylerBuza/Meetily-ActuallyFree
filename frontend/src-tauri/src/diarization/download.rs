@@ -83,11 +83,44 @@ fn emit<R: Runtime>(app: &AppHandle<R>, p: DownloadProgress) {
 }
 
 /// SHA-256 of a file on disk, lowercase hex.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn download_ipc_future_stays_within_windows_stack_budget() {
+        fn future_size<F: std::future::Future>(
+            _: impl FnOnce(tauri::AppHandle<tauri::Wry>, Option<String>) -> F,
+        ) -> usize {
+            std::mem::size_of::<F>()
+        }
+        // Inspect the actual command future without constructing/running a GUI.
+        let size = future_size(super::super::download_diarization_models::<tauri::Wry>);
+        assert!(size < 32 * 1024, "Download IPC future is {size} bytes; nested Tauri dispatch can overflow the Windows stack");
+        println!("Download IPC future: {size} bytes");
+    }
+
+    #[tokio::test]
+    async fn checksum_future_is_small_and_hashes_multiple_buffers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("model.onnx");
+        let bytes: Vec<u8> = (0..200_003).map(|i| (i % 251) as u8).collect();
+        tokio::fs::write(&path, &bytes).await.unwrap();
+        let future = file_sha256(&path);
+        // Windows IPC can copy/nest this future several times before spawning it.
+        // Prevent the 64 KiB inline buffer that caused _alloca_probe stack overflow.
+        assert!(std::mem::size_of_val(&future) < 4096, "Checksum buffer leaked onto async stack");
+        assert_eq!(future.await.unwrap(), format!("{:x}", Sha256::digest(&bytes)));
+    }
+}
+
 async fn file_sha256(path: &Path) -> Result<String> {
     use tokio::io::AsyncReadExt;
     let mut file = tokio::fs::File::open(path).await?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 64 * 1024];
+    // This buffer lives across await points. Inline arrays inflate every parent
+    // future and can overflow the Windows IPC thread before the task is spawned.
+    let mut buffer = vec![0u8; 64 * 1024];
     loop {
         let count = file.read(&mut buffer).await?;
         if count == 0 { break; }

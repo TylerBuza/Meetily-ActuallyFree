@@ -6,7 +6,8 @@ Based on @ampersandru's `feat/nemotron-diarization` at
 ## Supported integration
 
 - Optional Nemotron-3 post-call Auto-detect; default remains Pyannote.
-- Explicit speaker counts and live labels use the existing bundled engine.
+- Nemotron always auto-detects; manual counts are offered only for Pyannote.
+  Live labels continue to use the existing bundled engine.
 - Separate microphone and system files, local-user provenance, overlapping
   activity, names, transcript text and timestamps are preserved.
 - Windows DirectML inference on the shared ONNX Runtime, with CPU fallback on

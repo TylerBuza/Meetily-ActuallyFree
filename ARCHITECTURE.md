@@ -272,8 +272,9 @@ hostnames, or device names. Do not replace it with the much broader manual
 
 The default remains the bundled Pyannote/WeSpeaker pipeline described below.
 Settings also offers optional **Nemotron-3** for post-call **Auto-detect**. An
-explicit speaker count always uses the bundled clustering engine; never simulate
-a count by truncating Nemotron's eight output channels. Live labels still use
+explicit speaker count is available only when Pyannote is selected. Nemotron
+always auto-detects, ignoring stale count requests without switching engines;
+never simulate a count by truncating its eight output channels. Live labels still use
 the existing embedder because live VAD segments are discontinuous, while Nemotron
 requires continuous audio context for its streaming state.
 

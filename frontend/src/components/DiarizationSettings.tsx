@@ -389,7 +389,7 @@ export function DiarizationSettings() {
                   </span>
                 </div>
                 <span className="text-[11px] text-slate-500 dark:text-slate-400 block mt-1">
-                  Auto-detect uses Nemotron after recording. An explicit speaker count uses the bundled Pyannote engine. Live labels use the bundled engine.
+                  Nemotron automatically detects up to 8 speakers. Live speaker labels use Pyannote; Nemotron refines labels after recording.
                 </span>
               </div>
               <div>

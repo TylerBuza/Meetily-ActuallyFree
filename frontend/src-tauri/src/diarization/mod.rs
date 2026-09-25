@@ -252,7 +252,7 @@ pub fn diarize_file_with_engine(
     threshold: Option<f32>,
 ) -> Result<DiarizationResult> {
     anyhow::ensure!(matches!(engine, "pyannote" | "nemotron"), "Unknown diarization engine");
-    if engine == "nemotron" && num_speakers.is_none() {
+    if engine == "nemotron" {
         if !nemotron_models_available() {
             return Err(anyhow!(
                 "Nemotron-3 diarization model not found in {}. Expected nemotron3_diar_v3.onnx.",
@@ -916,9 +916,8 @@ pub async fn diarize_meeting(
     let pool = state.db_manager.pool();
     let selected_engine = engine.unwrap_or_else(get_active_engine);
     if !matches!(selected_engine.as_str(), "pyannote" | "nemotron") { return Err("Unknown diarization engine".into()); }
-    // Nemotron estimates its own speaker count. An explicit count requires the
-    // bundled clustering engine, rather than dropping Nemotron output channels.
-    let selected_engine = if num_speakers.is_some() { "pyannote".to_string() } else { selected_engine };
+    // Counts saved by older UI versions must not silently switch the engine.
+    let num_speakers = if selected_engine == "nemotron" { None } else { num_speakers };
 
     // Resolve the recording.
     let meeting: Option<(Option<String>, String)> =

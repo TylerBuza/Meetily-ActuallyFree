@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.18 - 2026-09-25
+
+- Fix a Windows stack-overflow crash when invoking diarization model downloads:
+  checksum buffers now live on the heap instead of inside nested async futures.
+- Make Nemotron Auto-detect-only in both speaker dialogs and backend dispatch;
+  stale manual counts no longer silently select Pyannote. Manual speaker counts
+  remain available when Pyannote is selected.
+- Clarify that live labels use Pyannote and Nemotron refines labels after recording.
+
 ## 0.2.17 - 2026-09-25
 
 - Add optional NVIDIA Nemotron-3 post-call speaker Auto-detect, adapted from
