@@ -9,8 +9,9 @@ Based on @ampersandru's `feat/nemotron-diarization` at
 - Explicit speaker counts and live labels use the existing bundled engine.
 - Separate microphone and system files, local-user provenance, overlapping
   activity, names, transcript text and timestamps are preserved.
-- Native CPU inference on the existing shared ONNX Runtime. The application's
-  CPU/Vulkan/CUDA Whisper variants do not change Nemotron's execution provider.
+- Windows DirectML inference on the shared ONNX Runtime, with CPU fallback on
+  GPU session initialization failure. All CPU/Vulkan/CUDA Whisper variants get
+  the same Nemotron DirectML capability; those variants select Whisper's backend.
 - A roughly 382 MB model download plus its license; immutable source revision,
   exact byte counts and SHA-256 verification, including manually placed weights.
 - Sortformer preprocessing/cache implementation adapted from Enes Altun's
@@ -22,7 +23,7 @@ Removed destructive text-length-based splitting, its nonexistent database column
 speaker-duration-based user identification, winner-only overlap conversion,
 Parakeet-preprocessor substitution, recent-history-only speaker cache, and
 unverified model acceptance. Restored the startup crash-report gate, pinned
-shared CPU runtime, frozen frontend lockfile, and configured transcription model
+shared runtime, frozen frontend lockfile, and configured transcription model
 selection. CUDA development flags are Windows-script-scoped and respect an
 explicit architecture override; the full release architecture list is retained.
 
@@ -83,3 +84,46 @@ not a replacement for the published release. Artifacts are under `dist/` and
 lack Authenticode signing; the updater signature is present and verified.
 No real fresh-install,
 upgrade, GUI recording soak, or real-meeting accuracy result is claimed here.
+
+## DirectML follow-up
+
+The Windows runtime is now the pinned Microsoft.ML.OnnxRuntime.DirectML 1.22.0
+NuGet payload, plus Microsoft.AI.DirectML 1.15.4. Both package downloads and each
+staged DLL/license are checked for exact length and SHA-256. The DirectML DLL is
+preloaded from the app-owned absolute path and retained for the process lifetime.
+Nemotron requests adapter 0 using sequential execution and disabled memory
+patterns, as required by the DirectML execution provider. A failure to register
+the provider or create its session is logged and recreates a CPU session.
+
+Tested on NVIDIA RTX 4070 Ti, driver 32.0.16.1714:
+
+- Actual ONNX kernel profiling recorded 13,272 DirectML events, including 1,330
+  MatMul events, plus 6,251 CPU events. This verifies GPU work rather than merely
+  successful provider registration; the graph still has CPU partitions.
+- The 104.985-second synthetic conversation passed all identity/overlap
+  assertions. An initial timed inference was 0.77 seconds on DirectML versus
+  3.11 seconds on CPU, excluding model/session initialization. This is not a
+  real-meeting performance or accuracy benchmark.
+- An intentionally invalid adapter exercised CPU fallback and passed the same
+  inference assertions. Its profile contained 19,369 CPU events and no GPU events.
+- CPU VAD detected speech, and all three Parakeet int8 sessions transcribed the
+  generated speech correctly using the new shared runtime. Bundled Pyannote and
+  the four standard runtime tests also passed.
+- Production frontend build and TypeScript passed with the updated settings copy.
+- Rebuilt CPU, Vulkan, and CUDA variants, the NSIS updater, and the bootstrapper
+  with the DirectML runtime. Final payload verification passed, including both
+  DirectML DLL/license hashes, backend hashes, updater signatures, archive
+  integrity, and bootstrapper payload verification without installation.
+
+For the opt-in native model test, set `MEETILY_NEMOTRON_PROFILE` to an absolute
+profile prefix. Then verify the generated JSON with:
+
+```text
+python frontend/scripts/verify-nemotron-profile.py <profile.json> --provider directml
+```
+
+Test builds also accept `MEETILY_NEMOTRON_TEST_CPU=1` or
+`MEETILY_NEMOTRON_TEST_DEVICE=-1`; the latter exercises real provider failure and
+fallback. Verify either CPU profile with `--provider cpu`. These switches are
+compiled out of the shipped application. No real AMD/Intel hardware qualification
+has been performed.

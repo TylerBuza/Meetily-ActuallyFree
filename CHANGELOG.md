@@ -12,7 +12,9 @@
   identity from speaking duration. Separate mic/system tracks remain authoritative.
 - Pin the optional ONNX export and license by revision, exact length and SHA-256;
   use model-specific native feature extraction and speaker-aware cache retention.
-- Retain the shared CPU ONNX Runtime, crash-report startup gate, and full release
+- Add Windows DirectML acceleration for Nemotron with CPU fallback, using a pinned
+  shared ONNX Runtime and DirectML redistributable. VAD and Parakeet retain CPU execution.
+- Retain the crash-report startup gate and full release
   CUDA architecture set. Credit Enes Altun/parakeet-rs for the MIT-licensed
   Sortformer reference implementation.
 

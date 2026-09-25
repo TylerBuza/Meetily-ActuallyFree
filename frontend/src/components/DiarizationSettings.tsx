@@ -311,7 +311,7 @@ export function DiarizationSettings() {
               </div>
             </div>
             <p className="text-xs text-slate-600 dark:text-slate-200 leading-relaxed font-normal mt-1">
-                Post-call speaker detection with overlapping speech support, using the shared local CPU runtime.
+                Post-call speaker detection with overlapping speech support. Windows uses DirectML GPU acceleration when available, with CPU fallback.
             </p>
             <div className="mt-3.5 pt-2.5 border-t border-slate-200/90 dark:border-slate-700 flex items-center justify-between text-[11px]">
               <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-medium">

@@ -16,10 +16,50 @@ pub struct ModelConfig;
 impl ModelConfig {
     pub fn build_session(&self, path: &std::path::Path) -> Result<Session> {
         crate::onnx_runtime::ensure_available()?;
-        // Use the same verified CPU runtime as VAD/Parakeet. GPU providers need
-        // separate qualification rather than silent provider fallback.
-        Ok(Session::builder()?.with_intra_threads(4)?.commit_from_file(path)?)
+        #[cfg(windows)]
+        {
+            #[cfg(test)]
+            let force_cpu = std::env::var("MEETILY_NEMOTRON_TEST_CPU").as_deref() == Ok("1");
+            #[cfg(not(test))]
+            let force_cpu = false;
+            #[cfg(test)]
+            let device = std::env::var("MEETILY_NEMOTRON_TEST_DEVICE").ok()
+                .and_then(|v| v.parse().ok()).unwrap_or(0);
+            #[cfg(not(test))]
+            let device = 0;
+            if !force_cpu {
+                match directml_session(path, device) {
+                    Ok(session) => {
+                        log::info!("Nemotron: DirectML session initialized on adapter 0");
+                        return Ok(session);
+                    }
+                    Err(error) => log::warn!("Nemotron: DirectML unavailable, using CPU: {error}"),
+                }
+            }
+        }
+        log::info!("Nemotron: CPU execution provider");
+        let builder = Session::builder()?.with_intra_threads(4)?;
+        #[cfg(test)]
+        let builder = if let Ok(profile) = std::env::var("MEETILY_NEMOTRON_PROFILE") {
+            builder.with_profiling(profile)?
+        } else { builder };
+        Ok(builder.commit_from_file(path)?)
     }
+}
+
+#[cfg(windows)]
+fn directml_session(path: &std::path::Path, device: i32) -> Result<Session> {
+    use ort::execution_providers::DirectMLExecutionProvider;
+    // DirectML requires sequential execution and disabled memory patterns.
+    let builder = Session::builder()?.with_parallel_execution(false)?
+        .with_memory_pattern(false)?
+        .with_execution_providers([DirectMLExecutionProvider::default()
+            .with_device_id(device).build().error_on_failure()])?;
+    #[cfg(test)]
+    let builder = if let Ok(profile) = std::env::var("MEETILY_NEMOTRON_PROFILE") {
+        builder.with_profiling(profile)?
+    } else { builder };
+    Ok(builder.commit_from_file(path)?)
 }
 
 pub fn extract_3d_f32(value: &DynValue, name: &str) -> Result<Array3<f32>> {

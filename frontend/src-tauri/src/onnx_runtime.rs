@@ -1,4 +1,4 @@
-//! One packaged Windows CPU runtime for VAD, Parakeet, and diarization.
+//! One packaged Windows runtime for CPU speech models and DirectML diarization.
 //! Do not search PATH or accept an environment-selected DLL for the desktop app.
 
 pub const START_ERROR_CODE: &str = "TRANSCRIPTION_RUNTIME_INITIALIZATION_FAILED";
@@ -11,6 +11,8 @@ pub struct InitializationError(#[source] pub anyhow::Error);
 static RUNTIME_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 #[cfg(windows)]
 static INITIALIZED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+#[cfg(windows)]
+static DIRECTML: std::sync::OnceLock<libloading::Library> = std::sync::OnceLock::new();
 
 #[cfg(windows)]
 pub fn initialize<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
@@ -50,6 +52,15 @@ fn initialize_library(path: &std::path::Path) -> Result<(), String> {
     // SAFETY: the build/package validator pins this app-owned native library;
     // no function or pointer is used after the handle is dropped. ort retains
     // its own handle when init_from succeeds.
+    // Keep the app-owned DirectML dependency loaded by absolute path for the
+    // lifetime of ORT. Never resolve a different DirectML.dll from PATH.
+    let directml_path = path.with_file_name("DirectML.dll");
+    if directml_path.is_file() && DIRECTML.get().is_none() {
+        match unsafe { libloading::Library::new(&directml_path) } {
+            Ok(library) => { let _ = DIRECTML.set(library); }
+            Err(error) => log::warn!("DirectML unavailable; speech models can use CPU: {error}"),
+        }
+    }
     let library = unsafe { libloading::Library::new(path) }
         .map_err(|error| format!("Cannot load bundled ONNX Runtime: {error}. Repair/reinstall and restart Meetily."))?;
     unsafe { library.get::<unsafe extern "system" fn() -> *const std::ffi::c_void>(b"OrtGetApiBase\0") }
@@ -73,6 +84,25 @@ pub async fn check_transcription_runtime() -> Result<(), String> {
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "Requires MEETILY_PARAKEET_TEST_MODEL and MEETILY_NEMOTRON_WAV"]
+    fn directml_runtime_preserves_cpu_vad_and_parakeet() {
+        ensure_available().unwrap();
+        let path = std::env::var("MEETILY_PARAKEET_TEST_MODEL").expect("Set Parakeet model directory");
+        let wav = std::env::var("MEETILY_NEMOTRON_WAV").expect("Set speech WAV");
+        let (mut audio, rate) = crate::diarization::dsp::read_wav(std::path::Path::new(&wav)).unwrap();
+        assert_eq!(rate, 16000);
+        audio.truncate(16000 * 16);
+        let mut vad = crate::audio::vad::ContinuousVadProcessor::new(16000, 800).unwrap();
+        let mut segments = vad.process_audio(&audio).unwrap();
+        segments.extend(vad.flush().unwrap());
+        assert!(!segments.is_empty(), "VAD lost speech under DirectML-enabled runtime");
+        let mut model = crate::parakeet_engine::model::ParakeetModel::new(path, true).unwrap();
+        let result = model.transcribe_samples(audio).unwrap();
+        assert!(result.text.to_lowercase().contains("meeting"), "Unexpected Parakeet output: {}", result.text);
+        println!("CPU VAD and Parakeet passed: {}", result.text);
+    }
     #[test]
     fn missing_runtime_is_a_recoverable_error() {
         let dir = tempfile::tempdir().unwrap();

@@ -278,7 +278,11 @@ the existing embedder because live VAD segments are discontinuous, while Nemotro
 requires continuous audio context for its streaming state.
 
 `diarization/nemotron.rs` adapts the attributed MIT-licensed Sortformer reference
-under `diarization/sortformer/` to the same verified CPU ONNX Runtime. Its native
+under `diarization/sortformer/` to the shared ONNX Runtime. Windows bundles the
+DirectML-enabled runtime and pinned DirectML redistributable, with an absolute-path
+dependency preload. Nemotron attempts DirectML on adapter 0, using sequential
+execution with memory patterns disabled, then recreates a CPU session if GPU
+session initialization fails. VAD and Parakeet retain CPU sessions. Its native
 feature extraction differs from Parakeet's `nemo128.onnx`; never substitute that
 preprocessor. Preserve per-speaker activity, lookahead, and speaker-aware cache
 compression. Rolling recent history alone cannot retain a long-absent speaker.
