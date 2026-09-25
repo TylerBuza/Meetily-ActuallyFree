@@ -35,6 +35,9 @@ export function OptionalModelDownloadsProvider({ children }: { children: React.R
       if (disposed) stop(); else unsubscribers.push(stop);
     }
     listenersReady.current = Promise.all([
+      register<string>('diarization-engine-changed', engine => {
+        if (engine === 'nemotron') update('nemotron', { status: 'ready', progress: 100, enabled: true });
+      }),
       register<{ modelName: string; progress: number }>('model-download-progress', p => {
         if (p.modelName === OPTIONAL_WHISPER_MODEL) update('whisper', { status: 'downloading', progress: p.progress });
       }),
@@ -113,10 +116,13 @@ export function OptionalModelDownloadsProvider({ children }: { children: React.R
       }
       downloaded = true;
       update(model, { status: 'activating', progress: 100 });
-      await activateOptionalModel(model, OPTIONAL_WHISPER_MODEL);
+      // Nemotron's native download task also saves its selection, even if this
+      // WebView reloads while the download is running.
+      if (model === 'whisper') await activateOptionalModel(model, OPTIONAL_WHISPER_MODEL);
       update(model, { status: 'ready', progress: 100, enabled: true });
       toast.success(`${model === 'whisper' ? 'Whisper' : 'Nemotron'} is enabled`, { description: model === 'whisper' ? 'Whisper is now the default for post-call enhancement and retranscription.' : 'Nemotron will auto-detect speakers after recording.' });
     })().catch(error => {
+      downloaded ||= String(error).startsWith('Model downloaded, but could not enable it:');
       update(model, { status: downloaded ? 'activation-error' : 'error', progress: downloaded ? 100 : 0, error: String(error) });
       toast.error(downloaded ? 'Model downloaded, but could not enable it' : `${model === 'whisper' ? 'Whisper' : 'Nemotron'} download failed`, { description: 'You can keep using Meetily and retry from Settings.' });
     }).finally(() => {

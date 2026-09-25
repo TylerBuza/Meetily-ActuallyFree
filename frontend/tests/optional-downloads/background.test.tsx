@@ -54,7 +54,8 @@ test('optional downloads do not gate navigation and survive leaving onboarding',
   await act(async () => pending.get('download_diarization_models')!.resolve());
   expect(current.jobs.nemotron.status).toBe('ready');
   expect(current.jobs.nemotron.enabled).toBe(true);
-  expect(argumentsByCommand).toContainEqual(['set_diarization_engine', { engine: 'nemotron' }]);
+  expect(argumentsByCommand).toContainEqual(['download_diarization_models', { engine: 'nemotron' }]);
+  expect(calls).not.toContain('set_diarization_engine');
   expect(current.jobs.whisper.status).toBe('downloading');
   await act(async () => pending.get('whisper_download_model')!.resolve());
   expect(current.jobs.whisper.status).toBe('ready');
@@ -95,4 +96,23 @@ test('an existing native Whisper download is activated only after its completion
   expect(calls).not.toContain('api_save_post_call_transcript_config');
   await act(async () => listeners.get('model-download-complete')!({ payload: { modelName: 'large-v3-turbo-q5_0' } }));
   expect(current.jobs.whisper.enabled).toBe(true);
+});
+
+test('a remounted provider observes native Nemotron activation without an owning JS callback', async () => {
+  await act(async () => { root = create(<App page="setup" />); });
+  await act(async () => current.startDownload('nemotron'));
+  await act(async () => root.unmount());
+  await act(async () => { root = create(<App page="settings" />); });
+  await act(async () => listeners.get('diarization-engine-changed')!({ payload: 'nemotron' }));
+  expect(current.jobs.nemotron.status).toBe('ready');
+  expect(current.jobs.nemotron.enabled).toBe(true);
+  expect(calls).not.toContain('set_diarization_engine');
+});
+
+test('native activation failure offers activation retry', async () => {
+  await act(async () => { root = create(<App page="setup" />); });
+  await act(async () => current.startDownload('nemotron'));
+  await act(async () => pending.get('download_diarization_models')!.reject('Model downloaded, but could not enable it: disk error' as any));
+  expect(current.jobs.nemotron.status).toBe('activation-error');
+  expect(current.jobs.nemotron.enabled).not.toBe(true);
 });

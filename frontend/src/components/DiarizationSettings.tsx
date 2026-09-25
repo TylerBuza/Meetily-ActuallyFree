@@ -17,7 +17,7 @@ import {
   Check,
 } from "lucide-react"
 import { Button } from "./ui/button"
-import { activateOptionalModel, OPTIONAL_MODEL_PREFERENCES_CHANGED } from '@/lib/optional-model-activation';
+import { OPTIONAL_MODEL_PREFERENCES_CHANGED } from '@/lib/optional-model-activation';
 
 interface DownloadProgress {
   file: string;
@@ -59,10 +59,12 @@ export function DiarizationSettings() {
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const [isSwitching, setIsSwitching] = useState(false);
   const unlistenRef = useRef<UnlistenFn | null>(null);
+  const statusRevision = useRef(0);
 
   const refreshStatus = useCallback(() => {
+    const revision = ++statusRevision.current;
     invoke<DiarizationEngineStatus>('diarization_get_status')
-      .then(setStatus)
+      .then(value => { if (revision === statusRevision.current) setStatus(value); })
       .catch((e) => {
         console.error('Failed to get diarization status:', e);
       });
@@ -72,6 +74,15 @@ export function DiarizationSettings() {
     refreshStatus();
     window.addEventListener(OPTIONAL_MODEL_PREFERENCES_CHANGED, refreshStatus);
     return () => window.removeEventListener(OPTIONAL_MODEL_PREFERENCES_CHANGED, refreshStatus);
+  }, [refreshStatus]);
+
+  useEffect(() => {
+    let disposed = false;
+    let stop: UnlistenFn | undefined;
+    void listen('diarization-engine-changed', refreshStatus).then(unlisten => {
+      if (disposed) unlisten(); else stop = unlisten;
+    }).catch(error => console.error('Could not listen for engine changes:', error));
+    return () => { disposed = true; stop?.(); };
   }, [refreshStatus]);
 
   // Clean up download progress listener on unmount
@@ -132,7 +143,6 @@ export function DiarizationSettings() {
 
       await invoke('download_diarization_models', { engine: eng });
       downloaded = true;
-      if (eng === 'nemotron') await activateOptionalModel('nemotron', '');
       toast.success(
         eng === 'nemotron' ? 'Nemotron-3 installed and enabled' : 'Speaker models installed',
         {
@@ -142,6 +152,7 @@ export function DiarizationSettings() {
       refreshStatus();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      downloaded ||= msg.startsWith('Model downloaded, but could not enable it:');
       toast.error(downloaded ? 'Model downloaded, but could not enable it' : 'Model download failed', { description: msg });
       refreshStatus();
     } finally {

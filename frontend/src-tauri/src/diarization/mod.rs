@@ -694,7 +694,17 @@ pub async fn download_diarization_models<R: tauri::Runtime>(
     download::download_models_for_engine(&app, &target).await.map_err(|e| {
         log::error!("Diarization model download failed: {}", e);
         e.to_string()
-    })
+    })?;
+    // Finish the opt-in download in the native task. A WebView reload during
+    // setup must not discard the preference save along with its JS callback.
+    if target == "nemotron" {
+        set_diarization_engine(target).await.map_err(|e| {
+            format!("Model downloaded, but could not enable it: {e}")
+        })?;
+        use tauri::Emitter;
+        let _ = app.emit("diarization-engine-changed", "nemotron");
+    }
+    Ok(())
 }
 
 /// Rename every transcript segment belonging to one speaker in a meeting.

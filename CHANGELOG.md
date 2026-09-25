@@ -2,6 +2,9 @@
 
 ## 0.2.17 - 2026-09-25
 
+- Save Nemotron's automatic selection inside the native download task so setup
+  WebView reloads cannot lose activation. Open Settings and speaker dialogs
+  refresh when the native task enables Nemotron.
 - Automatically enable optional Nemotron after a successful download. Optional
   Whisper becomes the post-call enhancement/retranscription default; live
   transcription remains unchanged.
