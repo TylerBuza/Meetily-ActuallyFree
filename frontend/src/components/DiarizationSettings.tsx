@@ -17,6 +17,7 @@ import {
   Check,
 } from "lucide-react"
 import { Button } from "./ui/button"
+import { activateOptionalModel, OPTIONAL_MODEL_PREFERENCES_CHANGED } from '@/lib/optional-model-activation';
 
 interface DownloadProgress {
   file: string;
@@ -69,6 +70,8 @@ export function DiarizationSettings() {
 
   useEffect(() => {
     refreshStatus();
+    window.addEventListener(OPTIONAL_MODEL_PREFERENCES_CHANGED, refreshStatus);
+    return () => window.removeEventListener(OPTIONAL_MODEL_PREFERENCES_CHANGED, refreshStatus);
   }, [refreshStatus]);
 
   // Clean up download progress listener on unmount
@@ -83,6 +86,7 @@ export function DiarizationSettings() {
     setIsSwitching(true);
     try {
       await invoke('set_diarization_engine', { engine });
+      window.dispatchEvent(new Event(OPTIONAL_MODEL_PREFERENCES_CHANGED));
       toast.success(`Diarization engine switched to ${engine === 'nemotron' ? 'NVIDIA Nemotron-3' : 'Pyannote'}`);
       refreshStatus();
     } catch (e) {
@@ -118,6 +122,7 @@ export function DiarizationSettings() {
     setIsDownloading(true);
     setProgress(null);
     const eng = targetEngine || status?.active_engine || 'pyannote';
+    let downloaded = false;
 
     try {
       unlistenRef.current = await listen<DownloadProgress>(
@@ -126,8 +131,10 @@ export function DiarizationSettings() {
       );
 
       await invoke('download_diarization_models', { engine: eng });
+      downloaded = true;
+      if (eng === 'nemotron') await activateOptionalModel('nemotron', '');
       toast.success(
-        eng === 'nemotron' ? 'Nemotron-3 models installed' : 'Speaker models installed',
+        eng === 'nemotron' ? 'Nemotron-3 installed and enabled' : 'Speaker models installed',
         {
           description: 'You can now use Speakers on any meeting with a recording.',
         }
@@ -135,7 +142,8 @@ export function DiarizationSettings() {
       refreshStatus();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      toast.error('Model download failed', { description: msg });
+      toast.error(downloaded ? 'Model downloaded, but could not enable it' : 'Model download failed', { description: msg });
+      refreshStatus();
     } finally {
       if (unlistenRef.current) {
         unlistenRef.current();

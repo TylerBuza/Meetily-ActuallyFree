@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.2.19 - 2026-09-25
+## 0.2.17 - 2026-09-25
+
+- Automatically enable optional Nemotron after a successful download. Optional
+  Whisper becomes the post-call enhancement/retranscription default; live
+  transcription remains unchanged.
+- Mark both optional setup choices Recommended. Already-installed models can be
+  enabled without another download, and activation failures offer a retry.
+- Refresh open Settings panels after automatic activation.
 
 - Offer optional Whisper Large v3 Turbo Q5 and Nemotron downloads during setup.
   Download jobs are owned by the app, so navigating away or finishing onboarding
@@ -9,8 +16,6 @@
   requires the transcription engine to be ready; finishing setup no longer marks
   unfinished models as downloaded.
 
-## 0.2.18 - 2026-09-25
-
 - Fix a Windows stack-overflow crash when invoking diarization model downloads:
   checksum buffers now live on the heap instead of inside nested async futures.
 - Make Nemotron Auto-detect-only in both speaker dialogs and backend dispatch;
@@ -18,11 +23,9 @@
   remain available when Pyannote is selected.
 - Clarify that live labels use Pyannote and Nemotron refines labels after recording.
 
-## 0.2.17 - 2026-09-25
-
 - Add optional NVIDIA Nemotron-3 post-call speaker Auto-detect, adapted from
-  @ampersandru's PR #34. Live labels and explicit-count diarization continue
-  using the bundled Pyannote/WeSpeaker engine.
+  @ampersandru's PR #34. Live labels use the bundled Pyannote/WeSpeaker engine;
+  manual speaker counts are offered only when Pyannote is selected.
 - Preserve transcript text, row IDs, and timing across diarization reruns;
   speaker-label updates remain transactional. Sentence splitting requires
   actual word alignment and is not inferred from text length.

@@ -1,5 +1,20 @@
 # PR #34 qualification
 
+## Release numbering
+
+GitHub's latest published release is v0.2.16. All work in this branch is
+consolidated into **v0.2.17**, the next patch version. The 0.2.18–0.2.20 numbers
+mentioned in local qualification notes were temporary development build labels;
+they were never published or tagged as releases. The final installer is
+`dist/Meetily-ActuallyFree-0.2.17-x64-universal-setup.exe`. Earlier local candidate
+installers are archived outside `dist/` to avoid choosing a stale payload.
+
+The consolidated 0.2.17 installer was rebuilt after all optional-model activation
+changes. Production frontend build, all three Windows backend builds, updater
+signatures, archive/payload hashes, and bootstrapper payload verification passed.
+The installed executable was checked against the final CUDA payload and reports
+0.2.17. This candidate has not been published to GitHub.
+
 Based on @ampersandru's `feat/nemotron-diarization` at
 `125b6f0022bd3314c108b184456d98c7e95edb9c`.
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { OPTIONAL_MODEL_PREFERENCES_CHANGED } from '@/lib/optional-model-activation';
 import { BookOpen, Check, CheckCircle2, ChevronDown, Clock3, Languages, Loader2, Radio, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { Textarea } from './ui/textarea';
@@ -62,6 +63,22 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
     const postCallRevisionRef = useRef(0);
     const postCallSectionRef = useRef<HTMLDivElement>(null);
 
+    useEffect(() => {
+        let disposed = false;
+        const refreshPostCall = () => {
+            if (postCallSaveInFlightRef.current) return;
+            const revision = ++postCallRevisionRef.current;
+            void invoke<PostCallTranscriptConfig>('api_get_post_call_transcript_config').then(config => {
+                if (!disposed && revision === postCallRevisionRef.current) {
+                    setPostCallConfig(config);
+                    setPostCallError(null);
+                }
+            }).catch(error => console.error('Could not refresh activated post-call model:', error));
+        };
+        window.addEventListener(OPTIONAL_MODEL_PREFERENCES_CHANGED, refreshPostCall);
+        return () => { disposed = true; window.removeEventListener(OPTIONAL_MODEL_PREFERENCES_CHANGED, refreshPostCall); };
+    }, []);
+
     const refreshInstalledModels = useCallback(async () => {
         const [whisperModels, parakeetModels] = await Promise.all([
             invoke<RawModelInfo[]>('whisper_get_available_models').catch(() => []),
@@ -93,8 +110,9 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
 
     useEffect(() => {
         void refreshInstalledModels();
+        const revision = postCallRevisionRef.current;
         invoke<PostCallTranscriptConfig>('api_get_post_call_transcript_config')
-            .then((config) => setPostCallConfig(config || DEFAULT_POST_CALL_CONFIG))
+            .then((config) => { if (revision === postCallRevisionRef.current) setPostCallConfig(config || DEFAULT_POST_CALL_CONFIG); })
             .catch((error) => {
                 console.error('Failed to load post-call transcription config:', error);
                 setPostCallError('Could not load the post-call model preference.');
@@ -161,6 +179,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                 provider: nextConfig.provider,
                 model: nextConfig.model,
             });
+            window.dispatchEvent(new Event(OPTIONAL_MODEL_PREFERENCES_CHANGED));
             if (postCallRevisionRef.current === revision) {
                 setPostCallSaved(true);
                 window.setTimeout(() => setPostCallSaved(false), 2000);
