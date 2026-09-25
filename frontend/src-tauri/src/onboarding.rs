@@ -172,6 +172,8 @@ pub async fn complete_onboarding<R: Runtime>(
     app: AppHandle<R>,
     state: tauri::State<'_, AppState>,
     model: String,
+    parakeet_ready: Option<bool>,
+    summary_ready: Option<bool>,
 ) -> Result<(), String> {
     info!("Completing onboarding with builtin-ai model: {}", model);
 
@@ -209,9 +211,10 @@ pub async fn complete_onboarding<R: Runtime>(
         .map_err(|e| format!("Failed to load onboarding status: {}", e))?;
 
     status.completed = true;
-    status.current_step = 4; // Max step (4 on macOS with permissions, 3 on other platforms)
-    status.model_status.parakeet = "downloaded".to_string();
-    status.model_status.summary = "downloaded".to_string();
+    status.current_step = 5;
+    // Completing setup is independent of completing native model downloads.
+    status.model_status.parakeet = if parakeet_ready.unwrap_or(false) { "downloaded" } else { "not_downloaded" }.into();
+    status.model_status.summary = if summary_ready.unwrap_or(false) { "downloaded" } else { "not_downloaded" }.into();
     status.model_status.selected_summary_model = Some(model.clone());
 
     save_onboarding_status(&app, &status)

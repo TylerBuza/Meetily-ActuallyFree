@@ -11,6 +11,7 @@ import {
 } from '@/lib/transcription-acceleration';
 import { OnboardingContainer } from '../OnboardingContainer';
 import { useOnboarding } from '@/contexts/OnboardingContext';
+import { useOptionalModelDownloads } from '@/contexts/OptionalModelDownloadsContext';
 import {
   Tooltip,
   TooltipContent,
@@ -20,6 +21,9 @@ import {
 
 export function SetupOverviewStep() {
   const { goNext } = useOnboarding();
+  const { jobs, startDownload } = useOptionalModelDownloads();
+  const [installWhisper, setInstallWhisper] = useState(false);
+  const [installNemotron, setInstallNemotron] = useState(false);
   const [isMac, setIsMac] = useState(false);
   const [whisperBackend, setWhisperBackend] = useState<WhisperBackend | null | undefined>();
   const [cudaStatus, setCudaStatus] = useState<CudaReconfigurationStatus | null>(null);
@@ -70,6 +74,8 @@ export function SetupOverviewStep() {
   ];
 
   const handleContinue = () => {
+    if (installWhisper && jobs.whisper.status !== 'ready') startDownload('whisper');
+    if (installNemotron && jobs.nemotron.status !== 'ready') startDownload('nemotron');
     goNext();
   };
 
@@ -221,6 +227,23 @@ export function SetupOverviewStep() {
             </div>
           </div>
         )}
+
+        <div className="w-full max-w-md space-y-3 rounded-lg border border-gray-200 bg-white p-4 text-gray-900">
+          <h3 className="font-medium">Optional upgrades</h3>
+          <label className="flex items-start gap-3 text-sm">
+            <input type="checkbox" checked={installWhisper} onChange={e => setInstallWhisper(e.target.checked)} disabled={jobs.whisper.status === 'ready'} className="mt-1" />
+            <span>Whisper for retranscription <span className="text-gray-500">{jobs.whisper.status === 'ready' ? '· Already installed' : '· ~547 MB'}</span>
+              <span className="block text-xs text-gray-500">Large v3 Turbo Q5 for post-call enhancement and retranscribing recordings. Parakeet remains the live transcription engine.</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-3 text-sm">
+            <input type="checkbox" checked={installNemotron} onChange={e => setInstallNemotron(e.target.checked)} disabled={jobs.nemotron.status === 'ready'} className="mt-1" />
+            <span>Nemotron for speaker identification <span className="text-gray-500">{jobs.nemotron.status === 'ready' ? '· Already installed' : '· ~382 MB'}</span>
+              <span className="block text-xs text-gray-500">Auto-detect speakers after recording. Windows supports DirectML GPU acceleration with CPU fallback.</span>
+            </span>
+          </label>
+          <p className="text-xs text-gray-500">Selected downloads start in the background. You can finish setup immediately, track progress or retry in Settings, and choose the models once they are ready.</p>
+        </div>
 
         {/* CTA Section */}
         <div className="w-full max-w-xs space-y-4">

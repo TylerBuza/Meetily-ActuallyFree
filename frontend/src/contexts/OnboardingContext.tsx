@@ -497,6 +497,8 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
       // Onboarding always uses builtin-ai with selected model
       await invoke('complete_onboarding', {
         model: modelToSave,
+        parakeetReady: parakeetDownloaded,
+        summaryReady: selectedModelReady,
       });
       setCompleted(true);
       console.log('[OnboardingContext] Onboarding completed with model:', modelToSave);

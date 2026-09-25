@@ -18,6 +18,7 @@ import { OllamaDownloadProvider } from '@/contexts/OllamaDownloadContext'
 import { TranscriptProvider } from '@/contexts/TranscriptContext'
 import { ConfigProvider, useConfig } from '@/contexts/ConfigContext'
 import { OnboardingProvider } from '@/contexts/OnboardingContext'
+import { OptionalModelDownloadsProvider } from '@/contexts/OptionalModelDownloadsContext'
 import { OnboardingFlow } from '@/components/onboarding'
 import { loadBetaFeatures } from '@/types/betaFeatures'
 import { DownloadProgressToastProvider } from '@/components/shared/DownloadProgressToast'
@@ -385,6 +386,7 @@ export default function RootLayout({
                 <ConfigProvider>
                   <OllamaDownloadProvider>
                     <OnboardingProvider>
+                      <OptionalModelDownloadsProvider>
                       <SidebarProvider>
                         <TooltipProvider>
                           <RecordingPostProcessingProvider>
@@ -415,6 +417,7 @@ export default function RootLayout({
                           </RecordingPostProcessingProvider>
                         </TooltipProvider>
                       </SidebarProvider>
+                      </OptionalModelDownloadsProvider>
                     </OnboardingProvider>
                   </OllamaDownloadProvider>
                 </ConfigProvider>

@@ -11,6 +11,7 @@ import { PreferenceSettings } from '@/components/PreferenceSettings';
 import { SummaryModelSettings } from '@/components/SummaryModelSettings';
 import { MeetingDetectionSettings } from '@/components/MeetingDetectionSettings';
 import { DiarizationSettings } from '@/components/DiarizationSettings';
+import { OptionalModelDownloads } from '@/components/OptionalModelDownloads';
 import { AboutSettings } from '@/components/AboutSettings';
 import { BetaSettings } from '@/components/BetaSettings';
 import { LocalStackStatus } from '@/components/LocalStackStatus';
@@ -171,6 +172,7 @@ export default function SettingsPage() {
                 />
                 <div className="mt-6">
                   <DiarizationSettings />
+                  <OptionalModelDownloads />
                 </div>
               </TabsContent>
               <TabsContent value="summaryModels" className="mt-0 min-w-0 max-w-full focus-visible:ring-0">

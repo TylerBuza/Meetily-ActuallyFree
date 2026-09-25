@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.19 - 2026-09-25
+
+- Offer optional Whisper Large v3 Turbo Q5 and Nemotron downloads during setup.
+  Download jobs are owned by the app, so navigating away or finishing onboarding
+  does not stop them. Settings shows progress, completion, errors, and retry controls.
+- Allow continuing setup while Parakeet and other models download. Recording still
+  requires the transcription engine to be ready; finishing setup no longer marks
+  unfinished models as downloaded.
+
 ## 0.2.18 - 2026-09-25
 
 - Fix a Windows stack-overflow crash when invoking diarization model downloads:
