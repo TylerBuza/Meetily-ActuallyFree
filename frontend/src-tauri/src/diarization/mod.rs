@@ -20,6 +20,7 @@ pub mod dsp;
 pub mod models;
 pub mod nemotron;
 pub mod online;
+pub mod live_nemotron;
 pub mod voiceprint;
 
 use anyhow::{anyhow, Result};

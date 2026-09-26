@@ -1064,7 +1064,11 @@ impl AudioPipeline {
         transcription_sender: &mpsc::UnboundedSender<AudioChunk>,
         chunk_id_counter: &mut u64,
     ) {
-        match vad.process_audio(samples) {
+        match vad.process_audio_observed(samples, |start, audio| {
+            if matches!(device_type, DeviceType::System) {
+                crate::diarization::live_nemotron::feed(start, audio);
+            }
+        }) {
             Ok(speech_segments) => Self::enqueue_source_speech(
                 speech_segments,
                 device_type,
@@ -1259,7 +1263,7 @@ impl AudioPipeline {
 
                     // STEP 2: Mix audio in fixed windows when both streams have sufficient data
                     while self.ring_buffer.can_mix() {
-                        if let Some((mic_window, sys_window)) = self.ring_buffer.extract_window() {
+            if let Some((mic_window, sys_window)) = self.ring_buffer.extract_window() {
                             // STEP 3: Transcribe each source independently.
                             // Same wall-clock windows (aligned by the ring buffer),
                             // separate sample streams + VAD state — so when both
@@ -1382,6 +1386,7 @@ impl AudioPipeline {
             }
         }
 
+        crate::diarization::live_nemotron::finish();
         let mic_final = self.mic_vad.flush();
         let sys_final = self.system_vad.flush();
 

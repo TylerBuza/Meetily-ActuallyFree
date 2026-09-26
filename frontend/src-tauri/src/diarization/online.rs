@@ -93,16 +93,20 @@ static ONLINE: Mutex<Option<OnlineDiarizer>> = Mutex::new(None);
 
 /// Whether live speaker identification is currently active.
 pub fn is_active() -> bool {
-    ONLINE.lock().map(|g| g.is_some()).unwrap_or(false)
+    super::live_nemotron::active() || ONLINE.lock().map(|g| g.is_some()).unwrap_or(false)
 }
 
-/// Begin a live diarization session, loading the embedding model.
+/// Begin a live session with the selected engine, fixed for this recording.
+/// Nemotron receives continuous system audio from the pipeline; Pyannote uses
+/// the existing per-turn embedding path. Neither silently switches engines.
 ///
 /// Safe to call when models are absent — it simply reports failure and the
 /// caller falls back to capture-source labels.
-pub fn start() -> Result<()> {
-    // Live VAD chunks are discontinuous. Keep the established live embedder;
-    // Nemotron is selected for the continuous post-call recording only.
+pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<()> {
+    stop();
+    if super::get_active_engine() == "nemotron" {
+        return super::live_nemotron::start(app);
+    }
     if !super::pyannote_models_available() {
         return Err(anyhow!("diarization models not installed"));
     }
@@ -135,6 +139,7 @@ pub fn start() -> Result<()> {
 
 /// End the session and release the model.
 pub fn stop() {
+    super::live_nemotron::stop();
     if let Ok(mut guard) = ONLINE.lock() {
         if let Some(d) = guard.take() {
             log::info!(

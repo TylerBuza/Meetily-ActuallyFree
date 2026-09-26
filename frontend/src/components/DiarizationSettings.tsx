@@ -408,7 +408,7 @@ export function DiarizationSettings() {
                   </span>
                 </div>
                 <span className="text-[11px] text-slate-500 dark:text-slate-400 block mt-1">
-                  Nemotron automatically detects up to 8 speakers. Live speaker labels use Pyannote; Nemotron refines labels after recording.
+                  Nemotron tracks up to 8 remote speakers live and refines labels after recording. Microphone audio remains labeled You. Live engine changes apply to the next recording.
                 </span>
               </div>
               <div>

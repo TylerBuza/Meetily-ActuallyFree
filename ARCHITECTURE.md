@@ -7,6 +7,12 @@ this", and the places where a reasonable-looking change silently does nothing.
 
 For build commands see [`frontend/build-cuda-env.bat`](frontend/build-cuda-env.bat).
 
+For the recording/speaker implementation's file-by-file ownership, clocks,
+worker lifecycle, model activation, and test entry points, also read
+[`docs/DEVELOPMENT_MAP.md`](docs/DEVELOPMENT_MAP.md). Repository working conventions
+are in [`AGENTS.md`](AGENTS.md); feature qualification and historical notes are
+linked from that map.
+
 ---
 
 ## 1. Shape of the app
@@ -271,12 +277,18 @@ hostnames, or device names. Do not replace it with the much broader manual
 ## 4. Speaker diarization ("who spoke when")
 
 The default remains the bundled Pyannote/WeSpeaker pipeline described below.
-Settings also offers optional **Nemotron-3** for post-call **Auto-detect**. An
+Settings also offers optional **Nemotron-3** for live labels and post-call **Auto-detect**. An
 explicit speaker count is available only when Pyannote is selected. Nemotron
 always auto-detects, ignoring stale count requests without switching engines;
-never simulate a count by truncating its eight output channels. Live labels still use
-the existing embedder because live VAD segments are discontinuous, while Nemotron
-requires continuous audio context for its streaming state.
+never simulate a count by truncating its eight output channels. The live engine
+is selected at recording start. Pyannote uses the existing per-turn embedder;
+Nemotron receives continuous resampled system audio through the observer in
+`vad.rs`, before VAD removes silence. `live_nemotron.rs` owns a dedicated inference
+thread, bounded input queue, and recording-relative speaker timeline. Do not feed
+concatenated VAD speech turns into its streaming state. Microphone audio remains
+`You`. Closing streaming input drains and flushes audio; releasing the timeline
+waits until transcription processing finishes. See the development map for timing
+units, overload behavior, and the distinction between `finish()` and `stop()`.
 
 `diarization/nemotron.rs` adapts the attributed MIT-licensed Sortformer reference
 under `diarization/sortformer/` to the shared ONNX Runtime. Windows bundles the
@@ -308,7 +320,8 @@ onnxruntime and risk duplicate-symbol failures at link time.
 | `models.rs` | pyannote `segmentation-3.0` (7-class powerset) + WeSpeaker ResNet34 embeddings + VBx LDA transform; includes a minimal `.npz`/`.npy` reader |
 | `clustering.rs` | Agglomerative clustering, cosine distance, average linkage |
 | `mod.rs` | Offline pipeline + Tauri commands |
-| `online.rs` | Streaming diarization for live transcription |
+| `online.rs` | Live engine selection and Pyannote/WeSpeaker per-turn clustering |
+| `live_nemotron.rs` | Continuous Nemotron worker, timeline lookup, and shutdown lifecycle |
 | `download.rs` | Repair-path model download from the project's own GitHub release |
 
 ### Offline pipeline
@@ -324,7 +337,7 @@ onnxruntime and risk duplicate-symbol failures at link time.
 5. Merge adjacent same-speaker regions.
 
 The mic track updates `<data>/voiceprint/user_voiceprint.json`; live
-diarization seeds the user centroid from that profile on later calls.
+Pyannote diarization seeds the user centroid from that profile on later calls.
 Overlapped speech remains excluded from embeddings, but overlap timing is
 retained. Transcript rows can carry combined labels such as
 `You + Speaker 1` rather than being forced to one voice.

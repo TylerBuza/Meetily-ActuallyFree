@@ -6,6 +6,7 @@ use super::{DiarizationResult, DiarizationSegment};
 #[path = "sortformer/mod.rs"]
 #[allow(dead_code)] // Keep the attributed reference implementation's API intact.
 mod sortformer;
+pub(crate) use sortformer::SpeakerSegment as StreamingSpeakerSegment;
 
 pub const NEMOTRON_MODEL_FILENAME: &str = "nemotron3_diar_v3.onnx";
 pub const NEMOTRON_EXPECTED_BYTES: u64 = 400_506_656;
@@ -45,6 +46,20 @@ impl NemotronDiarizationModel {
 
     pub fn reset_streaming_state(&mut self) { self.model.reset_state(); }
 
+    pub fn enable_live_streaming(&mut self) -> Result<()> {
+        self.model.set_profile(sortformer::StreamingProfile::low_latency())?;
+        Ok(())
+    }
+
+    pub fn feed(&mut self, samples: &[f32]) -> Result<Vec<StreamingSpeakerSegment>> {
+        ensure!(samples.iter().all(|v| v.is_finite()), "Invalid streaming audio samples");
+        Ok(self.model.feed(samples)?)
+    }
+
+    pub fn flush(&mut self) -> Result<Vec<StreamingSpeakerSegment>> {
+        Ok(self.model.flush()?)
+    }
+
     pub fn diarize(&mut self, samples: &[f32], sample_rate: u32) -> Result<DiarizationResult> {
         ensure!(sample_rate > 0, "Invalid sample rate");
         ensure!(samples.iter().all(|v| v.is_finite()), "Invalid audio samples");
@@ -76,6 +91,49 @@ impl NemotronDiarizationModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "Requires pinned model and speech fixture"]
+    fn live_nemotron_streams_continuously_and_resets_between_meetings() {
+        let path = std::env::var("MEETILY_NEMOTRON_MODEL").unwrap();
+        let wav = std::env::var("MEETILY_NEMOTRON_WAV").unwrap();
+        let (audio, rate) = super::super::dsp::read_wav(Path::new(&wav)).unwrap();
+        assert_eq!(rate, 16000);
+        let mut model = NemotronDiarizationModel::new(path, 8, 0.5).unwrap();
+        model.enable_live_streaming().unwrap();
+        let started = std::time::Instant::now();
+        let mut segments = Vec::new();
+        for chunk in audio.chunks(800) { segments.extend(model.feed(chunk).unwrap()); }
+        segments.extend(model.flush().unwrap());
+        assert!(!segments.is_empty());
+        assert!(segments.iter().all(|s| s.start < s.end && s.end <= audio.len() as u64 && s.speaker_id < 8));
+        let speakers = segments.iter().map(|s| s.speaker_id).collect::<std::collections::HashSet<_>>();
+        assert!(speakers.len() >= 2, "Multispeaker fixture collapsed: {speakers:?}");
+        if let Ok(expected) = std::env::var("MEETILY_NEMOTRON_EXPECTED") {
+            let turns: Vec<serde_json::Value> = serde_json::from_slice(&std::fs::read(expected).unwrap()).unwrap();
+            let mut voices = std::collections::HashMap::new();
+            for turn in turns {
+                let name = turn["voice"].as_str().unwrap();
+                if name == "overlap" { continue; }
+                let start = (turn["start"].as_f64().unwrap() * 16000.0) as u64;
+                let end = (turn["end"].as_f64().unwrap() * 16000.0) as u64;
+                let mut coverage = [0u64; 8];
+                for segment in &segments {
+                    coverage[segment.speaker_id] += segment.end.min(end).saturating_sub(segment.start.max(start));
+                }
+                let (speaker, &duration) = coverage.iter().enumerate().max_by_key(|(_, n)| *n).unwrap();
+                assert!(duration > (end - start) / 2, "Insufficient live coverage for {name}");
+                if let Some(previous) = voices.insert(name.to_string(), speaker) {
+                    assert_eq!(previous, speaker, "Live identity changed for returning speaker {name}");
+                }
+            }
+            assert_eq!(voices.values().collect::<std::collections::HashSet<_>>().len(), voices.len());
+        }
+        println!("LIVE_NEMOTRON duration={} inference={:?} speakers={}", audio.len() as f64 / 16000.0, started.elapsed(), speakers.len());
+        model.reset_streaming_state();
+        assert!(model.feed(&vec![0.0; 16000 * 2]).unwrap().is_empty());
+        assert!(model.flush().unwrap().is_empty());
+    }
 
     #[test]
     #[ignore = "Requires MEETILY_NEMOTRON_MODEL pointing to the pinned model"]

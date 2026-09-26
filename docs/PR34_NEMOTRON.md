@@ -1,5 +1,11 @@
 # PR #34 qualification
 
+> Historical qualification of the original post-call integration. The later live
+> Nemotron implementation supersedes statements below that live labels always use
+> Pyannote. See [the current development map](DEVELOPMENT_MAP.md) and
+> [live implementation/qualification](LIVE_NEMOTRON_AND_PR36.md). Test and install
+> results below describe their specific candidate, not every later rebuild.
+
 ## Release numbering
 
 GitHub's latest published release is v0.2.16. All work in this branch is

@@ -207,7 +207,7 @@ export function TranscriptButtonGroup({
           <div className="mt-2 space-y-3">
             {engineError && <p role="alert" className="text-sm text-red-400">{engineError}</p>}
             {!engine && !engineError && <p role="status">Loading diarization settings…</p>}
-            {isNemotron && <p className="text-sm">Nemotron automatically detects up to 8 speakers. Live speaker labels use Pyannote; Nemotron refines labels after recording.</p>}
+            {isNemotron && <p className="text-sm">Nemotron automatically detects up to 8 speakers and refines the live labels using the completed recording.</p>}
             {engine && !isNemotron && <>
             <p className="text-sm text-gray-500">
               How many distinct voices were in this meeting, <span className="text-[var(--af-text,#374151)] font-medium">including you</span>?

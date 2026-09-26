@@ -1,5 +1,10 @@
 # Enable recommended optional models after download
 
+> Historical frontend-activation implementation. Nemotron activation was later
+> moved into its native download task; see
+> [NEMOTRON_NATIVE_ACTIVATION.md](NEMOTRON_NATIVE_ACTIVATION.md). The selected engine
+> now also drives the live path described in [DEVELOPMENT_MAP.md](DEVELOPMENT_MAP.md).
+
 Qualified locally as development build 0.2.20; included in the consolidated
 0.2.17 candidate, one patch version after GitHub's latest release (0.2.16).
 

@@ -128,6 +128,15 @@ export default function RootLayout({
 
   // Disable context menu in production
   useEffect(() => {
+    let disposed = false;
+    let stop: UnlistenFn | undefined;
+    void listen<string>('live-diarization-error', event => {
+      toast.error('Live speaker labeling unavailable', { description: event.payload, duration: 10000 });
+    }).then(unlisten => { if (disposed) unlisten(); else stop = unlisten; });
+    return () => { disposed = true; stop?.(); };
+  }, []);
+
+  useEffect(() => {
     if (process.env.NODE_ENV === 'production') {
       const handleContextMenu = (e: MouseEvent) => e.preventDefault();
       document.addEventListener('contextmenu', handleContextMenu);

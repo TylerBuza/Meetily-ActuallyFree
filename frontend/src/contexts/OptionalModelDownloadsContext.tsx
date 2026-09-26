@@ -120,7 +120,7 @@ export function OptionalModelDownloadsProvider({ children }: { children: React.R
       // WebView reloads while the download is running.
       if (model === 'whisper') await activateOptionalModel(model, OPTIONAL_WHISPER_MODEL);
       update(model, { status: 'ready', progress: 100, enabled: true });
-      toast.success(`${model === 'whisper' ? 'Whisper' : 'Nemotron'} is enabled`, { description: model === 'whisper' ? 'Whisper is now the default for post-call enhancement and retranscription.' : 'Nemotron will auto-detect speakers after recording.' });
+      toast.success(`${model === 'whisper' ? 'Whisper' : 'Nemotron'} is enabled`, { description: model === 'whisper' ? 'Whisper is now the default for post-call enhancement and retranscription.' : 'Nemotron will label speakers live on your next recording and refine them afterward.' });
     })().catch(error => {
       downloaded ||= String(error).startsWith('Model downloaded, but could not enable it:');
       update(model, { status: downloaded ? 'activation-error' : 'error', progress: downloaded ? 100 : 0, error: String(error) });

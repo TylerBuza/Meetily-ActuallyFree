@@ -2,6 +2,18 @@
 
 ## 0.2.17 - 2026-09-25
 
+### Nemotron speaker diarization
+
+Thanks to **[@ampersandru](https://github.com/ampersandru)** for
+[PR #34](https://github.com/TylerBuza/Meetily-ActuallyFree/pull/34), which provided
+the starting point for this integration. This release adapts and hardens that
+contribution and adds the live streaming path. Credit also goes to Enes Altun's
+MIT-licensed `parakeet-rs` Sortformer implementation.
+
+- Use the selected Nemotron engine for live remote-speaker labels as well as
+  post-call refinement. Continuous 16 kHz audio is processed on a dedicated
+  streaming worker; microphone audio remains You. Engine changes apply to the
+  next recording, and inference failures visibly retain source-only labels.
 - Save Nemotron's automatic selection inside the native download task so setup
   WebView reloads cannot lose activation. Open Settings and speaker dialogs
   refresh when the native task enables Nemotron.
@@ -24,7 +36,8 @@
 - Make Nemotron Auto-detect-only in both speaker dialogs and backend dispatch;
   stale manual counts no longer silently select Pyannote. Manual speaker counts
   remain available when Pyannote is selected.
-- Clarify that live labels use Pyannote and Nemotron refines labels after recording.
+- Explain live and post-call engine selection, including next-recording behavior
+  when the engine is changed during a call.
 
 - Add optional NVIDIA Nemotron-3 post-call speaker Auto-detect, adapted from
   @ampersandru's PR #34. Live labels use the bundled Pyannote/WeSpeaker engine;

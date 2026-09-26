@@ -391,7 +391,7 @@ export function PostCallProcessingDialog({
             </DialogTitle>
             <DialogDescription id="post-call-processing-description">
               {isNemotron
-                ? 'Nemotron automatically detects up to 8 speakers. Live speaker labels use Pyannote; Nemotron refines labels after recording.'
+              ? 'Nemotron automatically detects up to 8 speakers and refines the live labels using the completed recording.'
                 : 'Include yourself in the total. Entering the actual number gives more accurate speaker labels, or choose Auto-detect if you are not sure.'}
             </DialogDescription>
           </DialogHeader>

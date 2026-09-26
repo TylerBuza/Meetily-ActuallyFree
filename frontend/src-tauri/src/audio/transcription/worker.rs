@@ -189,7 +189,9 @@ pub fn start_transcription_task<R: Runtime>(
                             // display name). System audio is remote parties →
                             // diarize into Speaker N when models are available.
                             crate::audio::common::mark_stt_activity();
-                            let chunk_source = match &chunk.device_type {
+                        let nemotron_remote = matches!(chunk.device_type, crate::audio::recording_state::DeviceType::System)
+                            && crate::diarization::live_nemotron::active();
+                        let mut chunk_source = match &chunk.device_type {
                                 crate::audio::recording_state::DeviceType::Microphone => {
                                     // Still feed the online diarizer so it learns the
                                     // user's voice embedding for later offline refine.
@@ -227,7 +229,14 @@ pub fn start_transcription_task<R: Runtime>(
                             )
                             .await
                             {
-                                Ok((transcript, confidence_opt, is_partial)) => {
+                            Ok((transcript, confidence_opt, is_partial)) => {
+                                if nemotron_remote {
+                                    // Inference runs concurrently with ASR. Wait only for bounded
+                                    // lookahead here, never on the capture or Tokio worker thread.
+                                    chunk_source = tokio::task::spawn_blocking(move || {
+                                        crate::diarization::live_nemotron::label(chunk_timestamp, chunk_duration)
+                                    }).await.ok().flatten().unwrap_or_else(|| "Guest".into());
+                                }
                                     let confidence_str = match confidence_opt {
                                         Some(c) => format!("{:.2}", c),
                                         None => "N/A".to_string(),
