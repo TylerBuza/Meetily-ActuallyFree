@@ -25,6 +25,24 @@ The live profile uses roughly one second of model buffering, plus transcription
 and processing time. A transcript turn currently receives its dominant speaker
 label; post-call refinement remains useful for difficult turns and overlap.
 
+## Why Nemotron? Speaker-attribution accuracy
+
+![NVIDIA's chart of VoiceArena Diarization-Bench v1: Nemotron 3 has 14.7% diarization error rate; lower is better.](https://cdn-uploads.huggingface.co/production/uploads/688d4bdfdeb55432d90e546d/APLexzMWO1Om9RTvX8EGN.png)
+
+*Chart: NVIDIA, reporting VoiceArena Diarization-Bench v1 results for English
+with a 0 ms boundary collar. [NVIDIA's source article](https://huggingface.co/blog/nvidia/nemotron-diarization)
+and [benchmark methodology](https://voicearena.com/diarization-bench/methodology).*
+
+In these published results, Nemotron 3 scores **14.7% diarization error rate
+(DER)**, compared with **30.6% for pyannote Community-1**. Lower DER means less
+missed speech, false speech detection, and incorrect speaker attribution—not
+faster processing or lower GPU usage.
+
+This helps explain why we added Nemotron as an option. **Meetily's previous
+Pyannote/WeSpeaker pipeline is not the same system as the chart's Community-1 or
+Precision models**, and this chart is not a before-and-after benchmark of
+Meetily's live implementation. Results depend on audio and streaming settings.
+
 ## Other fixes
 
 - Fixed a Windows stack-overflow crash in diarization model downloads.
