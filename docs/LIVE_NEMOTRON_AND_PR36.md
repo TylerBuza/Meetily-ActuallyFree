@@ -22,7 +22,7 @@ without silently switching to Pyannote. Speaker history is bounded to ten
 minutes; excessively delayed transcript turns return source labels rather than
 guessing identities. Engine changes during capture apply on the next recording.
 
-## Qualification so far
+## Qualification
 
 - Native tests cover overlap-based label selection, history bounds, final-tail
   publication, and the continuous observer's 48 kHz-to-16 kHz conversion plus
@@ -36,6 +36,16 @@ guessing identities. Engine changes during capture apply on the next recording.
 - The real-model worker lifecycle test also passed: it submits the complete
   fixture to the bounded channel, closes input, joins the worker, and verifies
   that the final watermark and first/last-turn labels remain available afterward.
+- Production frontend build and all Windows CPU/Vulkan/CUDA variants passed.
+  Installer payload verification passed, including after refreshing updater notes
+  and manifest checksums to match `RELEASE_V0217.md`.
+- The final Windows CUDA payload was installed locally and its executable hash
+  matched the packaged variant. A SQLite backup was taken and the database file
+  hash was unchanged across installation. Installed-app IPC verified native
+  activation across a WebView reload; the app was then reopened normally.
+- Real-call accuracy, concurrent live ASR/diarization under sustained device load,
+  and non-NVIDIA DirectML hardware remain unqualified. The release does not claim
+  that the external NVIDIA/VoiceArena chart measures this application's accuracy.
 
 ## PR #36 review
 
