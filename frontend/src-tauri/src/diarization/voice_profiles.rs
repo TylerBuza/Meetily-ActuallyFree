@@ -49,6 +49,7 @@ struct LiveMatcher {
     models: DiarizationModels,
     profiles: Vec<VoiceProfile>,
     names: HashMap<String, String>,
+    pending: HashMap<String, Vec<f32>>,
 }
 
 /// Identity matching supplements Nemotron's meeting-local channels; it does not
@@ -59,7 +60,7 @@ pub fn start_live_matcher() -> Result<()> {
     let profiles = load_for_matching()?;
     if profiles.is_empty() { return Ok(()); }
     let models = DiarizationModels::load(&super::diarization_model_dir())?;
-    *guard = Some(LiveMatcher { models, profiles, names: HashMap::new() });
+    *guard = Some(LiveMatcher { models, profiles, names: HashMap::new(), pending: HashMap::new() });
     Ok(())
 }
 
@@ -72,16 +73,35 @@ pub fn name_live_nemotron_turn(label: &str, samples: &[f32]) -> Option<String> {
     if !label.starts_with("Speaker ") { return None; }
     let mut guard = LIVE_MATCHER.lock().ok()?;
     let matcher = guard.as_mut()?;
-    // Short VAD fragments are poor enrollment comparisons. A verified earlier
-    // match for this meeting-local channel can still label them.
-    if samples.len() >= 32_000 && samples.len() <= 240_000 {
-        if let Ok(embedding) = matcher.models.embed(samples) {
+    if let Some(name) = matcher.names.get(label) { return Some(name.clone()); }
+    // Near-live VAD chunks can be shorter than the embedding model's 2 s
+    // comparison window. Accumulate only this Nemotron channel's audio and
+    // cap it at 4 s; channel numbers are meeting-local, never identities.
+    let ready = {
+        let pending = matcher.pending.entry(label.to_string()).or_default();
+        append_live_profile_audio(pending, samples);
+        (pending.len() >= 32_000).then(|| pending.clone())
+    };
+    if let Some(audio) = ready {
+        if let Ok(embedding) = matcher.models.embed(&audio) {
             if let Some(profile) = best_match(&embedding, &matcher.profiles) {
-                matcher.names.insert(label.to_string(), profile.name.clone());
+                let name = profile.name.clone();
+                matcher.names.insert(label.to_string(), name.clone());
+                matcher.pending.remove(label);
+                return Some(name);
             }
         }
+        if audio.len() >= 64_000 { matcher.pending.remove(label); }
     }
-    matcher.names.get(label).cloned()
+    None
+}
+
+fn append_live_profile_audio(pending: &mut Vec<f32>, samples: &[f32]) {
+    const MAX_SAMPLES: usize = 64_000;
+    let incoming = &samples[samples.len().saturating_sub(MAX_SAMPLES)..];
+    let excess = pending.len().saturating_add(incoming.len()).saturating_sub(MAX_SAMPLES);
+    if excess > 0 { pending.drain(..excess); }
+    pending.extend_from_slice(incoming);
 }
 
 /// Compare clean, non-overlapping system-track turns for each diarized remote
@@ -324,5 +344,16 @@ mod tests {
         assert_eq!(best_match(&vector, &[profile.clone()]).unwrap().name, "Alice");
         assert!(best_match(&vector, &[profile.clone(), profile]).is_none());
         assert!(best_match(&[1.0, 0.0], &[]).is_none());
+    }
+    #[test]
+    fn short_live_chunks_accumulate_to_embedding_length_with_bounded_memory() {
+        let mut pending = Vec::new();
+        append_live_profile_audio(&mut pending, &vec![0.2; 20_000]);
+        assert_eq!(pending.len(), 20_000);
+        append_live_profile_audio(&mut pending, &vec![0.3; 16_000]);
+        assert_eq!(pending.len(), 36_000);
+        append_live_profile_audio(&mut pending, &vec![0.4; 50_000]);
+        assert_eq!(pending.len(), 64_000);
+        assert_eq!(pending[0], 0.3);
     }
 }

@@ -22,10 +22,12 @@ import { useRecordingState } from '@/contexts/RecordingStateContext';
 import { usePermissionCheck } from '@/hooks/usePermissionCheck';
 import { ModalType } from '@/hooks/useModalState';
 import { useIsLinux } from '@/hooks/usePlatform';
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { SpeakersSidebar } from '@/components/SpeakersSidebar';
 import { SpeakerRenameDialog } from '@/components/MeetingDetails/SpeakerRenameDialog';
 import { MergeSpeakerDialog } from '@/components/MergeSpeakerDialog';
+import { loadLabsPreferences } from '@/lib/labs';
 
 /**
  * TranscriptPanel Component
@@ -40,6 +42,9 @@ interface TranscriptPanelProps {
   isStopping: boolean;
   showModal: (name: ModalType, message?: string) => void;
 }
+
+type PreviewCaption = { source: 'microphone' | 'system'; start_time: number; end_time: number; text: string };
+type PreviewFinalized = { source: 'microphone' | 'system'; end_time: number };
 
 export function TranscriptPanel({
   isProcessingStop,
@@ -65,6 +70,48 @@ export function TranscriptPanel({
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const [mergeTarget, setMergeTarget] = useState<string | null>(null);
   const [userName, setUserName] = useState('');
+  const [nearLiveCaptions, setNearLiveCaptions] = useState(false);
+  const [previews, setPreviews] = useState<Partial<Record<PreviewCaption['source'], PreviewCaption>>>({});
+  const finalizedUntil = useRef({ microphone: -Infinity, system: -Infinity });
+
+  useEffect(() => {
+    const sync = () => setNearLiveCaptions(loadLabsPreferences().nearLiveCaptions);
+    sync();
+    window.addEventListener('meetily-labs-changed', sync);
+    return () => window.removeEventListener('meetily-labs-changed', sync);
+  }, []);
+
+  useEffect(() => {
+    if (!isRecording || !nearLiveCaptions || isPaused) {
+      setPreviews({});
+      return;
+    }
+    finalizedUntil.current = { microphone: -Infinity, system: -Infinity };
+    let disposed = false;
+    const unlisteners: Array<() => void> = [];
+    const attach = async () => {
+      const captionStop = await listen<PreviewCaption>('near-live-caption', ({ payload }) => {
+        if (disposed || payload.end_time <= finalizedUntil.current[payload.source]) return;
+        setPreviews(current => ({ ...current, [payload.source]: payload }));
+      });
+      unlisteners.push(captionStop);
+      const finalStop = await listen<PreviewFinalized>('near-live-finalized', ({ payload }) => {
+        if (disposed) return;
+        finalizedUntil.current[payload.source] = Math.max(finalizedUntil.current[payload.source], payload.end_time);
+        setPreviews(current => {
+          const preview = current[payload.source];
+          if (!preview || preview.start_time >= payload.end_time) return current;
+          const next = { ...current };
+          delete next[payload.source];
+          return next;
+        });
+      });
+      unlisteners.push(finalStop);
+      if (disposed) unlisteners.forEach(stop => stop());
+    };
+    void attach().catch(console.error);
+    return () => { disposed = true; unlisteners.forEach(stop => stop()); };
+  }, [isRecording, nearLiveCaptions, isPaused]);
 
   useEffect(() => {
     setShowSpeakersSidebar(showSpeakersPanel);
@@ -77,17 +124,27 @@ export function TranscriptPanel({
   }, []);
 
   // Convert transcripts to segments for virtualized view
-  const segments = useMemo(() =>
-    transcripts.map(t => ({
+  const segments = useMemo(() => {
+    const finalSegments = transcripts.map(t => ({
       id: t.id,
       timestamp: t.audio_start_time ?? 0,
       endTime: t.audio_end_time,
       text: t.text,
       confidence: t.confidence,
       speaker: t.speaker,
-    })),
-    [transcripts]
-  );
+    }));
+    const active = isRecording && nearLiveCaptions && !isPaused
+      ? Object.values(previews).filter((preview): preview is PreviewCaption => !!preview).map(preview => ({
+          id: `preview-${preview.source}`,
+          timestamp: preview.start_time,
+          endTime: preview.end_time,
+          text: `${preview.text} …`,
+          speaker: preview.source === 'microphone' ? 'You' : 'Remote voice',
+          provisional: true,
+        }))
+      : [];
+    return [...finalSegments, ...active].sort((a, b) => a.timestamp - b.timestamp);
+  }, [transcripts, previews, isRecording, nearLiveCaptions, isPaused]);
 
   return (
     <div className="flex flex-1 overflow-hidden w-full h-full">
@@ -169,6 +226,7 @@ export function TranscriptPanel({
               <VirtualizedTranscriptView
                 segments={segments}
                 isRecording={isRecording}
+                nearLiveCaptions={nearLiveCaptions}
                 isPaused={isPaused}
                 isProcessing={isProcessingStop}
                 isStopping={isStopping}

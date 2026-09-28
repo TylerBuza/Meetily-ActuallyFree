@@ -28,14 +28,20 @@ recording_commands.rs: start command
               -> continuous observer BEFORE silence removal
                  -> system only: live_nemotron::feed(recording_sample, audio)
               -> VAD speech turns -> transcription queue
+                 (Labs near-live: quiet-frame split at about 2 s even without silence)
+              -> latest-only provisional snapshots per source (Labs + Parakeet)
         -> persist mic/system source tracks and mixed playback audio
      -> transcription/worker.rs: transcribe each source's speech turn
+        -> provisional Parakeet worker shares the model and yields to queued final turns
+           -> near-live-caption event (UI only; never saved)
         -> microphone: You
         -> Pyannote selected: online embedding/centroid speaker matching
         -> Nemotron selected: query streaming timeline by turn start + duration
         -> transcript-update event
            -> frontend TranscriptContext + live transcript view
+              (Labs near-live: display joins interleaved chunks per speaker)
            -> native recording transcript accumulator/save path
+        -> near-live-finalized event clears replaced provisional text
 ```
 
 ### Source files to read together
@@ -48,6 +54,7 @@ Paths below are relative to `frontend/src-tauri/src/` unless marked frontend.
 | `audio/recording_manager.rs` | Starts capture and the audio pipeline, coordinates source state and recording storage. |
 | `audio/pipeline.rs` | Alignment, independent source VAD, queueing completed turns, source/mixed track persistence, final audio drain. |
 | `audio/vad.rs` | Resampling and VAD clocks. `process_audio_observed` supplies continuous 16 kHz audio before speech segmentation. |
+| `audio/near_live.rs` | Durable Labs flag, speech cap, and latest-only per-source preview channels. The pipeline snapshots the flag at recording start. Preview text never enters `transcript-update` or the save path. See [NEAR_LIVE_CAPTIONS.md](NEAR_LIVE_CAPTIONS.md). |
 | `audio/transcription/worker.rs` | ASR execution and the final speaker/source string carried by transcript updates. |
 | `diarization/online.rs` | Selects the live engine at recording start; retains the existing Pyannote/WeSpeaker online clustering implementation. |
 | `diarization/live_nemotron.rs` | Dedicated streaming inference thread, bounded queue, timestamped history, overlap lookup, error notification, and input-close/stop distinction. |
@@ -55,6 +62,7 @@ Paths below are relative to `frontend/src-tauri/src/` unless marked frontend.
 | `diarization/sortformer/` | Attributed model implementation, including speaker cache, feed/flush, streaming profiles, and ORT session construction. Preserve license/attribution. |
 | `audio/recording_saver.rs`, `audio/incremental_saver.rs` | Persistent transcript/source hints and recording tracks. A displayed rename alone does not update every save path. |
 | `frontend/src/contexts/TranscriptContext.tsx` | Frontend transcript events, ordering/buffering, local recovery, and live state. |
+| `frontend/src/components/VirtualizedTranscriptView.tsx` | Labs near-live display joins each speaker's short chunks even when the other source has an intervening turn; saved chunks are unchanged. |
 
 ### Time and identity invariants
 

@@ -70,11 +70,17 @@ impl RecordingManager {
         system_device: Option<Arc<AudioDevice>>,
         auto_save: bool,
         level_sender: Option<mpsc::UnboundedSender<super::pipeline::AudioLevels>>,
-    ) -> Result<mpsc::UnboundedReceiver<AudioChunk>> {
+    ) -> Result<super::near_live::LiveTranscriptionInputs> {
         info!("Starting recording manager (auto_save: {})", auto_save);
 
         // Set up transcription channel
         let (transcription_sender, transcription_receiver) = mpsc::unbounded_channel::<AudioChunk>();
+        let (mic_preview_sender, microphone_previews) = tokio::sync::watch::channel(None);
+        let (sys_preview_sender, system_previews) = tokio::sync::watch::channel(None);
+        let preview_senders = super::near_live::PreviewSenders {
+            microphone: mic_preview_sender,
+            system: sys_preview_sender,
+        };
 
         // Start recording state first
         self.state.start_recording()?;
@@ -112,6 +118,7 @@ impl RecordingManager {
         if let Err(error) = self.pipeline_manager.start(
             self.state.clone(),
             transcription_sender,
+            preview_senders,
             0, // Ignored - using dynamic sizing internally
             48000, // 48kHz sample rate
             || saver.start_accumulation(auto_save),
@@ -156,7 +163,11 @@ impl RecordingManager {
         info!("Recording manager started successfully with {} active streams",
                self.stream_manager.active_stream_count());
 
-        Ok(transcription_receiver)
+        Ok(super::near_live::LiveTranscriptionInputs {
+            final_chunks: transcription_receiver,
+            microphone_previews,
+            system_previews,
+        })
     }
 
     /// Start recording with default devices and auto_save setting
@@ -185,7 +196,7 @@ impl RecordingManager {
     ///
     /// User still hears audio via Bluetooth (playback), but recording captures
     /// via stable wired path for best quality.
-    pub async fn start_recording_with_defaults_and_auto_save(&mut self, auto_save: bool) -> Result<mpsc::UnboundedReceiver<AudioChunk>> {
+    pub async fn start_recording_with_defaults_and_auto_save(&mut self, auto_save: bool) -> Result<super::near_live::LiveTranscriptionInputs> {
         #[cfg(target_os = "macos")]
         {
             info!("🎙️ [macOS] Starting recording with smart device selection (Bluetooth override enabled)");

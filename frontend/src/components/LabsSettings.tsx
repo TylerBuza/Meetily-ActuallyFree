@@ -11,6 +11,7 @@ const options: { key: keyof LabsPreferences; title: string; detail: string }[] =
   { key: 'voiceProfiles', title: 'Voice profiles', detail: 'Enroll a named speaker from clear saved system audio. WeSpeaker compares future Pyannote or Nemotron live turns and post-call diarization; short or uncertain turns stay unnamed.' },
   { key: 'whisperSilenceGuard', title: 'Whisper silence guard', detail: 'Use stricter no-speech rejection for Whisper transcription. Quiet speech may be omitted.' },
   { key: 'parakeetGpu', title: 'Parakeet GPU acceleration', detail: 'Run the Parakeet encoder through DirectML on Windows. Switching reloads the selected model; CPU remains the default.' },
+  { key: 'nearLiveCaptions', title: 'Near-live captions', detail: 'Experimental Parakeet previews update during speech. This may briefly show extra speakers or inaccurate words; final transcription and diarization replace the previews, and post-call transcription and diarization can improve the saved result. Some errors may remain, especially with overlapping remote voices. Takes effect next recording.' },
   { key: 'cleanTranscript', title: 'Clean transcript view', detail: 'Hide simple English hesitations and immediate repeated words in the transcript display and new summaries. Saved text stays verbatim.' },
 ];
 
@@ -37,6 +38,13 @@ export function LabsSettings() {
     invoke<boolean>('get_parakeet_gpu_enabled').then((enabled) => {
       setPreferences((current) => {
         const next = { ...current, parakeetGpu: enabled };
+        saveLabsPreferences(next);
+        return next;
+      });
+    }).catch(console.error);
+    invoke<boolean>('get_near_live_captions_enabled').then((enabled) => {
+      setPreferences((current) => {
+        const next = { ...current, nearLiveCaptions: enabled };
         saveLabsPreferences(next);
         return next;
       });
@@ -77,6 +85,14 @@ export function LabsSettings() {
         await invoke('set_parakeet_gpu_enabled', { value });
       } catch (failure) {
         setError(`Parakeet GPU setting failed: ${String(failure)}`);
+        return;
+      }
+    }
+    if (key === 'nearLiveCaptions') {
+      try {
+        await invoke('set_near_live_captions_enabled', { value });
+      } catch (failure) {
+        setError(`Near-live captions setting failed: ${String(failure)}`);
         return;
       }
     }

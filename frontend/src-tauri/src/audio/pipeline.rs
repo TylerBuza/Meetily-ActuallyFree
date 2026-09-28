@@ -916,7 +916,7 @@ impl AudioCapture {
 }
 
 /// VAD-driven audio processing pipeline
-/// Uses Voice Activity Detection to segment speech in real-time and send only speech to Whisper
+/// Uses Voice Activity Detection to segment speech and send source audio to live ASR.
 pub struct AudioPipeline {
     receiver: mpsc::UnboundedReceiver<AudioChunk>,
     transcription_sender: mpsc::UnboundedSender<AudioChunk>,
@@ -926,6 +926,10 @@ pub struct AudioPipeline {
     /// so simultaneous talk never soft-limits one source into the other for STT.
     mic_vad: ContinuousVadProcessor,
     system_vad: ContinuousVadProcessor,
+    near_live_mode: bool,
+    preview_senders: Option<super::near_live::PreviewSenders>,
+    last_mic_preview_sample: u64,
+    last_system_preview_sample: u64,
     sample_rate: u32,
     chunk_id_counter: u64,
     // Performance optimization: reduce logging frequency
@@ -980,11 +984,11 @@ impl AudioPipeline {
         let system_enabled = system_device_name != "No System Audio";
         let _ = (mic_device_kind, system_device_kind);
 
-        // Fast real-time streaming uses 350ms redemption and 3.5s max utterance capping.
-        // Standard mode uses 800ms redemption and 6.0s max utterance capping.
+        // The Labs cap emits during continuous speech. Snapshot that mode here
+        // so a Settings change cannot change the segmentation of an active call.
         let is_realtime = crate::audio::recording_preferences::is_real_time_transcription();
-        let redemption_time = if is_realtime { 350 } else { 800 };
-        let max_duration_ms = if is_realtime { 3500 } else { 6000 };
+        let near_live_mode = crate::audio::near_live::enabled();
+        let (redemption_time, max_duration_ms) = crate::audio::near_live::vad_timing(near_live_mode, is_realtime);
 
         // One VAD per capture source so simultaneous talk is segmented independently.
         let make_vad = |label: &str, positive_threshold, negative_threshold| -> Result<ContinuousVadProcessor> {
@@ -1012,6 +1016,10 @@ impl AudioPipeline {
             state,
             mic_vad,
             system_vad,
+            near_live_mode,
+            preview_senders: None,
+            last_mic_preview_sample: 0,
+            last_system_preview_sample: 0,
             sample_rate,
             chunk_id_counter: 0,
             // Performance optimization: reduce logging frequency
@@ -1037,9 +1045,9 @@ impl AudioPipeline {
         if self.state.is_paused() {
             return;
         }
-        let is_realtime = crate::audio::recording_preferences::is_real_time_transcription();
-        let redemption_ms = if is_realtime { 350 } else { 800 };
-        let redemption = std::time::Duration::from_millis(redemption_ms);
+        let real_time = crate::audio::recording_preferences::is_real_time_transcription();
+        let (redemption_ms, _) = crate::audio::near_live::vad_timing(self.near_live_mode, real_time);
+        let redemption = std::time::Duration::from_millis(redemption_ms.into());
         let mut completed = Vec::new();
         if now.duration_since(self.last_mic_input) >= redemption {
             if let Some(segment) = self.mic_vad.finalize_active_speech() {
@@ -1061,7 +1069,7 @@ impl AudioPipeline {
         }
     }
 
-    /// Run VAD on one source and enqueue any finished speech segments for Whisper.
+    /// Run VAD on one source and enqueue finished speech segments for live ASR.
     /// `device_type` is the true origin (mic vs system) — not a post-mix guess.
     fn emit_source_speech(
         vad: &mut ContinuousVadProcessor,
@@ -1069,10 +1077,14 @@ impl AudioPipeline {
         device_type: DeviceType,
         transcription_sender: &mpsc::UnboundedSender<AudioChunk>,
         chunk_id_counter: &mut u64,
+        near_live_mode: bool,
+        preview_sender: Option<&tokio::sync::watch::Sender<Option<AudioChunk>>>,
+        last_preview_sample: &mut u64,
     ) {
         // Dynamically adjust max speech duration if preference changed during recording
         let is_realtime = crate::audio::recording_preferences::is_real_time_transcription();
-        vad.set_max_speech_duration_ms(if is_realtime { 3500 } else { 6000 });
+        let (_, max_duration_ms) = crate::audio::near_live::vad_timing(near_live_mode, is_realtime);
+        vad.set_max_speech_duration_ms(max_duration_ms);
 
         match vad.process_audio_observed(samples, |start, audio| {
             if matches!(device_type, DeviceType::System) {
@@ -1081,11 +1093,30 @@ impl AudioPipeline {
         }) {
             Ok(speech_segments) => Self::enqueue_source_speech(
                 speech_segments,
-                device_type,
+                device_type.clone(),
                 transcription_sender,
                 chunk_id_counter,
             ),
             Err(e) => warn!("⚠️ {:?} VAD error: {}", device_type, e),
+        }
+
+        if near_live_mode {
+            if let (Some(sender), Some((length, end_sample))) = (preview_sender, vad.active_speech_position()) {
+                // 0.8 s minimum gives batch Parakeet enough context; update at
+                // most every 0.5 s of captured audio. send_replace is bounded.
+                if length >= 12_800 && (end_sample as u64) >= last_preview_sample.saturating_add(8_000) {
+                    if let Some(snapshot) = vad.active_speech_snapshot() {
+                        sender.send_replace(Some(AudioChunk {
+                            data: snapshot.samples,
+                            sample_rate: 16_000,
+                            timestamp: snapshot.start_timestamp_ms / 1000.0,
+                            chunk_id: u64::MAX,
+                            device_type,
+                        }));
+                        *last_preview_sample = end_sample as u64;
+                    }
+                }
+            }
         }
     }
 
@@ -1285,6 +1316,9 @@ impl AudioPipeline {
                                 DeviceType::Microphone,
                                 &self.transcription_sender,
                                 &mut self.chunk_id_counter,
+                                self.near_live_mode,
+                                self.preview_senders.as_ref().map(|senders| &senders.microphone),
+                                &mut self.last_mic_preview_sample,
                             );
                             Self::emit_source_speech(
                                 &mut self.system_vad,
@@ -1292,6 +1326,9 @@ impl AudioPipeline {
                                 DeviceType::System,
                                 &self.transcription_sender,
                                 &mut self.chunk_id_counter,
+                                self.near_live_mode,
+                                self.preview_senders.as_ref().map(|senders| &senders.system),
+                                &mut self.last_system_preview_sample,
                             );
 
                             // STEP 4: Persist three tracks for offline diarization + playback.
@@ -1366,6 +1403,9 @@ impl AudioPipeline {
                 DeviceType::Microphone,
                 &self.transcription_sender,
                 &mut self.chunk_id_counter,
+                self.near_live_mode,
+                self.preview_senders.as_ref().map(|senders| &senders.microphone),
+                &mut self.last_mic_preview_sample,
             );
             Self::emit_source_speech(
                 &mut self.system_vad,
@@ -1373,6 +1413,9 @@ impl AudioPipeline {
                 DeviceType::System,
                 &self.transcription_sender,
                 &mut self.chunk_id_counter,
+                self.near_live_mode,
+                self.preview_senders.as_ref().map(|senders| &senders.system),
+                &mut self.last_system_preview_sample,
             );
 
             if let Some(sender) = &self.recording_sender_for_mixed {
@@ -1464,6 +1507,7 @@ impl AudioPipelineManager {
         &mut self,
         state: Arc<RecordingState>,
         transcription_sender: mpsc::UnboundedSender<AudioChunk>,
+        preview_senders: super::near_live::PreviewSenders,
         target_chunk_duration_ms: u32,
         sample_rate: u32,
         create_recording_sender: F,
@@ -1500,6 +1544,7 @@ impl AudioPipelineManager {
             system_device_name,
             system_device_kind,
         ).map_err(crate::onnx_runtime::InitializationError)?;
+        pipeline.preview_senders = Some(preview_senders);
 
         // VAD construction must succeed before creating folders or saver tasks.
         // The fork's saver still validates all three aligned destinations before

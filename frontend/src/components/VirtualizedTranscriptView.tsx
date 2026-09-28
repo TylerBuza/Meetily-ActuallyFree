@@ -33,6 +33,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { motion } from "framer-motion";
 import { TranscriptSegmentData } from "@/types";
 import { cleanTranscriptText } from '@/lib/labs';
+import { mergeInterleavedSpeakerTurns } from '@/lib/nearLiveCaptions';
 import { GitMerge } from "lucide-react";
 import {
   isUserSpeaker,
@@ -79,6 +80,7 @@ export interface VirtualizedTranscriptViewProps {
     onSeekAudio?: (seconds: number) => void;
     activeAudioTime?: number;
     cleanView?: boolean;
+    nearLiveCaptions?: boolean;
 }
 
 // Threshold for enabling virtualization (below this, use simple rendering)
@@ -159,6 +161,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
     onSeekAudio,
     activeAudioTime,
     cleanView = false,
+    provisional = false,
 }: {
     id: string;
     timestamp: number;
@@ -177,6 +180,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
     onSeekAudio?: (seconds: number) => void;
     activeAudioTime?: number;
     cleanView?: boolean;
+    provisional?: boolean;
 }) {
     const displayText = cleanView ? cleanTranscriptText(text) : text;
 
@@ -228,6 +232,7 @@ const TranscriptSegment = memo(function TranscriptSegment({
                             )}
                         </div>
                     )}
+                    {provisional && <span className="text-[10px] text-[var(--af-text-3)]">Updating</span>}
                     <Tooltip>
                         <TooltipTrigger>
                             {onSeekAudio ? <button type="button" onClick={() => onSeekAudio(timestamp)} title="Play from this turn" className="text-[11px] text-[var(--af-accent)] tabular-nums hover:underline">{formatRecordingTime(timestamp)}</button> : <span className="text-[11px] text-[var(--af-text-3)] tabular-nums">{formatRecordingTime(timestamp)}</span>}
@@ -243,8 +248,8 @@ const TranscriptSegment = memo(function TranscriptSegment({
                 <div
                     className={
                         isYou
-                            ? 'rounded-2xl rounded-tr-sm bg-blue-500/15 border border-blue-500/25 px-3.5 py-2'
-                            : 'rounded-2xl rounded-tl-sm bg-[var(--af-panel-2)] border border-[var(--af-border)] px-3.5 py-2'
+                            ? `rounded-2xl rounded-tr-sm bg-blue-500/15 border border-blue-500/25 px-3.5 py-2 ${provisional ? 'border-dashed' : ''}`
+                            : `rounded-2xl rounded-tl-sm bg-[var(--af-panel-2)] border border-[var(--af-border)] px-3.5 py-2 ${provisional ? 'border-dashed' : ''}`
                     }
                 >
                     <p
@@ -279,6 +284,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     onSeekAudio,
     activeAudioTime,
     cleanView = false,
+    nearLiveCaptions = false,
 }) => {
     // Greet the user by name when they've set one (Settings → General → Your
     // Name). Read on mount rather than at module scope so it picks up changes
@@ -292,8 +298,10 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
 
     // One bubble per speaking turn instead of dozens of VAD fragments.
     const displaySegments = useMemo(
-        () => onSeekAudio ? segments : mergeAdjacentSameSpeaker(segments),
-        [segments, onSeekAudio],
+        () => onSeekAudio ? segments : nearLiveCaptions && isRecording
+            ? mergeInterleavedSpeakerTurns(segments)
+            : mergeAdjacentSameSpeaker(segments),
+        [segments, onSeekAudio, nearLiveCaptions, isRecording],
     );
     const colorIndices = useMemo(
         () => speakerColorIndexMap(segments.map(segment => segment.speaker).filter((speaker): speaker is string => !!speaker)),
@@ -469,14 +477,15 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         onSeekAudio={onSeekAudio}
                                         activeAudioTime={activeAudioTime}
                                         cleanView={cleanView}
+                                        provisional={segment.provisional}
                                         confidence={segment.confidence}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
                                         speaker={segment.speaker}
                                         colorIndex={colorIndices.get(speakerKey(segment.speaker))}
                                         userName={userName}
-                                        onRenameSpeaker={onRenameSpeaker}
-                                        onMergeSpeaker={onMergeSpeaker}
+                                        onRenameSpeaker={segment.provisional ? undefined : onRenameSpeaker}
+                                        onMergeSpeaker={segment.provisional ? undefined : onMergeSpeaker}
                                     />
                                 </div>
                             );
@@ -537,14 +546,15 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         onSeekAudio={onSeekAudio}
                                         activeAudioTime={activeAudioTime}
                                         cleanView={cleanView}
+                                        provisional={segment.provisional}
                                         confidence={segment.confidence}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
                                         speaker={segment.speaker}
                                         colorIndex={colorIndices.get(speakerKey(segment.speaker))}
                                         userName={userName}
-                                        onRenameSpeaker={onRenameSpeaker}
-                                        onMergeSpeaker={onMergeSpeaker}
+                                        onRenameSpeaker={segment.provisional ? undefined : onRenameSpeaker}
+                                        onMergeSpeaker={segment.provisional ? undefined : onMergeSpeaker}
                                     />
                                 </motion.div>
                             );

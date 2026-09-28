@@ -124,6 +124,8 @@ export interface TranscriptSegmentData {
    * capture-source fallback "You". Undefined renders no label.
    */
   speaker?: string;
+  /** Ephemeral live ASR hypothesis; never saved as a transcript turn. */
+  provisional?: boolean;
 }
 
 export type GlobalSearchResultKind = 'person' | 'meeting' | 'transcript' | 'summary';

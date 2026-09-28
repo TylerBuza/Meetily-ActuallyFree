@@ -855,6 +855,8 @@ pub fn run() {
             summary::summary_engine::commands::builtin_ai_get_recommended_model,
             openrouter::get_openrouter_models,
             audio::recording_preferences::get_recording_preferences,
+            audio::near_live::get_near_live_captions_enabled,
+            audio::near_live::set_near_live_captions_enabled,
             audio::recording_preferences::set_recording_preferences,
             audio::recording_preferences::get_default_recordings_folder_path,
             audio::recording_preferences::open_recordings_folder,

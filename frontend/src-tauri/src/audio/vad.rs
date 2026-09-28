@@ -83,6 +83,27 @@ impl ContinuousVadProcessor {
         self.in_speech
     }
 
+    /// Snapshot the unfinished 16 kHz speech turn for provisional display.
+    /// This does not consume audio or alter final VAD segmentation.
+    pub fn active_speech_snapshot(&self) -> Option<SpeechSegment> {
+        if !self.in_speech || self.current_speech.is_empty() { return None; }
+        let start_ms = self.speech_start_sample as f64 * 1000.0 / 16_000.0;
+        let end_ms = start_ms + self.current_speech.len() as f64 * 1000.0 / 16_000.0;
+        Some(SpeechSegment {
+            samples: self.current_speech.clone(),
+            start_timestamp_ms: start_ms,
+            end_timestamp_ms: end_ms,
+            confidence: 0.0,
+        })
+    }
+
+    /// Cheap timing check so capture copies unfinished audio only when a
+    /// provisional decode is due, rather than on every device callback.
+    pub fn active_speech_position(&self) -> Option<(usize, usize)> {
+        if !self.in_speech || self.current_speech.is_empty() { return None; }
+        Some((self.current_speech.len(), self.speech_start_sample + self.current_speech.len()))
+    }
+
     /// Close the current live utterance at the last audio timestamp without
     /// synthesizing samples. Used when a capture backend suppresses callbacks
     /// throughout silence, so wall time can trigger finalization without moving

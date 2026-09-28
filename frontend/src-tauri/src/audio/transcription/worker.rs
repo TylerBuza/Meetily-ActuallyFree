@@ -78,9 +78,14 @@ fn should_emit_transcript(transcript: &str, _confidence: Option<f32>) -> bool {
 /// Optimized parallel transcription task ensuring ZERO chunk loss
 pub fn start_transcription_task<R: Runtime>(
     app: AppHandle<R>,
-    transcription_receiver: tokio::sync::mpsc::UnboundedReceiver<AudioChunk>,
+    inputs: crate::audio::near_live::LiveTranscriptionInputs,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let crate::audio::near_live::LiveTranscriptionInputs {
+            final_chunks: transcription_receiver,
+            mut microphone_previews,
+            mut system_previews,
+        } = inputs;
         info!("🚀 Starting optimized parallel transcription task - guaranteeing zero chunk loss");
 
         let initial_prompt = match app.try_state::<AppState>() {
@@ -117,6 +122,58 @@ pub fn start_transcription_task<R: Runtime>(
         let chunks_queued = Arc::new(AtomicU64::new(0));
         let chunks_completed = Arc::new(AtomicU64::new(0));
         let input_finished = Arc::new(AtomicBool::new(false));
+
+        // Provisional windows never enter the final transcript channel. One
+        // decoder task shares the loaded Parakeet model, consumes only the
+        // newest window per source, and yields whenever final chunks are queued.
+        let preview_handle = match &transcription_engine {
+            TranscriptionEngine::Parakeet(engine) if crate::audio::near_live::enabled() => {
+                let engine = engine.clone();
+                let app = app.clone();
+                let queued = chunks_queued.clone();
+                let completed = chunks_completed.clone();
+                let finished = input_finished.clone();
+                Some(tokio::spawn(async move {
+                    let (mut mic_open, mut system_open) = (true, true);
+                    while (mic_open || system_open) && !finished.load(Ordering::SeqCst) {
+                        let preview = tokio::select! {
+                            result = microphone_previews.changed(), if mic_open => {
+                                if result.is_err() { mic_open = false; continue; }
+                                microphone_previews.borrow_and_update().clone()
+                            }
+                            result = system_previews.changed(), if system_open => {
+                                if result.is_err() { system_open = false; continue; }
+                                system_previews.borrow_and_update().clone()
+                            }
+                        };
+                        let Some(chunk) = preview else { continue; };
+                        if queued.load(Ordering::SeqCst) > completed.load(Ordering::SeqCst) { continue; }
+                        let source = match chunk.device_type {
+                            crate::audio::recording_state::DeviceType::Microphone => "microphone",
+                            crate::audio::recording_state::DeviceType::System => "system",
+                            crate::audio::recording_state::DeviceType::Mixed => continue,
+                        };
+                        let start = chunk.timestamp;
+                        let end = start + chunk.data.len() as f64 / 16_000.0;
+                        let began = std::time::Instant::now();
+                        match engine.transcribe_audio(chunk.data).await {
+                            Ok(text) if !text.trim().is_empty()
+                                && !finished.load(Ordering::SeqCst)
+                                && queued.load(Ordering::SeqCst) == completed.load(Ordering::SeqCst) => {
+                                info!("Near-live {source} preview {:.2}-{:.2}s decoded in {}ms", start, end, began.elapsed().as_millis());
+                                let _ = app.emit("near-live-caption", serde_json::json!({
+                                    "source": source, "start_time": start,
+                                    "end_time": end, "text": text.trim(),
+                                }));
+                            }
+                            Err(error) => warn!("Near-live preview failed: {error}"),
+                            _ => {}
+                        }
+                    }
+                }))
+            }
+            _ => None,
+        };
 
         info!("📊 Starting {} transcription worker{} (serial mode for ordered emission)", NUM_WORKERS, if NUM_WORKERS == 1 { "" } else { "s" });
 
@@ -188,6 +245,11 @@ pub fn start_transcription_task<R: Runtime>(
 
                             let chunk_timestamp = chunk.timestamp;
                             let chunk_duration = chunk.data.len() as f64 / chunk.sample_rate as f64;
+                            let capture_source = match &chunk.device_type {
+                                crate::audio::recording_state::DeviceType::Microphone => "microphone",
+                                crate::audio::recording_state::DeviceType::System => "system",
+                                crate::audio::recording_state::DeviceType::Mixed => "mixed",
+                            };
 
                             // Speaker label for this segment.
                             //
@@ -329,6 +391,10 @@ pub fn start_transcription_task<R: Runtime>(
                                         TranscriptionError::AudioTooShort { .. } => {
                                             // Skip silently, this is expected for very short chunks
                                             info!("Worker {}: {}", worker_id, e);
+                                            let _ = app_clone.emit("near-live-finalized", serde_json::json!({
+                                                "source": capture_source,
+                                                "end_time": chunk_timestamp + chunk_duration,
+                                            }));
                                             chunks_completed_clone.fetch_add(1, Ordering::SeqCst);
                                             continue;
                                         }
@@ -344,6 +410,11 @@ pub fn start_transcription_task<R: Runtime>(
                                     }
                                 }
                             }
+
+                            let _ = app_clone.emit("near-live-finalized", serde_json::json!({
+                                "source": capture_source,
+                                "end_time": chunk_timestamp + chunk_duration,
+                            }));
 
                             // Mark chunk as completed
                             let completed =
@@ -425,6 +496,7 @@ pub fn start_transcription_task<R: Runtime>(
 
         // Signal that input is finished
         input_finished.store(true, Ordering::SeqCst);
+        if let Some(handle) = preview_handle { let _ = handle.await; }
         drop(work_sender); // Close the channel to signal workers
 
         let total_chunks_queued = chunks_queued.load(Ordering::SeqCst);
