@@ -6,6 +6,7 @@
  * | Ask AI panel. The record card floats over the transcript column.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { Copy, Globe, PanelRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTranscripts } from '@/contexts/TranscriptContext';
@@ -26,6 +27,8 @@ import { LivePanel, type LivePanelTab } from '@/components/recording/LivePanel';
 import { automaticTitle, onLiveSessionChange, readLiveTitle, writeLiveTitle, type LiveTitle } from '@/lib/live-session';
 import { formatClock } from '@/lib/dates';
 import type { LiveLine } from '@/lib/live-context';
+import { useLabs } from '@/hooks/useLabs';
+import { isDuplicatedMicCaption } from '@/lib/nearLiveCaptions';
 
 const PANEL_KEY = 'af-live-panel-open';
 const PANEL_WIDTH = 340;
@@ -34,6 +37,8 @@ const MIN_TRANSCRIPT_WIDTH = 480;
 /** Room under the last line for the floating record card. */
 const RECORD_CARD_CLEARANCE = 150;
 const isGeneric = (name: string) => /^speaker \d+$/i.test(name.trim());
+type PreviewCaption = { source: 'microphone' | 'system'; start_time: number; end_time: number; text: string };
+type PreviewFinalized = { source: PreviewCaption['source']; end_time: number };
 
 export function LiveSession({
   isProcessingStop,
@@ -60,6 +65,38 @@ export function LiveSession({
   const { meetings } = useSidebar();
   const [pendingGroup, chooseGroup] = usePendingGroup();
   const elapsed = useRecordingClock();
+  const { labs } = useLabs();
+  const [previews, setPreviews] = useState<Partial<Record<PreviewCaption['source'], PreviewCaption>>>({});
+  const finalizedUntil = useRef({ microphone: -Infinity, system: -Infinity });
+
+  useEffect(() => {
+    if (!isRecording || !labs.nearLiveCaptions || isPaused) { setPreviews({}); return; }
+    finalizedUntil.current = { microphone: -Infinity, system: -Infinity };
+    let disposed = false;
+    const stops: Array<() => void> = [];
+    const attach = async () => {
+      const captionStop = await listen<PreviewCaption>('near-live-caption', ({ payload }) => {
+        if (disposed || payload.end_time <= finalizedUntil.current[payload.source]) return;
+        setPreviews((current) => ({ ...current, [payload.source]: payload }));
+      });
+      stops.push(captionStop);
+      const finalStop = await listen<PreviewFinalized>('near-live-finalized', ({ payload }) => {
+        if (disposed) return;
+        finalizedUntil.current[payload.source] = Math.max(finalizedUntil.current[payload.source], payload.end_time);
+        setPreviews((current) => {
+          const preview = current[payload.source];
+          if (!preview || preview.start_time >= payload.end_time) return current;
+          const next = { ...current };
+          delete next[payload.source];
+          return next;
+        });
+      });
+      stops.push(finalStop);
+      if (disposed) stops.forEach((stop) => stop());
+    };
+    void attach().catch(console.error);
+    return () => { disposed = true; stops.forEach((stop) => stop()); };
+  }, [isRecording, isPaused, labs.nearLiveCaptions]);
 
   const [live, setLive] = useState<LiveTitle | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
@@ -147,18 +184,29 @@ export function LiveSession({
     setMeetingTitle(next);
   };
 
-  const segments = useMemo(
-    () =>
-      transcripts.map((t) => ({
-        id: t.id,
-        timestamp: t.audio_start_time ?? 0,
-        endTime: t.audio_end_time,
-        text: t.text,
-        confidence: t.confidence,
-        speaker: t.speaker,
-      })),
-    [transcripts],
-  );
+  const segments = useMemo(() => {
+    const saved = transcripts.map((t) => ({
+      id: t.id,
+      timestamp: t.audio_start_time ?? 0,
+      endTime: t.audio_end_time,
+      text: t.text,
+      confidence: t.confidence,
+      speaker: t.speaker,
+    }));
+    if (!isRecording || isPaused || !labs.nearLiveCaptions) return saved;
+    const active = Object.values(previews).filter((preview): preview is PreviewCaption => !!preview)
+      .filter((preview) => !(labs.micPlaybackSuppression && preview.source === 'microphone' && previews.system
+        && isDuplicatedMicCaption(preview, previews.system)))
+      .map((preview) => ({
+        id: `preview-${preview.source}`,
+        timestamp: preview.start_time,
+        endTime: preview.end_time,
+        text: `${preview.text} …`,
+        speaker: preview.source === 'microphone' ? 'You' : 'Remote voice',
+        provisional: true,
+      }));
+    return [...saved, ...active].sort((a, b) => a.timestamp - b.timestamp);
+  }, [transcripts, previews, isRecording, isPaused, labs.nearLiveCaptions, labs.micPlaybackSuppression]);
   const lines = useMemo<LiveLine[]>(
     () => transcripts.map((t) => ({ id: t.id, time: t.audio_start_time ?? 0, speaker: t.speaker, text: t.text })),
     [transcripts],
@@ -250,6 +298,7 @@ export function LiveSession({
         <div className="min-h-0 flex-1">
           <VirtualizedTranscriptView
             segments={segments}
+            nearLiveCaptions={labs.nearLiveCaptions}
             isRecording={isRecording}
             isPaused={isPaused}
             isProcessing={isProcessingStop}

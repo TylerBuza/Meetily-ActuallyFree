@@ -15,7 +15,7 @@ falls behind. The capture path checks timing before copying an unfinished
 window. A separate Parakeet task shares the loaded model and skips
 previews whenever a final chunk is queued. Its `near-live-caption` event is
 display only; `near-live-finalized` replaces it after final transcription.
-Neither event enters the saved transcript or IndexedDB. The frontend joins
+Neither event enters the saved transcript or IndexedDB. PR #39's `LiveSession` subscribes to these events, and the frontend joins
 nearby chunks from the same speaker for live display, including when chunks
 from the other capture source arrive between them. It does not rewrite saved
 transcript text, timestamps, or source provenance.

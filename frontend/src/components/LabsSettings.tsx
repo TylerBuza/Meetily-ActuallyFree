@@ -76,6 +76,20 @@ const GROUPS: Array<{ title: string; features: Feature[] }> = [
         where: 'Applies whenever Whisper transcribes.',
       },
       {
+        key: 'nearLiveCaptions',
+        icon: AudioWaveform,
+        title: 'Near-live captions',
+        description: 'Show provisional Parakeet words during speech. Brief extra speakers or inaccurate words may appear; final transcription and diarization replace previews, and post-call processing can improve the saved result.',
+        where: 'Applies to the next live recording. Parakeet provides provisional captions.',
+      },
+      {
+        key: 'micPlaybackSuppression',
+        icon: VolumeX,
+        title: 'Suppress speaker playback on mic',
+        description: 'Compare microphone and system audio and remove duplicate mic transcript turns. Short echoes may remain, and mixed local and remote speech can lose words.',
+        where: 'Needs both capture sources. Audio filtering starts next recording; rerun post-call transcription to clean an older meeting.',
+      },
+      {
         key: 'parakeetGpu',
         icon: Gauge,
         title: 'Parakeet on the GPU',
@@ -207,7 +221,7 @@ export function LabsSettings() {
   const { labs } = useLabs();
   const [busy, setBusy] = useState<LabsFeature | null>(null);
 
-  // Three switches live in Rust; show what it actually has.
+  // Native-backed switches can outlive the WebView; show their persisted state.
   useEffect(() => {
     void syncLabsFromBackend().catch(() => undefined);
   }, []);

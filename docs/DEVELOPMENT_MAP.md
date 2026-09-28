@@ -73,6 +73,8 @@ Paths below are relative to `frontend/src-tauri/src/` unless marked frontend.
 | `diarization/sortformer/` | Attributed model implementation, including speaker cache, feed/flush, streaming profiles, and ORT session construction. Preserve license/attribution. |
 | `audio/recording_saver.rs`, `audio/incremental_saver.rs` | Persistent transcript/source hints and recording tracks. A displayed rename alone does not update every save path. |
 | `frontend/src/contexts/TranscriptContext.tsx` | Frontend transcript events, ordering/buffering, local recovery, and live state. |
+| `frontend/src/components/recording/LiveSession.tsx` | PR #39 live screen receives bounded provisional events and projects them into display-only lines, with optional mic preview deduplication. |
+| `frontend/src/lib/labs-features.ts` | Syncs the two native-backed Labs switches and applies them before persisting the WebView mirror. |
 | `frontend/src/components/VirtualizedTranscriptView.tsx` | Labs near-live display joins each speaker's short chunks even when the other source has an intervening turn; saved chunks are unchanged. |
 
 ### Time and identity invariants

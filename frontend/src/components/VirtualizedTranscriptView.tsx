@@ -28,6 +28,7 @@ import { TranscriptSegmentData } from '@/types';
 import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import { cleanTranscriptText } from '@/lib/labs';
+import { mergeInterleavedSpeakerTurns } from '@/lib/nearLiveCaptions';
 import { displaySpeaker, isUserSpeaker, speakerColor, speakerColorIndexMap, speakerColorValue, speakerDot, speakerKey } from '@/utils/speakerUtils';
 
 /**
@@ -40,6 +41,7 @@ export type TranscriptTextMode = 'tidy' | 'clean' | 'verbatim';
 export interface VirtualizedTranscriptViewProps {
   segments: TranscriptSegmentData[];
   isRecording?: boolean;
+  nearLiveCaptions?: boolean;
   isPaused?: boolean;
   isProcessing?: boolean;
   isStopping?: boolean;
@@ -115,6 +117,7 @@ function mergeTurns(segments: TranscriptSegmentData[], maxGapSecs = 2.5): Turn[]
       last.text = `${last.text.trim()} ${segment.text.trim()}`.replace(/\s+/g, ' ').trim();
       last.endTime = segment.endTime ?? segment.timestamp;
       last.memberIds.push(segment.id);
+      last.provisional = last.provisional || segment.provisional;
       if (segment.confidence != null) last.confidence = Math.min(last.confidence ?? 1, segment.confidence);
     } else {
       out.push({ ...segment, memberIds: [segment.id] });
@@ -176,7 +179,7 @@ const TurnRow = memo(function TurnRow({
   const isYou = isUserSpeaker(speaker);
   const label = speaker ? displaySpeaker(speaker, userName) : '';
   const shown = shownText(text, textMode) || (text.trim() === '' ? '[Silence]' : text);
-  const clickable = !!speaker && (!!onSpeakerClick || !!onRenameSpeaker);
+  const clickable = !!speaker && !turn.provisional && (!!onSpeakerClick || !!onRenameSpeaker);
 
   return (
     <div id={`segment-${turn.id}`} className={cn('flex pb-3', isYou ? 'justify-end pl-8' : 'justify-start pr-8')}>
@@ -201,7 +204,7 @@ const TurnRow = memo(function TurnRow({
               ) : (
                 <span className={cn('text-xs font-semibold', speakerColor(speaker, colorIndex))}>{label}</span>
               )}
-              {!onSpeakerClick && onMergeSpeaker && (
+              {!turn.provisional && !onSpeakerClick && onMergeSpeaker && (
                 <button
                   type="button"
                   onClick={() => onMergeSpeaker(speaker)}
@@ -237,6 +240,7 @@ const TurnRow = memo(function TurnRow({
           style={isYou ? undefined : ({ '--chip': speakerColorValue(speaker, colorIndex) } as React.CSSProperties)}
         >
           <p className={cn('text-sm leading-relaxed text-af-text', isStreaming && 'opacity-80')}>{shown}</p>
+          {turn.provisional && <span className="mt-1 block text-[10px] text-af-text-4">Updating…</span>}
         </div>
       </div>
     </div>
@@ -246,6 +250,7 @@ const TurnRow = memo(function TurnRow({
 export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps> = ({
   segments,
   isRecording = false,
+  nearLiveCaptions = false,
   isPaused = false,
   isProcessing = false,
   isStopping = false,
@@ -269,7 +274,8 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
   colorIndices: givenColorIndices,
 }) => {
   const userName = useUserName();
-  const turns = useMemo(() => mergeTurns(segments), [segments]);
+  const turns = useMemo(() => mergeTurns(nearLiveCaptions && isRecording
+    ? mergeInterleavedSpeakerTurns(segments) : segments), [segments, nearLiveCaptions, isRecording]);
   // One colour per speaker in first-spoken order, so a renamed speaker keeps theirs.
   const ownColorIndices = useMemo(
     () => speakerColorIndexMap(turns.map((turn) => turn.speaker ?? '').filter(Boolean)),

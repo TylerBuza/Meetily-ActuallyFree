@@ -1472,7 +1472,8 @@ pub async fn diarize_meeting(
                 if let Some(label) = &fallback {
                     preserved += 1;
                     assignments.push((id.clone(), label.clone()));
-                }                updates.push((id, fallback));
+                }
+                updates.push((id, fallback));
             }
         }
     }
