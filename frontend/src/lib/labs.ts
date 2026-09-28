@@ -6,6 +6,7 @@ export interface LabsPreferences {
   cleanTranscript: boolean;
   parakeetGpu: boolean;
   nearLiveCaptions: boolean;
+  micPlaybackSuppression: boolean;
 }
 
 export const defaultLabsPreferences: LabsPreferences = {
@@ -16,6 +17,7 @@ export const defaultLabsPreferences: LabsPreferences = {
   cleanTranscript: false,
   parakeetGpu: false,
   nearLiveCaptions: false,
+  micPlaybackSuppression: false,
 };
 
 const key = 'meetily-labs-v1';

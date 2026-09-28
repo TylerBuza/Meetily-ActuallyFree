@@ -28,6 +28,7 @@ use crate::database::repositories::vocabulary::VocabularyRepository;
 use crate::state::AppState;
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
@@ -59,6 +60,65 @@ pub struct TranscriptUpdate {
     pub duration: f64,          // Segment duration in seconds (e.g., 3.3)
 }
 
+/// Final mic turns wait briefly for ASR from the aligned system source. The
+/// pipeline often queues mic first, so an immediate emit cannot compare the
+/// remote text. The pending queue and wait are bounded; stop flushes it.
+struct LiveDuplicateFilter {
+    system: VecDeque<(TranscriptUpdate, Vec<f32>)>,
+    pending_mic: VecDeque<(TranscriptUpdate, Vec<f32>, std::time::Instant)>,
+}
+
+impl LiveDuplicateFilter {
+    fn new() -> Self { Self { system: VecDeque::new(), pending_mic: VecDeque::new() } }
+
+    fn duplicate(&self, mic: &TranscriptUpdate, mic_envelope: &[f32]) -> bool {
+        self.system.iter().any(|(remote, system_envelope)| crate::audio::echo_guard::duplicated_mic_with_envelope(
+            &mic.text, mic.audio_start_time, mic.audio_end_time, mic_envelope, mic.audio_start_time,
+            &remote.text, remote.audio_start_time, remote.audio_end_time, system_envelope, remote.audio_start_time,
+        ))
+    }
+
+    fn accept(&mut self, update: TranscriptUpdate, microphone: bool, envelope: Vec<f32>) -> Vec<TranscriptUpdate> {
+        if microphone {
+            if self.duplicate(&update, &envelope) { return Vec::new(); }
+            if self.pending_mic.len() >= 16 {
+                let oldest = self.pending_mic.pop_front().unwrap().0;
+                self.pending_mic.push_back((update, envelope, std::time::Instant::now()));
+                return vec![oldest];
+            }
+            self.pending_mic.push_back((update, envelope, std::time::Instant::now()));
+            return Vec::new();
+        }
+        let newest_start = update.audio_start_time;
+        self.system.push_back((update.clone(), envelope));
+        while self.system.front().is_some_and(|(old, _)| old.audio_end_time < newest_start - 15.0) {
+            self.system.pop_front();
+        }
+        let mut ready = vec![update];
+        let mut waiting = VecDeque::new();
+        while let Some((mic, mic_envelope, since)) = self.pending_mic.pop_front() {
+            if self.duplicate(&mic, &mic_envelope) { continue; }
+            if ready[0].audio_end_time >= mic.audio_end_time + 0.3 {
+                ready.push(mic);
+            } else {
+                waiting.push_back((mic, mic_envelope, since));
+            }
+        }
+        self.pending_mic = waiting;
+        ready
+    }
+
+    fn flush_due(&mut self, force: bool) -> Vec<TranscriptUpdate> {
+        let mut ready = Vec::new();
+        while self.pending_mic.front().is_some_and(|(_, _, since)|
+            force || since.elapsed() >= std::time::Duration::from_secs(3)) {
+            let (mic, mic_envelope, _) = self.pending_mic.pop_front().unwrap();
+            if !self.duplicate(&mic, &mic_envelope) { ready.push(mic); }
+        }
+        ready
+    }
+}
+
 fn should_emit_transcript(transcript: &str, _confidence: Option<f32>) -> bool {
     let trimmed = transcript.trim();
     if trimmed.is_empty() {
@@ -66,6 +126,36 @@ fn should_emit_transcript(transcript: &str, _confidence: Option<f32>) -> bool {
     }
     // Content alone cannot distinguish a valid short reply from hallucination.
     true
+}
+
+#[cfg(test)]
+mod playback_tests {
+    use super::{LiveDuplicateFilter, TranscriptUpdate};
+
+    fn turn(text: &str, source: &str, start: f64, end: f64) -> TranscriptUpdate {
+        TranscriptUpdate {
+            text: text.into(), timestamp: String::new(), source: source.into(),
+            sequence_id: 0, chunk_start_time: start, is_partial: false,
+            confidence: 0.9, audio_start_time: start, audio_end_time: end,
+            duration: end - start,
+        }
+    }
+
+    #[test]
+    fn delayed_system_turn_removes_duplicate_mic_but_keeps_local_speech() {
+        let mut filter = LiveDuplicateFilter::new();
+        let duplicate = turn("Lucky you're beautiful because there's nothing up here. What does he mean?", "You", 55.8, 60.88);
+        assert!(filter.accept(duplicate, true, Vec::new()).is_empty());
+        let remote = turn("Lucky you're beautiful because there's nothing up here. What? That's mean.", "Scarlett", 55.62, 60.73);
+        assert_eq!(filter.accept(remote, false, Vec::new()).len(), 1);
+        assert!(filter.flush_due(true).is_empty());
+
+        let local = turn("I disagree because my microphone is on", "You", 65.0, 67.0);
+        assert!(filter.accept(local, true, Vec::new()).is_empty());
+        let retained = filter.flush_due(true);
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].source, "You");
+    }
 }
 
 // NOTE: get_transcript_history and get_recording_meeting_name functions
@@ -190,6 +280,8 @@ pub fn start_transcription_task<R: Runtime>(
 
             let worker_handle = tokio::spawn(async move {
                 info!("👷 Worker {} started", worker_id);
+                let mut duplicate_filter = crate::audio::echo_guard::enabled()
+                    .then(LiveDuplicateFilter::new);
 
                 // PRE-VALIDATE model state to avoid repeated async calls per chunk
                 let initial_model_loaded = engine_clone.is_model_loaded().await;
@@ -213,7 +305,17 @@ pub fn start_transcription_task<R: Runtime>(
                     // Try to get a chunk to process
                     let chunk = {
                         let mut receiver = work_receiver_clone.lock().await;
-                        receiver.recv().await
+                        match tokio::time::timeout(std::time::Duration::from_millis(250), receiver.recv()).await {
+                            Ok(chunk) => chunk,
+                            Err(_) => {
+                                if let Some(filter) = &mut duplicate_filter {
+                                    for update in filter.flush_due(false) {
+                                        let _ = app_clone.emit("transcript-update", &update);
+                                    }
+                                }
+                                continue;
+                            }
+                        }
                     };
 
                     match chunk {
@@ -241,6 +343,8 @@ pub fn start_transcription_task<R: Runtime>(
 
                             let chunk_timestamp = chunk.timestamp;
                             let chunk_duration = chunk.data.len() as f64 / chunk.sample_rate as f64;
+                            let duplicate_envelope = duplicate_filter.as_ref()
+                                .map(|_| crate::audio::echo_guard::rms_envelope(&chunk.data));
                             let capture_source = match &chunk.device_type {
                                 crate::audio::recording_state::DeviceType::Microphone => "microphone",
                                 crate::audio::recording_state::DeviceType::System => "system",
@@ -365,12 +469,14 @@ pub fn start_transcription_task<R: Runtime>(
                                             duration: chunk_duration,
                                         };
 
-                                        if let Err(e) = app_clone.emit("transcript-update", &update)
-                                        {
-                                            error!(
-                                                "Worker {}: Failed to emit transcript update: {}",
-                                                worker_id, e
-                                            );
+                                        let updates = match &mut duplicate_filter {
+                                            Some(filter) => filter.accept(update, capture_source == "microphone", duplicate_envelope.unwrap_or_default()),
+                                            None => vec![update],
+                                        };
+                                        for update in updates {
+                                            if let Err(e) = app_clone.emit("transcript-update", &update) {
+                                                error!("Worker {}: Failed to emit transcript update: {}", worker_id, e);
+                                            }
                                         }
                                         // PERFORMANCE: Removed verbose logging of every emission
                                     } else if !transcript.trim().is_empty() && should_log_this_chunk
@@ -451,6 +557,11 @@ pub fn start_transcription_task<R: Runtime>(
                                 let final_completed = chunks_completed_clone.load(Ordering::SeqCst);
 
                                 if final_completed >= final_queued {
+                                    if let Some(filter) = &mut duplicate_filter {
+                                        for update in filter.flush_due(true) {
+                                            let _ = app_clone.emit("transcript-update", &update);
+                                        }
+                                    }
                                     info!(
                                         "👷 Worker {} finishing - all {}/{} chunks processed",
                                         worker_id, final_completed, final_queued

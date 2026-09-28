@@ -29,6 +29,8 @@ recording_commands.rs: start command
   -> recording_manager.rs: devices + recording state + capture/pipeline
      -> pipeline.rs: align microphone and system audio into windows
         -> separate VAD processors for microphone and system
+           -> optional EchoGuard compares aligned tracks and filters mic playback
+              before mic VAD/preview; filtered mic.mp4 supports post-call processing
            -> vad.rs: resample to 16 kHz
               -> continuous observer BEFORE silence removal
                  -> system only: live_nemotron::feed(recording_sample, audio)
@@ -43,6 +45,8 @@ recording_commands.rs: start command
         -> Pyannote selected: online embedding/centroid speaker matching
         -> Nemotron selected: query streaming timeline by turn start + duration
         -> transcript-update event
+           (Labs mic playback suppression: compare final mic/system ASR text
+            and timing before saving; bounded pending mic turns)
            -> frontend TranscriptContext + live transcript view
               (Labs near-live: display joins interleaved chunks per speaker)
            -> native recording transcript accumulator/save path
@@ -60,6 +64,8 @@ Paths below are relative to `frontend/src-tauri/src/` unless marked frontend.
 | `audio/pipeline.rs` | Alignment, independent source VAD, queueing completed turns, source/mixed track persistence, final audio drain. |
 | `audio/vad.rs` | Resampling and VAD clocks. `process_audio_observed` supplies continuous 16 kHz audio before speech segmentation. |
 | `audio/near_live.rs` | Durable Labs flag, speech cap, and latest-only per-source preview channels. The pipeline snapshots the flag at recording start. Preview text never enters `transcript-update` or the save path. See [NEAR_LIVE_CAPTIONS.md](NEAR_LIVE_CAPTIONS.md). |
+| `audio/echo_guard.rs` | Opt-in Labs mic playback suppression. A bounded reference to system audio estimates delay and removes strongly correlated playback from the mic transcription/source track. The mixed playback keeps original mic audio. See [MIC_PLAYBACK_SUPPRESSION.md](MIC_PLAYBACK_SUPPRESSION.md). |
+| `audio/retranscription.rs` | With the mic playback Lab enabled, drops mic ASR turns that repeat overlapping system text before replacing post-call transcript rows, including on existing recordings with both source tracks. |
 | `audio/transcription/worker.rs` | ASR execution and the final speaker/source string carried by transcript updates. |
 | `diarization/online.rs` | Selects the live engine at recording start; retains the existing Pyannote/WeSpeaker online clustering implementation. |
 | `diarization/live_nemotron.rs` | Dedicated streaming inference thread, bounded queue, timestamped history, overlap lookup, error notification, and input-close/stop distinction. |
@@ -115,6 +121,10 @@ are documented in [SUMMARY_GENERATED_TITLES.md](SUMMARY_GENERATED_TITLES.md).
 `diarization/mod.rs` owns persisted engine settings and offline command dispatch.
 Nemotron is Auto-detect only; manual counts belong to Pyannote. Rerunning speaker
 identification must preserve transcript text, row identity, and timestamps.
+With the mic playback Lab enabled, remote rows require a retained overlapping
+mic transcript before diarization may include `You`; this prevents processed
+mic echo from restoring a removed false user label. The Lab also strips an
+unconfirmed `You` from an already saved combined label on rerun.
 Read [PR34_NEMOTRON.md](PR34_NEMOTRON.md) before changing that contract.
 
 Frontend post-call sequencing lives in

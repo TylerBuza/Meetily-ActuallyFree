@@ -28,3 +28,28 @@ export function mergeInterleavedSpeakerTurns(
   }
   return out;
 }
+
+// Provisional mic text may repeat system playback when microphone processing
+// destroys waveform correlation. Hide only overlapping, strongly shared text;
+// final transcript suppression remains owned by the native worker.
+export function isDuplicatedMicCaption(
+  mic: { text: string; start_time: number; end_time: number },
+  system: { text: string; start_time: number; end_time: number },
+): boolean {
+  const overlap = Math.max(0, Math.min(mic.end_time, system.end_time) - Math.max(mic.start_time, system.start_time));
+  if (overlap < Math.min(mic.end_time - mic.start_time, system.end_time - system.start_time) * 0.5) return false;
+  const words = (text: string) => text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const a = words(mic.text);
+  const b = words(system.text);
+  if (a.length < 4 || b.length < 4) return false;
+  let previous = new Array<number>(b.length + 1).fill(0);
+  for (const word of a) {
+    const current = new Array<number>(b.length + 1).fill(0);
+    for (let index = 0; index < b.length; index++) {
+      current[index + 1] = word === b[index] ? previous[index] + 1 : Math.max(current[index], previous[index + 1]);
+    }
+    previous = current;
+  }
+  const common = previous[b.length];
+  return common >= 4 && common * 5 >= a.length * 3;
+}

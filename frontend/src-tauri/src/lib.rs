@@ -888,6 +888,8 @@ pub fn run() {
             audio::recording_preferences::get_recording_preferences,
             audio::near_live::get_near_live_captions_enabled,
             audio::near_live::set_near_live_captions_enabled,
+            audio::echo_guard::get_mic_playback_suppression_enabled,
+            audio::echo_guard::set_mic_playback_suppression_enabled,
             audio::recording_preferences::set_recording_preferences,
             audio::recording_preferences::get_default_recordings_folder_path,
             audio::recording_preferences::open_recordings_folder,

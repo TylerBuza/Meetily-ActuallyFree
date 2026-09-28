@@ -274,6 +274,8 @@ async fn run_retranscription<R: Runtime>(
     let source_count = sources.len();
     let mut duration_seconds = 0.0f64;
     let mut speech_segments = Vec::new();
+    let mut mic_envelope = Vec::new();
+    let mut system_envelope = Vec::new();
 
     // Retained source tracks prevent one speaker from masking the other. Older
     // recordings fall back to the mixed playback file.
@@ -303,6 +305,13 @@ async fn run_retranscription<R: Runtime>(
         let audio_samples = tokio::task::spawn_blocking(move || decoded.to_whisper_format())
             .await
             .map_err(|e| anyhow!("Resample task panicked: {}", e))?;
+        if crate::audio::echo_guard::enabled() {
+            match source.speaker_hint {
+                Some("You") => mic_envelope = crate::audio::echo_guard::rms_envelope(&audio_samples),
+                Some("Guest") => system_envelope = crate::audio::echo_guard::rms_envelope(&audio_samples),
+                _ => {}
+            }
+        }
         let app_for_vad = app.clone();
         let meeting_id_for_vad = meeting_id.clone();
         let source_label = source.label;
@@ -520,6 +529,55 @@ async fn run_retranscription<R: Runtime>(
         }
     }
 
+    if crate::audio::echo_guard::enabled() {
+        // Saved mic audio from processed microphones can still contain remote
+        // speech even after acoustic filtering. Compare completed ASR turns
+        // across source tracks before replacing the saved transcript. A mic
+        // turn can span two consecutive system turns, so compare their combined
+        // text as well as each turn separately. Keep a borderline mic turn when
+        // it flows directly into an uncontested local turn.
+        let keep: Vec<bool> = all_transcripts.iter().enumerate().map(|(index, (text, start, end))| {
+            if speaker_hints[index] != Some("You") { return true; }
+            let overlapping_remote: Vec<_> = all_transcripts.iter().enumerate()
+                .filter(|(other_index, (_, remote_start, remote_end))| {
+                    speaker_hints[*other_index] != Some("You")
+                        && remote_end.min(*end) - remote_start.max(*start) >= 500.0
+                })
+                .map(|(_, turn)| turn).collect();
+            if overlapping_remote.is_empty() { return true; }
+            let clear_local_followup = all_transcripts.iter().enumerate().any(|(other_index, (_, local_start, local_end))| {
+                other_index != index && speaker_hints[other_index] == Some("You")
+                    && *local_start >= *end && *local_start - *end <= 250.0
+                    && all_transcripts.iter().enumerate().all(|(remote_index, (_, remote_start, remote_end))| {
+                        speaker_hints[remote_index] == Some("You")
+                            || remote_end.min(*local_end) - remote_start.max(*local_start) < 500.0
+                    })
+            });
+            if clear_local_followup { return true; }
+            let duplicate = |remote_text: &str, remote_start: f64, remote_end: f64| {
+                crate::audio::echo_guard::duplicated_mic_with_envelope(
+                    text, *start / 1000.0, *end / 1000.0, &mic_envelope, 0.0,
+                    remote_text, remote_start / 1000.0, remote_end / 1000.0, &system_envelope, 0.0,
+                )
+            };
+            if overlapping_remote.iter().any(|(remote_text, remote_start, remote_end)|
+                duplicate(remote_text, *remote_start, *remote_end)) { return false; }
+            let context = overlapping_remote.iter().map(|(remote_text, _, _)| remote_text.as_str())
+                .collect::<Vec<_>>().join(" ");
+            let context_start = overlapping_remote.iter().map(|(_, start, _)| *start)
+                .fold(f64::INFINITY, f64::min);
+            let context_end = overlapping_remote.iter().map(|(_, _, end)| *end)
+                .fold(f64::NEG_INFINITY, f64::max);
+            !duplicate(&context, context_start, context_end)
+        }).collect();
+        let removed = keep.iter().filter(|&&retained| !retained).count();
+        all_transcripts = all_transcripts.into_iter().enumerate()
+            .filter_map(|(index, turn)| keep[index].then_some(turn)).collect();
+        speaker_hints = speaker_hints.into_iter().enumerate()
+            .filter_map(|(index, hint)| keep[index].then_some(hint)).collect();
+        info!("Mic playback suppression removed {removed} duplicate post-call turns");
+    }
+
     let transcribed_count = all_transcripts.len();
     let avg_confidence = if transcribed_count > 0 {
         total_confidence / transcribed_count as f32
@@ -582,6 +640,11 @@ async fn run_retranscription<R: Runtime>(
         })
         .collect();
 
+    let retained_mic_ranges: Vec<(f64, f64)> = all_transcripts.iter().zip(&speaker_hints)
+        .filter(|(_, hint)| **hint == Some("You"))
+        .map(|((_, start, end), _)| (*start / 1000.0, *end / 1000.0))
+        .collect();
+
     // Reconstructed timestamps must remain stable across repeated runs.
     let mut segments =
         create_source_labeled_segments(&all_transcripts, &speaker_hints, recording_started_at)?;
@@ -614,7 +677,11 @@ async fn run_retranscription<R: Runtime>(
                 }
                 if let Some(name) = best_name {
                     if best_overlap > 0.05 {
-                        segment.speaker = Some(name);
+                        let confirmed = retained_mic_ranges.iter().any(|(mic_start, mic_end)|
+                            seg_end.min(*mic_end) - seg_start.max(*mic_start) >= 0.5);
+                        segment.speaker = crate::audio::echo_guard::strip_unconfirmed_user_label(
+                            Some(name), crate::audio::echo_guard::enabled(), confirmed,
+                        );
                     }
                 }
             }

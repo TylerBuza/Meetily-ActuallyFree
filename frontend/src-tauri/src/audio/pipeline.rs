@@ -970,6 +970,7 @@ pub struct AudioPipeline {
     mic_vad: ContinuousVadProcessor,
     system_vad: ContinuousVadProcessor,
     near_live_mode: bool,
+    echo_guard: Option<super::echo_guard::EchoGuard>,
     preview_senders: Option<super::near_live::PreviewSenders>,
     last_mic_preview_sample: u64,
     last_system_preview_sample: u64,
@@ -1031,6 +1032,8 @@ impl AudioPipeline {
         // so a Settings change cannot change the segmentation of an active call.
         let is_realtime = crate::audio::recording_preferences::is_real_time_transcription();
         let near_live_mode = crate::audio::near_live::enabled();
+        let echo_guard = (mic_enabled && system_enabled && super::echo_guard::enabled())
+            .then(|| super::echo_guard::EchoGuard::new(sample_rate));
         let (redemption_time, max_duration_ms) = crate::audio::near_live::vad_timing(near_live_mode, is_realtime);
 
         // One VAD per capture source so simultaneous talk is segmented independently.
@@ -1063,6 +1066,7 @@ impl AudioPipeline {
             mic_vad,
             system_vad,
             near_live_mode,
+            echo_guard,
             preview_senders: None,
             last_mic_preview_sample: 0,
             last_system_preview_sample: 0,
@@ -1329,6 +1333,7 @@ impl AudioPipeline {
                         chunk.timestamp,
                     );
                     if let Some(start_seconds) = discontinuity_start {
+                        if let Some(guard) = &mut self.echo_guard { guard.reset(); }
                         let mut completed = Vec::new();
                         if let Some(segment) = self.mic_vad.finalize_active_speech() {
                             completed.push((DeviceType::Microphone, segment));
@@ -1351,6 +1356,12 @@ impl AudioPipeline {
                     // STEP 2: Mix audio in fixed windows when both streams have sufficient data
                     while self.ring_buffer.can_mix() {
             if let Some((mic_window, sys_window)) = self.ring_buffer.extract_window() {
+                            // Only the mic transcription/source track is filtered.
+                            // Keep the original mic in mixed playback so the
+                            // user's recording is still audibly reviewable.
+                            let mic_for_stt = self.echo_guard.as_mut()
+                                .map(|guard| guard.filter_window(&mic_window, &sys_window))
+                                .unwrap_or_else(|| mic_window.clone());
                             // STEP 3: Transcribe each source independently.
                             // Same wall-clock windows (aligned by the ring buffer),
                             // separate sample streams + VAD state — so when both
@@ -1358,7 +1369,7 @@ impl AudioPipeline {
                             // other before Whisper, and device_type is exact.
                             Self::emit_source_speech(
                                 &mut self.mic_vad,
-                                &mic_window,
+                                &mic_for_stt,
                                 DeviceType::Microphone,
                                 &self.transcription_sender,
                                 &mut self.chunk_id_counter,
@@ -1385,7 +1396,7 @@ impl AudioPipeline {
                                 let ts = chunk.timestamp;
                                 let sr = self.sample_rate;
                                 let _ = sender.send(AudioChunk {
-                                    data: mic_window.clone(),
+                                    data: mic_for_stt.clone(),
                                     sample_rate: sr,
                                     timestamp: ts,
                                     chunk_id: self.chunk_id_counter,
@@ -1443,9 +1454,12 @@ impl AudioPipeline {
         );
 
         while let Some((mic_window, sys_window)) = self.ring_buffer.extract_remaining() {
+            let mic_for_stt = self.echo_guard.as_mut()
+                .map(|guard| guard.filter_window(&mic_window, &sys_window))
+                .unwrap_or_else(|| mic_window.clone());
             Self::emit_source_speech(
                 &mut self.mic_vad,
-                &mic_window,
+                &mic_for_stt,
                 DeviceType::Microphone,
                 &self.transcription_sender,
                 &mut self.chunk_id_counter,
@@ -1467,7 +1481,7 @@ impl AudioPipeline {
             if let Some(sender) = &self.recording_sender_for_mixed {
                 let chunk_id = self.chunk_id_counter;
                 for (data, device_type) in [
-                    (mic_window.clone(), DeviceType::Microphone),
+                    (mic_for_stt, DeviceType::Microphone),
                     (sys_window.clone(), DeviceType::System),
                     (
                         self.mixer.mix_window(&mic_window, &sys_window),

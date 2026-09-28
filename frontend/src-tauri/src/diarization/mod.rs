@@ -1366,7 +1366,14 @@ pub async fn diarize_meeting(
     let mut updates: Vec<(String, Option<String>)> = Vec::new();
     let mut preserved = 0u32;
 
+    let suppress_mic_playback = used_source_tracks && crate::audio::echo_guard::enabled();
     for (id, start, end, existing, _, _) in rows {
+        let confirmed_user_overlap = match (start, end) {
+            (Some(s), Some(e)) if e > s => user_ranges.iter().any(|(us, ue)|
+                (e as f32).min(*ue) - (s as f32).max(*us) >= 0.5),
+            _ => false,
+        };
+        let existing = crate::audio::echo_guard::strip_unconfirmed_user_label(existing, suppress_mic_playback, confirmed_user_overlap);
         if let Some(ref live) = existing {
             let live_trim = live.trim();
             if !live_trim.is_empty() {
@@ -1440,6 +1447,9 @@ pub async fn diarize_meeting(
                 speakers.sort_unstable();
                 let mut labels: Vec<_> = speakers.into_iter().map(&speaker_label).collect();
                 apply_source_track_hint(existing.as_deref(), used_source_tracks, num_speakers != Some(1), &mut labels);
+                if suppress_mic_playback && !confirmed_user_overlap && !existing.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("you")) {
+                    labels.retain(|label| !label.eq_ignore_ascii_case("you"));
+                }
                 labels.dedup();
                 labels.truncate(3);
                 let final_label = labels.join(" + ");
@@ -1450,18 +1460,19 @@ pub async fn diarize_meeting(
                 // label it already had, rather than clearing it.
                 let mut labels = Vec::new();
                 apply_source_track_hint(existing.as_deref(), used_source_tracks, num_speakers != Some(1), &mut labels);
+                if suppress_mic_playback && !confirmed_user_overlap {
+                    labels.retain(|label| !label.eq_ignore_ascii_case("you"));
+                }
                 let fallback = (!labels.is_empty()).then(|| labels.join(" + ")).or_else(|| {
-                    existing
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|label| !label.is_empty())
-                        .map(str::to_string)
+                    existing.as_deref().map(str::trim).filter(|label| !label.is_empty()).map(str::to_string)
                 });
+                let fallback = crate::audio::echo_guard::strip_unconfirmed_user_label(
+                    fallback, suppress_mic_playback, confirmed_user_overlap,
+                );
                 if let Some(label) = &fallback {
                     preserved += 1;
                     assignments.push((id.clone(), label.clone()));
-                }
-                updates.push((id, fallback));
+                }                updates.push((id, fallback));
             }
         }
     }
@@ -1709,6 +1720,15 @@ fn apply_source_track_hint(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn playback_lab_removes_unconfirmed_you_from_remote_overlap() {
+        let strip = crate::audio::echo_guard::strip_unconfirmed_user_label;
+        assert_eq!(strip(Some("You + Chris".into()), true, false), Some("Chris".into()));
+        assert_eq!(strip(Some("You + Chris".into()), true, true), Some("You + Chris".into()));
+        assert_eq!(strip(Some("You".into()), true, false), Some("You".into()));
+        assert_eq!(strip(Some("You + Chris".into()), false, false), Some("You + Chris".into()));
+    }
 
     #[tokio::test]
     async fn label_reruns_preserve_text_timing_and_rollback_as_a_unit() {

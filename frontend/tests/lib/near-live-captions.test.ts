@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mergeInterleavedSpeakerTurns } from '../../src/lib/nearLiveCaptions';
+import { isDuplicatedMicCaption, mergeInterleavedSpeakerTurns } from '../../src/lib/nearLiveCaptions';
 
 describe('near-live display', () => {
   test('keeps both overlapping source lines and extends the first speaker', () => {
@@ -31,5 +31,11 @@ describe('near-live display', () => {
     expect(projected).toEqual([{ ...finalTurn, endTime: 2.8, text: 'Hello everyone …', provisional: true }]);
     expect(finalTurn.text).toBe('Hello');
     expect(mergeInterleavedSpeakerTurns([finalTurn])).toEqual([finalTurn]);
+  });
+
+  test('hides matched microphone playback but retains independent local speech', () => {
+    const system = { text: "Lucky you're beautiful because there's nothing up here. What? That's mean.", start_time: 55.62, end_time: 60.73 };
+    expect(isDuplicatedMicCaption({ text: "Lucky you're beautiful because there's nothing up here. What does he mean?", start_time: 55.8, end_time: 60.88 }, system)).toBe(true);
+    expect(isDuplicatedMicCaption({ text: 'I disagree because my microphone is on', start_time: 55.8, end_time: 60.88 }, system)).toBe(false);
   });
 });
