@@ -155,10 +155,6 @@ pub fn find_pid_for_app(target_app: &str) -> Option<u32> {
 
         if name_match {
             let p = pid.as_u32();
-            if audio_pids.contains(&p) {
-                log::info!("🎯 Found active audio session PID {} for target app '{}'", p, target_app);
-                return Some(p);
-            }
             candidate_pids.push(p);
             if let Some(parent) = process.parent() {
                 candidate_parents.insert(p, parent.as_u32());
@@ -166,25 +162,59 @@ pub fn find_pid_for_app(target_app: &str) -> Option<u32> {
         }
     }
 
-    // If an audio session pid wasn't found yet, prefer the root process of the tree
-    // (a process whose parent is not also in candidate_pids), because targeting
-    // the root with PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE captures
-    // the entire process tree.
-    for &pid in &candidate_pids {
-        if let Some(&parent_pid) = candidate_parents.get(&pid) {
-            if !candidate_pids.contains(&parent_pid) {
-                log::info!("🎯 Selected root candidate PID {} for target app '{}'", pid, target_app);
-                return Some(pid);
+    let selected = select_app_root(&candidate_pids, &candidate_parents, &audio_pids);
+    log::info!("Selected process-tree root {:?} for target app '{}'", selected, target_app);
+    selected
+}
+
+fn select_app_root(
+    candidates: &[u32],
+    parents: &std::collections::HashMap<u32, u32>,
+    audio_pids: &std::collections::HashSet<u32>,
+) -> Option<u32> {
+    let candidates: std::collections::HashSet<u32> = candidates.iter().copied().collect();
+    let root_of = |mut pid: u32| {
+        // Parent snapshots can contain stale PID cycles; never walk indefinitely.
+        let mut visited = std::collections::HashSet::new();
+        while visited.insert(pid) {
+            match parents.get(&pid).filter(|parent| candidates.contains(parent)) {
+                Some(parent) => pid = *parent,
+                None => return pid,
             }
-        } else {
-            log::info!("🎯 Selected candidate PID {} (no parent) for target app '{}'", pid, target_app);
-            return Some(pid);
         }
+        *visited.iter().min().unwrap_or(&pid)
+    };
+    // Audio sessions choose the relevant tree, never its disposable audio worker.
+    // Including the root tree also captures replacement children and siblings.
+    audio_pids.iter().filter(|pid| candidates.contains(pid))
+        .map(|pid| root_of(*pid)).min()
+        .or_else(|| candidates.iter().map(|pid| root_of(*pid)).min())
+}
+
+#[cfg(test)]
+mod process_selection_tests {
+    use super::select_app_root;
+    use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn audio_worker_and_its_replacement_select_the_same_root() {
+        let parents = HashMap::from([(11, 10), (12, 10), (13, 12)]);
+        assert_eq!(select_app_root(&[10, 11, 12, 13], &parents, &HashSet::from([11])), Some(10));
+        assert_eq!(select_app_root(&[10, 12, 13], &parents, &HashSet::from([13])), Some(10));
     }
 
-    let fallback = candidate_pids.first().copied();
-    log::info!("🎯 Selected first candidate PID {:?} for target app '{}'", fallback, target_app);
-    fallback
+    #[test]
+    fn active_audio_selects_the_correct_independent_tree() {
+        let parents = HashMap::from([(11, 10), (21, 20)]);
+        assert_eq!(select_app_root(&[10, 11, 20, 21], &parents, &HashSet::from([21])), Some(20));
+    }
+
+    #[test]
+    fn missing_audio_and_stale_parent_cycles_are_bounded() {
+        assert_eq!(select_app_root(&[], &HashMap::new(), &HashSet::new()), None);
+        assert_eq!(select_app_root(&[12, 10], &HashMap::new(), &HashSet::new()), Some(10));
+        assert_eq!(select_app_root(&[11, 10], &HashMap::from([(10, 11), (11, 10)]), &HashSet::from([11])), Some(10));
+    }
 }
 
 #[cfg(windows)]
@@ -503,7 +533,9 @@ pub mod windows_loopback {
 
         while !stop_flag.load(Ordering::Relaxed) {
             let wait_res = unsafe { WaitForSingleObject(event, 200) };
-            if wait_res == WAIT_OBJECT_0 {
+            // Event delivery is a wake-up hint. Poll on timeout too: queued
+            // packets can survive a missed notification during source changes.
+            if wait_res == WAIT_OBJECT_0 || wait_res == WAIT_TIMEOUT {
                 loop {
                     let mut p_data = std::ptr::null_mut();
                     let mut num_frames = 0u32;
@@ -532,8 +564,6 @@ pub mod windows_loopback {
 
                     let _ = unsafe { capture_client.ReleaseBuffer(num_frames) };
                 }
-            } else if wait_res == WAIT_TIMEOUT {
-                continue;
             } else {
                 break;
             }

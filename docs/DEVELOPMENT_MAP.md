@@ -372,3 +372,5 @@ virtualization and saved transcript data retain their existing owners. Productio
 frontend build/type validation passed; Chrome preview verified aligned live/saved
 turns, the fixed caption box, and its stable paused state using synthetic meetings.
 The preference is local to WebView storage and does not change exports.
+
+Transcript appearance: `src/lib/transcript-layout.ts` owns persisted left-column and hide-speaker-dots preferences, shared through storage/events. Theme settings expose the dot option beneath left alignment. `VirtualizedTranscriptView` keeps the name/dot row together and places timestamps on a separate row below names in the left column; transcript content and provenance are unchanged. Production frontend compilation checks these interfaces.

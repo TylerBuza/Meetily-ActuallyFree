@@ -90,3 +90,5 @@ previews scroll inside the box; transcript bottom clearance includes the box.
 Frontend build/type validation and the nine targeted near-live/Labs tests passed;
 Chrome preview verified the box above the controls and stable paused placement
 using simulated text, not an ASR latency/accuracy fixture.
+
+The fixed meeting caption area is titled **Live Captions**. System previews show caption text without the temporary “Remote voice” prefix; microphone previews retain “You”. Final speaker labels remain in the transcript. This is presentation only and does not change provisional/final reconciliation.

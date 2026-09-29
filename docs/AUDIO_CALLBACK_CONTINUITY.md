@@ -99,3 +99,7 @@ as did 14 existing mixer/source continuity tests. This establishes decoding and
 sample continuity, not a physical SoundSwitch/Zoom/Chrome mute-cycle result.
 The actual WASAPI release/notification sequence needs a Windows live-device test;
 this change does not restart process capture after an unrelated terminal failure.
+
+### Per-app process lifetime and notification continuity
+
+Windows now selects the matching executable tree root, using active audio sessions to choose between independent trees. It no longer targets disposable audio children: replacement children remain included by process-tree loopback. Selection is deterministic and bounded for stale parent cycles; three native tests cover worker replacement, multiple trees, and missing/cyclic snapshots. Capture also drains packets after the 200 ms event timeout, so missed notifications do not strand queued audio. Existing silent-packet release and bounded per-app queues remain in place. Real Chrome/Zoom playback and SoundSwitch qualification still require hardware testing; restarting the entire application root is not automatic recovery.

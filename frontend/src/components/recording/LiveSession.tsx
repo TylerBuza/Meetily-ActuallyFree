@@ -329,12 +329,12 @@ export function LiveSession({
             bottomInset={RECORD_CARD_CLEARANCE + (labs.nearLiveCaptions ? 160 : 0)}
           />
           {isRecording && labs.nearLiveCaptions && (
-            <div aria-label="Near-live captions" className="absolute inset-x-4 rounded-xl border border-af-border bg-af-panel px-4 py-3 shadow-sm" style={{ bottom: 144 }}>
-              <p className="mb-1 text-[11px] font-semibold text-af-text-3">Near-live captions</p>
+            <div aria-label="Live Captions" className="absolute inset-x-4 rounded-xl border border-af-border bg-af-panel px-4 py-3 shadow-sm" style={{ bottom: 144 }}>
+              <p className="mb-1 text-[11px] font-semibold text-af-text-3">Live Captions</p>
               <div className="h-16 overflow-y-auto text-sm text-af-text" aria-live="off">
                 {isPaused ? <span className="text-af-text-4">Paused</span> : activePreviews.length === 0
                   ? <span className="text-af-text-4">Listening…</span>
-                  : activePreviews.map((preview) => <p key={preview.source}><span className="mr-2 font-medium text-af-accent">{preview.source === 'microphone' ? 'You' : 'Remote voice'}</span>{preview.text} …</p>)}
+                  : activePreviews.map((preview) => <p key={preview.source}>{preview.source === 'microphone' && <span className="mr-2 font-medium text-af-accent">You</span>}{preview.text} …</p>)}
               </div>
             </div>
           )}

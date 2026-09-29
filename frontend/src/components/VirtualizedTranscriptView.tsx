@@ -27,7 +27,7 @@ import { Button } from '@/components/ui/button';
 import type { MeetingImage } from '@/lib/meeting-images';
 import { useAutoScroll } from '@/hooks/useAutoScroll';
 import { useTranscriptStreaming } from '@/hooks/useTranscriptStreaming';
-import { useTranscriptLeftAligned } from '@/lib/transcript-layout';
+import { useTranscriptLeftAligned, useTranscriptHideSpeakerDots } from '@/lib/transcript-layout';
 import { useUserName } from '@/hooks/useUserName';
 import { TranscriptSegmentData } from '@/types';
 import { Spinner } from '@/components/ui/spinner';
@@ -162,6 +162,7 @@ const TurnRow = memo(function TurnRow({
   isStreaming,
   userName,
   leftAligned,
+  hideSpeakerDots,
   active,
   flash,
   onSpeakerClick,
@@ -177,6 +178,7 @@ const TurnRow = memo(function TurnRow({
   isStreaming: boolean;
   userName: string;
   leftAligned: boolean;
+  hideSpeakerDots: boolean;
   active: boolean;
   flash: boolean;
   onSpeakerClick?: VirtualizedTranscriptViewProps['onSpeakerClick'];
@@ -193,10 +195,11 @@ const TurnRow = memo(function TurnRow({
   return (
     <div id={`segment-${turn.id}`} className={cn('flex pb-3', leftAligned ? 'justify-start' : isYou ? 'justify-end pl-8' : 'justify-start pr-8')}>
       <div className={cn(leftAligned ? 'grid w-full min-w-0 grid-cols-[minmax(70px,110px)_minmax(0,1fr)] items-start gap-3' : 'flex min-w-0 max-w-[92%] flex-col gap-1', !leftAligned && (isYou ? 'items-end' : 'items-start'))}>
-        <div className={cn('flex items-center gap-2', leftAligned ? 'flex-wrap' : isYou && 'flex-row-reverse')}>
-          <span aria-hidden className={cn('h-2 w-2 shrink-0 rounded-full', speakerDot(speaker, colorIndex))} />
+        <div className={cn(leftAligned ? 'flex min-w-0 flex-col items-start gap-1' : 'flex items-center gap-2', !leftAligned && isYou && 'flex-row-reverse')}>
+          <div className={cn('flex min-w-0 items-start gap-2', !leftAligned && isYou && 'flex-row-reverse')}>
+          {!(leftAligned && hideSpeakerDots) && <span aria-hidden className={cn('mt-1 h-2 w-2 shrink-0 rounded-full', speakerDot(speaker, colorIndex))} />}
           {speaker && (
-            <span className="group/speaker flex items-center gap-1">
+            <span className="group/speaker flex min-w-0 items-center gap-1">
               {clickable ? (
                 <button
                   type="button"
@@ -205,6 +208,7 @@ const TurnRow = memo(function TurnRow({
                   }
                   className={cn(
                     'rounded px-0.5 text-xs font-semibold transition-colors hover:bg-af-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60',
+                    leftAligned && 'min-w-0 break-words px-0 text-left',
                     speakerColor(speaker, colorIndex),
                   )}
                 >
@@ -225,11 +229,13 @@ const TurnRow = memo(function TurnRow({
               )}
             </span>
           )}
+          </div>
+          <div className={cn(leftAligned && !hideSpeakerDots && 'pl-4')}>
           {onSeek ? (
             <button
               type="button"
               onClick={() => onSeek(turn.timestamp)}
-              className="rounded px-1 text-[11px] tabular-nums text-af-text-4 transition-colors hover:bg-af-hover hover:text-af-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60"
+              className={cn('rounded text-[11px] tabular-nums text-af-text-4 transition-colors hover:bg-af-hover hover:text-af-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60', leftAligned ? 'px-0' : 'px-1')}
               aria-label={`Play from ${clock(turn.timestamp)}`}
             >
               {clock(turn.timestamp)}
@@ -237,6 +243,7 @@ const TurnRow = memo(function TurnRow({
           ) : (
             <span className="text-[11px] tabular-nums text-af-text-4">{clock(turn.timestamp)}</span>
           )}
+          </div>
         </div>
         <div
           className={cn(
@@ -285,6 +292,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
 }) => {
   const userName = useUserName();
   const [leftAligned] = useTranscriptLeftAligned();
+  const [hideSpeakerDots] = useTranscriptHideSpeakerDots();
   const shownLiveText = useRef(new Map<string, string>());
   const turns = useMemo(() => {
     const live = nearLiveCaptions && isRecording;
@@ -430,6 +438,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
       isStreaming={streamingSegmentId === turn.id}
       userName={userName}
       leftAligned={leftAligned}
+      hideSpeakerDots={hideSpeakerDots}
       active={index === activeIndex}
       flash={index === flashIndex}
       onSpeakerClick={onSpeakerClick}
