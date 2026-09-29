@@ -54,6 +54,15 @@ lease. macOS and Linux have no active-media automation signal here. A detection
 event is not proof a meeting is underway; users should test the Labs action
 against their conferencing apps before relying on it.
 
+Process-only selection now uses configured app priority and sorted process
+names so multiple idle apps cannot rotate the selected candidate on each poll.
+The monitor treats helper process changes within one app as the same alert and
+keeps its alert state when settings change while detection remains enabled.
+Process-only prompts say the app is open; they do not claim a call was detected.
+Tests cover stable selection and same-app deduplication. This still cannot
+identify the start or end of a call on macOS/Linux when the conferencing app
+remains open.
+
 ## Feature 3: audio and transcript seeking
 
 `get_meeting_playback_audio` resolves the saved mixed audio for a meeting.
