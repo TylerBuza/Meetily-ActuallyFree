@@ -206,8 +206,8 @@ export function PreferenceSettings() {
           <Switch checked={leftAligned} onCheckedChange={setLeftAligned} aria-label="Align speaker names to the left" />
         </div>
         <div className="mt-3 flex items-center justify-between gap-4 pl-4">
-          <div><p className="text-sm font-medium text-af-text">Hide speaker dots</p><p className="text-xs text-af-text-3">Remove the bullet before names in the left column.</p></div>
-          <Switch checked={hideSpeakerDots} onCheckedChange={setHideSpeakerDots} disabled={!leftAligned} aria-label="Hide speaker dots" />
+          <div><p className="text-sm font-medium text-af-text">Hide speaker dots</p><p className="text-xs text-af-text-3">Remove the bullet before speaker names in any transcript layout.</p></div>
+          <Switch checked={hideSpeakerDots} onCheckedChange={setHideSpeakerDots} aria-label="Hide speaker dots" />
         </div>
       </div>
 

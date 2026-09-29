@@ -103,3 +103,37 @@ this change does not restart process capture after an unrelated terminal failure
 ### Per-app process lifetime and notification continuity
 
 Windows now selects the matching executable tree root, using active audio sessions to choose between independent trees. It no longer targets disposable audio children: replacement children remain included by process-tree loopback. Selection is deterministic and bounded for stale parent cycles; three native tests cover worker replacement, multiple trees, and missing/cyclic snapshots. Capture also drains packets after the 200 ms event timeout, so missed notifications do not strand queued audio. Existing silent-packet release and bounded per-app queues remain in place. Real Chrome/Zoom playback and SoundSwitch qualification still require hardware testing; restarting the entire application root is not automatic recovery.
+
+### Supervised process capture
+
+Each selected Windows app now has one long-lived native supervisor owning COM,
+the target executable, and replacement WASAPI clients. Read, release, and wait
+errors reopen only that client's capture. A complete parent map associates differently named audio helpers with their
+selected executable tree. A two-second process check resolves replacement roots; no-packet watchdog reactivation starts at five seconds and
+backs off to thirty seconds during ordinary app silence. Silence does not count
+as failure. Three failed sessions without thirty seconds of healthy packet
+delivery report `PerAppCaptureFailed` through the existing fatal-save/stop path
+instead of leaving a recording silently active. Recovery reuses the processor,
+source clock, and recording sender; it never recreates the microphone stream.
+The callback releases each copied packet before downstream processing, checks
+stop within a bounded 128-packet drain, and preserves null-silent packet handling.
+All clients request 48 kHz stereo PCM conversion, matching the existing pipeline
+and multi-app mixer contract. Burst queues retain at most 19,200 samples even
+when one native packet exceeds the 200 ms queue bound. Event handles and each
+successful COM initialization are balanced across recovery and process checks.
+
+Synthetic regressions cover retry exhaustion, ordinary-silence backoff, healthy
+reset, oversized packet queues, startup, and root selection. The opt-in Windows
+endpoint test uses a generated tone in its own process and an injected client
+failure, checking initial, recovered, and late signal delivery over two minutes.
+Its result is reported separately from real Zoom/Chrome calls. This cannot
+recover audio lost before reactivation, or treat a genuinely silent application's
+valid silent packets as proof of a fault. Native activation can take up to five
+seconds; shutdown waits for the owned worker rather than abandoning a client.
+
+Qualification for this follow-up: the CPU native library suite passed 372 tests
+(11 optional fixtures ignored by default). The explicitly run Windows process
+loopback fixture passed for 120 seconds with generated tone playback, one injected
+client invalidation, two client activations, and signal present before recovery,
+after recovery, and in the final five seconds. This establishes native recovery
+on this endpoint, not uninterrupted capture of a real Zoom/Chrome meeting.

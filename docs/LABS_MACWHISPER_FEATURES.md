@@ -193,3 +193,35 @@ preference tests (native save, rejection rollback, reload synchronization) passe
 No real-model
 or private-audio enrollment fixture was run; first-profile model quality and
 live-save enrollment require installed-app qualification.
+
+### Automatic enrollment with Live Caption chunks and post-call updates
+
+Enrollment now joins adjacent same-name saved ranges (up to a 250 ms quiet gap),
+subtracts other remote voices, and makes independent 2–4 second audio windows.
+Overlapping microphone rows do not disqualify the separate system track. Invalid
+ranges and duplicate timing do not become biometric evidence. First automatic
+profiles use up to four windows spread across available speech; manual learning
+retains its twenty-window limit and existing profiles are never overwritten by
+automatic saving. At least two successful embeddings are still required.
+
+The automatic worker waits for the shared speaker-operation guard before reading
+labels. Retranscription and diarization commit named contact links and schedule
+another first-profile attempt after their saved attribution is final. Candidate
+queries require a label still present in transcripts, excluding stale links.
+Native learning/saved/failed events share a person ID, so a pending toast is
+replaced by its actual result and views refresh only after success. Native read
+or embedding failures now retain their specific error. The opt-in enrollment
+diagnostic reads explicitly supplied model/audio paths and timing, reports only
+vector counts, and never writes a profile. No fixture audio or biometric data is
+committed. Live manual naming is enrolled once the meeting/source track is saved;
+insufficient speech and missing audio/models still report failure.
+
+Qualification for this follow-up: the isolated preference tests (3) and automatic
+notification tests (3) passed. The native suite passed 372 tests with 11 optional
+fixtures ignored by default. An explicitly run read-only diagnostic decoded the
+reported saved meeting's system track using the installed bundled WeSpeaker
+model and extracted four enrollment vectors in 33.2 seconds. It wrote no profile,
+so it establishes audio/model extraction rather than end-to-end automatic profile
+persistence in an installed build. Short-caption grouping, microphone overlap,
+remote-voice exclusion, duplicate ranges, and final named-contact links have
+synthetic/native regression coverage. The production Next build also passed.

@@ -726,8 +726,11 @@ async fn run_retranscription<R: Runtime>(
         .map_err(|e| anyhow!("Failed to insert transcript: {}", e))?;
     }
 
+    crate::database::repositories::person::PeopleRepository::link_named_speakers(&mut tx, &meeting_id).await
+        .map_err(|e| anyhow!("Failed to link named speakers: {e}"))?;
     tx.commit().await
         .map_err(|e| anyhow!("Failed to commit transaction: {}", e))?;
+    crate::diarization::voice_profiles::auto_save_named_voices(app.clone(), pool.clone(), meeting_id.clone(), None);
 
     info!(
         "Updated {} transcripts for meeting {} in transaction",

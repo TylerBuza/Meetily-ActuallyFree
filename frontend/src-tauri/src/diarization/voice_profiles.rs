@@ -299,23 +299,29 @@ pub fn auto_save_named_voices<R: tauri::Runtime>(app: tauri::AppHandle<R>, pool:
     tauri::async_runtime::spawn(async move {
         let _permit = permit;
         let _worker = WORKER.lock().await;
+        // A completed name must be read from the same stable attribution used
+        // for enrollment, never halfway through post-call transcript replacement.
+        let _labels = super::operation_guard().await;
         let result: Result<(), String> = async {
             let named: Vec<(String, String)> = sqlx::query_as(
-                "SELECT person_id, speaker_label FROM person_speakers WHERE meeting_id = ? AND (? IS NULL OR speaker_label = ?)"
+                "SELECT ps.person_id, ps.speaker_label FROM person_speakers ps WHERE ps.meeting_id = ? AND (? IS NULL OR ps.speaker_label = ?) AND EXISTS (SELECT 1 FROM transcripts t WHERE t.meeting_id = ps.meeting_id AND t.speaker = ps.speaker_label)"
             ).bind(&meeting_id).bind(&speaker).bind(&speaker).fetch_all(&pool).await.map_err(|error| error.to_string())?;
             for (person_id, label) in named {
                 if !crate::database::repositories::person::is_person_name(&label) { continue; }
                 if load().map_err(|error| error.to_string())?.iter().any(|profile| profile.person_id == person_id) { continue; }
+                let _ = app.emit("voice-profile-auto-save-result", serde_json::json!({"name": label, "personId": person_id, "status": "learning"}));
                 let enrollment: Result<String, String> = async {
-                    let (_, name, share) = meeting_share(&pool, &meeting_id, &label).await.map_err(String::from)?;
+                    // First enrollment needs a few dispersed samples, not a full
+                    // twenty-window rebuild while other recording work runs.
+                    let (_, name, share) = meeting_share_limit(&pool, &meeting_id, &label, 4).await.map_err(String::from)?;
                     store_shares(&person_id, &name, vec![share], false, true).map_err(String::from)?;
                     Ok(name)
                 }.await;
                 match enrollment {
-                    Ok(name) => { let _ = app.emit("voice-profile-auto-save-result", serde_json::json!({"name": name})); }
+                    Ok(name) => { let _ = app.emit("voice-profile-auto-save-result", serde_json::json!({"name": name, "personId": person_id, "status": "saved"})); }
                     Err(error) => {
                         log::warn!("Automatic voice saving for {label} failed: {error}");
-                        let _ = app.emit("voice-profile-auto-save-result", serde_json::json!({"error": format!("{label}: {error}")}));
+                        let _ = app.emit("voice-profile-auto-save-result", serde_json::json!({"personId": person_id, "status": "failed", "error": format!("{label}: {error}")}));
                     }
                 }
             }
@@ -402,26 +408,94 @@ impl From<EnrollError> for String {
 
 /// Embeds up to `LEARN_TURNS` clean turns of one meeting's call audio.
 fn embed_turns(track: &Path, turns: &[(f64, f64)]) -> Result<Vec<Vec<f32>>> {
+    embed_turns_with_models(track, turns, &super::diarization_model_dir())
+}
+
+fn embed_turns_with_models(track: &Path, turns: &[(f64, f64)], model_dir: &Path) -> Result<Vec<Vec<f32>>> {
     let audio = crate::audio::decoder::decode_audio_file(track)?.to_whisper_format();
-    let mut models = DiarizationModels::load(&super::diarization_model_dir())?;
+    let mut models = DiarizationModels::load(model_dir)?;
     let mut vectors = Vec::new();
+    let mut last_problem = None;
     for &(start, end) in turns.iter().take(LEARN_TURNS) {
         let first = (start * 16_000.0) as usize;
         let last = (end * 16_000.0) as usize;
-        if first >= last || last > audio.len() { continue; }
-        if let Ok(vector) = models.embed(&audio[first..last]) {
-            if vector.len() == 128 { vectors.push(vector); }
+        if first >= last || last > audio.len() {
+            last_problem = Some("Named voice timing extends beyond the saved system track".to_string());
+            continue;
         }
+        match models.embed(&audio[first..last]) {
+            Ok(vector) if vector.len() == 128 => vectors.push(vector),
+            Ok(_) => last_problem = Some("Voice model returned an unexpected embedding size".into()),
+            Err(error) => last_problem = Some(format!("Voice model could not learn a sample: {error:#}")),
+        }
+    }
+    if vectors.len() < 2 {
+        if let Some(problem) = last_problem { bail!("{problem}"); }
     }
     Ok(vectors)
 }
 
+/// Join adjacent live chunks, remove other remote voices, then split into
+/// independent 2–4 s windows. Local-mic overlap cannot contaminate system.mp4.
+fn enrollment_windows(rows: &[(String, Option<f64>, Option<f64>)], speaker: &str) -> Vec<(f64, f64)> {
+    let valid = |start: f64, end: f64| start.is_finite() && end.is_finite() && start >= 0.0 && end > start;
+    let mut own = Vec::new();
+    let mut others = Vec::new();
+    for (label, start, end) in rows {
+        let (Some(start), Some(end)) = (start, end) else { continue; };
+        if !valid(*start, *end) { continue; }
+        if label == speaker { own.push((*start, *end)); }
+        else if !label.eq_ignore_ascii_case("You") && !label.eq_ignore_ascii_case("microphone") {
+            others.push((*start, *end));
+        }
+    }
+    own.sort_by(|a, b| a.0.total_cmp(&b.0));
+    others.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut ranges: Vec<(f64, f64)> = Vec::new();
+    for (start, end) in own {
+        if let Some(last) = ranges.last_mut() {
+            let overlaps_other = others.iter().any(|&(a, b)| a < start && b > last.1);
+            if start <= last.1 + 0.25 && !overlaps_other { last.1 = last.1.max(end); continue; }
+        }
+        ranges.push((start, end));
+    }
+    let mut clear = Vec::new();
+    for (start, end) in ranges {
+        let mut cursor = start;
+        for &(a, b) in &others {
+            if b <= cursor { continue; }
+            if a >= end { break; }
+            if a > cursor { clear.push((cursor, a.min(end))); }
+            cursor = cursor.max(b);
+            if cursor >= end { break; }
+        }
+        if cursor < end { clear.push((cursor, end)); }
+    }
+    let mut windows = Vec::new();
+    for (start, end) in clear {
+        let duration = end - start;
+        if duration < 2.0 { continue; }
+        // Balanced windows avoid dropping a short remainder or reusing audio.
+        let count = (duration / 4.0).ceil().min((duration / 2.0).floor()) as usize;
+        for index in 0..count {
+            windows.push((start + duration * index as f64 / count as f64,
+                start + duration * (index + 1) as f64 / count as f64));
+        }
+    }
+    windows
+}
+
 /// One meeting's share of a named speaker's voice, with the contact it
 /// belongs to.
-async fn meeting_share(
+async fn meeting_share(pool: &SqlitePool, meeting_id: &str, speaker: &str) -> Result<(String, String, VoiceSource), EnrollError> {
+    meeting_share_limit(pool, meeting_id, speaker, LEARN_TURNS).await
+}
+
+async fn meeting_share_limit(
     pool: &SqlitePool,
     meeting_id: &str,
     speaker: &str,
+    limit: usize,
 ) -> Result<(String, String, VoiceSource), EnrollError> {
     use EnrollError::{Meeting, Unavailable};
     let failed = |error: sqlx::Error| Meeting(error.to_string());
@@ -471,17 +545,10 @@ async fn meeting_share(
     let rows: Vec<(String, Option<f64>, Option<f64>)> = sqlx::query_as(
         "SELECT COALESCE(speaker, ''), audio_start_time, audio_end_time FROM transcripts WHERE meeting_id = ? ORDER BY audio_start_time",
     ).bind(meeting_id).fetch_all(pool).await.map_err(failed)?;
-    let others: Vec<(f64, f64)> = rows.iter().filter(|(label, _, _)| label != speaker)
-        .filter_map(|(_, start, end)| Some((start.as_ref()?.to_owned(), end.as_ref()?.to_owned())))
-        .collect();
-    let clear: Vec<(f64, f64)> = rows.iter().filter(|(label, _, _)| label == speaker)
-        .filter_map(|(_, start, end)| Some((start.as_ref()?.to_owned(), end.as_ref()?.to_owned())))
-        .filter(|(start, end)| start.is_finite() && end.is_finite() && *start >= 0.0 && end - start >= 2.0 && end - start <= 15.0)
-        .filter(|(start, end)| !others.iter().any(|(other_start, other_end)| other_start < end && other_end > start))
-        .collect();
-    let turns = spread(&clear, LEARN_TURNS);
+    let clear = enrollment_windows(&rows, speaker);
+    let turns = spread(&clear, limit);
     let no_clear_turn = || Meeting(format!(
-        "{name} has no clear turn of 2 to 15 seconds, with nobody talking over them, in this meeting."
+        "{name} has no clear call-audio sample of at least 2 seconds in this meeting."
     ));
     if turns.is_empty() {
         return Err(no_clear_turn());
@@ -682,6 +749,44 @@ pub fn contact_deleted(person_id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn row(label: &str, start: f64, end: f64) -> (String, Option<f64>, Option<f64>) {
+        (label.into(), Some(start), Some(end))
+    }
+    #[test]
+    fn enrollment_joins_short_live_chunks_and_keeps_independent_samples() {
+        let rows = vec![row("Alice", 0.0, 1.7), row("Alice", 1.7, 3.4), row("Alice", 3.4, 5.1)];
+        let windows = enrollment_windows(&rows, "Alice");
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].1, windows[1].0);
+        assert_eq!((windows[0].0, windows[1].1), (0.0, 5.1));
+        assert!(windows.iter().all(|(a, b)| *b - *a >= 2.0));
+    }
+    #[test]
+    fn enrollment_excludes_remote_overlap_but_keeps_local_mic_overlap() {
+        let rows = vec![row("Alice", 0.0, 10.0), row("You", 0.0, 10.0), row("Bob", 4.0, 6.0)];
+        assert_eq!(enrollment_windows(&rows, "Alice"), vec![(0.0, 4.0), (6.0, 10.0)]);
+    }
+    #[test]
+    fn enrollment_does_not_bridge_another_voice_or_duplicate_audio() {
+        let rows = vec![row("Alice", 0.0, 2.0), row("Alice", 2.2, 4.2), row("Bob", 2.0, 2.2), row("Alice", 0.5, 1.5)];
+        assert_eq!(enrollment_windows(&rows, "Alice"), vec![(0.0, 2.0), (2.2, 4.2)]);
+        assert!(enrollment_windows(&[row("Alice", f64::NAN, 3.0), row("Alice", 5.0, 4.0), row("Alice", 0.0, 1.0)], "Alice").is_empty());
+    }
+
+    #[test]
+    #[ignore = "Requires an explicitly provided saved source track and WeSpeaker model directory; read-only"]
+    fn enrollment_track_diagnostic() {
+        let track = PathBuf::from(std::env::var("MEETILY_ENROLL_TRACK").expect("MEETILY_ENROLL_TRACK"));
+        let models = PathBuf::from(std::env::var("MEETILY_ENROLL_MODELS").expect("MEETILY_ENROLL_MODELS"));
+        let turns: Vec<(f64, f64)> = serde_json::from_str(&std::env::var("MEETILY_ENROLL_TURNS").expect("MEETILY_ENROLL_TURNS")).unwrap();
+        let rows: Vec<_> = turns.into_iter().map(|(start, end)| row("Named test voice", start, end)).collect();
+        let turns = spread(&enrollment_windows(&rows, "Named test voice"), 4);
+        let started = std::time::Instant::now();
+        let vectors = embed_turns_with_models(&track, &turns, &models).expect("Read-only enrollment extraction failed");
+        println!("Successfully extracted {} enrollment vectors in {:?}; no profile written", vectors.len(), started.elapsed());
+        assert!(vectors.len() >= 2, "Enrollment did not extract two eligible samples");
+    }
+
     #[test]
     fn short_live_chunks_accumulate_to_embedding_length_with_bounded_memory() {
         let mut pending = Vec::new();

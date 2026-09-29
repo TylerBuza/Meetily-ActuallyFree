@@ -982,6 +982,7 @@ fn ensure_wav(path: &Path) -> Result<(PathBuf, bool)> {
 /// Diarize a meeting's recording and assign "Speaker N" labels to its transcript segments.
 #[tauri::command]
 pub async fn diarize_meeting(
+    app: tauri::AppHandle,
     state: tauri::State<'_, crate::state::AppState>,
     meeting_id: String,
     audio_path: Option<String>,
@@ -1567,6 +1568,7 @@ pub async fn diarize_meeting(
         assignments.len()
     );
 
+    voice_profiles::auto_save_named_voices(app, pool.clone(), meeting_id.clone(), None);
     Ok(MeetingDiarizationResult {
         num_speakers: result.num_speakers,
         labeled: assignments.len(),
@@ -1584,6 +1586,7 @@ async fn persist_speaker_labels(
         sqlx::query("UPDATE transcripts SET speaker = ? WHERE id = ? AND meeting_id = ?")
             .bind(label).bind(id).bind(meeting_id).execute(&mut *tx).await?;
     }
+    crate::database::repositories::person::PeopleRepository::link_named_speakers(&mut tx, meeting_id).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -1739,10 +1742,13 @@ mod tests {
     async fn label_reruns_preserve_text_timing_and_rollback_as_a_unit() {
         let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
         sqlx::query("CREATE TABLE transcripts(id TEXT PRIMARY KEY, meeting_id TEXT, transcript TEXT, audio_start_time REAL, audio_end_time REAL, speaker TEXT CHECK(speaker != 'invalid'))").execute(&pool).await.unwrap();
+        sqlx::raw_sql("CREATE TABLE people (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, normalized_name TEXT UNIQUE, notes TEXT, created_at TEXT, updated_at TEXT); CREATE TABLE person_speakers (person_id TEXT, meeting_id TEXT, speaker_label TEXT, UNIQUE(meeting_id,speaker_label));").execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO transcripts VALUES ('a','m','Hello. 世界! Second turn.',1.25,9.5,'Guest'),('a-split-1','m','Retain this old row too.',9.5,12.0,'Guest'),('other','other','Private other meeting',0,1,'Named')").execute(&pool).await.unwrap();
-        for label in ["Speaker 1", "You + Speaker 2"] {
+        for label in ["Speaker 1", "You + Speaker 2", "Alice"] {
             persist_speaker_labels(&pool,"m",vec![("a".into(),Some(label.into())),("other".into(),Some(label.into()))]).await.unwrap();
         }
+        let linked: Vec<String> = sqlx::query_scalar("SELECT speaker_label FROM person_speakers WHERE meeting_id='m'").fetch_all(&pool).await.unwrap();
+        assert_eq!(linked, vec!["Alice"]);
         let rows: Vec<(String,String,f64,f64)> = sqlx::query_as("SELECT id,transcript,audio_start_time,audio_end_time FROM transcripts ORDER BY id").fetch_all(&pool).await.unwrap();
         assert_eq!(rows.len(),3);
         assert_eq!(rows[0],("a".into(),"Hello. 世界! Second turn.".into(),1.25,9.5));
@@ -1750,7 +1756,7 @@ mod tests {
         let failed = persist_speaker_labels(&pool,"m",vec![("a".into(),Some("Speaker 3".into())),("a-split-1".into(),Some("invalid".into()))]).await;
         assert!(failed.is_err());
         let labels: Vec<String> = sqlx::query_scalar("SELECT speaker FROM transcripts ORDER BY id").fetch_all(&pool).await.unwrap();
-        assert_eq!(labels,vec!["You + Speaker 2","Guest","Named"]);
+        assert_eq!(labels,vec!["Alice","Guest","Named"]);
     }
 
     #[test]

@@ -40,6 +40,7 @@ pub struct ProcessedAudioChunk {
 pub enum AudioError {
     DeviceDisconnected,
     StreamFailed,
+    PerAppCaptureFailed,
     ProcessingFailed,
     TranscriptionFailed,
     ChannelClosed,
@@ -58,7 +59,7 @@ impl AudioError {
             // replaces the failed CPAL stream, so waiting for repeats would
             // leave the UI recording while that source stays silent.
             AudioError::DeviceDisconnected => false,
-            AudioError::StreamFailed => false,
+            AudioError::StreamFailed | AudioError::PerAppCaptureFailed => false,
             AudioError::ProcessingFailed => true,
             AudioError::TranscriptionFailed => true,
             AudioError::ChannelClosed => false,
@@ -75,6 +76,7 @@ impl AudioError {
         match self {
             AudioError::DeviceDisconnected => "Audio device was disconnected",
             AudioError::StreamFailed => "Audio stream encountered an error",
+            AudioError::PerAppCaptureFailed => "Per-app audio could not recover. Check the selected app, or use all computer audio.",
             AudioError::ProcessingFailed => "Audio processing failed",
             AudioError::TranscriptionFailed => "Speech transcription failed",
             AudioError::ChannelClosed => "Audio channel was closed unexpectedly",

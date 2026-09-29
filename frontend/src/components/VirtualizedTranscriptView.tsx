@@ -197,7 +197,7 @@ const TurnRow = memo(function TurnRow({
       <div className={cn(leftAligned ? 'grid w-full min-w-0 grid-cols-[minmax(70px,110px)_minmax(0,1fr)] items-start gap-3' : 'flex min-w-0 max-w-[92%] flex-col gap-1', !leftAligned && (isYou ? 'items-end' : 'items-start'))}>
         <div className={cn(leftAligned ? 'flex min-w-0 flex-col items-start gap-1' : 'flex items-center gap-2', !leftAligned && isYou && 'flex-row-reverse')}>
           <div className={cn('flex min-w-0 items-start gap-2', !leftAligned && isYou && 'flex-row-reverse')}>
-          {!(leftAligned && hideSpeakerDots) && <span aria-hidden className={cn('mt-1 h-2 w-2 shrink-0 rounded-full', speakerDot(speaker, colorIndex))} />}
+          {!hideSpeakerDots && <span aria-hidden className={cn('mt-1 h-2 w-2 shrink-0 rounded-full', speakerDot(speaker, colorIndex))} />}
           {speaker && (
             <span className="group/speaker flex min-w-0 items-center gap-1">
               {clickable ? (

@@ -153,13 +153,12 @@ pub fn find_pid_for_app(target_app: &str) -> Option<u32> {
             || path_name.as_deref() == Some(&target_clean)
             || path_name.as_deref().and_then(|p| p.strip_suffix(".exe")) == Some(target_base);
 
-        if name_match {
-            let p = pid.as_u32();
-            candidate_pids.push(p);
-            if let Some(parent) = process.parent() {
-                candidate_parents.insert(p, parent.as_u32());
-            }
-        }
+        // Audio can run in a differently named helper (for example a call
+        // host). Keep the complete parent map to associate its session with
+        // the selected executable's tree rather than an unrelated app root.
+        let p = pid.as_u32();
+        if let Some(parent) = process.parent() { candidate_parents.insert(p, parent.as_u32()); }
+        if name_match { candidate_pids.push(p); }
     }
 
     let selected = select_app_root(&candidate_pids, &candidate_parents, &audio_pids);
@@ -176,19 +175,23 @@ fn select_app_root(
     let root_of = |mut pid: u32| {
         // Parent snapshots can contain stale PID cycles; never walk indefinitely.
         let mut visited = std::collections::HashSet::new();
-        while visited.insert(pid) {
-            match parents.get(&pid).filter(|parent| candidates.contains(parent)) {
+        let mut root = None;
+        loop {
+            if !visited.insert(pid) {
+                return visited.iter().filter(|pid| candidates.contains(pid)).copied().min().or(root);
+            }
+            if candidates.contains(&pid) { root = Some(pid); }
+            match parents.get(&pid) {
                 Some(parent) => pid = *parent,
-                None => return pid,
+                None => return root,
             }
         }
-        *visited.iter().min().unwrap_or(&pid)
     };
     // Audio sessions choose the relevant tree, never its disposable audio worker.
-    // Including the root tree also captures replacement children and siblings.
-    audio_pids.iter().filter(|pid| candidates.contains(pid))
-        .map(|pid| root_of(*pid)).min()
-        .or_else(|| candidates.iter().map(|pid| root_of(*pid)).min())
+    // Include differently named descendants and intervening launcher processes.
+    audio_pids.iter().filter_map(|pid| root_of(*pid)).min()
+        .or_else(|| candidates.iter().filter_map(|pid| root_of(*pid)).min())
+
 }
 
 #[cfg(test)]
@@ -210,6 +213,13 @@ mod process_selection_tests {
     }
 
     #[test]
+    fn differently_named_audio_helpers_select_their_app_tree() {
+        let parents = HashMap::from([(11, 10), (21, 20), (22, 21), (30, 29)]);
+        assert_eq!(select_app_root(&[10, 20], &parents, &HashSet::from([22, 30])), Some(20));
+        assert_eq!(select_app_root(&[20, 22], &parents, &HashSet::from([22])), Some(20));
+    }
+
+    #[test]
     fn missing_audio_and_stale_parent_cycles_are_bounded() {
         assert_eq!(select_app_root(&[], &HashMap::new(), &HashSet::new()), None);
         assert_eq!(select_app_root(&[12, 10], &HashMap::new(), &HashSet::new()), Some(10));
@@ -226,13 +236,18 @@ fn get_windows_audio_session_pids() -> std::collections::HashSet<u32> {
         IMMDeviceEnumerator, MMDeviceEnumerator,
     };
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
     };
 
+    struct ComScope(bool);
+    impl Drop for ComScope {
+        fn drop(&mut self) { if self.0 { unsafe { CoUninitialize() }; } }
+    }
     let mut pids = HashSet::new();
 
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        // Periodic process checks must balance each successful COM init.
+        let _com = ComScope(CoInitializeEx(None, COINIT_MULTITHREADED).is_ok());
 
         let enumerator: Result<IMMDeviceEnumerator, _> =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL);
@@ -269,7 +284,7 @@ pub mod windows_loopback {
     use std::sync::Arc;
     use tokio::sync::mpsc;
     use windows::core::{implement, w, IUnknown, Interface, HRESULT};
-    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
     use windows::Win32::Media::Audio::{
         ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation,
         IActivateAudioInterfaceCompletionHandler, IActivateAudioInterfaceCompletionHandler_Impl,
@@ -277,7 +292,7 @@ pub mod windows_loopback {
         AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_LOOPBACK, WAVEFORMATEX,
     };
     use windows::Win32::System::Com::StructuredStorage::PropVariantClear;
-    use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
     use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 
     #[repr(C)]
@@ -341,19 +356,101 @@ pub mod windows_loopback {
         }
     }
 
-    fn run_single_process_loopback_session<F>(
-        target_pid: u32,
-        app_name: String,
-        stop_flag: Arc<AtomicBool>,
-        ready: std::sync::mpsc::Sender<()>,
-        mut on_samples: F,
-    ) where
-        F: FnMut(&[f32]) + Send + 'static,
-    {
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        }
+    #[cfg(test)]
+    static TEST_CLIENT_FAULT: AtomicBool = AtomicBool::new(false);
+    #[cfg(test)]
+    static TEST_CLIENT_STARTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+    pub struct ProcessLoopbackTarget {
+        pub name: String,
+        pub executable: Option<String>,
+        pub pid: u32,
+    }
+
+    #[derive(Debug)]
+    enum SessionExit { Stopped, Idle, TargetChanged }
+
+    #[derive(Default)]
+    struct RecoveryPolicy { failures: u32, idle_restarts: u32 }
+    impl RecoveryPolicy {
+        fn idle_timeout(&self) -> std::time::Duration {
+            std::time::Duration::from_secs((5u64 << self.idle_restarts.min(3)).min(30))
+        }
+        fn next(&mut self, failed: bool, healthy: bool, idle: bool) -> Option<std::time::Duration> {
+            if healthy { self.failures = 0; self.idle_restarts = 0; }
+            if failed {
+                self.failures += 1;
+                if self.failures >= 3 { return None; }
+            }
+            if idle { self.idle_restarts = (self.idle_restarts + 1).min(3); }
+            Some(std::time::Duration::from_millis(200 * (self.failures + 1) as u64))
+        }
+    }
+
+    struct CaptureEvent(HANDLE);
+    impl Drop for CaptureEvent {
+        fn drop(&mut self) { let _ = unsafe { CloseHandle(self.0) }; }
+    }
+    struct ComApartment(bool);
+    impl Drop for ComApartment {
+        fn drop(&mut self) { if self.0 { unsafe { CoUninitialize() }; } }
+    }
+
+    fn supervise_process_loopback<F>(
+        mut target: ProcessLoopbackTarget,
+        stop: Arc<AtomicBool>,
+        ready: std::sync::mpsc::Sender<()>,
+        state: Arc<crate::audio::recording_state::RecordingState>,
+        mut on_samples: F,
+    ) where F: FnMut(&[f32]) + Send + 'static {
+        // One worker owns COM and all replacement clients. Reconnection keeps
+        // the same processor/pipeline and never tears down microphone capture.
+        let _com = ComApartment(unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_ok());
+        let mut started = false;
+        let mut recovery = RecoveryPolicy::default();
+        while !stop.load(Ordering::Relaxed) {
+            let began = std::time::Instant::now();
+            let mut packets = 0;
+            let result = match target.executable.as_deref().map(super::find_pid_for_app) {
+                Some(None) => Err(anyhow::anyhow!("Selected app is no longer running")),
+                found => {
+                    if let Some(Some(pid)) = found { target.pid = pid; }
+                    run_single_process_loopback_session(&target, &stop, &ready, &mut started,
+                        recovery.idle_timeout(), &mut |data| { packets += 1; on_samples(data); })
+                }
+            };
+            if stop.load(Ordering::Relaxed) || matches!(result, Ok(SessionExit::Stopped)) { break; }
+            let failed = result.is_err();
+            if let Err(error) = &result { log::warn!("Per-app capture for {} needs recovery: {error:#}", target.name); }
+            // Startup still fails atomically through the readiness channel.
+            if !started { break; }
+            let healthy = packets > 0 && began.elapsed() >= std::time::Duration::from_secs(30);
+            let idle = matches!(result, Ok(SessionExit::Idle));
+            let Some(delay) = recovery.next(failed, healthy, idle) else {
+                log::error!("Per-app capture for {} failed after three recovery attempts", target.name);
+                stop.store(true, Ordering::Relaxed);
+                state.report_error(crate::audio::recording_state::AudioError::PerAppCaptureFailed);
+                break;
+            };
+            log::info!("Reactivating per-app capture for {} ({result:?})", target.name);
+            // Short interruptible backoff bounds both retry rate and stop latency.
+            let deadline = std::time::Instant::now() + delay;
+            while !stop.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+        }
+    }
+
+    fn run_single_process_loopback_session<F>(
+        target: &ProcessLoopbackTarget,
+        stop_flag: &AtomicBool,
+        ready: &std::sync::mpsc::Sender<()>,
+        started: &mut bool,
+        idle_timeout: std::time::Duration,
+        on_samples: &mut F,
+    ) -> Result<SessionExit> where F: FnMut(&[f32]) {
+        let target_pid = target.pid;
+        let app_name = &target.name;
         let params = AUDIOCLIENT_ACTIVATION_PARAMS {
             ActivationType: 1, // AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK
             ProcessLoopbackParams: AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
@@ -367,7 +464,7 @@ pub mod windows_loopback {
         } as *mut AUDIOCLIENT_ACTIVATION_PARAMS;
         if p_mem.is_null() {
             log::error!("❌ CoTaskMemAlloc failed for process loopback parameters for app '{}' (PID {})", app_name, target_pid);
-            return;
+            anyhow::bail!("Could not initialize per-app loopback for {app_name}");
         }
         unsafe {
             std::ptr::write(p_mem, params);
@@ -403,7 +500,7 @@ pub mod windows_loopback {
         if let Err(e) = async_op {
             log::error!("❌ ActivateAudioInterfaceAsync failed for '{}' (PID {}): {}", app_name, target_pid, e);
             let _ = unsafe { PropVariantClear(&mut prop) };
-            return;
+            anyhow::bail!("Could not initialize per-app loopback for {app_name}");
         }
 
         let audio_client_unk = match rx.recv_timeout(std::time::Duration::from_secs(5)) {
@@ -411,12 +508,12 @@ pub mod windows_loopback {
             Ok(Err(hr)) => {
                 log::error!("❌ Process loopback activation failed for '{}' (PID {}) with HRESULT 0x{:08X}", app_name, target_pid, hr.0);
                 let _ = unsafe { PropVariantClear(&mut prop) };
-                return;
+                anyhow::bail!("Could not initialize per-app loopback for {app_name}");
             }
             Err(e) => {
                 log::error!("❌ Process loopback activation timed out for '{}' (PID {}): {}", app_name, target_pid, e);
                 let _ = unsafe { PropVariantClear(&mut prop) };
-                return;
+                anyhow::bail!("Could not initialize per-app loopback for {app_name}");
             }
         };
 
@@ -426,7 +523,7 @@ pub mod windows_loopback {
             Ok(client) => client,
             Err(e) => {
                 log::error!("❌ Failed to cast activated interface to IAudioClient for '{}': {}", app_name, e);
-                return;
+                anyhow::bail!("Could not initialize per-app loopback for {app_name}");
             }
         };
 
@@ -440,35 +537,11 @@ pub mod windows_loopback {
             cbSize: 0,
         };
 
-        let (p_wfx_to_use, channels, sample_rate, bits_per_sample, auto_convert_flags) = unsafe {
-            match audio_client.GetMixFormat() {
-                Ok(p) if !p.is_null() => {
-                    let w = *p;
-                    let sr = w.nSamplesPerSec;
-                    let ch = w.nChannels;
-                    let bits = w.wBitsPerSample;
-                    log::info!(
-                        "🔊 Process loopback using native mix format for '{}': {} Hz, {} channels, {} bits/sample",
-                        app_name, sr, ch, bits
-                    );
-                    (p, ch, sr, bits, 0u32)
-                }
-                res => {
-                    log::info!(
-                        "ℹ️ audio_client.GetMixFormat() for '{}' returned {:?}. Using 48kHz 16-bit PCM with AUTOCONVERTPCM",
-                        app_name, res.err()
-                    );
-                    (
-                        &mut fallback_wfx as *mut WAVEFORMATEX,
-                        2u16,
-                        48000u32,
-                        16u16,
-                        0x80000000u32 /* AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM */
-                            | 0x08000000u32 /* AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY */,
-                    )
-                }
-            }
-        };
+        // Process loopback GetMixFormat may be unsupported, and changing output
+        // endpoints must not change the pipeline's 48 kHz stereo contract.
+        let p_wfx_to_use = std::ptr::addr_of_mut!(fallback_wfx);
+        let (channels, sample_rate, bits_per_sample) = (2u16, 48_000u32, 16u16);
+        let auto_convert_flags = 0x80000000u32 | 0x08000000u32;
 
         log::info!(
             "🔊 Process loopback format configured for '{}': {} Hz, {} channels, {} bits/sample",
@@ -479,9 +552,11 @@ pub mod windows_loopback {
             Ok(e) => e,
             Err(e) => {
                 log::error!("❌ Failed to create event for '{}': {}", app_name, e);
-                return;
+                anyhow::bail!("Could not initialize per-app loopback for {app_name}");
             }
         };
+
+        let _event_owner = CaptureEvent(event);
 
         let stream_flags = AUDCLNT_STREAMFLAGS_LOOPBACK
             | AUDCLNT_STREAMFLAGS_EVENTCALLBACK
@@ -500,85 +575,100 @@ pub mod windows_loopback {
 
         if let Err(e) = init_res {
             log::error!("❌ Failed to initialize audio client for '{}': {}", app_name, e);
-            let _ = unsafe { CloseHandle(event) };
-            return;
+            anyhow::bail!("Could not initialize per-app loopback for {app_name}");
         }
 
         if let Err(e) = unsafe { audio_client.SetEventHandle(event) } {
             log::error!("❌ Failed to set event handle for '{}': {}", app_name, e);
-            let _ = unsafe { CloseHandle(event) };
-            return;
+            anyhow::bail!("Could not initialize per-app loopback for {app_name}");
         }
 
         let capture_client: IAudioCaptureClient = match unsafe { audio_client.GetService() } {
             Ok(client) => client,
             Err(e) => {
                 log::error!("❌ Failed to get IAudioCaptureClient for '{}': {}", app_name, e);
-                let _ = unsafe { CloseHandle(event) };
-                return;
+                anyhow::bail!("Could not initialize per-app loopback for {app_name}");
             }
         };
 
         if let Err(e) = unsafe { audio_client.Start() } {
             log::error!("❌ Failed to start audio client for '{}': {}", app_name, e);
-            let _ = unsafe { CloseHandle(event) };
-            return;
+            anyhow::bail!("Could not initialize per-app loopback for {app_name}");
         }
 
         log::info!("✅ Process loopback started successfully for '{}' (PID {})", app_name, target_pid);
-        let _ = ready.send(());
-        drop(ready);
+        if !*started { let _ = ready.send(()); *started = true; }
+        #[cfg(test)]
+        TEST_CLIENT_STARTS.fetch_add(1, Ordering::Relaxed);
+        #[cfg(test)]
+        let test_started = std::time::Instant::now();
 
         let mut f32_buffer = Vec::new();
-
-        while !stop_flag.load(Ordering::Relaxed) {
+        let mut last_packet = std::time::Instant::now();
+        let mut last_target_check = last_packet;
+        let outcome = 'capture: loop {
+            if stop_flag.load(Ordering::Relaxed) { break Ok(SessionExit::Stopped); }
             let wait_res = unsafe { WaitForSingleObject(event, 200) };
-            // Event delivery is a wake-up hint. Poll on timeout too: queued
-            // packets can survive a missed notification during source changes.
-            if wait_res == WAIT_OBJECT_0 || wait_res == WAIT_TIMEOUT {
-                loop {
-                    let mut p_data = std::ptr::null_mut();
-                    let mut num_frames = 0u32;
-                    let mut flags = 0u32;
-
-                    let get_res = unsafe {
-                        capture_client.GetBuffer(
-                            &mut p_data,
-                            &mut num_frames,
-                            &mut flags,
-                            None,
-                            None,
-                        )
-                    };
-
-                    if get_res.is_err() || num_frames == 0 {
-                        break;
-                    }
-
-                    let is_silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) != 0;
-                    // GetBuffer owns these frames even when the silent packet has
-                    // no pointer. Decoding silence must reach ReleaseBuffer below.
-                    unsafe { decode_loopback_packet(&mut f32_buffer, p_data, num_frames, channels, bits_per_sample, is_silent); }
-
-                    on_samples(&f32_buffer);
-
-                    let _ = unsafe { capture_client.ReleaseBuffer(num_frames) };
-                }
-            } else {
-                break;
+            if wait_res != WAIT_OBJECT_0 && wait_res != WAIT_TIMEOUT {
+                break Err(anyhow::anyhow!("Per-app event wait failed: {wait_res:?}"));
             }
-        }
+            #[cfg(test)]
+            if test_started.elapsed() >= std::time::Duration::from_secs(2) && TEST_CLIENT_FAULT.swap(false, Ordering::Relaxed) {
+                break Err(anyhow::anyhow!("Injected client invalidation for recovery qualification"));
+            }
+            // A missed notification must not strand queued sound. Bound each
+            // drain so stop, process checks, and the watchdog retain ownership.
+            for _ in 0..128 {
+                if stop_flag.load(Ordering::Relaxed) { break 'capture Ok(SessionExit::Stopped); }
+                let mut p_data = std::ptr::null_mut();
+                let mut num_frames = 0u32;
+                let mut flags = 0u32;
+                if let Err(error) = unsafe { capture_client.GetBuffer(&mut p_data, &mut num_frames, &mut flags, None, None) } {
+                    break 'capture Err(anyhow::anyhow!("Per-app GetBuffer failed: {error}"));
+                }
+                if num_frames == 0 { break; }
+                let is_silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) != 0;
+                unsafe { decode_loopback_packet(&mut f32_buffer, p_data, num_frames, channels, bits_per_sample, is_silent); }
+                // Copy/decode first, then release ownership before downstream
+                // processing. Release failures invalidate this client too.
+                if let Err(error) = unsafe { capture_client.ReleaseBuffer(num_frames) } {
+                    break 'capture Err(anyhow::anyhow!("Per-app ReleaseBuffer failed: {error}"));
+                }
+                last_packet = std::time::Instant::now();
+                on_samples(&f32_buffer);
+            }
+            let now = std::time::Instant::now();
+            if now.duration_since(last_target_check) >= std::time::Duration::from_secs(2) {
+                last_target_check = now;
+                if target.executable.as_deref().is_some_and(|exe| super::find_pid_for_app(exe) != Some(target_pid)) {
+                    break Ok(SessionExit::TargetChanged);
+                }
+            }
+            if now.duration_since(last_packet) >= idle_timeout {
+                // No packets can mean ordinary application silence. Reactivate
+                // without declaring it fatal; repeated idle checks back off.
+                break Ok(SessionExit::Idle);
+            }
+        };
 
         let _ = unsafe { audio_client.Stop() };
-        let _ = unsafe { CloseHandle(event) };
         log::info!("🛑 Process loopback stopped for '{}' (PID {})", app_name, target_pid);
+        outcome
+    }
+
+    fn queue_audio(queue: &mut std::collections::VecDeque<f32>, data: &[f32]) {
+        const MAX_SAMPLES: usize = 19_200; // 200 ms of 48 kHz stereo.
+        let incoming = &data[data.len().saturating_sub(MAX_SAMPLES)..];
+        let excess = queue.len().saturating_add(incoming.len()).saturating_sub(MAX_SAMPLES);
+        queue.drain(..excess.min(queue.len()));
+        queue.extend(incoming.iter().copied());
     }
 
     pub fn start_multi_process_loopback(
         device: Arc<crate::audio::devices::AudioDevice>,
         state: Arc<crate::audio::recording_state::RecordingState>,
         recording_sender: Option<mpsc::UnboundedSender<crate::audio::recording_state::AudioChunk>>,
-        target_pids: Vec<(String, u32)>,
+        target_pids: Vec<ProcessLoopbackTarget>,
         stop_flag: Arc<AtomicBool>,
     ) -> Result<Vec<std::thread::JoinHandle<()>>> {
         // Startup is acknowledged only after every selected AudioClient starts.
@@ -587,7 +677,7 @@ pub mod windows_loopback {
         let target_count = target_pids.len();
         let processor = Arc::new(crate::audio::pipeline::AudioCapture::new(
             device,
-            state,
+            state.clone(),
             48000,
             2,
             crate::audio::recording_state::DeviceType::System,
@@ -595,11 +685,11 @@ pub mod windows_loopback {
         ));
 
         if target_pids.len() == 1 {
-            let (app_name, pid) = target_pids.into_iter().next().unwrap();
+            let target = target_pids.into_iter().next().unwrap();
             let stop_flag_clone = stop_flag.clone();
             let proc = processor.clone();
             let handle = std::thread::spawn(move || {
-                run_single_process_loopback_session(pid, app_name, stop_flag_clone, ready_tx, move |data| {
+                supervise_process_loopback(target, stop_flag_clone, ready_tx, state, move |data| {
                     proc.process_audio_data(data);
                 });
             });
@@ -616,19 +706,15 @@ pub mod windows_loopback {
 
         let mut handles = Vec::new();
 
-        for (idx, (app_name, pid)) in target_pids.into_iter().enumerate() {
+        for (idx, target) in target_pids.into_iter().enumerate() {
             let ready = ready_tx.clone();
             let stop_flag_worker = stop_flag.clone();
             let queues_clone = queues.clone();
+            let worker_state = state.clone();
             let handle = std::thread::spawn(move || {
-                run_single_process_loopback_session(pid, app_name, stop_flag_worker, ready, move |data| {
+                supervise_process_loopback(target, stop_flag_worker, ready, worker_state, move |data| {
                     if let Ok(mut q) = queues_clone[idx].lock() {
-                        let q_len = q.len();
-                        if q_len + data.len() > 19200 {
-                            let drop_count = (q_len + data.len()) - 19200;
-                            q.drain(0..drop_count.min(q_len));
-                        }
-                        q.extend(data.iter().copied());
+                        queue_audio(&mut q, data);
                     }
                 });
             });
@@ -719,7 +805,7 @@ pub mod windows_loopback {
             device,
             state,
             recording_sender,
-            vec![("Target".to_string(), target_pid)],
+            vec![ProcessLoopbackTarget { name: "Target".into(), executable: None, pid: target_pid }],
             stop_flag,
         )?;
         Ok(handles.remove(0))
@@ -744,6 +830,106 @@ pub mod windows_loopback {
     #[cfg(test)]
     mod startup_tests {
         use super::*;
+
+        #[test]
+        #[ignore = "Windows live endpoint test: plays a synthetic tone, captures only this test process, and injects one client failure"]
+        fn real_process_loopback_resumes_after_client_invalidation() {
+            use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_FILENAME, SND_LOOP, SND_NODEFAULT};
+            use windows::core::PCWSTR;
+            use std::sync::atomic::AtomicUsize;
+            let seconds = std::env::var("MEETILY_LOOPBACK_SECONDS").ok().and_then(|value| value.parse::<u64>().ok()).unwrap_or(120).max(10);
+            let dir = tempfile::tempdir().unwrap();
+            let track = dir.path().join("synthetic-tone.wav");
+            let count = 48_000u32;
+            let mut wav = Vec::new();
+            wav.extend_from_slice(b"RIFF"); wav.extend_from_slice(&(36 + count * 2).to_le_bytes()); wav.extend_from_slice(b"WAVEfmt ");
+            wav.extend_from_slice(&16u32.to_le_bytes()); wav.extend_from_slice(&1u16.to_le_bytes()); wav.extend_from_slice(&1u16.to_le_bytes());
+            wav.extend_from_slice(&48_000u32.to_le_bytes()); wav.extend_from_slice(&96_000u32.to_le_bytes());
+            wav.extend_from_slice(&2u16.to_le_bytes()); wav.extend_from_slice(&16u16.to_le_bytes());
+            wav.extend_from_slice(b"data"); wav.extend_from_slice(&(count * 2).to_le_bytes());
+            for index in 0..count {
+                let sample = ((index as f32 * 2.0 * std::f32::consts::PI * 220.0 / 48_000.0).sin() * 1_000.0) as i16;
+                wav.extend_from_slice(&sample.to_le_bytes());
+            }
+            std::fs::write(&track, wav).unwrap();
+            let stop = Arc::new(AtomicBool::new(false));
+            struct Cleanup { stop: Arc<AtomicBool>, worker: Option<std::thread::JoinHandle<()>> }
+            impl Drop for Cleanup {
+                fn drop(&mut self) {
+                    self.stop.store(true, Ordering::Relaxed);
+                    let _ = unsafe { PlaySoundW(PCWSTR::null(), None, SND_ASYNC) };
+                    if let Some(worker) = self.worker.take() { let _ = worker.join(); }
+                    TEST_CLIENT_FAULT.store(false, Ordering::Relaxed);
+                }
+            }
+            TEST_CLIENT_STARTS.store(0, Ordering::Relaxed);
+            TEST_CLIENT_FAULT.store(true, Ordering::Relaxed);
+            let early = Arc::new(AtomicUsize::new(0));
+            let resumed = Arc::new(AtomicUsize::new(0));
+            let late = Arc::new(AtomicUsize::new(0));
+            let (ready, received) = std::sync::mpsc::channel();
+            let began = std::time::Instant::now();
+            let worker_stop = stop.clone();
+            let counts = (early.clone(), resumed.clone(), late.clone());
+            let state = crate::audio::recording_state::RecordingState::new();
+            let worker_state = state.clone();
+            let worker = std::thread::spawn(move || {
+                supervise_process_loopback(ProcessLoopbackTarget { name: "Synthetic test".into(), executable: None, pid: std::process::id() },
+                    worker_stop, ready, worker_state, move |samples| {
+                        if samples.iter().any(|sample| sample.abs() > 0.001) {
+                            if TEST_CLIENT_STARTS.load(Ordering::Relaxed) == 1 { counts.0.fetch_add(1, Ordering::Relaxed); }
+                            else { counts.1.fetch_add(1, Ordering::Relaxed); }
+                            if began.elapsed().as_secs() >= seconds - 5 { counts.2.fetch_add(1, Ordering::Relaxed); }
+                        }
+                    });
+            });
+            let _cleanup = Cleanup { stop, worker: Some(worker) };
+            received.recv_timeout(std::time::Duration::from_secs(8)).expect("Process capture did not start");
+            let wide: Vec<u16> = track.to_string_lossy().encode_utf16().chain(Some(0)).collect();
+            assert!(unsafe { PlaySoundW(PCWSTR(wide.as_ptr()), None, SND_ASYNC | SND_FILENAME | SND_LOOP | SND_NODEFAULT) }.as_bool(), "Synthetic playback failed");
+            while began.elapsed().as_secs() < seconds { std::thread::sleep(std::time::Duration::from_millis(100)); }
+            assert!(early.load(Ordering::Relaxed) > 0, "No initial process audio");
+            assert!(resumed.load(Ordering::Relaxed) > 0, "Process audio did not recover");
+            assert!(late.load(Ordering::Relaxed) > 0, "Process audio stopped during sustained capture");
+            assert!(state.get_last_error().is_none(), "Recovery became fatal");
+            println!("Synthetic process capture sustained {seconds}s; client starts {}, signal packets before {}, after {}, late {}", TEST_CLIENT_STARTS.load(Ordering::Relaxed), early.load(Ordering::Relaxed), resumed.load(Ordering::Relaxed), late.load(Ordering::Relaxed));
+        }
+
+        #[test]
+        fn failed_clients_retry_then_report_failure_with_bounded_backoff() {
+            let mut recovery = RecoveryPolicy::default();
+            assert_eq!(recovery.next(true, false, false).unwrap().as_millis(), 400);
+            assert_eq!(recovery.next(true, false, false).unwrap().as_millis(), 600);
+            assert!(recovery.next(true, false, false).is_none());
+            assert!(!crate::audio::recording_state::AudioError::PerAppCaptureFailed.is_recoverable());
+        }
+        #[test]
+        fn ordinary_app_silence_keeps_retrying_without_fatal_errors() {
+            let mut recovery = RecoveryPolicy::default();
+            assert_eq!(recovery.idle_timeout().as_secs(), 5);
+            for _ in 0..20 { assert!(recovery.next(false, false, true).is_some()); }
+            assert_eq!(recovery.idle_timeout().as_secs(), 30);
+            assert_eq!(recovery.failures, 0);
+            recovery.next(false, true, false).unwrap();
+            assert_eq!(recovery.idle_timeout().as_secs(), 5);
+        }
+        #[test]
+        fn sustained_healthy_capture_resets_a_previous_client_failure() {
+            let mut recovery = RecoveryPolicy::default();
+            recovery.next(true, false, false).unwrap();
+            recovery.next(true, false, false).unwrap();
+            assert!(recovery.next(true, true, false).is_some());
+            assert_eq!(recovery.failures, 1);
+        }
+        #[test]
+        fn large_packets_cannot_overrun_the_multi_app_queue() {
+            let mut queue = std::collections::VecDeque::from(vec![0.0; 19_000]);
+            let packet: Vec<f32> = (0..96_000).map(|n| n as f32).collect();
+            queue_audio(&mut queue, &packet);
+            assert_eq!(queue.len(), 19_200);
+            assert_eq!(queue.front(), Some(&76_800.0));
+            assert_eq!(queue.back(), Some(&95_999.0));
+        }
 
         #[test]
         fn silent_null_packet_preserves_frames_before_speech_resumes() {

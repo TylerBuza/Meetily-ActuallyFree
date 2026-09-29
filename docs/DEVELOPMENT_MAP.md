@@ -374,3 +374,11 @@ turns, the fixed caption box, and its stable paused state using synthetic meetin
 The preference is local to WebView storage and does not change exports.
 
 Transcript appearance: `src/lib/transcript-layout.ts` owns persisted left-column and hide-speaker-dots preferences, shared through storage/events. Theme settings expose the dot option beneath left alignment. `VirtualizedTranscriptView` keeps the name/dot row together and places timestamps on a separate row below names in the left column; transcript content and provenance are unchanged. Production frontend compilation checks these interfaces.
+
+The hide-speaker-dots preference is independent of left alignment and applies
+to transcript names in both bubble and column layouts. Voice enrollment progress
+is owned by `VoiceProfileNotifications.tsx`; model/sample selection and native
+retry after saved post-call changes are documented in
+[LABS_MACWHISPER_FEATURES.md](LABS_MACWHISPER_FEATURES.md). Supervised per-app
+client recovery and its opt-in Windows fixture are documented in
+[AUDIO_CALLBACK_CONTINUITY.md](AUDIO_CALLBACK_CONTINUITY.md).
