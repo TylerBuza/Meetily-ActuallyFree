@@ -197,6 +197,20 @@ gating, quiet-speech and meeting-scoped speaker-edit recovery corrections.
 
 ### Home meeting library
 
+In the v0.2.18 workspace, the meeting library lives in
+`frontend/src/app/meetings/page.tsx`. Each row can expand in place, and the
+button beside a date expands or collapses all currently filtered meetings in
+that section. `api_get_meetings` batches stored summary results and transcript
+speaker labels with duration/group data; `SidebarProvider` carries the preview
+fields to All meetings. Only explicitly named speakers are listed. The restored
+`frontend/src/lib/summary-buckets.ts` reads Markdown, BlockNote, and older
+section summaries for a brief AI summary and up to three short Key Topics.
+Existing row selection, rename, group, export, delete, and Open meeting actions
+stay independent of expansion. Parser tests cover stored formats and topic
+labels; native compilation and the frontend production build cover the API/UI
+integration. Summaries follow the saved result and can be stale until the
+meeting list refreshes; an absent summary stays an explicit empty state.
+
 `components/Sidebar/index.tsx` renders the text-only **Meetily · Actually Free**
 wordmark, with the original blue/soft-blue colors on one line. It opens About;
 the adjacent collapse control remains separate. The 16px wordmark was visually

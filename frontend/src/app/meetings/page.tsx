@@ -13,6 +13,9 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   ArrowUpRight,
   Check,
+  ChevronDown,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Download,
   FileAudio,
   FolderInput,
@@ -23,6 +26,7 @@ import {
   Plus,
   Search,
   Trash2,
+  Users,
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -54,6 +58,7 @@ import { dateSection, formatDuration, parseDate } from '@/lib/dates';
 import { displayTitle } from '@/lib/meeting-titles';
 import { deleteMeetings, moveMeetingsToGroup, renameMeeting } from '@/lib/meeting-actions';
 import { onWorkspaceChange } from '@/lib/workspace-api';
+import { normalizeSummary, shortTopicLabel } from '@/lib/summary-buckets';
 import type { PersonProfile } from '@/types';
 
 type Sort = 'newest' | 'oldest' | 'longest';
@@ -71,6 +76,18 @@ function totalDuration(meetings: CurrentMeeting[]): string {
   return minutes > 0 ? `${minutes} min recorded` : '';
 }
 
+function summaryExcerpt(raw: string): string | null {
+  const text = raw.split(/\r?\n/).map((line) => line.trim())
+    .filter((line) => line && !/^#{1,6}\s*(AI Generated Summary|Date:)/i.test(line))
+    .join(' ')
+    .replace(/!?\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .replace(/^\*{0,2}Summary\*{0,2}\s*:?\s*/i, '')
+    .replace(/(?:^|\s)[#>*_`~-]+(?=\S)/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+  return text ? text.length > 360 ? `${text.slice(0, 360).trimEnd()}…` : text : null;
+}
+
 export default function MeetingsPage() {
   const router = useRouter();
   const { meetings, setCurrentMeeting, currentMeeting } = useSidebar();
@@ -85,6 +102,7 @@ export default function MeetingsPage() {
   const [range, setRange] = useState<Range>('any');
   const [sort, setSort] = useState<Sort>('newest');
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
@@ -181,6 +199,14 @@ export default function MeetingsPage() {
   }, [filtered, sort]);
 
   const orderedIds = useMemo(() => filtered.map((meeting) => meeting.id), [filtered]);
+  const toggleExpanded = useCallback((ids: string[]) => {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (ids.every((id) => next.has(id))) ids.forEach((id) => next.delete(id));
+      else ids.forEach((id) => next.add(id));
+      return next;
+    });
+  }, []);
   const selecting = selected.size > 0;
   const filtersActive = query.trim() !== '' || groupFilter !== ALL_GROUPS || personFilter !== null || range !== 'any';
 
@@ -188,6 +214,10 @@ export default function MeetingsPage() {
   useEffect(() => {
     const alive = new Set(meetings.map((meeting) => meeting.id));
     setSelected((current) => {
+      const next = new Set([...current].filter((id) => alive.has(id)));
+      return next.size === current.size ? current : next;
+    });
+    setExpanded((current) => {
       const next = new Set([...current].filter((id) => alive.has(id)));
       return next.size === current.size ? current : next;
     });
@@ -376,19 +406,34 @@ export default function MeetingsPage() {
               </div>
               {sections.map((section, sectionIndex) => (
                 <section key={section.title} className="mt-3 first:mt-1">
-                  <h2 className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-af-text-4">
-                    {section.title}
-                    <span className="ml-2 font-normal normal-case tracking-normal tabular-nums">{section.meetings.length}</span>
-                  </h2>
-                  <ul className="af-appear overflow-hidden rounded-xl border border-af-border bg-af-panel-2/40" style={{ '--af-i': sectionIndex } as React.CSSProperties}>
+                  <div className="flex items-center gap-1 px-3 pb-1">
+                    <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-af-text-4">
+                      {section.title}
+                      <span className="ml-2 font-normal normal-case tracking-normal tabular-nums">{section.meetings.length}</span>
+                    </h2>
+                    <button
+                      type="button"
+                      onClick={() => toggleExpanded(section.meetings.map((meeting) => meeting.id))}
+                      aria-expanded={section.meetings.every((meeting) => expanded.has(meeting.id))}
+                      aria-controls={`meeting-day-${sectionIndex}`}
+                      aria-label={`${section.meetings.every((meeting) => expanded.has(meeting.id)) ? 'Collapse' : 'Expand'} all meetings in ${section.title}`}
+                      title={`${section.meetings.every((meeting) => expanded.has(meeting.id)) ? 'Collapse' : 'Expand'} all`}
+                      className="ml-1 inline-flex h-6 w-6 items-center justify-center rounded-md text-af-text-4 transition-colors hover:bg-af-hover hover:text-af-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent"
+                    >
+                      {section.meetings.every((meeting) => expanded.has(meeting.id)) ? <ChevronsDownUp className="h-4 w-4" /> : <ChevronsUpDown className="h-4 w-4" />}
+                    </button>
+                  </div>
+                  <ul id={`meeting-day-${sectionIndex}`} className="af-appear overflow-hidden rounded-xl border border-af-border bg-af-panel-2/40" style={{ '--af-i': sectionIndex } as React.CSSProperties}>
                     {section.meetings.map((meeting) => (
                       <LibraryRow
                         key={meeting.id}
                         meeting={meeting}
                         selected={selected.has(meeting.id)}
+                        expanded={expanded.has(meeting.id)}
                         selecting={selecting}
                         renaming={renaming === meeting.id}
                         onToggle={(rangeSelect) => toggle(meeting.id, rangeSelect)}
+                        onToggleExpanded={() => toggleExpanded([meeting.id])}
                         onOpen={() => open(meeting)}
                         onRenameStart={() => setRenaming(meeting.id)}
                         onRenameEnd={async (title) => {
@@ -473,9 +518,11 @@ export default function MeetingsPage() {
 function LibraryRow({
   meeting,
   selected,
+  expanded,
   selecting,
   renaming,
   onToggle,
+  onToggleExpanded,
   onOpen,
   onRenameStart,
   onRenameEnd,
@@ -485,9 +532,11 @@ function LibraryRow({
 }: {
   meeting: CurrentMeeting;
   selected: boolean;
+  expanded: boolean;
   selecting: boolean;
   renaming: boolean;
   onToggle: (range: boolean) => void;
+  onToggleExpanded: () => void;
   onOpen: () => void;
   onRenameStart: () => void;
   onRenameEnd: (title: string | null) => void;
@@ -500,6 +549,9 @@ function LibraryRow({
   const date = parseDate(meeting.created_at);
   const title = displayTitle(meeting.title, meeting.created_at);
   const [draft, setDraft] = useState(meeting.title);
+  const buckets = normalizeSummary(meeting.summary_data ?? meeting.summary_preview);
+  const excerpt = summaryExcerpt(buckets.summary.join(' ') || meeting.summary_preview || '');
+  const topics = buckets.topics.map(shortTopicLabel).filter(Boolean).slice(0, 3);
 
   useEffect(() => {
     if (renaming) setDraft(meeting.title);
@@ -508,7 +560,7 @@ function LibraryRow({
   return (
     <li
       className={cn(
-        'group/row grid cursor-pointer grid-cols-[1.25rem_minmax(0,1fr)_auto] items-center gap-3 border-b border-af-border px-3 py-2.5 transition-colors last:border-b-0 sm:grid-cols-[1.25rem_minmax(0,1fr)_10rem_9rem_3.5rem_1.75rem]',
+        'group/row grid cursor-pointer grid-cols-[1.25rem_minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-af-border px-3 py-2.5 transition-colors last:border-b-0 sm:grid-cols-[1.25rem_minmax(0,1fr)_10rem_9rem_3.5rem_1.75rem_1.75rem]',
         selected ? 'bg-af-accent/[0.1]' : 'hover:bg-af-hover/70',
       )}
       onClick={(event) => {
@@ -623,6 +675,53 @@ function LibraryRow({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      <button
+        type="button"
+        onClick={(event) => { event.stopPropagation(); onToggleExpanded(); }}
+        aria-expanded={expanded}
+        aria-controls={`meeting-preview-${meeting.id}`}
+        aria-label={`${expanded ? 'Collapse' : 'Expand'} details for ${title}`}
+        title={expanded ? 'Collapse details' : 'Expand details'}
+        className="flex h-7 w-7 items-center justify-center rounded-md text-af-text-3 transition-colors hover:bg-af-active hover:text-af-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent"
+      >
+        <ChevronDown className={cn('h-4 w-4 transition-transform', expanded && 'rotate-180')} />
+      </button>
+
+      {expanded && (
+        <div
+          id={`meeting-preview-${meeting.id}`}
+          className="col-span-full -mx-3 -mb-2.5 mt-1 border-t border-af-border bg-af-panel px-6 py-4"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {!!meeting.named_participants?.length && (
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-af-text-3">
+              <Users className="h-3.5 w-3.5" aria-hidden="true" />
+              {meeting.named_participants.map((name) => (
+                <span key={name} className="inline-flex items-center gap-1.5 rounded-full border border-af-border bg-af-panel-2 px-2 py-1 text-af-text-2">
+                  <Avatar name={name} size="xs" />{name}
+                </span>
+              ))}
+            </div>
+          )}
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-af-text-4">AI summary</p>
+          <p className="mt-1 max-w-3xl text-[13px] leading-relaxed text-af-text-2">
+            {excerpt ?? 'No AI summary yet. Open this meeting to generate one.'}
+          </p>
+          {topics.length > 0 && (
+            <div className="mt-3">
+              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-af-text-4">Key topics</p>
+              <div className="flex flex-wrap gap-1.5">
+                {topics.map((topic, index) => (
+                  <span key={`${topic}-${index}`} className="rounded-md border border-af-border bg-af-panel-2 px-2 py-1 text-xs text-af-text-2">{topic}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          <button type="button" onClick={onOpen} className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-af-accent hover:underline">
+            Open meeting <ArrowUpRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
     </li>
   );
 }

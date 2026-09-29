@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 $frontend = Split-Path $PSScriptRoot -Parent
 $repo = Split-Path $frontend -Parent
 $tauri = Join-Path $frontend 'src-tauri'
+$appVersion = (Get-Content (Join-Path $tauri 'tauri.conf.json') -Raw | ConvertFrom-Json).version
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path -LiteralPath $vswhere)) { throw 'Visual Studio Build Tools locator is missing' }
 $vsInstall = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim()
@@ -44,11 +45,11 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Tauri local-test bundle failed' }
 } finally { Pop-Location }
 
-$installer = Join-Path $repo 'target\release\bundle\nsis\Meetily Labs Local Test_0.2.17_x64-setup.exe'
+$installer = Join-Path $repo "target\release\bundle\nsis\Meetily Labs Local Test_${appVersion}_x64-setup.exe"
 if (-not (Test-Path -LiteralPath $installer)) { throw "Installer was not produced: $installer" }
 $dist = Join-Path $repo $(if ($Cuda) { 'dist-labs-cuda-test' } else { 'dist-labs-test' })
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
-$outputName = if ($Cuda) { 'Meetily Labs CUDA Test_0.2.17_x64-setup.exe' } else { 'Meetily Labs Local Test_0.2.17_x64-setup.exe' }
+$outputName = if ($Cuda) { "Meetily Labs CUDA Test_${appVersion}_x64-setup.exe" } else { "Meetily Labs Local Test_${appVersion}_x64-setup.exe" }
 $output = Join-Path $dist $outputName
 Copy-Item -LiteralPath $installer -Destination $output -Force
 $hash = (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash.ToLowerInvariant()

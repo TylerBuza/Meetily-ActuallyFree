@@ -38,6 +38,12 @@ pub struct Meeting {
     pub duration_seconds: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_data: Option<String>,
+    #[serde(default)]
+    pub named_participants: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -392,6 +398,33 @@ pub async fn api_get_meetings<R: Runtime>(
                     .filter_map(|(id, group)| group.map(|group| (id, group)))
                     .collect();
 
+            // All meetings can expand an entire day at once. Fetch summaries
+            // and labels in batches rather than making one native call per row.
+            let summaries: HashMap<String, String> = sqlx::query_as::<_, (String, String)>(
+                "SELECT meeting_id, result FROM summary_processes WHERE result IS NOT NULL",
+            )
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("Failed to read meeting summaries: {}", e))?
+            .into_iter()
+            .collect();
+            let speaker_rows: Vec<(String, String)> = sqlx::query_as(
+                "SELECT meeting_id, speaker FROM transcripts WHERE speaker IS NOT NULL \
+                 GROUP BY meeting_id, speaker ORDER BY meeting_id, MIN(COALESCE(audio_start_time, 1e12)), MIN(rowid)",
+            )
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("Failed to read meeting participants: {}", e))?;
+            let mut participants: HashMap<String, Vec<String>> = HashMap::new();
+            for (meeting_id, speaker) in speaker_rows {
+                if crate::database::repositories::person::is_person_name(&speaker) {
+                    let names = participants.entry(meeting_id).or_default();
+                    if !names.iter().any(|name| name.eq_ignore_ascii_case(&speaker)) {
+                        names.push(speaker);
+                    }
+                }
+            }
+
             let mut result: Vec<Meeting> = Vec::with_capacity(meeting_models.len());
             for m in meeting_models {
                 let metadata_started_at = m.folder_path.as_deref().and_then(|folder| {
@@ -410,6 +443,10 @@ pub async fn api_get_meetings<R: Runtime>(
                 result.push(Meeting {
                     duration_seconds: durations.get(&m.id).copied(),
                     group_id: groups.get(&m.id).cloned(),
+                    summary_preview: summaries.get(&m.id).and_then(|raw|
+                        crate::database::repositories::person::visible_summary_text(raw)),
+                    summary_data: summaries.get(&m.id).cloned(),
+                    named_participants: participants.remove(&m.id).unwrap_or_default(),
                     id: m.id,
                     title: m.title,
                     created_at: Some(created_at.to_rfc3339()),
