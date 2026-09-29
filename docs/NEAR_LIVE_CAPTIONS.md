@@ -77,3 +77,16 @@ Native timing selection and voice-profile accumulation have pure unit tests.
 Frontend preview merge has a targeted test. Frontend
 build and Windows packaging verify integration. Real model quality, GPU load,
 latency, and same-track overlap require a local audio fixture or live test.
+
+## Fixed provisional-caption area (September 2026)
+
+`LiveSession.tsx` projects only saved turns into `VirtualizedTranscriptView`.
+Microphone/system previews live in a fixed-height box above the recording bar,
+with Listening and Paused states keeping its position stable between previews.
+The existing per-source finalization watermark, saved-turn handoff, expiry, and
+optional mic duplicate suppression still own preview removal. Remote preview
+labels never enter the final transcript, contact list, or persistence. Long
+previews scroll inside the box; transcript bottom clearance includes the box.
+Frontend build/type validation and the nine targeted near-live/Labs tests passed;
+Chrome preview verified the box above the controls and stable paused placement
+using simulated text, not an ASR latency/accuracy fixture.

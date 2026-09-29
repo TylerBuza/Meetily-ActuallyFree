@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import type { MeetingImage } from '@/lib/meeting-images';
 import { useAutoScroll } from '@/hooks/useAutoScroll';
 import { useTranscriptStreaming } from '@/hooks/useTranscriptStreaming';
+import { useTranscriptLeftAligned } from '@/lib/transcript-layout';
 import { useUserName } from '@/hooks/useUserName';
 import { TranscriptSegmentData } from '@/types';
 import { Spinner } from '@/components/ui/spinner';
@@ -160,6 +161,7 @@ const TurnRow = memo(function TurnRow({
   colorIndex,
   isStreaming,
   userName,
+  leftAligned,
   active,
   flash,
   onSpeakerClick,
@@ -174,6 +176,7 @@ const TurnRow = memo(function TurnRow({
   colorIndex?: number;
   isStreaming: boolean;
   userName: string;
+  leftAligned: boolean;
   active: boolean;
   flash: boolean;
   onSpeakerClick?: VirtualizedTranscriptViewProps['onSpeakerClick'];
@@ -188,9 +191,9 @@ const TurnRow = memo(function TurnRow({
   const clickable = !!speaker && !turn.provisional && (!!onSpeakerClick || !!onRenameSpeaker);
 
   return (
-    <div id={`segment-${turn.id}`} className={cn('flex pb-3', isYou ? 'justify-end pl-8' : 'justify-start pr-8')}>
-      <div className={cn('flex min-w-0 max-w-[92%] flex-col gap-1', isYou ? 'items-end' : 'items-start')}>
-        <div className={cn('flex items-center gap-2', isYou && 'flex-row-reverse')}>
+    <div id={`segment-${turn.id}`} className={cn('flex pb-3', leftAligned ? 'justify-start' : isYou ? 'justify-end pl-8' : 'justify-start pr-8')}>
+      <div className={cn(leftAligned ? 'grid w-full min-w-0 grid-cols-[minmax(70px,110px)_minmax(0,1fr)] items-start gap-3' : 'flex min-w-0 max-w-[92%] flex-col gap-1', !leftAligned && (isYou ? 'items-end' : 'items-start'))}>
+        <div className={cn('flex items-center gap-2', leftAligned ? 'flex-wrap' : isYou && 'flex-row-reverse')}>
           <span aria-hidden className={cn('h-2 w-2 shrink-0 rounded-full', speakerDot(speaker, colorIndex))} />
           {speaker && (
             <span className="group/speaker flex items-center gap-1">
@@ -237,9 +240,9 @@ const TurnRow = memo(function TurnRow({
         </div>
         <div
           className={cn(
-            'rounded-2xl border px-3.5 py-2 transition-[box-shadow,border-color,background-color] duration-200',
+            leftAligned ? 'min-w-0 rounded-md px-1 transition-colors' : 'rounded-2xl border px-3.5 py-2 transition-[box-shadow,border-color,background-color] duration-200',
             // Others' bubbles carry a faint wash of their colour (globals.css).
-            isYou ? 'rounded-tr-md border-af-accent/25 bg-af-accent/[0.12]' : 'af-speaker-bubble rounded-tl-md',
+            !leftAligned && (isYou ? 'rounded-tr-md border-af-accent/25 bg-af-accent/[0.12]' : 'af-speaker-bubble rounded-tl-md'),
             active && 'border-af-accent/60 shadow-[0_0_0_3px_rgb(var(--af-accent-rgb)/0.14)]',
             flash && 'animate-af-flash',
           )}
@@ -281,6 +284,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
   colorIndices: givenColorIndices,
 }) => {
   const userName = useUserName();
+  const [leftAligned] = useTranscriptLeftAligned();
   const shownLiveText = useRef(new Map<string, string>());
   const turns = useMemo(() => {
     const live = nearLiveCaptions && isRecording;
@@ -425,6 +429,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
       colorIndex={turn.speaker ? colorIndices.get(speakerKey(turn.speaker)) : undefined}
       isStreaming={streamingSegmentId === turn.id}
       userName={userName}
+      leftAligned={leftAligned}
       active={index === activeIndex}
       flash={index === flashIndex}
       onSpeakerClick={onSpeakerClick}

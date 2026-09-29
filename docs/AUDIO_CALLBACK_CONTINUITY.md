@@ -81,3 +81,21 @@ person-speaker links, model hashes, and preference values were preserved. This
 is local installation/startup qualification, not a new microphone capture test.
 The reporter's devices remain untested here. v0.2.18 is prepared as a draft;
 publication is separate from this verified local installation.
+
+## Windows global-mute packet handling (September 2026)
+
+`audio/capture/per_app.rs` now consumes a successful WASAPI packet with frames
+when its silent flag is set even if its data pointer is null. The worker decodes
+it as zeros and reaches `ReleaseBuffer`; previously the pointer check broke the
+read loop before release, leaving later packets blocked. Nonempty null packets
+are also released without dereferencing. Empty/failed reads do not own frames.
+`AudioStreamManager::reconnect_source` replaces just the disconnected endpoint,
+so microphone recovery preserves the selected per-app system capture threads.
+Capture remains nonblocking, and the existing recording-state sender connects
+replacement capture to the running pipeline.
+
+The native synthetic null-silent packet followed by float speech test passed,
+as did 14 existing mixer/source continuity tests. This establishes decoding and
+sample continuity, not a physical SoundSwitch/Zoom/Chrome mute-cycle result.
+The actual WASAPI release/notification sequence needs a Windows live-device test;
+this change does not restart process capture after an unrelated terminal failure.

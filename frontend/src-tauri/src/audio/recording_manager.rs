@@ -565,39 +565,12 @@ impl RecordingManager {
         if let Some(device) = device {
             info!("✅ Device '{}' found, recreating stream...", device_name);
 
-            // Determine which device to reconnect based on type
-            let device_arc: Arc<AudioDevice> = Arc::new(device);
-            match device_type {
-                DeviceMonitorType::Microphone => {
-                    // Stop existing mic stream and start new one
-                    // We need to keep system audio running if it exists
-                    let system_device = self.state.get_system_device();
-
-                    // Restart streams with new microphone
-                    self.stream_manager.stop_streams()?;
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-                    self.stream_manager.start_streams(Some(device_arc.clone()), system_device, None).await?;
-                    self.state.set_microphone_device(device_arc);
-
-                    info!("✅ Microphone reconnected successfully");
-                    Ok(true)
-                }
-                DeviceMonitorType::SystemAudio => {
-                    // Stop existing system audio stream and start new one
-                    let microphone_device = self.state.get_microphone_device();
-
-                    // Restart streams with new system audio
-                    self.stream_manager.stop_streams()?;
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-                    self.stream_manager.start_streams(microphone_device, Some(device_arc.clone()), None).await?;
-                    self.state.set_system_device(device_arc);
-
-                    info!("✅ System audio reconnected successfully");
-                    Ok(true)
-                }
-            }
+            let source = match device_type {
+                DeviceMonitorType::Microphone => RecordingDeviceType::Microphone,
+                DeviceMonitorType::SystemAudio => RecordingDeviceType::System,
+            };
+            self.stream_manager.reconnect_source(Arc::new(device), source).await?;
+            Ok(true)
         } else {
             warn!("❌ Device '{}' not yet available", device_name);
             Ok(false)

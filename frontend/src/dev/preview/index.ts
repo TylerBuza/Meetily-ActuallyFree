@@ -71,7 +71,7 @@ const state = {
     ignored_apps: [] as string[],
     notify: true,
   },
-  labs: { whisperStrictSilence: false, voiceProfiles: false, parakeetGpu: false },
+  labs: { whisperStrictSilence: false, voiceProfiles: false, autoSaveVoiceProfiles: false, nearLiveCaptions: false, micPlaybackSuppression: false, parakeetGpu: false },
   voices: [{ person_id: 'person-tom', samples: 6, meetings: 1, from: ['meeting-acme-kickoff'] }] as Array<{
     person_id: string;
     samples: number;
@@ -428,6 +428,13 @@ function handle(cmd: string, args: Args): unknown {
     case 'set_whisper_strict_silence':
       state.labs.whisperStrictSilence = !!args.enabled;
       return null;
+    case 'list_meeting_images': return [];
+    case 'get_voice_profiles_auto_save': return state.labs.autoSaveVoiceProfiles;
+    case 'set_voice_profiles_auto_save': state.labs.autoSaveVoiceProfiles = !!args.value; return null;
+    case 'get_near_live_captions_enabled': return state.labs.nearLiveCaptions;
+    case 'set_near_live_captions_enabled': state.labs.nearLiveCaptions = !!args.value; return null;
+    case 'get_mic_playback_suppression_enabled': return state.labs.micPlaybackSuppression;
+    case 'set_mic_playback_suppression_enabled': state.labs.micPlaybackSuppression = !!args.value; return null;
     case 'get_voice_profiles_enabled':
       return state.labs.voiceProfiles;
     case 'set_voice_profiles_enabled':

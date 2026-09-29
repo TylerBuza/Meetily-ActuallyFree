@@ -220,20 +220,11 @@ export function LiveSession({
       confidence: t.confidence,
       speaker: t.speaker,
     }));
-    if (!isRecording || isPaused || !labs.nearLiveCaptions) return saved;
-    const active = Object.values(previews).filter((preview): preview is PreviewCaption => !!preview)
-      .filter((preview) => !(labs.micPlaybackSuppression && preview.source === 'microphone' && previews.system
-        && isDuplicatedMicCaption(preview, previews.system)))
-      .map((preview) => ({
-        id: `preview-${preview.source}`,
-        timestamp: preview.start_time,
-        endTime: preview.end_time,
-        text: `${preview.text} …`,
-        speaker: preview.source === 'microphone' ? 'You' : 'Remote voice',
-        provisional: true,
-      }));
-    return [...saved, ...active].sort((a, b) => a.timestamp - b.timestamp);
-  }, [transcripts, previews, isRecording, isPaused, labs.nearLiveCaptions, labs.micPlaybackSuppression]);
+    return saved;
+  }, [transcripts]);
+  const activePreviews = Object.values(previews).filter((preview): preview is PreviewCaption => !!preview)
+    .filter((preview) => !(labs.micPlaybackSuppression && preview.source === 'microphone' && previews.system
+      && isDuplicatedMicCaption(preview, previews.system)));
   const lines = useMemo<LiveLine[]>(
     () => transcripts.map((t) => ({ id: t.id, time: t.audio_start_time ?? 0, speaker: t.speaker, text: t.text })),
     [transcripts],
@@ -322,7 +313,7 @@ export function LiveSession({
           </div>
         </header>
 
-        <div className="min-h-0 flex-1">
+        <div className="relative min-h-0 flex-1">
           <VirtualizedTranscriptView
             segments={segments}
             nearLiveCaptions={labs.nearLiveCaptions}
@@ -335,8 +326,18 @@ export function LiveSession({
             onRenameSpeaker={(speaker, segmentId) => setIdentity({ speaker, transcriptId: segmentId || null })}
             onMergeSpeaker={(speaker) => setIdentity({ speaker, transcriptId: null })}
             highlightSegmentId={highlight}
-            bottomInset={RECORD_CARD_CLEARANCE}
+            bottomInset={RECORD_CARD_CLEARANCE + (labs.nearLiveCaptions ? 160 : 0)}
           />
+          {isRecording && labs.nearLiveCaptions && (
+            <div aria-label="Near-live captions" className="absolute inset-x-4 rounded-xl border border-af-border bg-af-panel px-4 py-3 shadow-sm" style={{ bottom: 144 }}>
+              <p className="mb-1 text-[11px] font-semibold text-af-text-3">Near-live captions</p>
+              <div className="h-16 overflow-y-auto text-sm text-af-text" aria-live="off">
+                {isPaused ? <span className="text-af-text-4">Paused</span> : activePreviews.length === 0
+                  ? <span className="text-af-text-4">Listening…</span>
+                  : activePreviews.map((preview) => <p key={preview.source}><span className="mr-2 font-medium text-af-accent">{preview.source === 'microphone' ? 'You' : 'Remote voice'}</span>{preview.text} …</p>)}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

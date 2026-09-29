@@ -36,6 +36,7 @@ import { WorkspaceProvider } from '@/contexts/WorkspaceContext'
 import { RouteWarmup } from '@/components/RouteWarmup'
 import { CHROME_BOOT_SCRIPT } from '@/lib/window-chrome'
 import { RecordingPill } from '@/components/recording/RecordingPill'
+import { VoiceProfileNotifications } from '@/components/VoiceProfileNotifications'
 import { GroupEditorHost } from '@/components/groups/GroupEditor'
 
 // Development only: in a plain browser (no Tauri bridge) serve sample data so
@@ -543,6 +544,7 @@ export default function RootLayout({
                                   <div className="flex min-h-0 min-w-0 h-screen overflow-hidden">
                                     <Sidebar />
                                     <MainContent>{children}</MainContent>
+                                    <VoiceProfileNotifications />
                                     <RecordingPill />
                                     <GroupEditorHost />
                                   </div>

@@ -2,6 +2,7 @@ export interface LabsPreferences {
   meetingAutomation: boolean;
   transcriptScrubbing: boolean;
   voiceProfiles: boolean;
+  autoSaveVoiceProfiles: boolean;
   whisperSilenceGuard: boolean;
   cleanTranscript: boolean;
   parakeetGpu: boolean;
@@ -13,6 +14,7 @@ export const defaultLabsPreferences: LabsPreferences = {
   meetingAutomation: false,
   transcriptScrubbing: false,
   voiceProfiles: false,
+  autoSaveVoiceProfiles: false,
   whisperSilenceGuard: false,
   cleanTranscript: false,
   parakeetGpu: false,

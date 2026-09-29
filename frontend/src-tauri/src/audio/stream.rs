@@ -607,6 +607,27 @@ impl AudioStreamManager {
         self.start_streams_with_per_app(microphone_device, system_device, None, recording_sender).await
     }
 
+    /// Replace only the failed endpoint; process loopback and the other source
+    /// retain their capture threads and pipeline connection.
+    pub async fn reconnect_source(&mut self, device: Arc<AudioDevice>, source: DeviceType) -> Result<()> {
+        let slot = match source {
+            DeviceType::Microphone => &mut self.microphone_stream,
+            DeviceType::System => &mut self.system_stream,
+            DeviceType::Mixed => return Err(anyhow::anyhow!("Cannot reconnect mixed audio")),
+        };
+        self.state.set_capture_active(source.clone(), false);
+        if let Some(stream) = slot.take() { stream.stop()?; }
+        let stream = AudioStream::create(device.clone(), self.state.clone(), source.clone(), None).await?;
+        match source {
+            DeviceType::Microphone => self.state.set_microphone_device(device),
+            DeviceType::System => self.state.set_system_device(device),
+            DeviceType::Mixed => unreachable!(),
+        }
+        *slot = Some(stream);
+        self.state.set_capture_active(source, true);
+        Ok(())
+    }
+
     /// Stop all audio streams
     pub fn stop_streams(&mut self) -> Result<()> {
         info!("Stopping all audio streams");

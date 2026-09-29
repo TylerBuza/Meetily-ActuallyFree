@@ -519,31 +519,14 @@ pub mod windows_loopback {
                         )
                     };
 
-                    if get_res.is_err() || num_frames == 0 || p_data.is_null() {
+                    if get_res.is_err() || num_frames == 0 {
                         break;
                     }
 
                     let is_silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) != 0;
-                    let total_samples = (num_frames * channels as u32) as usize;
-
-                    f32_buffer.clear();
-                    f32_buffer.resize(total_samples, 0.0);
-
-                    if !is_silent {
-                        if bits_per_sample == 32 {
-                            let float_slice = unsafe {
-                                std::slice::from_raw_parts(p_data as *const f32, total_samples)
-                            };
-                            f32_buffer.copy_from_slice(float_slice);
-                        } else if bits_per_sample == 16 {
-                            let i16_slice = unsafe {
-                                std::slice::from_raw_parts(p_data as *const i16, total_samples)
-                            };
-                            for (i, &s) in i16_slice.iter().enumerate() {
-                                f32_buffer[i] = s as f32 / 32768.0;
-                            }
-                        }
-                    }
+                    // GetBuffer owns these frames even when the silent packet has
+                    // no pointer. Decoding silence must reach ReleaseBuffer below.
+                    unsafe { decode_loopback_packet(&mut f32_buffer, p_data, num_frames, channels, bits_per_sample, is_silent); }
 
                     on_samples(&f32_buffer);
 
@@ -712,9 +695,35 @@ pub mod windows_loopback {
         Ok(handles.remove(0))
     }
 
+    /// `data` points to `frames * channels` samples owned by WASAPI until release.
+    /// A silent packet may use a null pointer; never dereference it.
+    unsafe fn decode_loopback_packet(buffer: &mut Vec<f32>, data: *const u8, frames: u32, channels: u16, bits: u16, silent: bool) {
+        let count = frames as usize * channels as usize;
+        buffer.clear();
+        buffer.resize(count, 0.0);
+        if silent || data.is_null() { return; }
+        if bits == 32 {
+            buffer.copy_from_slice(std::slice::from_raw_parts(data as *const f32, count));
+        } else if bits == 16 {
+            for (target, sample) in buffer.iter_mut().zip(std::slice::from_raw_parts(data as *const i16, count)) {
+                *target = *sample as f32 / 32768.0;
+            }
+        }
+    }
+
     #[cfg(test)]
     mod startup_tests {
         use super::*;
+
+        #[test]
+        fn silent_null_packet_preserves_frames_before_speech_resumes() {
+            let mut buffer = vec![1.0; 8];
+            unsafe { decode_loopback_packet(&mut buffer, std::ptr::null(), 3, 2, 32, true); }
+            assert_eq!(buffer, vec![0.0; 6]);
+            let speech = [0.25f32, -0.5, 0.75, -1.0];
+            unsafe { decode_loopback_packet(&mut buffer, speech.as_ptr() as *const u8, 2, 2, 32, false); }
+            assert_eq!(buffer, speech);
+        }
 
         #[test]
         fn partial_startup_failure_stops_all_selected_apps() {

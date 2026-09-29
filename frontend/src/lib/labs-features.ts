@@ -11,16 +11,18 @@ export type LabsFeature = keyof LabsPreferences;
 
 /** Refreshes the mirrored switches from Rust. */
 export async function syncLabsFromBackend(): Promise<LabsPreferences> {
-  const [whisper, voices, gpu, nearLive, micPlayback] = await Promise.allSettled([
+  const [whisper, voices, gpu, nearLive, micPlayback, autoSave] = await Promise.allSettled([
     invoke<boolean>('get_whisper_strict_silence'),
     invoke<boolean>('get_voice_profiles_enabled'),
     invoke<boolean>('get_parakeet_gpu_enabled'),
     invoke<boolean>('get_near_live_captions_enabled'),
     invoke<boolean>('get_mic_playback_suppression_enabled'),
+    invoke<boolean>('get_voice_profiles_auto_save'),
   ]);
   const current = loadLabsPreferences();
   const next: LabsPreferences = {
     ...current,
+    autoSaveVoiceProfiles: autoSave.status === 'fulfilled' ? autoSave.value : current.autoSaveVoiceProfiles,
     whisperSilenceGuard: whisper.status === 'fulfilled' ? whisper.value : current.whisperSilenceGuard,
     voiceProfiles: voices.status === 'fulfilled' ? voices.value : current.voiceProfiles,
     parakeetGpu: gpu.status === 'fulfilled' ? gpu.value : current.parakeetGpu,
@@ -48,6 +50,9 @@ export async function setLabsFeature(feature: LabsFeature, value: boolean): Prom
       break;
     case 'whisperSilenceGuard':
       await invoke('set_whisper_strict_silence', { enabled: value });
+      break;
+    case 'autoSaveVoiceProfiles':
+      await invoke('set_voice_profiles_auto_save', { value });
       break;
     case 'voiceProfiles':
       await invoke('set_voice_profiles_enabled', { value });

@@ -360,3 +360,15 @@ Development labels 0.2.18–0.2.20 in historical notes were consolidated into th
 0.2.17 candidate after checking GitHub's published 0.2.16. Re-check the actual
 release state before future version work; do not treat this historical statement
 as a permanently current release number.
+
+### Transcript layout preference
+
+Settings > General, under Theme, offers left-aligned speaker names.
+`lib/transcript-layout.ts` owns the WebView preference and change notifications;
+the shared `VirtualizedTranscriptView` uses a left name column and indented
+plain text for both local and remote speakers, in live and saved meetings.
+The default bubble view remains available. Speaker clicks, colors, seeking,
+virtualization and saved transcript data retain their existing owners. Production
+frontend build/type validation passed; Chrome preview verified aligned live/saved
+turns, the fixed caption box, and its stable paused state using synthetic meetings.
+The preference is local to WebView storage and does not change exports.

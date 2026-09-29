@@ -720,6 +720,7 @@ pub struct MeetingSpeakerRenameResult {
 
 #[tauri::command]
 pub async fn rename_meeting_speaker(
+    app: tauri::AppHandle,
     state: tauri::State<'_, crate::state::AppState>,
     meeting_id: String,
     from: String,
@@ -739,6 +740,7 @@ pub async fn rename_meeting_speaker(
         "🧑‍🤝‍🧑 Renamed speaker '{}' → '{}' across {} segments of meeting {}",
         from, outcome.speaker, outcome.count, meeting_id
     );
+    voice_profiles::auto_save_named_voices(app, state.db_manager.pool().clone(), meeting_id, Some(outcome.speaker.clone()));
     Ok(MeetingSpeakerRenameResult {
         speaker: outcome.speaker,
         count: outcome.count,
@@ -749,6 +751,7 @@ pub async fn rename_meeting_speaker(
 /// Move a single transcript line to another speaker. The rest of that label stays put.
 #[tauri::command]
 pub async fn reassign_transcript_speaker(
+    app: tauri::AppHandle,
     state: tauri::State<'_, crate::state::AppState>,
     meeting_id: String,
     transcript_id: String,
@@ -763,6 +766,7 @@ pub async fn reassign_transcript_speaker(
     )
     .await
     .map_err(|e| format!("Failed to move this line: {}", e))?;
+    voice_profiles::auto_save_named_voices(app, state.db_manager.pool().clone(), meeting_id, Some(outcome.speaker.clone()));
     Ok(MeetingSpeakerRenameResult {
         speaker: outcome.speaker,
         count: outcome.count,

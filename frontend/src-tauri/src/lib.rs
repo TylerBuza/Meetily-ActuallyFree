@@ -650,6 +650,8 @@ pub fn run() {
             whisper_engine::labs::set_whisper_strict_silence,
             diarization::voice_profiles::get_voice_profiles_enabled,
             diarization::voice_profiles::set_voice_profiles_enabled,
+            diarization::voice_profiles::get_voice_profiles_auto_save,
+            diarization::voice_profiles::set_voice_profiles_auto_save,
             diarization::voice_profiles::enroll_voice_profile,
             diarization::voice_profiles::enroll_person_voice,
             diarization::voice_profiles::list_voice_profiles,

@@ -169,3 +169,27 @@ recording or biometric profile belongs in the repository. A locally built
 installer is not an installed or published release. The attachment's existing
 installer path identifies an older build and must not be presented as
 containing these Labs changes.
+
+## First-profile automatic enrollment (September 2026)
+
+Settings > Labs > Voices adds an opt-in automatic first-profile switch beneath
+Voice profiles. Its native preference is mirrored through `labs-features.ts`.
+Durable speaker relabel/reassignment commands schedule enrollment after contact
+link persistence; `api_save_transcript` does the same for names entered live.
+The native job owns a cloned database pool and app handle, independent of the
+invoking WebView promise. Eight permits bound pending jobs and one native async
+mutex serializes enrollment; `meeting_share` performs model inference through
+its existing blocking worker. Capture never runs enrollment inference.
+
+Existing profiles are skipped by person ID and rechecked under the write lock,
+so automatic enrollment does not replace a manually learned profile. Naming is
+not biometric evidence: the normal saved system-track, model, clean-turn and
+two-successful-embedding requirements still apply. Failure keeps the contact
+and transcript and emits a visible toast; Learn voice remains the manual retry.
+Success refreshes the voice-profile views through the shared change event.
+Jobs survive navigation, but not app exit, and they are not persisted for restart.
+Native compilation, 11 existing voice-profile tests, and three isolated frontend
+preference tests (native save, rejection rollback, reload synchronization) passed.
+No real-model
+or private-audio enrollment fixture was run; first-profile model quality and
+live-save enrollment require installed-app qualification.

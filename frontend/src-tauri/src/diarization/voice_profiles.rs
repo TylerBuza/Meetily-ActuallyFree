@@ -265,6 +265,69 @@ pub fn set_voice_profiles_enabled(value: bool) -> Result<(), String> {
     Ok(())
 }
 
+static AUTO_SAVE: OnceLock<AtomicBool> = OnceLock::new();
+fn auto_save_flag() -> &'static AtomicBool {
+    AUTO_SAVE.get_or_init(|| AtomicBool::new(std::fs::read_to_string(
+        crate::paths::install_data_root().join("voice_profiles_auto_save.txt")
+    ).map(|text| text.trim() == "true").unwrap_or(false)))
+}
+#[tauri::command]
+pub fn get_voice_profiles_auto_save() -> bool { auto_save_flag().load(Ordering::Relaxed) }
+#[tauri::command]
+pub fn set_voice_profiles_auto_save(value: bool) -> Result<(), String> {
+    let file = crate::paths::install_data_root().join("voice_profiles_auto_save.txt");
+    if let Some(parent) = file.parent() { std::fs::create_dir_all(parent).map_err(|error| error.to_string())?; }
+    std::fs::write(file, value.to_string()).map_err(|error| error.to_string())?;
+    auto_save_flag().store(value, Ordering::Relaxed);
+    Ok(())
+}
+
+/// Native ownership keeps enrollment alive after navigation. At most eight
+/// jobs may wait/run, with one enrollment at a time; capture never does inference.
+pub fn auto_save_named_voices<R: tauri::Runtime>(app: tauri::AppHandle<R>, pool: SqlitePool, meeting_id: String, speaker: Option<String>) {
+    use tauri::Emitter;
+    if !enabled() || !get_voice_profiles_auto_save() { return; }
+    static SLOTS: OnceLock<std::sync::Arc<tokio::sync::Semaphore>> = OnceLock::new();
+    static WORKER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let permit = match SLOTS.get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(8))).clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            let _ = app.emit("voice-profile-auto-save-result", serde_json::json!({"error": "Automatic voice saving is busy. Use Learn voice on the contact to retry."}));
+            return;
+        }
+    };
+    tauri::async_runtime::spawn(async move {
+        let _permit = permit;
+        let _worker = WORKER.lock().await;
+        let result: Result<(), String> = async {
+            let named: Vec<(String, String)> = sqlx::query_as(
+                "SELECT person_id, speaker_label FROM person_speakers WHERE meeting_id = ? AND (? IS NULL OR speaker_label = ?)"
+            ).bind(&meeting_id).bind(&speaker).bind(&speaker).fetch_all(&pool).await.map_err(|error| error.to_string())?;
+            for (person_id, label) in named {
+                if !crate::database::repositories::person::is_person_name(&label) { continue; }
+                if load().map_err(|error| error.to_string())?.iter().any(|profile| profile.person_id == person_id) { continue; }
+                let enrollment: Result<String, String> = async {
+                    let (_, name, share) = meeting_share(&pool, &meeting_id, &label).await.map_err(String::from)?;
+                    store_shares(&person_id, &name, vec![share], false, true).map_err(String::from)?;
+                    Ok(name)
+                }.await;
+                match enrollment {
+                    Ok(name) => { let _ = app.emit("voice-profile-auto-save-result", serde_json::json!({"name": name})); }
+                    Err(error) => {
+                        log::warn!("Automatic voice saving for {label} failed: {error}");
+                        let _ = app.emit("voice-profile-auto-save-result", serde_json::json!({"error": format!("{label}: {error}")}));
+                    }
+                }
+            }
+            Ok(())
+        }.await;
+        if let Err(error) = result {
+            log::warn!("Automatic voice saving failed: {error}");
+            let _ = app.emit("voice-profile-auto-save-result", serde_json::json!({"error": error}));
+        }
+    });
+}
+
 fn load() -> Result<Vec<VoiceProfile>> {
     let bytes = match std::fs::read(path()) {
         Ok(bytes) => bytes,
@@ -433,11 +496,14 @@ async fn meeting_share(
 
 /// Adds (or, with `replace`, rebuilds from) meeting shares of a contact's
 /// voice and saves it.
-fn store_shares(person_id: &str, name: &str, shares: Vec<VoiceSource>, replace: bool) -> Result<VoiceProfileInfo, EnrollError> {
+fn store_shares(person_id: &str, name: &str, shares: Vec<VoiceSource>, replace: bool, only_first: bool) -> Result<VoiceProfileInfo, EnrollError> {
     use EnrollError::{Meeting, Unavailable};
     let _guard = PROFILE_WRITE.lock().map_err(|_| Unavailable("Voice profile lock poisoned".into()))?;
     let mut profiles = load().map_err(|error| Unavailable(error.to_string()))?;
     let existing = profiles.iter().position(|profile| profile.person_id == person_id);
+    if only_first {
+        if let Some(index) = existing { return Ok(profiles[index].info()); }
+    }
     let earlier = match existing {
         Some(index) if !replace => profiles[index].shares(),
         _ => Vec::new(),
@@ -465,7 +531,7 @@ pub async fn enroll_voice_profile(
     speaker: String,
 ) -> Result<VoiceProfileInfo, String> {
     let (person_id, name, share) = meeting_share(state.db_manager.pool(), &meeting_id, &speaker).await?;
-    Ok(store_shares(&person_id, &name, vec![share], false)?)
+    Ok(store_shares(&person_id, &name, vec![share], false, false)?)
 }
 
 /// Learns a contact's voice. With a meeting, that meeting's audio is added to
@@ -510,7 +576,7 @@ pub async fn enroll_person_voice(
             "None of {name}'s last {tried} meetings has clear call audio of them. Learning a voice needs meetings recorded with Save audio on, where they speak for turns of 2 to 15 seconds."
         ));
     }
-    Ok(store_shares(&person_id, &name, shares, meeting_id.is_none())?)
+    Ok(store_shares(&person_id, &name, shares, meeting_id.is_none(), false)?)
 }
 
 /// Voices Meetily knows, each under its contact's current name. A voice whose

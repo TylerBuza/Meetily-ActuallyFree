@@ -111,6 +111,12 @@ const GROUPS: Array<{ title: string; features: Feature[] }> = [
           "Learn a contact's voice from the meetings they spoke in. When speakers are identified in later meetings, a matching voice gets their name.",
         where: "Learn, update or forget a voice on a contact's page, or add one meeting's audio from its speaker card.",
       },
+      {
+        key: 'autoSaveVoiceProfiles', icon: Fingerprint,
+        title: 'Automatically save newly named voices',
+        description: 'Save a first voice profile to a contact when you name a speaker. Existing profiles are kept.',
+        where: 'Requires Voice profiles, speaker models and clear saved system audio. Live names are learned after the recording is saved.',
+      },
     ],
   },
 ];

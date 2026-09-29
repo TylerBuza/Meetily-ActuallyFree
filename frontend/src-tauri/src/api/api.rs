@@ -1324,6 +1324,7 @@ pub async fn api_save_transcript<R: Runtime>(
     .await
     {
         Ok(meeting_id) => {
+            crate::diarization::voice_profiles::auto_save_named_voices(_app.clone(), pool.clone(), meeting_id.clone(), None);
             log_info!(
                 "Successfully saved transcript and created meeting with id: {}",
                 meeting_id
