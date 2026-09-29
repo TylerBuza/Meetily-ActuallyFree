@@ -26,6 +26,9 @@ pub struct SummaryResponse {
     pub end: Option<String>,
     pub data: Option<serde_json::Value>,
     pub error: Option<String>,
+    /// The user edited this summary after it was generated.
+    #[serde(rename = "userEdited", default)]
+    pub user_edited: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -79,6 +82,9 @@ pub async fn api_save_meeting_summary<R: Runtime>(
     meeting_id: String,
     summary: serde_json::Value,
     _auth_token: Option<String>,
+    // False when the app rewrites the summary itself (e.g. moving action
+    // items into their own list); anything else is treated as a user edit.
+    user_edit: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     log_info!(
         "api_save_meeting_summary (native) called for meeting_id: {}",
@@ -86,7 +92,14 @@ pub async fn api_save_meeting_summary<R: Runtime>(
     );
     let pool = state.db_manager.pool();
 
-    match SummaryProcessesRepository::update_meeting_summary(pool, &meeting_id, &summary).await {
+    match SummaryProcessesRepository::update_meeting_summary(
+        pool,
+        &meeting_id,
+        &summary,
+        user_edit.unwrap_or(true),
+    )
+    .await
+    {
         Ok(true) => {
             log_info!("Summary saved successfully for meeting_id: {}", meeting_id);
             Ok(serde_json::json!({
@@ -274,6 +287,9 @@ pub async fn api_get_summary<R: Runtime>(
                 }
             };
 
+            let user_edited = SummaryProcessesRepository::is_user_edited(pool, &meeting_id)
+                .await
+                .unwrap_or(false);
             let response = SummaryResponse {
                 status: status.clone(),
                 meeting_name,
@@ -282,6 +298,7 @@ pub async fn api_get_summary<R: Runtime>(
                 end: process.end_time.map(|t| t.to_rfc3339()),
                 data,
                 error,
+                user_edited,
             };
 
             log_info!(
@@ -310,6 +327,7 @@ pub async fn api_get_summary<R: Runtime>(
                 end: None,
                 data: None,
                 error: None,
+                user_edited: false,
             })
         }
         Err(e) => {

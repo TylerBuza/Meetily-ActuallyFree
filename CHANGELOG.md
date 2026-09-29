@@ -1,5 +1,94 @@
 # Changelog
 
+## Unreleased
+
+Prepared for **v0.2.18**; see [release notes and complete contributor
+credits](docs/RELEASE_V0218.md). The workspace redesign is from **@jayjoe101's
+PR #39**, including **@ampersandru's PRs #36–#38** and **@cedstrom's PR #28**
+(original commit attribution: **@chris-edstrom**). Thanks to **@fernandog** for
+the detailed issue #40 recording-artifact report and analysis.
+
+### Recording and post-call corrections
+
+- Preserve continuous microphone/system samples across jittered capture callback
+  boundaries instead of repeatedly inserting zeros or dropping samples (#40).
+  Applies to new recordings; older damaged files are not repaired.
+- Retain speech-start pre-roll and correct VAD reset timestamps; increase live
+  system-audio speech sensitivity and preserve quiet speech/short replies.
+- Restore AI-generated titles for automatically named meetings while respecting
+  manual names and rejecting template placeholders.
+- Use a compact centered **Auto-detect & continue** action for Nemotron; show
+  ongoing processing in a nonmodal bottom card so the meeting stays interactive.
+- Restore the original text-only blue wordmark, add a system **Low audio**
+  advisory, and improve capture startup, setup gating, and live speaker-edit recovery.
+
+### Interface overhaul and workspace
+
+- Three themes (Midnight, Vanilla and Charcoal) built on shared colour tokens, one
+  component kit across every screen, and on Windows a title bar drawn inside the app
+  with its own window buttons. Icons make a small, meaningful motion on hover.
+- A home screen around the record card, with what is up next and open action items.
+  During a call: an editable title, the group, people heard so far, the live
+  transcript and a Speakers | Notes | Ask AI panel. The rest of the app stays usable
+  while recording.
+- A rebuilt meeting page: one row of people, a chat-style transcript with playback,
+  and one document with your notes, action items and the editable summary.
+- Groups (schedules, open items across meetings, Ask AI), contacts and person pages,
+  and action items stored as records with owners, due dates and source moments.
+- A Ctrl+K command bar that searches people, groups, meetings, transcripts, summaries
+  and action items; an All meetings page; and export of any number of meetings to
+  PDF, Word, Markdown, text or JSON.
+- Contacts are kept when a speaker's lines are unlinked; only deleting or merging
+  removes them. Useful summary-generated titles replace automatic meeting names;
+  manual meeting titles remain authoritative.
+- Each person is drawn in their contact colour across the transcript, with a faint
+  tint on their chat bubbles, so it is easy to see who is talking.
+
+### Claude Code CLI summaries
+
+Thanks to **[@cedstrom](https://github.com/cedstrom)** for
+[PR #28](https://github.com/TylerBuza/Meetily-ActuallyFree/pull/28), which provides
+this provider.
+
+- Add a **Claude Code CLI** summary provider. Summaries and the live assistant can
+  now run through the `claude` command installed on your computer, so they draw on
+  a Claude subscription instead of a pay-as-you-go API key. Model Settings detects
+  the executable, shows the signed-in account and plan, warns when
+  `ANTHROPIC_API_KEY` would override the subscription, and can send a test call.
+  Nothing is bundled and no key is stored — the CLI owns sign-in.
+- Runs on current Claude Code releases. The system prompt is passed as a file rather
+  than on the command line, and a signed-out or outdated CLI reports the step to take.
+
+### Per-app recording and Labs
+
+Thanks to **[@ampersandru](https://github.com/ampersandru)** for
+[PR #38](https://github.com/TylerBuza/Meetily-ActuallyFree/pull/38) (which also brings
+their PRs #36 and #37), which provides these features. They are built into the
+interface above.
+
+- **Record only the apps you choose.** On Windows and macOS, computer audio can come
+  from just the chosen apps, such as the call without music or notification sounds,
+  instead of everything the computer plays. Choose in Settings > Recording or in the
+  record card's system audio panel; each app shows whether it is open and playing
+  sound.
+- **Labs**, a new Settings section of experimental features. Each stays off until you
+  turn it on, and each also appears where it is used:
+  - Meeting automation records a detected call once it uses your microphone or
+    camera, and stops and saves when the call ends. Recordings you start yourself
+    are never stopped. Also in Meeting detection.
+  - Waveform scrubbing shows the recording's waveform in the meeting player and adds
+    0.5× and 0.75× speeds.
+  - Clean transcript adds a Clean/Verbatim switch to the meeting player and writes
+    new summaries from the clean text. The saved transcript stays word for word.
+  - Whisper silence guard filters silence and noise more strictly when Whisper
+    transcribes.
+  - Parakeet on the GPU runs Parakeet's encoder through DirectML on Windows.
+  - Voice profiles learn a contact's voice from their recorded meetings, and later
+    meetings name a matching voice. Update voice on a contact's page relearns it from
+    all their recent meetings, and the speaker card adds one meeting's audio. Renaming,
+    merging or deleting a contact updates or removes their voice.
+- Unnamed voices keep distinct colours in a meeting, and keep them when renamed.
+
 ## 0.2.17 - 2026-09-25
 
 ### Nemotron speaker diarization

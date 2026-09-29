@@ -43,9 +43,11 @@ export function OnboardingContainer({
   };
 
   return (
-    <div className="fixed inset-0 bg-gray-50 flex items-center justify-center z-50 overflow-hidden">
+    <div className="fixed inset-0 bg-af-panel-2 flex items-center justify-center z-50 overflow-hidden">
+      {/* Drag strip for the app's own title bar on Windows (0 high elsewhere). */}
+      <div data-tauri-drag-region aria-hidden className="absolute inset-x-0 top-0 h-[var(--af-chrome-h)]" />
       <div className={cn(
-        'w-full max-w-2xl h-full max-h-screen flex flex-col px-6 py-6',
+        'w-full max-w-2xl h-full max-h-screen flex flex-col px-6 pb-6 pt-[calc(var(--af-chrome-h)+1.5rem)]',
         className,
       )}>
         {/* Progress Indicator with Navigation - Fixed */}
@@ -58,9 +60,9 @@ export function OnboardingContainer({
                   onClick={handlePrevious}
                   disabled={!canGoPrevious || step === 1}
                   className={cn(
-                    'pointer-events-auto w-8 h-8 rounded-full bg-white border border-gray-200 shadow-sm flex items-center justify-center transition-all duration-200',
+                    'pointer-events-auto w-8 h-8 rounded-full bg-af-panel border border-af-border shadow-sm flex items-center justify-center transition-all duration-200',
                     canGoPrevious && step !== 1
-                      ? 'hover:bg-gray-50 hover:shadow-md hover:scale-110 text-gray-700'
+                      ? 'hover:bg-af-panel-2 hover:shadow-md hover:scale-110 text-af-text-2'
                       : 'opacity-0 cursor-not-allowed'
                   )}
                 >
@@ -72,9 +74,9 @@ export function OnboardingContainer({
                   disabled={!canGoNext}
                   aria-label={step === totalSteps ? 'Finish' : 'Next'}
                   className={cn(
-                    'pointer-events-auto w-8 h-8 rounded-full bg-white border border-gray-200 shadow-sm flex items-center justify-center transition-all duration-200',
+                    'pointer-events-auto w-8 h-8 rounded-full bg-af-panel border border-af-border shadow-sm flex items-center justify-center transition-all duration-200',
                     canGoNext
-                      ? 'hover:bg-gray-50 hover:shadow-md hover:scale-110 text-gray-700'
+                      ? 'hover:bg-af-panel-2 hover:shadow-md hover:scale-110 text-af-text-2'
                       : 'opacity-0 cursor-not-allowed'
                   )}
                 >
@@ -90,9 +92,9 @@ export function OnboardingContainer({
 
         {/* Header - Fixed */}
         <div className="mb-4 text-center space-y-3 flex-shrink-0">
-          <h1 className="text-4xl font-semibold text-gray-900 animate-fade-in-up">{title}</h1>
+          <h1 className="text-4xl font-semibold text-af-text animate-fade-in-up">{title}</h1>
           {description && (
-            <p className="text-base text-gray-600 max-w-md mx-auto animate-fade-in-up delay-75">
+            <p className="text-base text-af-text-2 max-w-md mx-auto animate-fade-in-up delay-75">
               {description}
             </p>
           )}

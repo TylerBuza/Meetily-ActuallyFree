@@ -1,967 +1,876 @@
-﻿'use client';
+'use client';
 
 /**
- * Primary left navigation sidebar.
+ * Primary navigation rail.
  *
- * Layout (top → bottom): brand ("Meetily · Actually Free", see Logo.tsx),
- * a global-search trigger (Ctrl/Cmd+K), a teal "New Recording" action, a "RECENT MEETINGS"
- * list (dot + title + date-subtitle from `created_at`, with a "View all
- * library" toggle capped by RECENT_LIMIT), and a Settings-only footer.
+ * Top to bottom: brand + collapse, the recording action (New recording, or
+ * "Back to recording" with a live timer while one runs), search / command
+ * bar, section links, then the meeting list grouped by date or by group, with
+ * inline rename, per-row actions, and multi-select for bulk moves and deletes.
  *
- * Supports shift/ctrl multi-select + bulk delete of meetings.
- *
- * State/wiring:
- *  - Reads the meetings list + current meeting + recording status from
- *    SidebarProvider (useSidebar) — the single source of truth kept in sync
- *    with the Rust core via Tauri commands/events.
- *  - Navigation uses next/navigation; selecting a meeting routes to
- *    /meeting-details?id=...  (see app/meeting-details/page-content.tsx).
- *  - Default state is expanded (isCollapsed=false in SidebarProvider).
+ * The rail collapses to icons and can be resized; SidebarProvider owns the
+ * width and the meeting list.
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
-import { ChevronDown, ChevronRight, FileText, AudioLines, ArrowRight, Settings, ChevronLeftCircle, ChevronRightCircle, Calendar, Trash2, Mic, Square, Plus, Search, Pencil, NotebookPen, Upload, House } from 'lucide-react';
-import { useRouter, usePathname } from 'next/navigation';
-import { useSidebar } from './SidebarProvider';
-import type { CurrentMeeting } from '@/components/Sidebar/SidebarProvider';
-import { ConfirmationModal } from '../ConfirmationModel/confirmation-modal';
-import { ModelConfig } from '@/components/ModelSettingsModal';
-import { TranscriptModelProps } from '@/components/TranscriptSettings';
-import Analytics from '@/lib/analytics';
-import { invoke } from '@tauri-apps/api/core';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { toast } from 'sonner';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import {
+  ArrowUpRight,
+  CalendarDays,
+  Check,
+  ChevronDown,
+  Contact,
+  Download,
+  FolderInput,
+  Layers,
+  Library,
+  ListFilter,
+  Mic,
+  MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pencil,
+  Plus,
+  Search,
+  Settings,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
+import { useSidebar, type CurrentMeeting } from './SidebarProvider';
+import { SIDEBAR_DEFAULT } from '@/hooks/useCompactChrome';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
 import { useImportDialog } from '@/contexts/ImportDialogContext';
-import { useConfig } from '@/contexts/ConfigContext';
-
+import { useWorkspace } from '@/contexts/WorkspaceContext';
+import { useRecordingClock } from '@/components/recording/RecordingPill';
+import { cn } from '@/lib/utils';
+import { dateSection, formatClock, formatDuration, formatShortDate, formatTime, parseDate } from '@/lib/dates';
+import { displayTitle } from '@/lib/meeting-titles';
+import { writePendingGroup } from '@/lib/groups';
+import { deleteMeetings, moveMeetingsToGroup, renameMeeting } from '@/lib/meeting-actions';
+import { groupColorVar } from '@/lib/group-colors';
+import { createGroupFromPicker, GroupDot, groupOptions } from '@/components/groups/GroupBits';
+import { openGroupEditor } from '@/components/groups/GroupEditor';
+import { Hint } from '@/components/ui/tooltip';
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { VisuallyHidden } from '@/components/ui/visually-hidden';
+import { About } from '@/components/About';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Kbd } from '@/components/ui/surface';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Combobox } from '@/components/ui/combobox';
+import { ExportMeetingsDialog } from '@/components/meetings/ExportMeetingsDialog';
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { VisuallyHidden } from "@/components/ui/visually-hidden"
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
-import { MessageToast } from '../MessageToast';
-import Logo from '../Logo';
-import { ComplianceNotification } from '../ComplianceNotification';
+const RAIL_EASE = 'ease-[cubic-bezier(0.22,1,0.36,1)]';
+const GROUP_BY_KEY = 'af-sidebar-group-by';
 
-interface SidebarItem {
-  id: string;
+type GroupBy = 'date' | 'group';
+
+interface Section {
+  key: string;
   title: string;
-  type: 'folder' | 'file';
-  children?: SidebarItem[];
-  createdAt?: string;
-  durationSeconds?: number;
+  color?: string | null;
+  groupId?: string;
+  meetings: CurrentMeeting[];
 }
 
-function formatDurationShort(secs?: number): string {
-  if (secs == null || !Number.isFinite(secs) || secs <= 0) return '';
-  const total = Math.round(secs);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s.toString().padStart(2, '0')}s`;
-  return `${s}s`;
+function RailIcon({ children }: { children: React.ReactNode }) {
+  return <span className="flex h-full w-10 shrink-0 items-center justify-center [&_svg]:size-[18px]">{children}</span>;
 }
 
-// "RECENT MEETINGS" rows show a date/time subtitle. Meetings created before the
-// timestamp was tracked fall back to parsing it out of the auto-generated title
-// (e.g. "Meeting 2026-08-05_21-59-55").
-function parseMeetingDate(item: { createdAt?: string; title?: string }): Date | null {
-  if (item.createdAt) {
-    const d = new Date(item.createdAt);
-    if (!isNaN(d.getTime())) return d;
-  }
-  const m = item.title?.match(/(\d{4})-(\d{2})-(\d{2})[_ T](\d{2})[-:](\d{2})(?:[-:](\d{2}))?/);
-  if (m) {
-    const [, y, mo, da, h, mi, s] = m;
-    const d = new Date(Number(y), Number(mo) - 1, Number(da), Number(h), Number(mi), Number(s || '0'));
-    if (!isNaN(d.getTime())) return d;
-  }
-  return null;
+function RailLabel({ expanded, children, className }: { expanded: boolean; children: React.ReactNode; className?: string }) {
+  return (
+    <span
+      className={cn(
+        'flex min-w-0 flex-1 items-center overflow-hidden whitespace-nowrap text-left transition-[max-width,opacity,transform] duration-300 motion-reduce:transition-none',
+        RAIL_EASE,
+        expanded ? 'max-w-56 translate-x-0 opacity-100' : 'max-w-0 -translate-x-1 opacity-0',
+        className,
+      )}
+    >
+      {children}
+    </span>
+  );
 }
 
-function formatMeetingDate(d: Date): string {
-  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+function RailTip({ show, label, shortcut, children }: { show: boolean; label: string; shortcut?: string; children: React.ReactElement }) {
+  return show ? (
+    <Hint label={label} side="right" shortcut={shortcut}>
+      {children}
+    </Hint>
+  ) : (
+    children
+  );
 }
 
-function formatMeetingTime(d: Date): string {
-  return d.toLocaleString(undefined, { hour: 'numeric', minute: '2-digit' });
+const navClass = (active: boolean) =>
+  cn(
+    'flex h-9 w-full items-center overflow-hidden rounded-lg text-[13px] font-medium transition-colors duration-150',
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60',
+    active ? 'bg-af-active text-af-text' : 'text-af-text-2 hover:bg-af-hover hover:text-af-text',
+  );
+
+function useStoredGroupBy(): [GroupBy, (next: GroupBy) => void] {
+  const [value, setValue] = useState<GroupBy>('date');
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(GROUP_BY_KEY) === 'group') setValue('group');
+    } catch {
+      // Storage unavailable: keep the default.
+    }
+  }, []);
+  const set = (next: GroupBy) => {
+    setValue(next);
+    try {
+      localStorage.setItem(GROUP_BY_KEY, next);
+    } catch {
+      // Not remembered, still applied.
+    }
+  };
+  return [value, set];
 }
 
 const Sidebar: React.FC = () => {
   const router = useRouter();
   const pathname = usePathname();
-  const {
-    currentMeeting,
-    setCurrentMeeting,
-    sidebarItems,
-    isCollapsed,
-    toggleCollapse,
-    handleRecordingToggle,
-    meetings,
-    setMeetings,
-    serverAddress
-  } = useSidebar();
-
-  // Get recording state from RecordingStateContext (single source of truth)
-  const { isRecording } = useRecordingState();
+  const { currentMeeting, setCurrentMeeting, isCollapsed, sidebarWidth, setSidebarWidth, toggleRail, previewSidebar, meetings } =
+    useSidebar();
+  const { isRecording, isPaused } = useRecordingState();
+  const elapsed = useRecordingClock();
   const { openImportDialog } = useImportDialog();
-  const { betaFeatures } = useConfig();
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['meetings']));
-  const [showModelSettings, setShowModelSettings] = useState(false);
-  const [modelConfig, setModelConfig] = useState<ModelConfig>({
-    provider: 'ollama',
-    model: '',
-    whisperModel: '',
-    apiKey: null,
-    ollamaEndpoint: null
-  });
-  const [transcriptModelConfig, setTranscriptModelConfig] = useState<TranscriptModelProps>({
-    provider: 'parakeet',
-    model: 'parakeet-tdt-0.6b-v3-int8',
-  });
-  const [settingsSaveSuccess, setSettingsSaveSuccess] = useState<boolean | null>(null);
+  const { groups, groupById } = useWorkspace();
+  const expanded = !isCollapsed;
 
-  // State for edit modal
-  const [editModalState, setEditModalState] = useState<{ isOpen: boolean; meetingId: string | null; currentTitle: string }>({
-    isOpen: false,
-    meetingId: null,
-    currentTitle: ''
-  });
-  const [editingTitle, setEditingTitle] = useState<string>('');
-
-  // Ensure 'meetings' folder is always expanded
-  useEffect(() => {
-    if (!expandedFolders.has('meetings')) {
-      const newExpanded = new Set(expandedFolders);
-      newExpanded.add('meetings');
-      setExpandedFolders(newExpanded);
-    }
-  }, [expandedFolders]);
-
-  // useEffect(() => {
-  //   if (settingsSaveSuccess !== null) {
-  //     const timer = setTimeout(() => {
-  //       setSettingsSaveSuccess(null);
-  //     }, 3000);
-  //   }
-  // }, [settingsSaveSuccess]);
-
-
-  const [deleteModalState, setDeleteModalState] = useState<{ isOpen: boolean; itemId: string | null }>({ isOpen: false, itemId: null });
-
-  // Multi-select for the meeting list: shift-click selects a range, ctrl/cmd
-  // click toggles one, and the selection can be deleted in bulk.
+  const [groupBy, setGroupBy] = useStoredGroupBy();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
-  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [anchorId, setAnchorId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+  const selecting = selectedIds.size > 0;
 
-  // "RECENT MEETINGS" shows the newest few with a "View all library" toggle.
-  const RECENT_LIMIT = 8;
-  const [showAllMeetings, setShowAllMeetings] = useState(false);
+  const activeMeetingId = pathname === '/meeting-details' ? currentMeeting?.id : undefined;
 
-  useEffect(() => {
-    // Note: Don't set hardcoded defaults - let DB be the source of truth
-    const fetchModelConfig = async () => {
-      // Only make API call if serverAddress is loaded
-      if (!serverAddress) {
-        console.log('Waiting for server address to load before fetching model config');
-        return;
-      }
-
-      try {
-        const data = await invoke('api_get_model_config') as any;
-        if (data && data.provider !== null) {
-          // Fetch API key if not included and provider requires it
-          if (data.provider !== 'ollama' && !data.apiKey) {
-            try {
-              const apiKeyData = await invoke('api_get_api_key', {
-                provider: data.provider
-              }) as string;
-              data.apiKey = apiKeyData;
-            } catch (err) {
-              console.error('Failed to fetch API key:', err);
-            }
-          }
-          setModelConfig(data);
+  const sections = useMemo<Section[]>(() => {
+    const sorted = [...meetings].sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
+    if (groupBy === 'group') {
+      const byGroup = new Map<string, Section>();
+      const loose: CurrentMeeting[] = [];
+      for (const meeting of sorted) {
+        const group = groupById(meeting.group_id);
+        if (!group) {
+          loose.push(meeting);
+          continue;
         }
-      } catch (error) {
-        console.error('Failed to fetch model config:', error);
+        const section = byGroup.get(group.id) ?? { key: group.id, title: group.name, color: group.color, groupId: group.id, meetings: [] };
+        section.meetings.push(meeting);
+        byGroup.set(group.id, section);
       }
-    };
+      const ordered = [...byGroup.values()];
+      if (loose.length) ordered.push({ key: 'no-group', title: 'No group', meetings: loose });
+      return ordered;
+    }
+    const byDate = new Map<string, Section>();
+    const now = new Date();
+    for (const meeting of sorted) {
+      const date = parseDate(meeting.created_at);
+      const title = date ? dateSection(date, now) : 'Older';
+      const section = byDate.get(title) ?? { key: title, title, meetings: [] };
+      section.meetings.push(meeting);
+      byDate.set(title, section);
+    }
+    return [...byDate.values()];
+  }, [meetings, groupBy, groupById]);
 
-    fetchModelConfig();
-  }, [serverAddress]);
+  const orderedIds = useMemo(() => sections.flatMap((section) => section.meetings.map((meeting) => meeting.id)), [sections]);
 
+  // Selection survives list refreshes only for meetings that still exist.
+  useEffect(() => {
+    setSelectedIds((current) => {
+      const alive = new Set([...current].filter((id) => orderedIds.includes(id)));
+      return alive.size === current.size ? current : alive;
+    });
+  }, [orderedIds]);
 
   useEffect(() => {
-    // Note: Don't set hardcoded defaults - let DB be the source of truth
-    const fetchTranscriptSettings = async () => {
-      // Only make API call if serverAddress is loaded
-      if (!serverAddress) {
-        console.log('Waiting for server address to load before fetching transcript settings');
-        return;
-      }
-
-      try {
-        const data = await invoke('api_get_transcript_config') as any;
-        if (data && data.provider !== null) {
-          setTranscriptModelConfig(data);
-        }
-      } catch (error) {
-        console.error('Failed to fetch transcript settings:', error);
-      }
+    if (!selecting) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelectedIds(new Set());
     };
-    fetchTranscriptSettings();
-  }, [serverAddress]);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selecting]);
 
-  // Listen for model config updates from other components
   useEffect(() => {
-    const setupListener = async () => {
-      const { listen } = await import('@tauri-apps/api/event');
-      const unlisten = await listen<ModelConfig>('model-config-updated', (event) => {
-        console.log('Sidebar received model-config-updated event:', event.payload);
-        setModelConfig(event.payload);
-      });
+    if (listRef.current) listRef.current.inert = !expanded;
+  }, [expanded]);
 
-      return unlisten;
-    };
-
-    let cleanup: (() => void) | undefined;
-    setupListener().then(fn => cleanup = fn);
-
-    return () => {
-      cleanup?.();
-    };
-  }, []);
-
-
-
-  // Handle model config save
-  const handleSaveModelConfig = async (config: ModelConfig) => {
-    try {
-      await invoke('api_save_model_config', {
-        provider: config.provider,
-        model: config.model,
-        whisperModel: config.whisperModel,
-        apiKey: config.apiKey,
-        ollamaEndpoint: config.ollamaEndpoint,
-        summaryMaxTokens: config.summaryMaxTokens ?? null,
-      });
-
-      setModelConfig(config);
-      console.log('Model config saved successfully');
-      setSettingsSaveSuccess(true);
-
-      // Emit event to sync other components
-      const { emit } = await import('@tauri-apps/api/event');
-      await emit('model-config-updated', config);
-
-      // Track settings change
-      await Analytics.trackSettingsChanged('model_config', `${config.provider}_${config.model}`);
-    } catch (error) {
-      console.error('Error saving model config:', error);
-      setSettingsSaveSuccess(false);
-    }
-  };
-
-  const handleSaveTranscriptConfig = async (updatedConfig?: TranscriptModelProps) => {
-    try {
-      const configToSave = updatedConfig || transcriptModelConfig;
-      const payload = {
-        provider: configToSave.provider,
-        model: configToSave.model,
-        apiKey: configToSave.apiKey ?? null
-      };
-      console.log('Saving transcript config with payload:', payload);
-
-      await invoke('api_save_transcript_config', {
-        provider: payload.provider,
-        model: payload.model,
-        apiKey: payload.apiKey,
-      });
-
-
-      setSettingsSaveSuccess(true);
-
-      // Track settings change
-      const transcriptConfigToSave = updatedConfig || transcriptModelConfig;
-      await Analytics.trackSettingsChanged('transcript_config', `${transcriptConfigToSave.provider}_${transcriptConfigToSave.model}`);
-    } catch (error) {
-      console.error('Failed to save transcript config:', error);
-      setSettingsSaveSuccess(false);
-    }
-  };
-
-  const openGlobalSearch = () => window.dispatchEvent(new CustomEvent('open-global-search'));
-
-
-  const handleDelete = async (itemId: string) => {
-    console.log('Deleting item:', itemId);
-    const payload = {
-      meetingId: itemId
-    };
-
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('api_delete_meeting', {
-        meetingId: itemId,
-      });
-      console.log('Meeting deleted successfully');
-      const updatedMeetings = meetings.filter((m: CurrentMeeting) => m.id !== itemId);
-      setMeetings(updatedMeetings);
-
-      // Track meeting deletion
-      Analytics.trackMeetingDeleted(itemId);
-
-      // Show success toast
-      toast.success("Meeting deleted successfully", {
-        description: "All associated data has been removed"
-      });
-
-      // If deleting the active meeting, navigate to home
-      if (currentMeeting?.id === itemId) {
-        setCurrentMeeting({ id: 'intro-call', title: '+ New Call' });
-        router.push('/');
-      }
-    } catch (error) {
-      console.error('Failed to delete meeting:', error);
-      toast.error("Failed to delete meeting", {
-        description: error instanceof Error ? error.message : String(error)
-      });
-    }
-  };
-
-  const handleDeleteConfirm = () => {
-    if (deleteModalState.itemId) {
-      handleDelete(deleteModalState.itemId);
-    }
-    setDeleteModalState({ isOpen: false, itemId: null });
-  };
-
-  // Flat, ordered list of meeting ids as currently displayed — needed so a
-  // shift-click can select the contiguous range between two clicks.
-  const orderedMeetingIds = useMemo(() => {
-    const ids: string[] = [];
-    for (const folder of sidebarItems) {
-      if (folder.type === 'folder' && folder.children) {
-        for (const child of folder.children) {
-          if (child.type === 'file' && child.id.includes('-') && !child.id.startsWith('intro-call')) {
-            ids.push(child.id);
+  const toggleSelected = useCallback(
+    (id: string, range: boolean) => {
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        if (range && anchorId) {
+          const from = orderedIds.indexOf(anchorId);
+          const to = orderedIds.indexOf(id);
+          if (from !== -1 && to !== -1) {
+            const [lo, hi] = from < to ? [from, to] : [to, from];
+            for (let index = lo; index <= hi; index++) next.add(orderedIds[index]);
+            return next;
           }
         }
-      }
-    }
-    return ids;
-  }, [sidebarItems]);
-
-  const clearSelection = () => {
-    setSelectedIds(new Set());
-    setLastSelectedId(null);
-  };
-
-  const handleMeetingSelect = (id: string, e: React.MouseEvent) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (e.shiftKey && lastSelectedId) {
-        const a = orderedMeetingIds.indexOf(lastSelectedId);
-        const b = orderedMeetingIds.indexOf(id);
-        if (a !== -1 && b !== -1) {
-          const [lo, hi] = a < b ? [a, b] : [b, a];
-          for (let i = lo; i <= hi; i++) next.add(orderedMeetingIds[i]);
-        } else {
-          next.has(id) ? next.delete(id) : next.add(id);
-        }
-      } else {
-        next.has(id) ? next.delete(id) : next.add(id);
-      }
-      return next;
-    });
-    setLastSelectedId(id);
-  };
-
-  const handleBulkDelete = async () => {
-    const ids = Array.from(selectedIds);
-    let ok = 0;
-    for (const id of ids) {
-      try {
-        await invoke('api_delete_meeting', { meetingId: id });
-        Analytics.trackMeetingDeleted(id);
-        ok++;
-      } catch (error) {
-        console.error('Failed to delete meeting', id, error);
-      }
-    }
-    setMeetings(meetings.filter((m: CurrentMeeting) => !selectedIds.has(m.id)));
-    if (currentMeeting && selectedIds.has(currentMeeting.id)) {
-      setCurrentMeeting({ id: 'intro-call', title: '+ New Call' });
-      router.push('/');
-    }
-    if (ok > 0) {
-      toast.success(`Deleted ${ok} meeting${ok === 1 ? '' : 's'}`, {
-        description: 'All associated data has been removed',
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
       });
-    }
-    if (ok < ids.length) {
-      toast.error(`Failed to delete ${ids.length - ok} meeting${ids.length - ok === 1 ? '' : 's'}`);
-    }
-    clearSelection();
-    setBulkDeleteOpen(false);
+      setAnchorId(id);
+    },
+    [anchorId, orderedIds],
+  );
+
+  const openMeeting = (meeting: CurrentMeeting) => {
+    setCurrentMeeting({ id: meeting.id, title: meeting.title });
+    router.push(`/meeting-details?id=${encodeURIComponent(meeting.id)}`);
   };
 
-  // Handle modal editing of meeting names
-  const handleEditStart = (meetingId: string, currentTitle: string) => {
-    setEditModalState({
-      isOpen: true,
-      meetingId: meetingId,
-      currentTitle: currentTitle
-    });
-    setEditingTitle(currentTitle);
-  };
-
-  const handleEditConfirm = async () => {
-    const newTitle = editingTitle.trim();
-    const meetingId = editModalState.meetingId;
-
-    if (!meetingId) return;
-
-    // Prevent empty titles
-    if (!newTitle) {
-      toast.error("Meeting title cannot be empty");
+  const onRowClick = (meeting: CurrentMeeting, event: React.MouseEvent) => {
+    if (event.shiftKey || event.metaKey || event.ctrlKey || selecting) {
+      event.preventDefault();
+      toggleSelected(meeting.id, event.shiftKey);
       return;
     }
+    openMeeting(meeting);
+  };
 
-    try {
-      await invoke('api_save_meeting_title', {
-        meetingId: meetingId,
-        title: newTitle,
-      });
-
-      // Update local state
-      const updatedMeetings = meetings.map((m: CurrentMeeting) =>
-        m.id === meetingId ? { ...m, title: newTitle } : m
-      );
-      setMeetings(updatedMeetings);
-
-      // Update current meeting if it's the one being edited
-      if (currentMeeting?.id === meetingId) {
-        setCurrentMeeting({ id: meetingId, title: newTitle });
-      }
-
-      // Track the edit
-      Analytics.trackButtonClick('edit_meeting_title', 'sidebar');
-
-      toast.success("Meeting title updated successfully");
-
-      // Close modal and reset state
-      setEditModalState({ isOpen: false, meetingId: null, currentTitle: '' });
-      setEditingTitle('');
-    } catch (error) {
-      console.error('Failed to update meeting title:', error);
-      toast.error("Failed to update meeting title", {
-        description: error instanceof Error ? error.message : String(error)
-      });
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    const ids = pendingDelete;
+    const deleted = await deleteMeetings(ids);
+    if (deleted > 0) {
+      setSelectedIds(new Set());
+      if (activeMeetingId && ids.includes(activeMeetingId)) router.push('/');
     }
   };
 
-  const handleEditCancel = () => {
-    setEditModalState({ isOpen: false, meetingId: null, currentTitle: '' });
-    setEditingTitle('');
+  const recordForGroup = (group: { id: string; name: string }) => {
+    writePendingGroup(group);
+    router.push('/');
   };
 
-  const toggleFolder = (folderId: string) => {
-    // Normal toggle behavior for all folders
-    const newExpanded = new Set(expandedFolders);
-    if (newExpanded.has(folderId)) {
-      newExpanded.delete(folderId);
-    } else {
-      newExpanded.add(folderId);
-    }
-    setExpandedFolders(newExpanded);
-  };
-
-  // Expose setShowModelSettings to window for Rust tray to call
-  useEffect(() => {
-    (window as any).openSettings = () => {
-      setShowModelSettings(true);
+  // Resizable rail.
+  const [dragging, setDragging] = useState(false);
+  const startResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const originX = event.clientX;
+    const originWidth = sidebarWidth;
+    setDragging(true);
+    document.documentElement.setAttribute('data-sidebar-drag', '');
+    const move = (moveEvent: PointerEvent) => previewSidebar(originWidth + (moveEvent.clientX - originX));
+    const stop = (endEvent: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+      const next = originWidth + (endEvent.clientX - originX);
+      requestAnimationFrame(() => {
+        document.documentElement.removeAttribute('data-sidebar-drag');
+        setDragging(false);
+        setSidebarWidth(next, originWidth);
+      });
     };
-
-    // Cleanup on unmount
-    return () => {
-      delete (window as any).openSettings;
-    };
-  }, []);
-
-  const renderCollapsedIcons = () => {
-    if (!isCollapsed) return null;
-
-    const isMeetingPage = pathname?.includes('/meeting-details');
-    const isSettingsPage = pathname === '/settings';
-
-    return (
-      <TooltipProvider>
-        <div className="flex h-full flex-col items-center">
-          <div className="flex flex-col items-center space-y-4 mt-4">
-            <Logo isCollapsed={isCollapsed} />
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={openGlobalSearch}
-                  className="rounded-lg p-2 text-[var(--af-text-2)] transition-colors hover:bg-[var(--af-hover)] hover:text-[var(--af-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--af-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--af-bg)]"
-                  aria-label="Search everything"
-                >
-                  <Search className="h-5 w-5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                <p>Search everything (Ctrl+K)</p>
-              </TooltipContent>
-            </Tooltip>
-
-            {/* New Recording */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={handleRecordingToggle}
-                  disabled={isRecording}
-                  className={`p-2 ${isRecording ? 'bg-red-500 cursor-not-allowed' : 'bg-red-500 hover:bg-red-600'} rounded-full transition-colors duration-150 shadow-sm`}
-                >
-                  {isRecording ? (
-                    <Square className="w-5 h-5 text-white" />
-                  ) : (
-                    <Mic className="w-5 h-5 text-white" />
-                  )}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                <p>{isRecording ? "Recording in progress..." : "Start Recording"}</p>
-              </TooltipContent>
-            </Tooltip>
-
-            {/* Home */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => router.push('/home')}
-                  className={`rounded-lg p-2 transition-colors duration-150 ${pathname === '/home' ? 'bg-[var(--af-panel-2)] text-[var(--af-accent)]' : 'text-gray-600 hover:bg-gray-100'}`}
-                  aria-label="Home"
-                >
-                  <House className="h-5 w-5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right"><p>Home</p></TooltipContent>
-            </Tooltip>
-
-            {/* Meetings */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => {
-                    if (isCollapsed) toggleCollapse();
-                    toggleFolder('meetings');
-                  }}
-                  className={`p-2 rounded-lg transition-colors duration-150 ${isMeetingPage ? 'bg-gray-100' : 'hover:bg-gray-100'
-                    }`}
-                >
-                  <NotebookPen className="w-5 h-5 text-gray-600" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                <p>Meetings</p>
-              </TooltipContent>
-            </Tooltip>
-
-            {/* Import Audio (below Meetings) */}
-            {betaFeatures.importAndRetranscribe && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => openImportDialog()}
-                    className="p-2 rounded-lg transition-colors duration-150 hover:bg-blue-100 bg-blue-50"
-                  >
-                    <Upload className="w-5 h-5 text-blue-600" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="right">
-                  <p>Import Audio</p>
-                </TooltipContent>
-              </Tooltip>
-            )}
-          </div>
-
-          {/* Settings pinned to the bottom */}
-          <div className="mt-auto mb-4">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => router.push('/settings')}
-                  className={`p-2 rounded-lg transition-colors duration-150 ${isSettingsPage ? 'bg-gray-100' : 'hover:bg-gray-100'
-                    }`}
-                >
-                  <Settings className="w-5 h-5 text-gray-600" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                <p>Settings</p>
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        </div>
-      </TooltipProvider>
-    );
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
   };
 
-  const renderItem = (item: SidebarItem, depth = 0) => {
-    const isExpanded = expandedFolders.has(item.id);
-    // Keep meeting rows tight to the left so more of the title is visible.
-    const paddingLeft = item.type === 'file' ? `${Math.max(6, depth * 4 + 2)}px` : `${depth * 12 + 12}px`;
-    const isActive = item.type === 'file' && currentMeeting?.id === item.id;
-    const isMeetingItem = item.id.includes('-') && !item.id.startsWith('intro-call');
-    const isSelected = selectedIds.has(item.id);
-
-    if (isCollapsed) return null;
-
-    return (
-      <div key={item.id}>
-        <div
-          className={`flex items-center transition-all duration-150 group select-none ${item.type === 'folder' && depth === 0
-            ? 'p-3 text-lg font-semibold h-10 mx-3 mt-3 rounded-lg'
-            : `px-2.5 py-2 my-0.5 rounded-lg text-sm ${isSelected ? 'bg-[var(--af-panel-2)] text-[var(--af-text)] ring-1 ring-[var(--af-accent)]/50' :
-              isActive ? 'bg-[var(--af-panel-2)] text-[var(--af-text)] font-medium' :
-                'hover:bg-[var(--af-hover)]'
-            } cursor-pointer`
-            }`}
-          style={item.type === 'folder' && depth === 0 ? {} : { paddingLeft }}
-          onClick={(e) => {
-            if (item.type === 'folder') {
-              toggleFolder(item.id);
-              return;
-            }
-            // Shift / Ctrl / Cmd click manages a multi-selection instead of
-            // navigating, so several meetings can be deleted at once.
-            if (isMeetingItem && (e.shiftKey || e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              handleMeetingSelect(item.id, e);
-              return;
-            }
-            if (selectedIds.size > 0) clearSelection();
-            setCurrentMeeting({ id: item.id, title: item.title });
-            const basePath = item.id.startsWith('intro-call') ? '/' :
-              item.id.includes('-') ? `/meeting-details?id=${item.id}` : `/notes/${item.id}`;
-            router.push(basePath);
-          }}
-        >
-          {item.type === 'folder' ? (
-            <>
-              {item.id === 'meetings' ? (
-                <Calendar className="w-4 h-4 mr-2" />
-              ) : item.id === 'notes' ? (
-                <Calendar className="w-4 h-4 mr-2" />
-              ) : null}
-              <span className={depth === 0 ? "" : "font-medium"}>{item.title}</span>
-              <div className="ml-auto">
-                {isExpanded ? (
-                  <ChevronDown className="w-4 h-4 text-gray-500" />
-                ) : (
-                  <ChevronRight className="w-4 h-4 text-gray-500" />
-                )}
-              </div>
-            </>
-          ) : (
-            (() => {
-              const meetingDate = isMeetingItem ? parseMeetingDate(item) : null;
-              const durationLabel = isMeetingItem ? formatDurationShort(item.durationSeconds) : '';
-              return (
-                <div className="relative flex w-full min-w-0 items-start gap-1.5">
-                  {isMeetingItem ? (
-                    <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center ${isActive ? 'text-[var(--af-accent)]' : 'text-[var(--af-text-3)]'}`}>
-                      {isActive ? <AudioLines className="h-3.5 w-3.5" /> : <FileText className="h-3.5 w-3.5" />}
-                    </span>
-                  ) : (
-                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded bg-blue-100 text-blue-600">
-                      <Plus className="h-3 w-3" />
-                    </span>
-                  )}
-
-                  <div className="min-w-0 flex-1">
-                    <div
-                      className="truncate text-[13px] leading-snug"
-                      title={item.title}
-                    >
-                      {item.title}
-                    </div>
-                    {isMeetingItem && (
-                      <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 text-[11px] leading-tight text-[var(--af-text-3)]">
-                        {meetingDate && <span className="truncate">{formatMeetingDate(meetingDate)}</span>}
-                        {meetingDate && durationLabel && <span aria-hidden>·</span>}
-                        {durationLabel && <span className="shrink-0 tabular-nums">{durationLabel}</span>}
-                      </div>
-                    )}
-                  </div>
-
-                  {isMeetingItem && (
-                    <div className="absolute right-0 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-[var(--af-panel)] p-0.5 opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleEditStart(item.id, item.title);
-                        }}
-                        className="rounded-md p-1 text-[var(--af-text-3)] hover:bg-[var(--af-hover)] hover:text-[var(--af-accent)]"
-                        aria-label="Edit meeting title"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeleteModalState({ isOpen: true, itemId: item.id });
-                        }}
-                        className="rounded-md p-1 text-[var(--af-text-3)] hover:bg-red-500/10 hover:text-red-500"
-                        aria-label="Delete meeting"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })()
-          )}
-        </div>
-        {item.type === 'folder' && isExpanded && item.children && (
-          <div className="ml-1">
-            {item.children.map(child => renderItem(child, depth + 1))}
-          </div>
-        )}
-      </div>
-    );
-  };
+  const openSearch = () => window.dispatchEvent(new CustomEvent('open-global-search'));
+  const isContacts = pathname === '/contacts' || pathname === '/person';
+  const isGroups = pathname === '/groups';
+  const isLibrary = pathname === '/meetings';
+  const isSettings = pathname === '/settings';
 
   return (
-    <div className="fixed top-0 left-0 h-screen z-40">
-      {/* Floating collapse button */}
-      <button
-        onClick={toggleCollapse}
-        className="absolute -right-6 top-20 z-50 p-1 rounded-full shadow-lg border bg-[var(--af-panel,#fff)] border-[var(--af-border,#e5e7eb)] text-[var(--af-text,#374151)] hover:bg-[var(--af-hover,#f3f4f6)] transition-colors"
-        style={{ transform: 'translateX(50%)' }}
-      >
-        {isCollapsed ? (
-          <ChevronRightCircle className="w-6 h-6" />
-        ) : (
-          <ChevronLeftCircle className="w-6 h-6" />
-        )}
-      </button>
-
+    <div
+      className={cn(
+        'af-rail fixed left-0 top-0 z-20 h-screen overflow-hidden',
+        dragging ? 'is-resizing' : 'transition-[width,border-color] duration-300 ease-[cubic-bezier(0.22,1.25,0.36,1)] motion-reduce:transition-none',
+      )}
+      style={{ width: sidebarWidth }}
+    >
       <div
-        className={`h-screen bg-white border-r shadow-sm flex flex-col transition-all duration-300 ${isCollapsed ? 'w-16' : 'w-64'
-          }`}
-      >
-        {/* Header: brand, search, New Recording */}
-        <div className="flex-shrink-0">
-          {!isCollapsed && (
-            <div className="px-3 pt-5 pb-4 space-y-4">
-              <div className="pt-1 pb-1">
-                <Logo isCollapsed={isCollapsed} />
-              </div>
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        aria-valuemin={64}
+        aria-valuemax={384}
+        aria-valuenow={sidebarWidth}
+        onPointerDown={startResize}
+        className="af-rail-resize absolute inset-y-0 right-0 z-10 w-1.5 cursor-col-resize"
+      />
 
+      <div className="flex h-full w-full min-w-0 flex-col overflow-hidden">
+        {/* Wordmark (opens About) and the collapse button. The button is pinned
+            to the rail's right edge, so it glides with the rail as it opens and
+            closes and lands in the icon column when collapsed; its two icons
+            cross-fade. The row keeps its height, so nothing below it moves, and
+            its empty space drags the window (the app draws its own title bar on
+            Windows). */}
+        <div data-tauri-drag-region="deep" className="relative flex h-14 shrink-0 items-center px-3">
+          <Dialog aria-describedby={undefined}>
+            <DialogTrigger asChild>
               <button
-                onClick={openGlobalSearch}
-                className="flex h-9 w-full items-center gap-2 rounded-lg border border-[var(--af-border)] bg-[var(--af-panel)] px-3 text-left text-sm text-[var(--af-text-3)] shadow-sm hover:border-[var(--af-border-strong)] hover:bg-[var(--af-panel-2)] hover:text-[var(--af-text-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--af-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--af-bg)]"
-              >
-                <Search className="h-4 w-4 shrink-0" />
-                <span className="min-w-0 flex-1 truncate">Search everything</span>
-                <kbd className="shrink-0 rounded border border-[var(--af-border-strong)] bg-[var(--af-panel-2)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--af-text-3)]">Ctrl K</kbd>
-              </button>
-
-              <button
-                onClick={handleRecordingToggle}
-                disabled={isRecording}
-                className={`w-full flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold text-white transition-[filter] bg-[var(--af-accent)] ${isRecording ? 'opacity-70 cursor-not-allowed' : 'hover:brightness-110'}`}
-              >
-                {isRecording ? (
-                  <>
-                    <Square className="w-4 h-4" />
-                    <span>Recording in progress…</span>
-                  </>
-                ) : (
-                  <>
-                    <AudioLines className="w-4 h-4" />
-                    <span>New Recording</span>
-                  </>
+                type="button"
+                aria-label="About Meetily"
+                tabIndex={expanded ? undefined : -1}
+                aria-hidden={expanded ? undefined : true}
+                className={cn(
+                  'mr-10 flex h-10 min-w-0 flex-1 items-center rounded-lg px-1 text-left transition-[opacity,background-color] hover:bg-af-hover motion-reduce:transition-none',
+                  RAIL_EASE,
+                  expanded ? 'opacity-100 delay-75 duration-200' : 'pointer-events-none opacity-0 duration-150',
                 )}
-              </button>
-              <button
-                onClick={() => router.push('/home')}
-                aria-current={pathname === '/home' ? 'page' : undefined}
-                className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${pathname === '/home' ? 'bg-[var(--af-panel-2)] text-[var(--af-accent)]' : 'text-[var(--af-text-2)] hover:bg-[var(--af-hover)] hover:text-[var(--af-text)]'}`}
               >
-                <House className="h-4 w-4" /> Home
+                <span className="whitespace-nowrap text-base font-bold tracking-tight text-blue-500">
+                  Meetily <span className="text-blue-400/70">· Actually Free</span>
+                </span>
               </button>
-            </div>
-          )}
+            </DialogTrigger>
+            <DialogContent>
+              <VisuallyHidden>
+                <DialogTitle>About Meetily</DialogTitle>
+              </VisuallyHidden>
+              <About />
+            </DialogContent>
+          </Dialog>
+          <RailTip show={!expanded} label="Expand sidebar">
+            <button
+              type="button"
+              onClick={toggleRail}
+              aria-label={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+              aria-expanded={expanded}
+              className={cn(
+                'absolute right-3 top-1/2 flex h-9 w-10 -translate-y-1/2 items-center justify-center rounded-lg text-af-text-3 transition-colors hover:bg-af-hover hover:text-af-text',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60',
+              )}
+            >
+              <span className="relative h-[18px] w-[18px]">
+                <PanelLeftClose
+                  className={cn('absolute inset-0 h-[18px] w-[18px] transition-opacity duration-200', expanded ? 'opacity-100' : 'opacity-0')}
+                />
+                <PanelLeftOpen
+                  className={cn('absolute inset-0 h-[18px] w-[18px] transition-opacity duration-200', expanded ? 'opacity-0' : 'opacity-100')}
+                />
+              </span>
+            </button>
+          </RailTip>
         </div>
 
-        {/* Main content - scrollable area */}
-        <div className="flex-1 flex flex-col min-h-0">
-          {/* Content area */}
-          <div className="flex-1 flex flex-col min-h-0">
-            {renderCollapsedIcons()}
-            {/* Meetings folder header - fixed */}
-            {!isCollapsed && (
-              <div className="flex-shrink-0">
-                {sidebarItems.filter(item => item.type === 'folder').map(item => (
-                  <div
-                    key={item.id}
-                    className="flex items-center px-4 pt-5 pb-2 text-xs font-semibold uppercase tracking-wider text-[var(--af-text-3)]"
-                  >
-                    <span>{item.title}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+        <div className="flex shrink-0 flex-col gap-1.5 px-3">
+          {/* Recording action */}
+          {isRecording ? (
+            <RailTip show={!expanded} label={`Back to recording · ${formatClock(elapsed)}`}>
+              <button
+                type="button"
+                onClick={() => router.push('/')}
+                aria-label="Back to recording"
+                className={cn(
+                  'group flex h-10 w-full items-center overflow-hidden rounded-xl text-sm font-semibold text-white shadow-sm transition-[background-color,transform] duration-150 active:scale-[0.98]',
+                  'bg-af-record hover:bg-af-record/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-record/50',
+                )}
+              >
+                <RailIcon>
+                  <span className="relative flex h-2.5 w-2.5">
+                    {!isPaused && <span className="absolute inset-0 animate-ping rounded-full bg-white/70" />}
+                    <span className="relative h-2.5 w-2.5 rounded-full bg-white" />
+                  </span>
+                </RailIcon>
+                <RailLabel expanded={expanded} className="justify-between pr-3">
+                  <span className="truncate">{isPaused ? 'Paused' : 'Back to recording'}</span>
+                  <span className="ml-2 font-medium tabular-nums text-white/85">{formatClock(elapsed)}</span>
+                </RailLabel>
+              </button>
+            </RailTip>
+          ) : (
+            <div className="flex h-10 w-full items-stretch overflow-hidden rounded-xl bg-af-record text-white shadow-sm">
+              <RailTip show={!expanded} label="New recording">
+                <button
+                  type="button"
+                  onClick={() => router.push('/')}
+                  aria-label="New recording"
+                  className="flex min-w-0 flex-1 items-center text-sm font-semibold transition-colors hover:bg-black/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/60"
+                >
+                  <RailIcon>
+                    <Mic />
+                  </RailIcon>
+                  <RailLabel expanded={expanded}>
+                    <span className="truncate">New recording</span>
+                  </RailLabel>
+                </button>
+              </RailTip>
+              {expanded && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label="More ways to start"
+                      className="flex w-9 shrink-0 items-center justify-center border-l border-white/20 transition-colors hover:bg-black/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/60 data-[state=open]:bg-black/15"
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-60">
+                    <DropdownMenuItem onSelect={() => openImportDialog()}>
+                      <Upload />
+                      Import an audio file…
+                    </DropdownMenuItem>
+                    {groups.length > 0 && (
+                      <DropdownMenuSub>
+                        <DropdownMenuSubTrigger>
+                          <Layers />
+                          Record for a group
+                        </DropdownMenuSubTrigger>
+                        <DropdownMenuSubContent className="max-h-72 w-56 overflow-y-auto">
+                          {groups.map((group) => (
+                            <DropdownMenuItem key={group.id} onSelect={() => recordForGroup(group)}>
+                              <GroupDot color={group.color} />
+                              <span className="truncate">{group.name}</span>
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuSubContent>
+                      </DropdownMenuSub>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
+          )}
 
-            {/* Bulk-selection action bar */}
-            {!isCollapsed && selectedIds.size > 0 && (
-              <div className="mx-3 mb-1 flex items-center justify-between rounded-md bg-blue-50 px-3 py-2 text-sm">
-                <span className="font-medium text-blue-700">{selectedIds.size} selected</span>
-                <div className="flex items-center gap-2">
-                  <button onClick={clearSelection} className="text-gray-500 hover:text-gray-700">Clear</button>
+          {/* Search / command bar */}
+          <RailTip show={!expanded} label="Search or run a command" shortcut="Ctrl K">
+            <button
+              type="button"
+              onClick={openSearch}
+              aria-label="Search or run a command"
+              className="flex h-9 w-full items-center overflow-hidden rounded-lg border border-af-border bg-af-panel-2 text-af-text-3 transition-colors hover:border-af-border-strong hover:text-af-text-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60"
+            >
+              <RailIcon>
+                <Search />
+              </RailIcon>
+              <RailLabel expanded={expanded} className="justify-between pr-2">
+                <span className="truncate text-[13px]">Search or jump to…</span>
+                <Kbd>Ctrl K</Kbd>
+              </RailLabel>
+            </button>
+          </RailTip>
+
+          <nav className="mt-1 flex flex-col gap-0.5" aria-label="Sections">
+            <RailTip show={!expanded} label="Contacts">
+              <button type="button" onClick={() => router.push('/contacts')} className={navClass(isContacts)} aria-current={isContacts ? 'page' : undefined}>
+                <RailIcon>
+                  <Contact />
+                </RailIcon>
+                <RailLabel expanded={expanded}>Contacts</RailLabel>
+              </button>
+            </RailTip>
+            <RailTip show={!expanded} label="Groups">
+              <button type="button" onClick={() => router.push('/groups')} className={navClass(isGroups)} aria-current={isGroups ? 'page' : undefined}>
+                <RailIcon>
+                  <Layers />
+                </RailIcon>
+                <RailLabel expanded={expanded}>Groups</RailLabel>
+              </button>
+            </RailTip>
+            <RailTip show={!expanded} label="All meetings">
+              <button type="button" onClick={() => router.push('/meetings')} className={navClass(isLibrary)} aria-current={isLibrary ? 'page' : undefined}>
+                <RailIcon>
+                  <Library />
+                </RailIcon>
+                <RailLabel expanded={expanded}>All meetings</RailLabel>
+              </button>
+            </RailTip>
+          </nav>
+        </div>
+
+        {/* Meeting list */}
+        <div
+          ref={listRef}
+          aria-hidden={!expanded}
+          className={cn(
+            'mt-3 flex min-h-0 flex-1 flex-col transition-[opacity,transform] duration-300 motion-reduce:transition-none',
+            RAIL_EASE,
+            expanded ? 'translate-x-0 opacity-100' : 'pointer-events-none -translate-x-1 opacity-0',
+          )}
+        >
+          <div className="flex shrink-0 items-center justify-between px-4 pb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-af-text-4">Meetings</span>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Meeting list options"
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-af-text-3 transition-colors hover:bg-af-hover hover:text-af-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60 data-[state=open]:bg-af-hover"
+                >
+                  <ListFilter className="h-3.5 w-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                <DropdownMenuLabel>Arrange by</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={groupBy} onValueChange={(value) => setGroupBy(value as GroupBy)}>
+                  <DropdownMenuRadioItem value="date">Date</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="group">Group</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => orderedIds[0] && setSelectedIds(new Set([orderedIds[0]]))} disabled={orderedIds.length === 0}>
+                  <Check />
+                  Select meetings
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => router.push('/meetings')}>
+                  <Library />
+                  Open the library
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+            {sections.length === 0 ? (
+              <div className="mx-2 mt-2 rounded-xl border border-dashed border-af-border-strong px-3 py-5 text-center">
+                <CalendarDays className="mx-auto h-5 w-5 text-af-text-4" />
+                <p className="mt-2 text-xs font-medium text-af-text-2">No meetings yet</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-af-text-4">Your recordings will show up here.</p>
+              </div>
+            ) : (
+              sections.map((section) => (
+                <div key={section.key} className="mt-2 first:mt-0">
+                  <div className="flex items-center gap-1.5 pb-0.5 pl-8 pr-2 pt-1.5">
+                    {section.groupId ? (
+                      <button
+                        type="button"
+                        onClick={() => router.push(`/groups?id=${encodeURIComponent(section.groupId!)}`)}
+                        className="min-w-0 truncate rounded text-[11px] font-semibold text-af-text-4 transition-colors hover:text-af-text-2"
+                      >
+                        {section.title}
+                      </button>
+                    ) : (
+                      <span className="truncate text-[11px] font-semibold text-af-text-4">{section.title}</span>
+                    )}
+                    <span className="text-[10px] tabular-nums text-af-text-4">{section.meetings.length}</span>
+                  </div>
+                  {section.meetings.map((meeting) => (
+                    <MeetingRow
+                      key={meeting.id}
+                      meeting={meeting}
+                      groupName={groupBy === 'date' ? groupById(meeting.group_id)?.name ?? null : null}
+                      showTimeOnly={groupBy === 'date' && (section.title === 'Today' || section.title === 'Yesterday')}
+                      active={meeting.id === activeMeetingId}
+                      selected={selectedIds.has(meeting.id)}
+                      selecting={selecting}
+                      renaming={renamingId === meeting.id}
+                      onClick={(event) => onRowClick(meeting, event)}
+                      onOpen={() => openMeeting(meeting)}
+                      onToggle={(range) => toggleSelected(meeting.id, range)}
+                      onRenameStart={() => setRenamingId(meeting.id)}
+                      onRenameEnd={async (title) => {
+                        setRenamingId(null);
+                        if (title !== null && title.trim() && title.trim() !== meeting.title) {
+                          const ok = await renameMeeting(meeting.id, title);
+                          if (ok && currentMeeting?.id === meeting.id) setCurrentMeeting({ id: meeting.id, title: title.trim() });
+                        }
+                      }}
+                      onMove={(groupId, groupName) => moveMeetingsToGroup([meeting.id], groupId, groupName)}
+                      onDelete={() => setPendingDelete([meeting.id])}
+                    />
+                  ))}
+                </div>
+              ))
+            )}
+          </div>
+
+          {selecting && (
+            <div className="mx-2 mb-2 shrink-0 animate-af-rise rounded-xl border border-af-border-strong bg-af-elevated p-1.5 shadow-lg">
+              <div className="flex items-center justify-between px-1.5 pb-1">
+                <span className="text-xs font-medium text-af-text">{selectedIds.size} selected</span>
+                <div className="flex items-center gap-0.5">
                   <button
-                    onClick={() => setBulkDeleteOpen(true)}
-                    className="inline-flex items-center gap-1 rounded-md bg-red-500 px-2 py-1 font-medium text-white hover:bg-red-600"
+                    type="button"
+                    onClick={() => setSelectedIds(new Set(orderedIds))}
+                    className="rounded px-1.5 py-0.5 text-[11px] text-af-text-3 transition-colors hover:bg-af-hover hover:text-af-text"
                   >
-                    <Trash2 className="w-3.5 h-3.5" /> Delete
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedIds(new Set())}
+                    aria-label="Clear selection"
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-af-text-3 transition-colors hover:bg-af-hover hover:text-af-text"
+                  >
+                    <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
               </div>
-            )}
-
-            {/* Scrollable meeting items */}
-            {!isCollapsed && (
-              <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0 px-1">
-                {sidebarItems
-                  .filter(item => item.type === 'folder' && expandedFolders.has(item.id) && item.children)
-                  .map(item => {
-                    const children = item.children!;
-                    const showAll = showAllMeetings;
-                    const shown = showAll ? children : children.slice(0, RECENT_LIMIT);
-                    const hasMore = children.length > RECENT_LIMIT;
-                    return (
-                      <div key={`${item.id}-children`} className="mx-1">
-                        {shown.map(child => renderItem(child, 1))}
-                        {item.id === 'meetings' && hasMore && (
-                          <button
-                            onClick={() => setShowAllMeetings(v => !v)}
-                            className="mt-3 mb-2 flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--af-border-strong)] px-3 py-2 text-sm font-medium text-[var(--af-text-2)] transition-colors hover:bg-[var(--af-hover)] hover:text-[var(--af-text)]"
-                          >
-                            {showAllMeetings ? 'Show recent only' : 'View all library'}
-                            <ArrowRight className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
+              <div className="flex gap-1">
+                <Combobox
+                  value={null}
+                  open={bulkMoveOpen}
+                  onOpenChange={setBulkMoveOpen}
+                  onChange={async (groupId, option) => {
+                    const ok = await moveMeetingsToGroup([...selectedIds], groupId, option?.label);
+                    if (ok) setSelectedIds(new Set());
+                  }}
+                  options={groupOptions(groups)}
+                  clearLabel="Remove from group"
+                  searchPlaceholder="Move to group…"
+                  onCreate={createGroupFromPicker}
+                  createLabel={(query) => `Create group “${query}”`}
+                  side="top"
+                  trigger={
+                    <button
+                      type="button"
+                      className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg bg-af-panel-2 text-xs font-medium text-af-text transition-colors hover:bg-af-hover"
+                    >
+                      <FolderInput className="h-3.5 w-3.5" />
+                      Move to group
+                    </button>
+                  }
+                />
+                <Hint label="Export">
+                  <button
+                    type="button"
+                    onClick={() => setExportOpen(true)}
+                    aria-label="Export selected meetings"
+                    className="flex h-8 w-9 items-center justify-center rounded-lg bg-af-panel-2 text-af-text-2 transition-colors hover:bg-af-hover hover:text-af-text"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                  </button>
+                </Hint>
+                <button
+                  type="button"
+                  onClick={() => setPendingDelete([...selectedIds])}
+                  aria-label="Delete selected meetings"
+                  className="flex h-8 w-9 items-center justify-center rounded-lg bg-af-danger/[0.12] text-af-danger transition-colors hover:bg-af-danger/20"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
-        {!isCollapsed && (
-          <div className="flex-shrink-0 p-2 border-t border-[var(--af-border)]">
-            {betaFeatures.importAndRetranscribe && (
-              <button
-                onClick={() => openImportDialog()}
-                className="w-full flex items-center gap-2.5 px-3 py-2 mb-1 text-sm font-medium text-[var(--af-text-2)] hover:bg-[var(--af-hover)] hover:text-[var(--af-text)] rounded-lg transition-colors"
-              >
-                <Upload className="w-4 h-4" />
-                <span>Import Audio</span>
-              </button>
-            )}
-            <button
-              onClick={() => router.push('/settings')}
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium text-[var(--af-text-2)] hover:bg-[var(--af-hover)] hover:text-[var(--af-text)] rounded-lg transition-colors"
-            >
-              <Settings className="w-4 h-4" />
-              <span>Settings</span>
+        {/* h-14 matches the meeting page's playback bar, so their top borders line up. */}
+        <div className={cn('mx-3 mt-auto flex h-14 shrink-0 flex-col justify-center border-t transition-colors', expanded ? 'border-af-border' : 'border-transparent')}>
+          <RailTip show={!expanded} label="Settings">
+            <button type="button" onClick={() => router.push('/settings')} className={navClass(isSettings)} aria-current={isSettings ? 'page' : undefined}>
+              <RailIcon>
+                <Settings />
+              </RailIcon>
+              <RailLabel expanded={expanded}>Settings</RailLabel>
             </button>
-          </div>
-        )}
+          </RailTip>
+        </div>
       </div>
 
-      {/* Confirmation Modal for Delete */}
-      <ConfirmationModal
-        isOpen={deleteModalState.isOpen}
-        text="Are you sure you want to delete this meeting? This action cannot be undone."
-        onConfirm={handleDeleteConfirm}
-        onCancel={() => setDeleteModalState({ isOpen: false, itemId: null })}
+      <ExportMeetingsDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        meetings={meetings
+          .filter((meeting) => selectedIds.has(meeting.id))
+          .map((meeting) => ({ ...meeting, groupName: groupById(meeting.group_id)?.name ?? null }))}
       />
 
-      {/* Confirmation Modal for Bulk Delete */}
-      <ConfirmationModal
-        isOpen={bulkDeleteOpen}
-        text={`Delete ${selectedIds.size} selected meeting${selectedIds.size === 1 ? '' : 's'}? This action cannot be undone.`}
-        onConfirm={handleBulkDelete}
-        onCancel={() => setBulkDeleteOpen(false)}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => !open && setPendingDelete(null)}
+        variant="danger"
+        title={pendingDelete && pendingDelete.length > 1 ? `Delete ${pendingDelete.length} meetings?` : 'Delete this meeting?'}
+        description="The transcript, summary, notes, and action items are removed. Audio files stay in your recordings folder."
+        confirmLabel="Delete"
+        onConfirm={confirmDelete}
       />
-
-      {/* Edit Meeting Title Modal */}
-      <Dialog open={editModalState.isOpen} onOpenChange={(open) => {
-        if (!open) handleEditCancel();
-      }}>
-        <DialogContent className="sm:max-w-[425px]">
-          <VisuallyHidden>
-            <DialogTitle>Edit Meeting Title</DialogTitle>
-          </VisuallyHidden>
-          <div className="py-4">
-            <h3 className="text-lg font-semibold mb-4">Edit Meeting Title</h3>
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="meeting-title" className="block text-sm font-medium text-gray-700 mb-2">
-                  Meeting Title
-                </label>
-                <input
-                  id="meeting-title"
-                  type="text"
-                  value={editingTitle}
-                  onChange={(e) => setEditingTitle(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      handleEditConfirm();
-                    } else if (e.key === 'Escape') {
-                      handleEditCancel();
-                    }
-                  }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Enter meeting title"
-                  autoFocus
-                />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <button
-              onClick={handleEditCancel}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleEditConfirm}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
-            >
-              Save
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };
+
+interface MeetingRowProps {
+  meeting: CurrentMeeting;
+  /** Shown in the details line when meetings are listed by date. */
+  groupName?: string | null;
+  showTimeOnly: boolean;
+  active: boolean;
+  selected: boolean;
+  selecting: boolean;
+  renaming: boolean;
+  onClick: (event: React.MouseEvent) => void;
+  onOpen: () => void;
+  onToggle: (range: boolean) => void;
+  onRenameStart: () => void;
+  onRenameEnd: (title: string | null) => void;
+  onMove: (groupId: string | null, groupName?: string) => void;
+  onDelete: () => void;
+}
+
+function MeetingRow({
+  meeting,
+  groupName,
+  showTimeOnly,
+  active,
+  selected,
+  selecting,
+  renaming,
+  onClick,
+  onOpen,
+  onToggle,
+  onRenameStart,
+  onRenameEnd,
+  onMove,
+  onDelete,
+}: MeetingRowProps) {
+  const { groups } = useWorkspace();
+  const date = parseDate(meeting.created_at);
+  const title = displayTitle(meeting.title, meeting.created_at);
+  const meta = [groupName, date ? (showTimeOnly ? formatTime(date) : formatShortDate(date)) : null, formatDuration(meeting.duration_seconds) || null]
+    .filter(Boolean)
+    .join(' · ');
+  const [draft, setDraft] = useState(title);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (renaming) {
+      setDraft(meeting.title);
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      });
+    }
+  }, [renaming, meeting.title]);
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-current={active ? 'page' : undefined}
+      onClick={renaming ? undefined : onClick}
+      onDoubleClick={(event) => {
+        event.preventDefault();
+        onRenameStart();
+      }}
+      onKeyDown={(event) => {
+        if (renaming) return;
+        if (event.key === 'Enter') onClick(event as unknown as React.MouseEvent);
+        if (event.key === 'F2') onRenameStart();
+      }}
+      className={cn(
+        'group/row relative flex min-h-[44px] cursor-pointer select-none items-center gap-2 rounded-lg px-2 py-1.5 outline-none transition-colors duration-100',
+        'focus-visible:ring-2 focus-visible:ring-af-accent/60',
+        selected ? 'bg-af-accent/[0.12]' : active ? 'bg-af-active' : 'hover:bg-af-hover',
+      )}
+    >
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center" onClick={(event) => event.stopPropagation()}>
+        <Checkbox
+          checked={selected}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggle(event.shiftKey);
+          }}
+          aria-label={selected ? `Deselect ${title}` : `Select ${title}`}
+          className={cn('transition-opacity', selecting || selected ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100')}
+        />
+      </span>
+
+      <div className="min-w-0 flex-1">
+        {renaming ? (
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === 'Enter') onRenameEnd(draft);
+              if (event.key === 'Escape') onRenameEnd(null);
+            }}
+            onBlur={() => onRenameEnd(draft)}
+            aria-label="Meeting title"
+            className="af-bare -mx-1 h-6 w-[calc(100%+0.5rem)] rounded-md !border !border-af-accent !bg-af-panel-2 px-1 text-[13px] text-af-text outline-none"
+          />
+        ) : (
+          <p className={cn('truncate text-[13px] leading-5', active ? 'font-medium text-af-text' : 'text-af-text-2 group-hover/row:text-af-text')} title={title}>
+            {title}
+          </p>
+        )}
+        {meta && <p className="truncate text-[11px] leading-4 text-af-text-4">{meta}</p>}
+      </div>
+
+      {!renaming && !selecting && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              onClick={(event) => event.stopPropagation()}
+              aria-label={`Actions for ${title}`}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-af-text-3 opacity-0 transition-[opacity,background-color] hover:bg-af-active hover:text-af-text focus-visible:opacity-100 group-hover/row:opacity-100 data-[state=open]:bg-af-active data-[state=open]:opacity-100"
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" side="right" className="w-52" onClick={(event) => event.stopPropagation()}>
+            <DropdownMenuItem onSelect={onOpen}>
+              <ArrowUpRight />
+              Open
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={onRenameStart}>
+              <Pencil />
+              Rename
+            </DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <FolderInput />
+                Move to group
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="max-h-72 w-56 overflow-y-auto">
+                {groups.map((group) => (
+                  <DropdownMenuItem key={group.id} onSelect={() => onMove(group.id, group.name)}>
+                    <span
+                      className="af-tint-dot h-2 w-2 rounded-full"
+                      style={{ '--chip': groupColorVar(group.color) } as React.CSSProperties}
+                    />
+                    <span className="truncate">{group.name}</span>
+                    {meeting.group_id === group.id && <Check className="ml-auto !text-af-accent" />}
+                  </DropdownMenuItem>
+                ))}
+                {groups.length > 0 && <DropdownMenuSeparator />}
+                <DropdownMenuItem onSelect={() => openGroupEditor({ assignMeetingIds: [meeting.id] })}>
+                  <Plus />
+                  New group…
+                </DropdownMenuItem>
+                {meeting.group_id && (
+                  <DropdownMenuItem onSelect={() => onMove(null)}>
+                    <X />
+                    Remove from group
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="danger" onSelect={onDelete}>
+              <Trash2 />
+              Delete…
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+    </div>
+  );
+}
 
 export default Sidebar;

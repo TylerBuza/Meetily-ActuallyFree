@@ -1,201 +1,186 @@
 'use client';
 
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { ArrowLeft, Settings2, Mic, Database as DatabaseIcon, SparkleIcon, Radar, Info, Cpu, FlaskConical } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+/**
+ * Settings, laid out like the rest of the app: sections down the left, the
+ * chosen one on the right. `/settings?section=transcription` opens a section
+ * directly (the home page's setup line and the command bar link here).
+ */
+import { Suspense, useEffect, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { invoke } from '@tauri-apps/api/core';
-import { motion } from 'framer-motion';
-import { TranscriptSettings } from '@/components/TranscriptSettings';
-import { RecordingSettings } from '@/components/RecordingSettings';
+import { AudioLines, Cpu, FileAudio, FlaskConical, Info, Mic, Radar, Settings2, Sparkles, type LucideIcon } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { useConfig } from '@/contexts/ConfigContext';
+import { useImportDialog } from '@/contexts/ImportDialogContext';
+import { Button } from '@/components/ui/button';
 import { PreferenceSettings } from '@/components/PreferenceSettings';
+import { RecordingSettings } from '@/components/RecordingSettings';
+import { TranscriptSettings } from '@/components/TranscriptSettings';
+import { DiarizationSettings } from '@/components/DiarizationSettings';
 import { SummaryModelSettings } from '@/components/SummaryModelSettings';
 import { MeetingDetectionSettings } from '@/components/MeetingDetectionSettings';
-import { DiarizationSettings } from '@/components/DiarizationSettings';
 import { OptionalModelDownloads } from '@/components/OptionalModelDownloads';
-import { AboutSettings } from '@/components/AboutSettings';
-import { BetaSettings } from '@/components/BetaSettings';
 import { LocalStackStatus } from '@/components/LocalStackStatus';
+import { AboutSettings } from '@/components/AboutSettings';
 import { LabsSettings } from '@/components/LabsSettings';
-import { useConfig } from '@/contexts/ConfigContext';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { AppAudioCard } from '@/components/recording/AppAudioSource';
 
-const TABS = [
-  { value: 'general', label: 'General', icon: Settings2 },
-  { value: 'recording', label: 'Recording', icon: Mic },
-  { value: 'Transcriptionmodels', label: 'Transcription', icon: DatabaseIcon },
-  { value: 'summaryModels', label: 'Summary', icon: SparkleIcon },
-  { value: 'meetingDetection', label: 'Detection', icon: Radar },
-  { value: 'localStack', label: 'Local stack', icon: Cpu },
-  { value: 'labs', label: 'Labs', icon: FlaskConical },
-  { value: 'about', label: 'About', icon: Info },
-] as const;
+type SectionId = 'general' | 'recording' | 'transcription' | 'summaries' | 'detection' | 'local' | 'labs' | 'about';
 
-export default function SettingsPage() {
+const SECTIONS: Array<{ id: SectionId; label: string; hint: string; description: string; icon: LucideIcon }> = [
+  { id: 'general', label: 'General', hint: 'Theme, name, notifications', description: 'How Meetily looks, what it calls you, and where it keeps your files.', icon: Settings2 },
+  { id: 'recording', label: 'Recording', hint: 'Saving, computer audio', description: 'How recordings are saved, and which computer audio they capture.', icon: Mic },
+  { id: 'transcription', label: 'Transcription', hint: 'Speech models, speakers', description: 'The speech models that write the transcript, and telling voices apart.', icon: AudioLines },
+  { id: 'summaries', label: 'Summaries', hint: 'Model, language', description: 'Which AI model writes summaries and answers Ask AI, and in what language.', icon: Sparkles },
+  { id: 'detection', label: 'Meeting detection', hint: 'Prompt to record', description: 'Get a prompt to record when a call starts in another app.', icon: Radar },
+  { id: 'local', label: 'Local AI', hint: 'Runtime status', description: 'The on-device engines that run transcription and summaries.', icon: Cpu },
+  { id: 'labs', label: 'Labs', hint: 'Experimental features', description: 'Experimental features. Each stays off until you turn it on, and may change in later versions.', icon: FlaskConical },
+  { id: 'about', label: 'About', hint: 'Version, updates', description: 'Version, updates and links.', icon: Info },
+];
+
+/** Older links used tab names. */
+const LEGACY_TABS: Record<string, SectionId> = {
+  general: 'general',
+  recording: 'recording',
+  Transcriptionmodels: 'transcription',
+  summaryModels: 'summaries',
+  meetingDetection: 'detection',
+  localStack: 'local',
+  labs: 'labs',
+  about: 'about',
+};
+
+const isSection = (value: string | null): value is SectionId => !!value && SECTIONS.some((section) => section.id === value);
+
+function ImportCard() {
+  const { openImportDialog } = useImportDialog();
+  return (
+    <div className="flex flex-wrap items-center gap-4 rounded-2xl border border-af-border bg-af-panel-2/40 p-5">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-af-accent/[0.12] text-af-accent">
+        <FileAudio className="h-5 w-5" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <h3 className="text-[15px] font-semibold text-af-text">Import a recording</h3>
+        <p className="mt-0.5 text-[13px] leading-relaxed text-af-text-3">
+          Transcribe an audio file you already have. You can also drop a file anywhere in the window.
+        </p>
+      </div>
+      <Button variant="secondary" size="sm" onClick={() => openImportDialog()}>
+        Choose a file
+      </Button>
+    </div>
+  );
+}
+
+function SettingsInner() {
   const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
   const { transcriptModelConfig, setTranscriptModelConfig } = useConfig();
-
-  const [activeTab, setActiveTab] = useState('general');
-  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const tabsScrollRef = useRef<HTMLDivElement | null>(null);
-  const [underlineStyle, setUnderlineStyle] = useState({ left: 0, width: 0 });
-  const [tabsOverflow, setTabsOverflow] = useState(false);
+  const [active, setActive] = useState<SectionId>('general');
 
   useEffect(() => {
-    const requestedTab = sessionStorage.getItem('meetily-settings-tab');
-    if (requestedTab && TABS.some((tab) => tab.value === requestedTab)) {
-      setActiveTab(requestedTab);
+    const requested = params.get('section');
+    if (isSection(requested)) {
+      setActive(requested);
+      return;
     }
-    sessionStorage.removeItem('meetily-settings-tab');
-  }, []);
+    const legacy = sessionStorage.getItem('meetily-settings-tab');
+    if (legacy) {
+      sessionStorage.removeItem('meetily-settings-tab');
+      if (LEGACY_TABS[legacy]) setActive(LEGACY_TABS[legacy]);
+    }
+  }, [params]);
 
   useEffect(() => {
-    const loadTranscriptConfig = async () => {
-      try {
-        const config = await invoke('api_get_transcript_config') as any;
-        if (config) {
-          setTranscriptModelConfig({
-            provider: config.provider || 'localWhisper',
-            model: config.model || 'large-v3',
-            apiKey: config.apiKey || null
-          });
-        }
-      } catch (error) {
-        console.error('Failed to load transcript config:', error);
-      }
-    };
-    loadTranscriptConfig();
+    invoke<{ provider?: string; model?: string; apiKey?: string | null } | null>('api_get_transcript_config')
+      .then((config) => {
+        if (!config) return;
+        setTranscriptModelConfig({
+          provider: (config.provider || 'localWhisper') as typeof transcriptModelConfig.provider,
+          model: config.model || 'large-v3',
+          apiKey: config.apiKey || null,
+        });
+      })
+      .catch((error) => console.error('Failed to load transcript config:', error));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setTranscriptModelConfig]);
 
-  // Keep the active tab underline aligned, and scroll it into view on narrow windows.
-  useLayoutEffect(() => {
-    const activeIndex = TABS.findIndex(tab => tab.value === activeTab);
-    const activeTabElement = tabRefs.current[activeIndex];
-    if (!activeTabElement) return;
+  const choose = (id: SectionId) => {
+    setActive(id);
+    router.replace(`${pathname}?section=${id}`, { scroll: false });
+  };
 
-    const { offsetLeft, offsetWidth } = activeTabElement;
-    setUnderlineStyle({ left: offsetLeft, width: offsetWidth });
-    activeTabElement.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
-  }, [activeTab]);
-
-  // Only show the right-edge fade when the tab strip actually overflows.
-  useLayoutEffect(() => {
-    const el = tabsScrollRef.current;
-    if (!el) return;
-
-    const measure = () => {
-      setTabsOverflow(el.scrollWidth > el.clientWidth + 2);
-    };
-    measure();
-
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
-    ro?.observe(el);
-    window.addEventListener('resize', measure);
-    return () => {
-      ro?.disconnect();
-      window.removeEventListener('resize', measure);
-    };
-  }, []);
+  const section = SECTIONS.find((entry) => entry.id === active) ?? SECTIONS[0];
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 max-w-full flex-col overflow-hidden bg-[var(--af-bg)] text-[var(--af-text)]">
-      {/* Header */}
-      <div className="flex-shrink-0 border-b border-[var(--af-border)] bg-[var(--af-panel)]">
-        <div className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 sm:py-6 lg:px-8">
-          <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-            <button
-              onClick={() => router.back()}
-              className="flex shrink-0 items-center gap-2 text-[var(--af-text-2)] transition-colors hover:text-[var(--af-text)]"
-            >
-              <ArrowLeft className="h-5 w-5" />
-              <span className="hidden sm:inline">Back</span>
-            </button>
-            <h1 className="truncate text-2xl font-bold sm:text-3xl text-[var(--af-text)]">Settings</h1>
+    <div className="flex h-full min-h-0 bg-af-panel">
+      <nav aria-label="Settings sections" className="w-60 shrink-0 overflow-y-auto border-r border-af-border px-3 pb-6 pt-8">
+        <h1 className="px-3 text-lg font-semibold tracking-tight text-af-text">Settings</h1>
+        <ul className="mt-4 space-y-0.5">
+          {SECTIONS.map(({ id, label, hint, icon: Icon }) => {
+            const selected = id === active;
+            return (
+              <li key={id}>
+                <button
+                  type="button"
+                  onClick={() => choose(id)}
+                  aria-current={selected ? 'page' : undefined}
+                  className={cn(
+                    'group/nav flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-[background-color,color] duration-150',
+                    selected ? 'bg-af-active text-af-text' : 'text-af-text-2 hover:bg-af-hover hover:text-af-text',
+                  )}
+                >
+                  <Icon className={cn('h-4 w-4 shrink-0 transition-colors', selected ? 'text-af-accent' : 'text-af-text-3 group-hover/nav:text-af-text-2')} />
+                  <span className="min-w-0">
+                    <span className="block truncate text-[13px] font-medium">{label}</span>
+                    <span className="block truncate text-[11px] text-af-text-4">{hint}</span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+
+      <main className="min-w-0 flex-1 overflow-y-auto">
+        <div key={section.id} className="mx-auto w-full max-w-3xl px-8 pb-24 pt-10 animate-af-rise">
+          <header className="mb-6">
+            <h2 className="text-xl font-semibold tracking-tight text-af-text">{section.label}</h2>
+            <p className="mt-1 text-sm text-af-text-3">{section.description}</p>
+          </header>
+          <div className="af-settings space-y-5">
+            {active === 'general' && <PreferenceSettings />}
+            {active === 'recording' && (
+              <>
+                <RecordingSettings />
+                <AppAudioCard />
+                <ImportCard />
+              </>
+            )}
+            {active === 'transcription' && (
+              <>
+                <TranscriptSettings transcriptModelConfig={transcriptModelConfig} setTranscriptModelConfig={setTranscriptModelConfig} />
+                <DiarizationSettings />
+                <OptionalModelDownloads />
+              </>
+            )}
+            {active === 'summaries' && <SummaryModelSettings />}
+            {active === 'detection' && <MeetingDetectionSettings />}
+            {active === 'local' && <LocalStackStatus />}
+            {active === 'labs' && <LabsSettings />}
+            {active === 'about' && <AboutSettings />}
           </div>
         </div>
-      </div>
-
-      {/* Body */}
-      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
-        <div className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6 sm:py-6 lg:px-8">
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="min-w-0 max-w-full">
-            {/* Horizontal scroll for tabs on narrow windows */}
-            <div className="relative min-w-0 max-w-full">
-              <div
-                ref={tabsScrollRef}
-                className="min-w-0 max-w-full overflow-x-auto overscroll-x-contain no-scrollbar"
-                style={{ WebkitOverflowScrolling: 'touch' }}
-              >
-                <TabsList className="relative flex h-auto w-max min-w-full flex-nowrap justify-start gap-0 rounded-none border-b border-[var(--af-border)] bg-transparent p-0">
-                  {TABS.map((tab, index) => {
-                    const Icon = tab.icon;
-                    return (
-                      <TabsTrigger
-                        key={tab.value}
-                        value={tab.value}
-                        ref={el => { tabRefs.current[index] = el; }}
-                        className="relative z-10 flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-none border-0 bg-transparent px-3 py-3 text-sm text-[var(--af-text-2)] shadow-none hover:text-[var(--af-text)] data-[state=active]:bg-transparent data-[state=active]:text-blue-500 data-[state=active]:shadow-none sm:gap-2 sm:px-4 sm:py-4 font-medium"
-                      >
-                        <Icon className="h-4 w-4 shrink-0" />
-                        <span>{tab.label}</span>
-                      </TabsTrigger>
-                    );
-                  })}
-                  <motion.div
-                    className="pointer-events-none absolute bottom-0 z-20 h-0.5 bg-blue-600"
-                    layoutId="settings-tab-underline"
-                    style={{ left: underlineStyle.left, width: underlineStyle.width }}
-                    transition={{ type: 'spring', stiffness: 400, damping: 40 }}
-                  />
-                </TabsList>
-              </div>
-              {/* Fade only when tabs overflow — uses theme bg so it isn't a white blob in dark mode */}
-              {tabsOverflow && (
-                <div
-                  aria-hidden
-                  className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-[var(--af-bg,#0a0c10)] to-transparent"
-                />
-              )}
-            </div>
-
-            <div className="mt-4 min-w-0 max-w-full break-words sm:mt-6">
-              <TabsContent value="general" className="mt-0 min-w-0 max-w-full focus-visible:ring-0">
-                <PreferenceSettings />
-              </TabsContent>
-              <TabsContent value="recording" className="mt-0 min-w-0 max-w-full focus-visible:ring-0">
-                <RecordingSettings />
-                <div className="mt-6">
-                  <BetaSettings />
-                </div>
-              </TabsContent>
-              <TabsContent value="Transcriptionmodels" className="mt-0 min-w-0 max-w-full focus-visible:ring-0">
-                <TranscriptSettings
-                  transcriptModelConfig={transcriptModelConfig}
-                  setTranscriptModelConfig={setTranscriptModelConfig}
-                />
-                <div className="mt-6">
-                  <DiarizationSettings />
-                  <OptionalModelDownloads />
-                </div>
-              </TabsContent>
-              <TabsContent value="summaryModels" className="mt-0 min-w-0 max-w-full focus-visible:ring-0">
-                <SummaryModelSettings />
-              </TabsContent>
-              <TabsContent value="meetingDetection" className="mt-0 min-w-0 max-w-full focus-visible:ring-0">
-                <MeetingDetectionSettings />
-              </TabsContent>
-              <TabsContent value="localStack" className="mt-0 min-w-0 max-w-full focus-visible:ring-0">
-                <LocalStackStatus />
-              </TabsContent>
-              <TabsContent value="labs" className="mt-0 min-w-0 max-w-full focus-visible:ring-0">
-                <LabsSettings />
-              </TabsContent>
-              <TabsContent value="about" className="mt-0 min-w-0 max-w-full focus-visible:ring-0">
-                <AboutSettings />
-              </TabsContent>
-            </div>
-          </Tabs>
-        </div>
-      </div>
+      </main>
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={<div className="h-full bg-af-panel" />}>
+      <SettingsInner />
+    </Suspense>
   );
 }

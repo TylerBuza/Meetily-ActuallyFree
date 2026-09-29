@@ -7,6 +7,34 @@ use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
+/// Only the template's leading H1 is a title candidate. A heading in the body,
+/// or an unfilled template instruction, must never rename a meeting.
+pub(crate) fn extract_meeting_name_from_markdown(markdown: &str) -> Option<String> {
+    let first = markdown.lines().find(|line| !line.trim().is_empty())?.trim();
+    let title = first.strip_prefix("# ")?.trim().trim_matches('*').trim();
+    let normalized = title.trim_matches(|c| matches!(c, '<' | '>' | '[' | ']' | '`')).trim().to_lowercase();
+    if title.is_empty() || title.chars().count() > 200 || matches!(normalized.as_str(),
+        "add title here" | "ai-generated title" | "meeting title" | "title" |
+        "summary" | "meeting summary" | "overview" | "notes" | "transcript") {
+        return None;
+    }
+    Some(title.to_string())
+}
+
+#[cfg(test)]
+mod generated_title_tests {
+    use super::extract_meeting_name_from_markdown;
+
+    #[test]
+    fn generated_title_accepts_only_a_useful_leading_heading() {
+        assert_eq!(extract_meeting_name_from_markdown("\n# **GPU Budget Review**\n\n## Decisions"), Some("GPU Budget Review".into()));
+        assert_eq!(extract_meeting_name_from_markdown("# Revisión del presupuesto\n"), Some("Revisión del presupuesto".into()));
+        for text in ["", "## Decisions", "Body\n# A later heading", "# <Add Title here>", "# [AI-Generated Title]", "# **Meeting Title**", "# Summary", "# "] {
+            assert_eq!(extract_meeting_name_from_markdown(text), None, "{text}");
+        }
+    }
+}
+
 // Compile regex once and reuse (significant performance improvement for repeated calls)
 static THINKING_TAG_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?s)<think(?:ing)?>.*?</think(?:ing)?>").unwrap()
@@ -298,20 +326,6 @@ fn require_meaningful_summary(markdown: &str, stage: &str) -> Result<String, Str
     }
 }
 
-/// Extracts meeting name from the first heading in markdown
-///
-/// # Arguments
-/// * `markdown` - Markdown content
-///
-/// # Returns
-/// Meeting name if found, None otherwise
-pub fn extract_meeting_name_from_markdown(markdown: &str) -> Option<String> {
-    markdown
-        .lines()
-        .find(|line| line.starts_with("# "))
-        .map(|line| line.trim_start_matches("# ").trim().to_string())
-}
-
 /// Generates a complete meeting summary with conditional chunking strategy
 ///
 /// # Arguments
@@ -354,6 +368,7 @@ pub async fn generate_meeting_summary(
     temperature: Option<f32>,
     top_p: Option<f32>,
     app_data_dir: Option<&PathBuf>,
+    claude_cli_path: Option<&str>,
     cancellation_token: Option<&CancellationToken>,
     summary_language: Option<&str>,
     detected_transcript_language: Option<&str>,
@@ -430,6 +445,7 @@ pub async fn generate_meeting_summary(
                     temperature,
                     top_p,
                     app_data_dir,
+                    claude_cli_path,
                     cancellation_token,
                 )
                 .await
@@ -486,6 +502,7 @@ pub async fn generate_meeting_summary(
                     temperature,
                     top_p,
                     app_data_dir,
+                    claude_cli_path,
                     cancellation_token,
                 )
                 .await?;
@@ -535,6 +552,7 @@ pub async fn generate_meeting_summary(
             temperature,
             top_p,
             app_data_dir,
+            claude_cli_path,
             cancellation_token,
         )
         .await?;
@@ -560,6 +578,7 @@ pub async fn generate_meeting_summary(
                 temperature,
                 top_p,
                 app_data_dir,
+                claude_cli_path,
                 cancellation_token,
             )
             .await
@@ -587,6 +606,7 @@ pub async fn generate_meeting_summary(
                     temperature,
                     top_p,
                     app_data_dir,
+                    claude_cli_path,
                     cancellation_token,
                 )
                 .await,
@@ -616,6 +636,7 @@ async fn run_markdown_transform(
     temperature: Option<f32>,
     top_p: Option<f32>,
     app_data_dir: Option<&PathBuf>,
+    claude_cli_path: Option<&str>,
     cancellation_token: Option<&CancellationToken>,
 ) -> Result<String, String> {
     if let Some(token) = cancellation_token {
@@ -637,6 +658,7 @@ async fn run_markdown_transform(
         temperature,
         top_p,
         app_data_dir,
+        claude_cli_path,
         cancellation_token,
     )
     .await
@@ -659,6 +681,7 @@ async fn translate_markdown(
     temperature: Option<f32>,
     top_p: Option<f32>,
     app_data_dir: Option<&PathBuf>,
+    claude_cli_path: Option<&str>,
     cancellation_token: Option<&CancellationToken>,
 ) -> Result<String, String> {
     info!("Translation pass: target language = {}", target_language);
@@ -682,6 +705,7 @@ async fn translate_markdown(
         temperature,
         top_p,
         app_data_dir,
+        claude_cli_path,
         cancellation_token,
     )
     .await
@@ -700,6 +724,7 @@ async fn normalize_markdown_to_english(
     temperature: Option<f32>,
     top_p: Option<f32>,
     app_data_dir: Option<&PathBuf>,
+    claude_cli_path: Option<&str>,
     cancellation_token: Option<&CancellationToken>,
 ) -> Result<String, String> {
     info!("English normalization pass: preserving Markdown structure");
@@ -722,6 +747,7 @@ async fn normalize_markdown_to_english(
         temperature,
         top_p,
         app_data_dir,
+        claude_cli_path,
         cancellation_token,
     )
     .await

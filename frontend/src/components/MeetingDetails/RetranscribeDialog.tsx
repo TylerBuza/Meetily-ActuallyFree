@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { RefreshCw, Globe, Loader2, AlertCircle, CheckCircle2, X, Cpu, BookOpen } from 'lucide-react';
+import { Spinner } from '@/components/ui/spinner';
+import { RefreshCw, Globe,  AlertCircle, CheckCircle2, X, Cpu, BookOpen } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -25,6 +26,7 @@ import { useRouter } from 'next/navigation';
 import { LANGUAGES } from '@/constants/languages';
 import { useTranscriptionModels, ModelOption } from '@/hooks/useTranscriptionModels';
 import Analytics from '@/lib/analytics';
+import { announceChange } from '@/lib/workspace-api';
 
 interface RetranscribeDialogProps {
   open: boolean;
@@ -201,6 +203,7 @@ export function RetranscribeDialog({
             toast.success(
               `Retranscription complete! ${event.payload.segments_count} segments created.`
             );
+            announceChange('people');
             onCompleteRef.current?.();
             onOpenChangeRef.current(false);
           }
@@ -349,17 +352,17 @@ export function RetranscribeDialog({
           <DialogTitle className="flex items-center gap-2">
             {isProcessing ? (
               <>
-                <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+                <Spinner className="h-5 w-5 text-af-accent" />
                 Retranscribing...
               </>
             ) : error ? (
               <>
-                <AlertCircle className="h-5 w-5 text-red-600" />
+                <AlertCircle className="h-5 w-5 text-af-danger" />
                 Retranscription Failed
               </>
             ) : (
               <>
-                <RefreshCw className="h-5 w-5 text-blue-600" />
+                <RefreshCw className="h-5 w-5 text-af-accent" />
                 Retranscribe Meeting
               </>
             )}
@@ -448,7 +451,7 @@ export function RetranscribeDialog({
                   <div className="rounded-md border border-border bg-muted/30 p-3">
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-medium">Parakeet</span>
-                      <span className={hasParakeetModel ? 'text-emerald-600' : 'text-muted-foreground'}>
+                      <span className={hasParakeetModel ? 'text-af-success' : 'text-muted-foreground'}>
                         {hasParakeetModel ? 'Installed' : 'Not installed'}
                       </span>
                     </div>
@@ -459,7 +462,7 @@ export function RetranscribeDialog({
                   <div className="rounded-md border border-border bg-muted/30 p-3">
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-medium">Whisper</span>
-                      <span className={hasWhisperModel ? 'text-emerald-600' : 'text-amber-600'}>
+                      <span className={hasWhisperModel ? 'text-af-success' : 'text-af-warning'}>
                         {hasWhisperModel ? 'Installed' : 'Optional'}
                       </span>
                     </div>
@@ -543,13 +546,13 @@ export function RetranscribeDialog({
           {isProcessing && progress && (
             <div className="space-y-2">
               <div className="relative">
-                <div className="w-full bg-gray-200 rounded-full h-3">
+                <div className="w-full bg-af-hover rounded-full h-3">
                   <div
-                    className="bg-blue-600 h-3 rounded-full transition-all duration-300 ease-out"
+                    className="bg-af-accent h-3 rounded-full transition-all duration-300 ease-out"
                     style={{ width: `${Math.min(progress.progress_percentage, 100)}%` }}
                   />
                 </div>
-                <div className="flex justify-between text-xs text-gray-600 mt-1">
+                <div className="flex justify-between text-xs text-af-text-2 mt-1">
                   <span>{progress.stage}</span>
                   <span>{Math.round(progress.progress_percentage)}%</span>
                 </div>
@@ -561,8 +564,8 @@ export function RetranscribeDialog({
           )}
 
           {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-              <p className="text-sm text-red-800">{error}</p>
+            <div className="bg-af-danger/10 border border-af-danger/35 rounded-lg p-3">
+              <p className="text-sm text-af-danger">{error}</p>
             </div>
           )}
         </div>
@@ -575,7 +578,7 @@ export function RetranscribeDialog({
               </Button>
               <Button
                 onClick={handleStartRetranscription}
-                className="bg-blue-600 hover:bg-blue-700"
+                className="bg-af-accent hover:bg-af-accent-hover"
                 disabled={!meetingFolderPath || !listenersReady || isClearingMeetingVocabulary || loadingModels || !selectedModelDetails}
               >
                 <RefreshCw className="h-4 w-4 mr-2" />

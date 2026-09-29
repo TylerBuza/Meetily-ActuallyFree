@@ -13,18 +13,23 @@ export interface PermissionStatus {
 // session-scoped so a permission revoked between app launches is not trusted.
 export const MACOS_SYSTEM_AUDIO_VERIFIED_KEY = 'macos_system_audio_verified';
 
+// The last result in this window, so a page that mounts again (the recorder)
+// shows the record card at once while the device check re-runs behind it.
+let lastKnown: { hasMicrophone: boolean; hasSystemAudio: boolean } | null = null;
+
 export function usePermissionCheck() {
   const platform = usePlatform();
   const requestInFlight = useRef<Promise<void> | null>(null);
-  const [status, setStatus] = useState<PermissionStatus>({
-    hasMicrophone: false,
-    hasSystemAudio: false,
-    isChecking: true,
+  const [status, setStatus] = useState<PermissionStatus>(() => ({
+    hasMicrophone: lastKnown?.hasMicrophone ?? false,
+    hasSystemAudio: lastKnown?.hasSystemAudio ?? false,
+    isChecking: lastKnown === null,
     error: null,
-  });
+  }));
 
   const checkPermissions = async () => {
-    setStatus(prev => ({ ...prev, isChecking: true, error: null }));
+    // A known result stays on screen during a background re-check.
+    if (lastKnown === null) setStatus(prev => ({ ...prev, isChecking: true, error: null }));
 
     try {
       // Get audio devices to check for microphone and system audio availability
@@ -49,6 +54,7 @@ export function usePermissionCheck() {
         outputDevices: outputDevices.length
       });
 
+      lastKnown = { hasMicrophone, hasSystemAudio };
       setStatus({
         hasMicrophone,
         hasSystemAudio,

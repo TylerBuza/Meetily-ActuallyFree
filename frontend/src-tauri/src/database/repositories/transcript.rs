@@ -91,18 +91,11 @@ impl TranscriptsRepository {
             meeting_id
         );
 
-        // Live UI renames are saved as transcript labels before this transaction.
-        // Link every actual person name now, so enrollment works immediately
-        // after stopping without forcing a second rename in meeting details.
-        let named_speakers: std::collections::HashSet<&str> = transcripts.iter()
-            .filter_map(|segment| segment.speaker.as_deref())
-            .filter(|name| crate::database::repositories::person::is_person_name(name))
-            .collect();
-        for name in named_speakers {
-            crate::database::repositories::person::PeopleRepository::reconcile_speaker_identity(
-                &mut transaction, &meeting_id, name, name,
-            ).await?;
-        }
+        crate::database::repositories::person::PeopleRepository::link_named_speakers(
+            &mut transaction,
+            &meeting_id,
+        )
+        .await?;
 
         // Commit the transaction
         transaction.commit().await?;
@@ -270,6 +263,10 @@ pub(crate) fn timestamp_from_offset(
 pub(crate) fn is_default_meeting_title(title: &str) -> bool {
     let title = title.trim();
     if matches!(title, "+ New Call" | "New Meeting") {
+        return true;
+    }
+    // Current format: "Meeting · Mon, Sep 28 · 2:30 PM" (see lib/meeting-titles.ts).
+    if title.starts_with("Meeting · ") {
         return true;
     }
 

@@ -7,7 +7,8 @@ import { useOnboarding } from '@/contexts/OnboardingContext';
 import { usePlatform } from '@/hooks/usePlatform';
 import { MACOS_SYSTEM_AUDIO_VERIFIED_KEY } from '@/hooks/usePermissionCheck';
 import { OnboardingContainer } from '../OnboardingContainer';
-import { Mic, Volume2, RefreshCw } from 'lucide-react';
+import { Check, Mic, Volume2, RefreshCw } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface AudioDevice {
   name: string;
@@ -273,15 +274,12 @@ export function AudioTestStep() {
     <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--af-panel-2)]">
       <div
         className={`h-full rounded-full transition-all duration-75 ${
-          ok ? 'bg-emerald-500' : 'bg-[var(--af-accent)]'
+          ok ? 'bg-af-success' : 'bg-[var(--af-accent)]'
         }`}
         style={{ width: `${Math.min(100, Math.round(Math.max(rms, 0) * 500))}%` }}
       />
     </div>
   );
-
-  const selectClass =
-    'w-full rounded-lg border border-[var(--af-border)] bg-[var(--af-panel-2)] px-3 py-2 text-sm text-[var(--af-text)] outline-none focus:border-[var(--af-accent)]';
 
   return (
     <OnboardingContainer
@@ -306,24 +304,21 @@ export function AudioTestStep() {
         <div className="rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] p-4 space-y-3">
           <div className="flex items-center justify-between text-sm font-medium text-[var(--af-text)]">
             <span className="inline-flex items-center gap-2">
-              <Mic size={16} className="text-blue-400" /> Microphone
+              <Mic size={16} className="text-af-accent" /> Microphone
             </span>
-            <span className={micHeard ? 'text-emerald-400 text-xs' : 'text-[var(--af-text-3)] text-xs'}>
-              {micHeard ? 'Heard you ✓' : 'Speak now…'}
+            <span className={micHeard ? 'text-af-success text-xs' : 'text-[var(--af-text-3)] text-xs'}>
+              {micHeard ? (
+                <span className="inline-flex items-center gap-1">
+                  <Check className="h-3.5 w-3.5" />
+                  Heard you
+                </span>
+              ) : (
+                'Speak now…'
+              )}
             </span>
           </div>
           {inputs.length > 0 ? (
-            <select
-              className={selectClass}
-              value={micName}
-              onChange={(e) => void onMicChange(e.target.value)}
-            >
-              {inputs.map((d) => (
-                <option key={d.name} value={d.name}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
+            <DeviceSelect label="Microphone" value={micName} devices={inputs} onChange={(name) => void onMicChange(name)} />
           ) : (
             <p className="text-xs text-[var(--af-text-3)]">No microphones found</p>
           )}
@@ -333,10 +328,17 @@ export function AudioTestStep() {
         <div className="rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] p-4 space-y-3">
           <div className="flex items-center justify-between text-sm font-medium text-[var(--af-text)]">
             <span className="inline-flex items-center gap-2">
-              <Volume2 size={16} className="text-purple-400" /> System audio
+              <Volume2 size={16} className="text-af-accent" /> System audio
             </span>
-            <span className={sysHeard ? 'text-emerald-400 text-xs' : 'text-[var(--af-text-3)] text-xs'}>
-              {sysHeard ? 'Detected ✓' : 'Play a video…'}
+            <span className={sysHeard ? 'text-af-success text-xs' : 'text-[var(--af-text-3)] text-xs'}>
+              {sysHeard ? (
+                <span className="inline-flex items-center gap-1">
+                  <Check className="h-3.5 w-3.5" />
+                  Detected
+                </span>
+              ) : (
+                'Play a video…'
+              )}
             </span>
           </div>
           {isMacOS && outputs.length > 0 ? (
@@ -344,17 +346,7 @@ export function AudioTestStep() {
               Current default output (change it in System Settings)
             </p>
           ) : outputs.length > 0 ? (
-            <select
-              className={selectClass}
-              value={sysName}
-              onChange={(e) => void onSysChange(e.target.value)}
-            >
-              {outputs.map((d) => (
-                <option key={d.name} value={d.name}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
+            <DeviceSelect label="System audio device" value={sysName} devices={outputs} onChange={(name) => void onSysChange(name)} />
           ) : (
             <p className="text-xs text-[var(--af-text-3)]">No playback devices found</p>
           )}
@@ -372,7 +364,7 @@ export function AudioTestStep() {
           </button>
         </div>
 
-        {error && <p className="text-center text-xs text-amber-400 break-words">{error}</p>}
+        {error && <p className="text-center text-xs text-af-warning break-words">{error}</p>}
         <p className="text-center text-xs text-[var(--af-text-3)]">
           You can finish even if a meter stays quiet — fix devices later in Settings → Recording.
         </p>
@@ -394,3 +386,30 @@ function shortName(name: string): string {
 }
 
 export default AudioTestStep;
+
+function DeviceSelect({
+  label,
+  value,
+  devices,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  devices: Array<{ name: string }>;
+  onChange: (name: string) => void;
+}) {
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger aria-label={label}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {devices.map((device) => (
+          <SelectItem key={device.name} value={device.name}>
+            {device.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}

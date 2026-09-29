@@ -1,33 +1,49 @@
 'use client'
 
 import './globals.css'
+import './icon-motion.css'
 import dynamic from 'next/dynamic'
-import { Source_Sans_3 } from 'next/font/google'
+import { Inter } from 'next/font/google'
 import { SidebarProvider } from '@/components/Sidebar/SidebarProvider'
-import { StartupTranscriptRecovery } from '@/components/StartupTranscriptRecovery'
 import AnalyticsProvider from '@/components/AnalyticsProvider'
 import { Toaster, toast } from 'sonner'
+import { X } from 'lucide-react'
 import "sonner/dist/styles.css"
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { usePathname, useRouter } from 'next/navigation'
+import { launchRecording, requestRecordingStop } from '@/lib/recording-launch'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
-import { applyAppTheme, getSavedAppTheme } from '@/lib/app-theme'
+import { applyAppTheme, getSavedAppTheme, themeInfo, THEME_BOOT_SCRIPT, useAppTheme } from '@/lib/app-theme'
+import { COMPACT_MIN_WIDTH } from '@/hooks/useCompactChrome'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { AppTooltipGuard } from '@/components/AppTooltipGuard'
 import { RecordingStateProvider } from '@/contexts/RecordingStateContext'
 import { OllamaDownloadProvider } from '@/contexts/OllamaDownloadContext'
 import { TranscriptProvider } from '@/contexts/TranscriptContext'
 import { ConfigProvider, useConfig } from '@/contexts/ConfigContext'
 import { OnboardingProvider } from '@/contexts/OnboardingContext'
 import { OptionalModelDownloadsProvider } from '@/contexts/OptionalModelDownloadsContext'
-import { loadBetaFeatures } from '@/types/betaFeatures'
 import { DownloadProgressToastProvider } from '@/components/shared/DownloadProgressToast'
 import { UpdateCheckProvider } from '@/components/UpdateCheckProvider'
 import { RecordingPostProcessingProvider } from '@/contexts/RecordingPostProcessingProvider'
 import { ImportDialogProvider } from '@/contexts/ImportDialogContext'
 import { isAudioExtension, getAudioFormatsDisplayList } from '@/constants/audioFormats'
 import { loadLabsPreferences } from '@/lib/labs'
+import { automatedRecording, endAutomatedRecording, markAutomatedStart } from '@/lib/meeting-automation'
 import { getPendingCrashReport, type PendingCrashReport } from '@/services/crashReportService'
-import { Button } from '@/components/ui/button'
+import { WorkspaceProvider } from '@/contexts/WorkspaceContext'
+import { RouteWarmup } from '@/components/RouteWarmup'
+import { CHROME_BOOT_SCRIPT } from '@/lib/window-chrome'
+import { RecordingPill } from '@/components/recording/RecordingPill'
+import { GroupEditorHost } from '@/components/groups/GroupEditor'
+
+// Development only: in a plain browser (no Tauri bridge) serve sample data so
+// screens can be reviewed at http://localhost:3118. Stripped from production.
+if (process.env.NODE_ENV === 'development' && typeof window !== 'undefined' && !('__TAURI_INTERNALS__' in window)) {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('@/dev/preview').installPreviewMocks()
+}
 
 // Dynamically import heavy dialogs and onboarding wizard so app/layout.js stays lightweight
 // and cold-compiles quickly without timing out on slow startup or high CPU load.
@@ -45,6 +61,10 @@ const ImportDropOverlay = dynamic(
 )
 const GlobalSearchDialog = dynamic(
   () => import('@/components/GlobalSearchDialog'),
+  { ssr: false }
+)
+const WindowControls = dynamic(
+  () => import('@/components/WindowControls'),
   { ssr: false }
 )
 const CrashReportDialog = dynamic(
@@ -94,10 +114,11 @@ const inlineChunkErrorHandler = `
 })();
 `;
 
-const sourceSans3 = Source_Sans_3({
+const inter = Inter({
   subsets: ['latin'],
   weight: ['400', '500', '600', '700'],
-  variable: '--font-source-sans-3',
+  variable: '--font-sans',
+  display: 'swap',
 })
 
 // Module-level component — stable reference across RootLayout re-renders.
@@ -112,13 +133,6 @@ function ConditionalImportDialog({
   handleImportDialogClose: (open: boolean) => void;
   importFilePath: string | null;
 }) {
-  const { betaFeatures } = useConfig();
-
-  // Only mount ImportAudioDialog (and its hooks/listeners) when feature is enabled
-  if (!betaFeatures.importAndRetranscribe) {
-    return null;
-  }
-
   return (
     <ImportAudioDialog
       open={showImportDialog}
@@ -135,8 +149,15 @@ export default function RootLayout({
 }: {
   children: React.ReactNode
 }) {
+  const pathname = usePathname()
+  const router = useRouter()
+  // Tray, notification and meeting-detection starts work from any page.
+  const startRecordingAnywhere = useRef<() => void>(() => undefined)
+  startRecordingAnywhere.current = () => launchRecording((href) => router.push(href))
+  const isMinibar = (pathname ?? '').startsWith('/minibar')
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [onboardingCompleted, setOnboardingCompleted] = useState(false)
+  // Paint a retryable startup screen until native setup status is known.
   const [startupResolved, setStartupResolved] = useState(false)
   const [startupError, setStartupError] = useState<string | null>(null)
   const [startupAttempt, setStartupAttempt] = useState(0)
@@ -147,56 +168,75 @@ export default function RootLayout({
   const [showImportDialog, setShowImportDialog] = useState(false)
   const [importFilePath, setImportFilePath] = useState<string | null>(null)
 
-  // Apply saved theme (default: dark). Toggle lives in Settings.
+  // THEME_BOOT_SCRIPT already painted the saved theme; this also syncs the
+  // native title bar. useAppTheme follows changes from Settings and from the
+  // other window.
+  const [appTheme] = useAppTheme()
   useEffect(() => {
     applyAppTheme(getSavedAppTheme())
   }, [])
 
+  // Keep the window wide enough for the expanded rail, its collapse control,
+  // the recording card, and the speakers panel without those overlapping.
+  useEffect(() => {
+    if (isMinibar) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const { getCurrentWindow, LogicalSize } = await import('@tauri-apps/api/window')
+        const win = getCurrentWindow()
+        const min = new LogicalSize(COMPACT_MIN_WIDTH, 1)
+        await win.setMinSize(min)
+        const factor = await win.scaleFactor()
+        const size = (await win.innerSize()).toLogical(factor)
+        if (cancelled || size.width >= COMPACT_MIN_WIDTH) return
+        await win.setSize(new LogicalSize(COMPACT_MIN_WIDTH, size.height))
+      } catch {
+        // Browser preview, or the desktop window is not available yet.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [isMinibar])
+
   useEffect(() => {
     let cancelled = false
-
-    // Safety timeout: Never stay stuck on blank startup screen if an invoke takes too long
-    const safetyTimer = setTimeout(() => {
-      if (!cancelled) {
-        setStartupResolved(true);
-      }
-    }, 2500);
+    const timer = window.setTimeout(() => {
+      if (!cancelled) setStartupError('Setup status is taking longer than expected.')
+    }, 8000)
 
     const initializeStartup = async () => {
-      setStartupResolved(false)
-      setStartupError(null)
       try {
         const status = await invoke<{ completed: boolean } | null>('get_onboarding_status')
         if (cancelled) return
         const isComplete = status?.completed ?? false
+        window.clearTimeout(timer)
+        setStartupError(null)
+        setStartupResolved(true)
         setOnboardingCompleted(isComplete)
+        setShowOnboarding(!isComplete)
 
-        if (!isComplete) {
-          console.log('[Layout] Onboarding not completed, showing onboarding flow')
-          setShowOnboarding(true)
-        } else {
-          console.log('[Layout] Onboarding completed, showing main app')
+        if (isComplete) {
           try {
             const report = await getPendingCrashReport()
             if (!cancelled) setPendingCrashReport(report)
-          } catch (e) {
-            console.warn('[Layout] Crash report check failed:', e)
+          } catch (error) {
+            console.warn('[Layout] Crash report check failed:', error)
           }
         }
       } catch (error) {
-        console.warn('[Layout] Could not resolve Tauri startup state, defaulting to main app:', error)
+        console.warn('[Layout] Could not resolve Tauri startup state:', error)
         if (cancelled) return
-        setOnboardingCompleted(true)
-      } finally {
-        clearTimeout(safetyTimer)
-        if (!cancelled) setStartupResolved(true)
+        window.clearTimeout(timer)
+        setStartupError('Unable to check setup status. Please retry.')
       }
     }
 
-    initializeStartup()
+    void initializeStartup()
     return () => {
       cancelled = true
-      clearTimeout(safetyTimer)
+      window.clearTimeout(timer)
     }
   }, [startupAttempt])
 
@@ -230,7 +270,7 @@ export default function RootLayout({
       } else {
         // If in main app, forward to useRecordingStart via window event
         console.log('[Layout] Forwarding to start-recording-from-sidebar');
-        window.dispatchEvent(new CustomEvent('start-recording-from-sidebar'));
+        startRecordingAnywhere.current();
       }
     });
 
@@ -261,8 +301,11 @@ export default function RootLayout({
   }, [startupResolved, startupError, pendingCrashReport]);
 
   // Meeting Detection: prompt to start recording when a meeting app is detected.
+  // With Labs meeting automation on, a call that is using the microphone or
+  // camera starts a recording instead, and that recording stops when the call
+  // ends. The compact bar's window never starts or stops recordings.
   useEffect(() => {
-    if (!startupResolved || startupError || pendingCrashReport) return
+    if (!startupResolved || startupError || pendingCrashReport || isMinibar) return
     const unlisten = listen<{ app: string; process: string; notify: boolean; active_media: boolean }>(
       'meeting-detected',
       (event) => {
@@ -276,20 +319,14 @@ export default function RootLayout({
             });
             return;
           }
-          if (window.location.pathname !== '/') {
-            sessionStorage.setItem('autoStartRecording', 'true');
-            window.location.assign('/');
-          } else {
-            window.dispatchEvent(new CustomEvent('start-recording-from-sidebar'));
-          }
+          startRecordingAnywhere.current();
         };
 
         if (loadLabsPreferences().meetingAutomation && active_media && !showOnboarding) {
           void invoke<{ is_recording?: boolean }>('get_recording_state').then((state) => {
-            if (!state.is_recording) {
-              sessionStorage.setItem('labsAutoStartPending', process);
-              startRecording();
-            }
+            if (state.is_recording) return;
+            markAutomatedStart({ app, process });
+            startRecording();
           }).catch((error) => console.error('Could not check recording state for meeting automation:', error));
           return;
         }
@@ -322,24 +359,21 @@ export default function RootLayout({
         });
         return;
       }
-      window.dispatchEvent(new CustomEvent('start-recording-from-sidebar'));
+      startRecordingAnywhere.current();
     });
 
-    const unlistenEnd = listen<{ process: string }>('meeting-ended', (event) => {
-      if (!loadLabsPreferences().meetingAutomation) return;
-      if (sessionStorage.getItem('labsAutoRecordingProcess') !== event.payload.process) return;
+    // Only a recording that automation started for this same call is stopped.
+    const unlistenEnd = listen<{ app: string; process: string }>('meeting-ended', (event) => {
+      const call = automatedRecording();
+      if (!call || call.process !== event.payload.process || !loadLabsPreferences().meetingAutomation) return;
       void invoke<{ is_recording?: boolean }>('get_recording_state').then((state) => {
         if (!state.is_recording) {
-          sessionStorage.removeItem('labsAutoRecordingProcess');
+          endAutomatedRecording();
           return;
         }
-        sessionStorage.setItem('labsAutoStopPending', 'true');
-        if (window.location.pathname === '/') {
-          window.dispatchEvent(new Event('stop-recording-from-labs'));
-        } else {
-          window.location.assign('/');
-        }
-      }).catch(console.error);
+        toast(`${call.app} call ended`, { description: 'Meeting automation is stopping and saving the recording.' });
+        requestRecordingStop((href) => router.push(href));
+      }).catch((error) => console.error('Could not check recording state for meeting automation:', error));
     });
 
     return () => {
@@ -347,20 +381,10 @@ export default function RootLayout({
       unlistenStart.then((fn) => fn());
       unlistenEnd.then((fn) => fn());
     };
-  }, [showOnboarding, startupResolved, startupError, pendingCrashReport]);
+  }, [showOnboarding, startupResolved, startupError, pendingCrashReport, isMinibar, router]);
 
   // Handle file drop for audio import
   const handleFileDrop = useCallback((paths: string[]) => {
-    // Check if beta features are enabled (read from localStorage directly since we're outside ConfigProvider)
-    const betaFeatures = loadBetaFeatures();
-
-    if (!betaFeatures.importAndRetranscribe) {
-      toast.error('Beta feature disabled', {
-        description: 'Enable "Import Audio & Retranscribe" in Settings > Beta to use this feature.'
-      });
-      return;
-    }
-
     // Find the first audio file
     const audioFile = paths.find(p => {
       const ext = p.split('.').pop()?.toLowerCase();
@@ -386,11 +410,9 @@ export default function RootLayout({
     const cleanedUpRef = { current: false };
 
     const setupListeners = async () => {
-      // Drag enter/over - show overlay only if beta feature is enabled
+      // Dragging a file over the window shows the import overlay.
       const unlistenDragEnter = await listen('tauri://drag-enter', () => {
-        if (loadBetaFeatures().importAndRetranscribe) {
-          setShowDropOverlay(true);
-        }
+        setShowDropOverlay(true);
       });
       if (cleanedUpRef.current) {
         unlistenDragEnter();
@@ -452,18 +474,16 @@ export default function RootLayout({
     window.location.reload()
   }
 
-  // The compact recording bar lives in its own tiny frameless window and must
-  // render bare: mounting the app chrome here put the collapsed sidebar (the
-  // logo square) and the floating Ask-AI button inside a 520×76 overlay, and
-  // their opaque backgrounds squared off the window's rounded corners.
-  // Checked via location rather than usePathname so no hook order changes.
-  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/minibar')) {
+  // The compact bar is its own window. Render it bare on the server and the
+  // client so the full app chrome never mounts there and then unmounts.
+  if (isMinibar) {
     return (
-      <html lang="en" className="dark minibar-window">
+      <html lang="en" data-theme="midnight" className={`dark minibar-window ${inter.variable} ${inter.className}`} suppressHydrationWarning>
         <head>
+          <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
           <script dangerouslySetInnerHTML={{ __html: inlineChunkErrorHandler }} />
         </head>
-        <body className={`${sourceSans3.variable} font-sans antialiased bg-transparent`}>
+        <body className="font-sans antialiased bg-transparent">
           {children}
         </body>
       </html>
@@ -471,28 +491,26 @@ export default function RootLayout({
   }
 
   return (
-    <html lang="en" className="dark">
+    <html lang="en" data-theme="midnight" className={`dark ${inter.variable} ${inter.className}`} suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
+        <script dangerouslySetInnerHTML={{ __html: CHROME_BOOT_SCRIPT }} />
         <script dangerouslySetInnerHTML={{ __html: inlineChunkErrorHandler }} />
       </head>
-      <body className={`${sourceSans3.variable} font-sans antialiased`}>
-        {!startupResolved ? (
-          <div className="flex h-screen items-center justify-center bg-[var(--af-bg)]">
-            <div className="flex flex-col items-center gap-3">
-              <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
-              <span className="text-xs text-[var(--af-text-2)] font-medium">Starting Meetily…</span>
-            </div>
-          </div>
-        ) : startupError ? (
-          <div className="flex h-screen items-center justify-center bg-[var(--af-bg)] px-6">
-            <div className="max-w-md rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] p-6 text-center shadow-xl">
-              <h1 className="text-lg font-semibold text-[var(--af-text)]">Startup check failed</h1>
-              <p className="mt-2 text-sm text-[var(--af-text-2)]">{startupError}</p>
-              <Button className="mt-5" onClick={() => setStartupAttempt((value) => value + 1)}>
-                Retry
-              </Button>
-            </div>
-          </div>
+      <body className="font-sans antialiased">
+        {!startupResolved || startupError ? (
+          <main className="flex h-screen flex-col items-center justify-center gap-4 bg-[var(--af-bg)] text-af-text">
+            <p role="status">{startupError ?? 'Checking setup…'}</p>
+            {startupError && <button onClick={() => { setStartupError(null); setStartupAttempt(value => value + 1); }}>Retry</button>}
+          </main>
+        ) : pendingCrashReport ? (
+          <>
+            <div className="h-screen bg-[var(--af-bg)]" />
+            <CrashReportDialog
+              report={pendingCrashReport}
+              onResolved={() => setPendingCrashReport(null)}
+            />
+          </>
         ) : (
           <AnalyticsProvider>
             <RecordingStateProvider>
@@ -500,14 +518,16 @@ export default function RootLayout({
                 <ConfigProvider>
                   <OllamaDownloadProvider>
                     <OnboardingProvider>
+                      <WorkspaceProvider>
                       <OptionalModelDownloadsProvider>
                       <SidebarProvider>
                         <TooltipProvider>
+                          <AppTooltipGuard />
                           <RecordingPostProcessingProvider>
                             <UpdateCheckProvider onboardingCompleted={onboardingCompleted}>
-                              {onboardingCompleted && !showOnboarding && <GlobalSearchDialog />}
                               <ImportDialogProvider onOpen={handleOpenImportDialog}>
-                                {!showOnboarding && <StartupTranscriptRecovery />}
+                                {onboardingCompleted && !showOnboarding && <GlobalSearchDialog />}
+                                {onboardingCompleted && !showOnboarding && <RouteWarmup />}
                                 {/* Download progress toast provider - listens for background downloads */}
                                 <DownloadProgressToastProvider />
 
@@ -518,6 +538,8 @@ export default function RootLayout({
                                   <div className="flex min-h-0 min-w-0 h-screen overflow-hidden">
                                     <Sidebar />
                                     <MainContent>{children}</MainContent>
+                                    <RecordingPill />
+                                    <GroupEditorHost />
                                   </div>
                                 )}
                                 {/* Import audio overlay and dialog */}
@@ -540,6 +562,7 @@ export default function RootLayout({
                         </TooltipProvider>
                       </SidebarProvider>
                       </OptionalModelDownloadsProvider>
+                      </WorkspaceProvider>
                     </OnboardingProvider>
                   </OllamaDownloadProvider>
                 </ConfigProvider>
@@ -548,7 +571,23 @@ export default function RootLayout({
           </AnalyticsProvider>
         )}
 
-        <Toaster position="bottom-center" theme="dark" richColors closeButton />
+        {/* Minimize, maximize and close, drawn by the app on Windows. */}
+        <WindowControls />
+
+        <Toaster
+          position="top-center"
+          theme={themeInfo(appTheme).dark ? 'dark' : 'light'}
+          closeButton
+          offset="calc(var(--af-chrome-h) + 16px)"
+          icons={{ close: <X className="h-4 w-4" /> }}
+          toastOptions={{
+            classNames: {
+              toast: 'af-toast',
+              title: 'text-sm font-medium text-af-text',
+              description: 'text-xs text-af-text-2',
+            },
+          }}
+        />
       </body>
     </html>
   )

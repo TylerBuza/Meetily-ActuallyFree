@@ -3,14 +3,17 @@ import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
 
+/** Inline notice. Tinted by intent so it reads the same in every theme. */
 const alertVariants = cva(
-  "relative w-full rounded-lg border px-4 py-3 text-sm [&>svg+div]:translate-y-[-3px] [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:text-foreground [&>svg~*]:pl-7",
+  "relative w-full rounded-xl border px-4 py-3 text-sm [&>svg+div]:translate-y-[-2px] [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-[0.85rem] [&>svg]:size-4 [&>svg~*]:pl-7",
   {
     variants: {
       variant: {
-        default: "bg-background text-foreground",
-        destructive:
-          "border-destructive/50 text-destructive dark:border-destructive [&>svg]:text-destructive",
+        default: "border-af-border bg-af-panel-2 text-af-text [&>svg]:text-af-text-3",
+        info: "border-af-accent/30 bg-af-accent/[0.08] text-af-text [&>svg]:text-af-accent",
+        success: "border-af-success/30 bg-af-success/[0.08] text-af-text [&>svg]:text-af-success",
+        warning: "border-af-warning/30 bg-af-warning/[0.08] text-af-text [&>svg]:text-af-warning",
+        destructive: "border-af-danger/35 bg-af-danger/[0.08] text-af-text [&>svg]:text-af-danger",
       },
     },
     defaultVariants: {
@@ -38,7 +41,7 @@ const AlertTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <h5
     ref={ref}
-    className={cn("mb-1 font-medium leading-none tracking-tight", className)}
+    className={cn("mb-1 font-medium leading-snug", className)}
     {...props}
   />
 ))
@@ -50,7 +53,7 @@ const AlertDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <div
     ref={ref}
-    className={cn("text-sm [&_p]:leading-relaxed", className)}
+    className={cn("text-[13px] leading-relaxed text-af-text-2 [&_p]:leading-relaxed", className)}
     {...props}
   />
 ))

@@ -4,9 +4,7 @@ use crate::database::repositories::{
 use crate::summary::llm_client::LLMProvider;
 use crate::summary::language_detection::detect_summary_language;
 use crate::summary::metadata::read_detected_summary_language_from_metadata;
-use crate::summary::processor::{
-    extract_meeting_name_from_markdown, generate_meeting_summary, language_name_from_code,
-};
+use crate::summary::processor::{extract_meeting_name_from_markdown, generate_meeting_summary, language_name_from_code};
 use crate::summary::templates::{self, Template};
 use crate::ollama::metadata::ModelMetadataCache;
 use serde::{Deserialize, Serialize};
@@ -372,9 +370,14 @@ impl SummaryService {
             }
         };
 
-        // Validate and setup api_key, Flexible for Ollama, BuiltInAI, and CustomOpenAI
-        let api_key = if provider == LLMProvider::Ollama || provider == LLMProvider::BuiltInAI || provider == LLMProvider::CustomOpenAI {
+        // Validate and setup api_key, Flexible for Ollama, BuiltInAI, ClaudeCli, and CustomOpenAI
+        let api_key = if provider == LLMProvider::Ollama
+            || provider == LLMProvider::BuiltInAI
+            || provider == LLMProvider::ClaudeCli
+            || provider == LLMProvider::CustomOpenAI
+        {
             // These providers don't require API keys from the standard database column
+            // (ClaudeCli delegates authentication to the signed-in Claude Code CLI)
             String::new()
         } else {
             match SettingsRepository::get_api_key(&pool, &model_provider).await {
@@ -399,6 +402,20 @@ impl SummaryService {
                 Ok(None) => None,
                 Err(e) => {
                     info!("Failed to retrieve Ollama endpoint: {}, using default", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Get the explicit Claude Code CLI path if the user set one; None means
+        // the backend discovers the executable itself.
+        let claude_cli_path = if provider == LLMProvider::ClaudeCli {
+            match SettingsRepository::get_claude_cli_path(&pool).await {
+                Ok(path) => path,
+                Err(e) => {
+                    info!("Failed to read Claude Code CLI path: {}, using auto-discovery", e);
                     None
                 }
             }
@@ -602,6 +619,7 @@ impl SummaryService {
             custom_openai_temperature,
             custom_openai_top_p,
             app_data_dir.as_ref(),
+            claude_cli_path.as_deref(),
             Some(&cancellation_token),
             summary_language.as_deref(),
             detected_summary_language.as_deref(),
@@ -656,36 +674,19 @@ impl SummaryService {
                         meeting_id
                     ),
                     Ok(true) => {
+                        // Commit the generated name before completion is emitted:
+                        // the UI refetches both the meeting and sidebar on that event.
+                        if let Some(title) = extract_meeting_name_from_markdown(&final_markdown) {
+                            if let Err(error) = MeetingsRepository::update_generated_meeting_title(
+                                &pool, &meeting_id, &title,
+                            ).await {
+                                error!("Summary saved, but generated title update failed for {}: {}", meeting_id, error);
+                            }
+                        }
                         info!(
                             "Summary saved successfully for meeting_id: {}",
                             meeting_id
                         );
-                        if let Some(name) = extract_meeting_name_from_markdown(&final_markdown)
-                            .map(|name| name.trim().to_string())
-                            .filter(|name| !name.is_empty())
-                        {
-                            info!("Extracted meeting name from summary: '{}'", name);
-                            match MeetingsRepository::update_generated_meeting_title(
-                                &pool,
-                                &meeting_id,
-                                &name,
-                            )
-                            .await
-                            {
-                                Ok(true) => info!(
-                                    "Successfully updated generated meeting name for {}",
-                                    meeting_id
-                                ),
-                                Ok(false) => info!(
-                                    "Preserved user-owned meeting name for {}",
-                                    meeting_id
-                                ),
-                                Err(e) => error!(
-                                    "Failed to update meeting name for {}: {}",
-                                    meeting_id, e
-                                ),
-                            }
-                        }
                         emit_progress("completed", "Summary ready", Some(result_json));
                     }
                 }
@@ -816,8 +817,8 @@ mod tests {
 
     #[test]
     fn test_strip_title_if_present_mid_document_h1_preserved() {
-        // H1 after body content must NOT be stripped — guards the asymmetry where
-        // extract_meeting_name_from_markdown scans every line for "# ".
+        // Only a leading H1 is the template's title line; one after body
+        // content is part of the notes.
         let input = "Some paragraph\n\n# H1 on line 3\n## Section\nbody";
         assert_eq!(strip_title_if_present(input), input);
     }

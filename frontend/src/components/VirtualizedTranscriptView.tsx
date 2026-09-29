@@ -1,598 +1,474 @@
 'use client';
 
 /**
- * The transcript renderer actually used by the app — both during live recording
- * and on the meeting-details screen. (`components/TranscriptView.tsx` is dead
- * code; edit this file instead.)
+ * The transcript renderer for both the live recorder and the meeting page.
  *
- * Rows are virtualized with @tanstack/react-virtual so multi-hour meetings stay
- * responsive: only visible segments are mounted.
+ * Rows are virtualized with @tanstack/react-virtual so multi-hour meetings
+ * stay responsive: only visible turns are mounted. Consecutive lines from one
+ * speaker merge into a single turn (live VAD emits many short fragments).
  *
- * ## Speaker labels
- * Each segment may carry a `speaker` string, rendered above its text and given
- * a stable colour by `speakerColor()`. Two sources produce it:
- *   - live recording  → streaming diarization ("Speaker 1/2/3"), see
- *     `src-tauri/src/diarization/online.rs`
- *   - after the fact  → the Speakers action re-runs offline diarization and
- *     persists labels to the DB `transcripts.speaker` column
+ * On the meeting page the view is linked to playback: the turn being played
+ * is highlighted (and followed if asked), timestamps seek the audio, speaker
+ * names open a person card, and a search hit can be flashed into view.
  *
- * ⚠️ The label only appears if every hop preserves it. Three separate
- * transcript→segment converters exist and each must copy `speaker`:
- *   1. `app/_components/TranscriptPanel.tsx`        (live)
- *   2. `components/MeetingDetails/TranscriptPanel.tsx` (non-paginated)
- *   3. `hooks/usePaginatedTranscripts.ts`            (paginated)
- * Dropping it in any one of them silently hides speakers on that screen.
+ * ⚠️ Speaker labels only appear if every converter copies `speaker`:
+ *   1. `app/_components/TranscriptPanel.tsx`            (live)
+ *   2. `components/MeetingDetails/TranscriptPanel.tsx`  (non-paginated)
+ *   3. `hooks/usePaginatedTranscripts.ts`               (paginated)
  */
 
-import { useCallback, useRef, useReducer, startTransition, useEffect, useState, useMemo, memo } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { useAutoScroll } from "@/hooks/useAutoScroll";
-import { useTranscriptStreaming } from "@/hooks/useTranscriptStreaming";
-import { ConfidenceIndicator } from "./ConfidenceIndicator";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
-import { motion } from "framer-motion";
-import { TranscriptSegmentData } from "@/types";
+import { memo, startTransition, useEffect, useMemo, useReducer, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { motion } from 'framer-motion';
+import { GitMerge, Mic } from 'lucide-react';
+import { useAutoScroll } from '@/hooks/useAutoScroll';
+import { useTranscriptStreaming } from '@/hooks/useTranscriptStreaming';
+import { useUserName } from '@/hooks/useUserName';
+import { TranscriptSegmentData } from '@/types';
+import { Spinner } from '@/components/ui/spinner';
+import { cn } from '@/lib/utils';
 import { cleanTranscriptText } from '@/lib/labs';
-import { mergeInterleavedSpeakerTurns } from '@/lib/nearLiveCaptions';
-import { GitMerge } from "lucide-react";
-import {
-  isUserSpeaker,
-  displaySpeaker,
-  speakerKey,
-  speakerDot,
-  speakerColor,
-  speakerColorIndexMap,
-} from "@/utils/speakerUtils";
+import { displaySpeaker, isUserSpeaker, speakerColor, speakerColorIndexMap, speakerColorValue, speakerDot, speakerKey } from '@/utils/speakerUtils';
+
+/**
+ * How line text is shown. `tidy` drops filler words (the default); with Labs
+ * clean transcript on, the meeting page switches between `clean` (fillers
+ * and stutters dropped) and `verbatim` (every word). Saved text never changes.
+ */
+export type TranscriptTextMode = 'tidy' | 'clean' | 'verbatim';
 
 export interface VirtualizedTranscriptViewProps {
-    /** Transcript segments to display */
-    segments: TranscriptSegmentData[];
-    /** Whether recording is in progress */
-    isRecording?: boolean;
-    /** Whether recording is paused */
-    isPaused?: boolean;
-    /** Whether processing/finalizing transcription */
-    isProcessing?: boolean;
-    /** Whether stopping */
-    isStopping?: boolean;
-    /** Enable streaming effect for latest segment */
-    enableStreaming?: boolean;
-    /** Show confidence indicators */
-    showConfidence?: boolean;
-    /** Completely disable auto-scroll behavior (for meeting details page) */
-    disableAutoScroll?: boolean;
+  segments: TranscriptSegmentData[];
+  isRecording?: boolean;
+  isPaused?: boolean;
+  isProcessing?: boolean;
+  isStopping?: boolean;
+  /** Typewriter effect for the newest live line. */
+  enableStreaming?: boolean;
+  showConfidence?: boolean;
+  /** Never auto-scroll (the meeting page scrolls on the user's terms). */
+  disableAutoScroll?: boolean;
 
-    // Pagination props (infinite scroll)
-    hasMore?: boolean;
-    isLoadingMore?: boolean;
-    totalCount?: number;
-    loadedCount?: number;
-    onLoadMore?: () => void;
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  totalCount?: number;
+  loadedCount?: number;
+  onLoadMore?: () => void;
 
-    /**
-     * Called when a speaker label is clicked for renaming.
-     */
-    onRenameSpeaker?: (speaker: string) => void;
-    /**
-     * Called when merge action is triggered on a speaker.
-     */
-    onMergeSpeaker?: (speaker: string) => void;
-    onSeekAudio?: (seconds: number) => void;
-    activeAudioTime?: number;
-    cleanView?: boolean;
-    nearLiveCaptions?: boolean;
+  /** Clicking a speaker name. Receives the element to anchor a card on. */
+  onSpeakerClick?: (speaker: string, segmentId: string, anchor: HTMLElement) => void;
+  /** Fallbacks used when `onSpeakerClick` is not given. */
+  onRenameSpeaker?: (speaker: string, segmentId: string) => void;
+  onMergeSpeaker?: (speaker: string) => void;
+
+  /** Playback position in seconds; the matching turn is highlighted. */
+  playbackTime?: number | null;
+  /** Keep the playing turn in view. */
+  followPlayback?: boolean;
+  /** Timestamp clicked. */
+  onSeek?: (seconds: number) => void;
+  /** Scroll to and briefly flash the turn containing this line. */
+  highlightSegmentId?: string | null;
+  /** Empty state for the idle recorder (it shows its own home content). */
+  emptyState?: React.ReactNode;
+  /** Space kept clear under the last line, e.g. for a floating control bar (px). */
+  bottomInset?: number;
+  textMode?: TranscriptTextMode;
+  /** Colour slot per speaker key (speakerColorIndexMap). Worked out from the lines when not given. */
+  colorIndices?: Map<string, number>;
 }
 
-// Threshold for enabling virtualization (below this, use simple rendering)
 const VIRTUALIZATION_THRESHOLD = 10;
 
-// Helper function to format seconds as recording-relative time [MM:SS]
-function formatRecordingTime(seconds: number | undefined): string {
-    if (seconds === undefined) return '--:--:--';
-
-    const totalSeconds = Math.floor(seconds);
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const secs = totalSeconds % 60;
-
-    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+interface Turn extends TranscriptSegmentData {
+  memberIds: string[];
 }
 
-// Memoized transcript segment component
-/**
- * Turn a raw speaker label into what the user should read.
- *
- * Diarization emits the bare marker "You" for whichever voice arrives on the
- * local microphone. The display name lives in settings (not in Rust) so it can
- * be changed without restarting, which is why substitution happens here.
- */
+function clock(seconds: number | undefined): string {
+  if (seconds === undefined || !Number.isFinite(seconds)) return '--:--';
+  const total = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
 
+const FILLERS = /\b(?:uh|um|er|ah|hmm|hm|eh)\b[,\s]*/gi;
 
-/**
- * Collapse back-to-back lines from the same speaker into one bubble when the
- * gap is small. Live VAD often emits many short fragments for one turn.
- */
-function mergeAdjacentSameSpeaker(
-    segments: TranscriptSegmentData[],
-    maxGapSecs = 2.5,
-): TranscriptSegmentData[] {
-    if (segments.length <= 1) return segments;
-    const out: TranscriptSegmentData[] = [];
-    for (const seg of segments) {
-        const last = out[out.length - 1];
-        const lastEnd = last?.endTime ?? last?.timestamp ?? 0;
-        const gap = seg.timestamp - lastEnd;
-        if (
-            last &&
-            speakerKey(last.speaker) === speakerKey(seg.speaker) &&
-            gap >= 0 &&
-            gap <= maxGapSecs
-        ) {
-            const joined = `${last.text.trim()} ${seg.text.trim()}`.replace(/\s+/g, ' ').trim();
-            last.text = joined;
-            last.endTime = seg.endTime ?? seg.timestamp;
-            if (seg.confidence != null && last.confidence != null) {
-                last.confidence = Math.min(last.confidence, seg.confidence);
-            } else if (seg.confidence != null) {
-                last.confidence = seg.confidence;
-            }
-        } else {
-            out.push({ ...seg });
-        }
+function cleanFillers(text: string): string {
+  return text.replace(FILLERS, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function shownText(text: string, mode: TranscriptTextMode): string {
+  if (mode === 'verbatim') return text;
+  return mode === 'clean' ? cleanTranscriptText(text) : cleanFillers(text);
+}
+
+/** One turn per speaker run, joining fragments less than 2.5s apart. */
+function mergeTurns(segments: TranscriptSegmentData[], maxGapSecs = 2.5): Turn[] {
+  const out: Turn[] = [];
+  for (const segment of segments) {
+    const last = out[out.length - 1];
+    const lastEnd = last?.endTime ?? last?.timestamp ?? 0;
+    const gap = segment.timestamp - lastEnd;
+    if (last && speakerKey(last.speaker) === speakerKey(segment.speaker) && gap >= 0 && gap <= maxGapSecs) {
+      last.text = `${last.text.trim()} ${segment.text.trim()}`.replace(/\s+/g, ' ').trim();
+      last.endTime = segment.endTime ?? segment.timestamp;
+      last.memberIds.push(segment.id);
+      if (segment.confidence != null) last.confidence = Math.min(last.confidence ?? 1, segment.confidence);
+    } else {
+      out.push({ ...segment, memberIds: [segment.id] });
     }
-    return out;
+  }
+  return out;
 }
 
+function activeTurnIndex(turns: Turn[], time: number | null | undefined): number {
+  if (time == null || turns.length === 0) return -1;
+  let lo = 0;
+  let hi = turns.length - 1;
+  let found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (turns[mid].timestamp <= time + 0.05) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (found === -1) return -1;
+  const turn = turns[found];
+  const end = turn.endTime ?? turn.timestamp;
+  // Between turns, keep the last one lit until the next starts.
+  return time <= end + 4 || found === turns.length - 1 || turns[found + 1].timestamp > time ? found : -1;
+}
 
-
-const TranscriptSegment = memo(function TranscriptSegment({
-    id,
-    timestamp,
-    endTime,
-    text,
-    confidence,
-    isStreaming,
-    showConfidence,
-    speaker,
-    colorIndex,
-    userName,
-    onRenameSpeaker,
-    onMergeSpeaker,
-    onSeekAudio,
-    activeAudioTime,
-    cleanView = false,
-    provisional = false,
+const TurnRow = memo(function TurnRow({
+  turn,
+  text,
+  textMode,
+  colorIndex,
+  isStreaming,
+  userName,
+  active,
+  flash,
+  onSpeakerClick,
+  onRenameSpeaker,
+  onMergeSpeaker,
+  onSeek,
 }: {
-    id: string;
-    timestamp: number;
-    endTime?: number;
-    text: string;
-    confidence?: number;
-    isStreaming: boolean;
-    showConfidence: boolean;
-    speaker?: string;
-    colorIndex?: number;
-    userName: string;
-    /** When provided, speaker labels become clickable for renaming. */
-    onRenameSpeaker?: (speaker: string) => void;
-    /** When provided, speaker can be merged into another speaker. */
-    onMergeSpeaker?: (speaker: string) => void;
-    onSeekAudio?: (seconds: number) => void;
-    activeAudioTime?: number;
-    cleanView?: boolean;
-    provisional?: boolean;
+  turn: Turn;
+  text: string;
+  textMode: TranscriptTextMode;
+  /** The speaker's colour slot in this meeting, kept through renames. */
+  colorIndex?: number;
+  isStreaming: boolean;
+  userName: string;
+  active: boolean;
+  flash: boolean;
+  onSpeakerClick?: VirtualizedTranscriptViewProps['onSpeakerClick'];
+  onRenameSpeaker?: VirtualizedTranscriptViewProps['onRenameSpeaker'];
+  onMergeSpeaker?: VirtualizedTranscriptViewProps['onMergeSpeaker'];
+  onSeek?: VirtualizedTranscriptViewProps['onSeek'];
 }) {
-    const displayText = cleanView ? cleanTranscriptText(text) : text;
+  const speaker = turn.speaker;
+  const isYou = isUserSpeaker(speaker);
+  const label = speaker ? displaySpeaker(speaker, userName) : '';
+  const shown = shownText(text, textMode) || (text.trim() === '' ? '[Silence]' : text);
+  const clickable = !!speaker && (!!onSpeakerClick || !!onRenameSpeaker);
 
-    // Split conversation: local user ("You" + their name) on the right in blue,
-    // everyone else on the left in purple/hashed colors. Timestamps stay shared
-    // so turns still line up chronologically.
-    const isYou = isUserSpeaker(speaker);
-    const label = speaker ? displaySpeaker(speaker, userName) : '';
-
-    return (
-        <div
-            id={`segment-${id}`}
-            className={`relative flex pb-4 ${isYou ? 'justify-end pl-10' : 'justify-start pr-10'} ${activeAudioTime !== undefined && activeAudioTime >= timestamp && activeAudioTime < (endTime ?? timestamp + 1) ? 'rounded-lg bg-blue-500/10' : ''}`}
-        >
-            <div className={`max-w-[85%] min-w-0 flex flex-col gap-1 ${isYou ? 'items-end' : 'items-start'}`}>
-                <div className={`flex items-baseline gap-2 ${isYou ? 'flex-row-reverse' : 'flex-row'}`}>
-                    <span
-                        aria-hidden
-                        className={`h-2 w-2 rounded-full shrink-0 ${speakerDot(speaker, colorIndex)}`}
-                    />
-                    {speaker && (
-                        <div className="flex items-center gap-1.5 group/speaker">
-                            {onRenameSpeaker ? (
-                                <button
-                                    type="button"
-                                    onClick={() => onRenameSpeaker(speaker)}
-                                    title={`Click to rename "${speaker}"`}
-                                    className={`text-xs font-semibold ${speakerColor(speaker, colorIndex)} rounded hover:underline inline-flex items-center gap-1`}
-                                >
-                                    <span>{label}</span>
-                                </button>
-                            ) : (
-                                <span className={`text-xs font-semibold ${speakerColor(speaker, colorIndex)}`}>
-                                    {label}
-                                </span>
-                            )}
-                            {onMergeSpeaker && (
-                                <button
-                                    type="button"
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        onMergeSpeaker(speaker);
-                                    }}
-                                    title={`Merge "${speaker}" into another speaker`}
-                                    className="opacity-0 group-hover/speaker:opacity-100 p-0.5 rounded text-[var(--af-text-3,#9ca3af)] hover:text-blue-600 hover:bg-blue-500/10 transition-opacity"
-                                >
-                                    <GitMerge size={12} />
-                                </button>
-                            )}
-                        </div>
-                    )}
-                    {provisional && <span className="text-[10px] text-[var(--af-text-3)]">Updating</span>}
-                    <Tooltip>
-                        <TooltipTrigger>
-                            {onSeekAudio ? <button type="button" onClick={() => onSeekAudio(timestamp)} title="Play from this turn" className="text-[11px] text-[var(--af-accent)] tabular-nums hover:underline">{formatRecordingTime(timestamp)}</button> : <span className="text-[11px] text-[var(--af-text-3)] tabular-nums">{formatRecordingTime(timestamp)}</span>}
-                        </TooltipTrigger>
-                        <TooltipContent>
-                            {confidence !== undefined && showConfidence && (
-                                <ConfidenceIndicator confidence={confidence} showIndicator={showConfidence} />
-                            )}
-                        </TooltipContent>
-                    </Tooltip>
-                </div>
-
-                <div
-                    className={
-                        isYou
-                            ? `rounded-2xl rounded-tr-sm bg-blue-500/15 border border-blue-500/25 px-3.5 py-2 ${provisional ? 'border-dashed' : ''}`
-                            : `rounded-2xl rounded-tl-sm bg-[var(--af-panel-2)] border border-[var(--af-border)] px-3.5 py-2 ${provisional ? 'border-dashed' : ''}`
-                    }
+  return (
+    <div id={`segment-${turn.id}`} className={cn('flex pb-3', isYou ? 'justify-end pl-8' : 'justify-start pr-8')}>
+      <div className={cn('flex min-w-0 max-w-[92%] flex-col gap-1', isYou ? 'items-end' : 'items-start')}>
+        <div className={cn('flex items-center gap-2', isYou && 'flex-row-reverse')}>
+          <span aria-hidden className={cn('h-2 w-2 shrink-0 rounded-full', speakerDot(speaker, colorIndex))} />
+          {speaker && (
+            <span className="group/speaker flex items-center gap-1">
+              {clickable ? (
+                <button
+                  type="button"
+                  onClick={(event) =>
+                    onSpeakerClick ? onSpeakerClick(speaker, turn.id, event.currentTarget) : onRenameSpeaker?.(speaker, turn.id)
+                  }
+                  className={cn(
+                    'rounded px-0.5 text-xs font-semibold transition-colors hover:bg-af-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60',
+                    speakerColor(speaker, colorIndex),
+                  )}
                 >
-                    <p
-                        className={`text-sm leading-relaxed ${
-                            isYou ? 'text-[var(--af-text)]' : 'text-[var(--af-text-2)]'
-                        } ${isStreaming ? 'opacity-80' : ''}`}
-                    >
-                        {displayText}
-                    </p>
-                </div>
-            </div>
+                  {label}
+                </button>
+              ) : (
+                <span className={cn('text-xs font-semibold', speakerColor(speaker, colorIndex))}>{label}</span>
+              )}
+              {!onSpeakerClick && onMergeSpeaker && (
+                <button
+                  type="button"
+                  onClick={() => onMergeSpeaker(speaker)}
+                  aria-label={`Merge ${label} into another speaker`}
+                  className="rounded p-0.5 text-af-text-4 opacity-0 transition-opacity hover:text-af-accent group-hover/speaker:opacity-100"
+                >
+                  <GitMerge size={12} />
+                </button>
+              )}
+            </span>
+          )}
+          {onSeek ? (
+            <button
+              type="button"
+              onClick={() => onSeek(turn.timestamp)}
+              className="rounded px-1 text-[11px] tabular-nums text-af-text-4 transition-colors hover:bg-af-hover hover:text-af-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60"
+              aria-label={`Play from ${clock(turn.timestamp)}`}
+            >
+              {clock(turn.timestamp)}
+            </button>
+          ) : (
+            <span className="text-[11px] tabular-nums text-af-text-4">{clock(turn.timestamp)}</span>
+          )}
         </div>
-    );
+        <div
+          className={cn(
+            'rounded-2xl border px-3.5 py-2 transition-[box-shadow,border-color,background-color] duration-200',
+            // Others' bubbles carry a faint wash of their colour (globals.css).
+            isYou ? 'rounded-tr-md border-af-accent/25 bg-af-accent/[0.12]' : 'af-speaker-bubble rounded-tl-md',
+            active && 'border-af-accent/60 shadow-[0_0_0_3px_rgb(var(--af-accent-rgb)/0.14)]',
+            flash && 'animate-af-flash',
+          )}
+          style={isYou ? undefined : ({ '--chip': speakerColorValue(speaker, colorIndex) } as React.CSSProperties)}
+        >
+          <p className={cn('text-sm leading-relaxed text-af-text', isStreaming && 'opacity-80')}>{shown}</p>
+        </div>
+      </div>
+    </div>
+  );
 });
 
 export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps> = ({
-    segments,
-    isRecording = false,
-    isPaused = false,
-    isProcessing = false,
-    isStopping = false,
-    enableStreaming = false,
-    showConfidence = true,
-    disableAutoScroll = false,
-    hasMore = false,
-    isLoadingMore = false,
-    totalCount = 0,
-    loadedCount = 0,
-    onLoadMore,
-    onRenameSpeaker,
-    onMergeSpeaker,
-    onSeekAudio,
-    activeAudioTime,
-    cleanView = false,
-    nearLiveCaptions = false,
+  segments,
+  isRecording = false,
+  isPaused = false,
+  isProcessing = false,
+  isStopping = false,
+  enableStreaming = false,
+  disableAutoScroll = false,
+  hasMore = false,
+  isLoadingMore = false,
+  totalCount = 0,
+  loadedCount = 0,
+  onLoadMore,
+  onSpeakerClick,
+  onRenameSpeaker,
+  onMergeSpeaker,
+  playbackTime,
+  followPlayback = false,
+  onSeek,
+  highlightSegmentId,
+  emptyState,
+  bottomInset = 0,
+  textMode = 'tidy',
+  colorIndices: givenColorIndices,
 }) => {
-    // Greet the user by name when they've set one (Settings → General → Your
-    // Name). Read on mount rather than at module scope so it picks up changes
-    // without a reload, and guards `window` for SSR.
-    const [userName, setUserName] = useState<string>('');
-    useEffect(() => {
-        if (typeof window !== 'undefined') {
-            setUserName(localStorage.getItem('meetily_user_name')?.trim() || '');
-        }
-    }, []);
+  const userName = useUserName();
+  const turns = useMemo(() => mergeTurns(segments), [segments]);
+  // One colour per speaker in first-spoken order, so a renamed speaker keeps theirs.
+  const ownColorIndices = useMemo(
+    () => speakerColorIndexMap(turns.map((turn) => turn.speaker ?? '').filter(Boolean)),
+    [turns],
+  );
+  const colorIndices = givenColorIndices ?? ownColorIndices;
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const loadMoreTriggerRef = useRef<HTMLDivElement>(null);
+  const [, rerender] = useReducer((x: number) => x + 1, 0);
 
-    // One bubble per speaking turn instead of dozens of VAD fragments.
-    const displaySegments = useMemo(
-        () => onSeekAudio ? segments : nearLiveCaptions && isRecording
-            ? mergeInterleavedSpeakerTurns(segments)
-            : mergeAdjacentSameSpeaker(segments),
-        [segments, onSeekAudio, nearLiveCaptions, isRecording],
+  const virtualizer = useVirtualizer({
+    count: turns.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 64,
+    // Heights are cached per turn, not per position. When a relabel (a
+    // rename, or diarization after the call) merges two turns, the turns
+    // after it move up a slot; keyed by position they kept the old slot's
+    // height and overlapped the bubble above.
+    getItemKey: (index) => turns[index]?.id ?? index,
+    overscan: 10,
+    onChange: () => startTransition(() => rerender()),
+  });
+
+  useAutoScroll({
+    scrollRef,
+    segments: turns,
+    isRecording,
+    isPaused,
+    virtualizer,
+    virtualizationThreshold: VIRTUALIZATION_THRESHOLD,
+    disableAutoScroll,
+  });
+
+  const { streamingSegmentId, getDisplayText } = useTranscriptStreaming(turns, isRecording, enableStreaming);
+  const useVirtualization = turns.length >= VIRTUALIZATION_THRESHOLD;
+  const activeIndex = useMemo(() => activeTurnIndex(turns, playbackTime), [turns, playbackTime]);
+  const flashIndex = useMemo(
+    () => (highlightSegmentId ? turns.findIndex((turn) => turn.memberIds.includes(highlightSegmentId)) : -1),
+    [turns, highlightSegmentId],
+  );
+
+  const scrollToTurn = (index: number) => {
+    if (index < 0) return;
+    if (useVirtualization) {
+      virtualizer.scrollToIndex(index, { align: 'center' });
+    } else {
+      document.getElementById(`segment-${turns[index].id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  };
+
+  // Follow playback.
+  const lastFollowed = useRef(-1);
+  useEffect(() => {
+    if (!followPlayback || activeIndex < 0 || activeIndex === lastFollowed.current) return;
+    lastFollowed.current = activeIndex;
+    scrollToTurn(activeIndex);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followPlayback, activeIndex]);
+
+  // Deep link: bring the matching turn into view once it is loaded.
+  const flashedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!highlightSegmentId || flashIndex < 0 || flashedFor.current === highlightSegmentId) return;
+    flashedFor.current = highlightSegmentId;
+    requestAnimationFrame(() => scrollToTurn(flashIndex));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightSegmentId, flashIndex]);
+
+  // Infinite scroll.
+  useEffect(() => {
+    if (!onLoadMore || !hasMore || isLoadingMore || isRecording || turns.length === 0) return;
+    const trigger = loadMoreTriggerRef.current;
+    if (!trigger) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !isLoadingMore) onLoadMore();
+      },
+      { root: null, rootMargin: '100px', threshold: 0 },
     );
-    const colorIndices = useMemo(
-        () => speakerColorIndexMap(segments.map(segment => segment.speaker).filter((speaker): speaker is string => !!speaker)),
-        [segments],
-    );
+    observer.observe(trigger);
+    return () => observer.disconnect();
+  }, [hasMore, isLoadingMore, onLoadMore, isRecording, turns.length]);
 
-    // Create scroll ref first - shared between virtualizer and auto-scroll hook
-    const scrollRef = useRef<HTMLDivElement>(null);
-    // Ref for infinite scroll trigger element
-    const loadMoreTriggerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!onLoadMore || !hasMore || isLoadingMore || isRecording) return;
+    const element = scrollRef.current;
+    if (!element) return;
+    let ticking = false;
+    const onScroll = () => {
+      if (ticking || isLoadingMore || !hasMore) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        const { scrollTop, scrollHeight, clientHeight } = element;
+        if (scrollHeight - scrollTop - clientHeight < 200 && hasMore && !isLoadingMore) onLoadMore();
+        ticking = false;
+      });
+    };
+    element.addEventListener('scroll', onScroll, { passive: true });
+    return () => element.removeEventListener('scroll', onScroll);
+  }, [onLoadMore, hasMore, isLoadingMore, isRecording]);
 
-    // Force re-render without flushSync (avoids React warning)
-    const [, rerender] = useReducer((x: number) => x + 1, 0);
+  const row = (turn: Turn, index: number) => (
+    <TurnRow
+      turn={turn}
+      text={getDisplayText(turn)}
+      textMode={textMode}
+      colorIndex={turn.speaker ? colorIndices.get(speakerKey(turn.speaker)) : undefined}
+      isStreaming={streamingSegmentId === turn.id}
+      userName={userName}
+      active={index === activeIndex}
+      flash={index === flashIndex}
+      onSpeakerClick={onSpeakerClick}
+      onRenameSpeaker={onRenameSpeaker}
+      onMergeSpeaker={onMergeSpeaker}
+      onSeek={onSeek}
+    />
+  );
 
-    // Setup virtualizer for efficient rendering of large lists
-    const virtualizer = useVirtualizer({
-        count: displaySegments.length,
-        getScrollElement: () => scrollRef.current,
-        estimateSize: () => 60, // Estimated height per segment
-        overscan: 10, // Render extra items above/below viewport
-        onChange: () => {
-            startTransition(() => {
-                rerender();
-            });
-        },
-    });
-
-    // Custom hook for auto-scrolling (supports both virtualized and non-virtualized)
-    useAutoScroll({
-        scrollRef,
-        segments: displaySegments,
-        isRecording,
-        isPaused,
-        virtualizer,
-        virtualizationThreshold: VIRTUALIZATION_THRESHOLD,
-        disableAutoScroll,
-    });
-
-    // Streaming text effect hook (typewriter animation for new transcripts)
-    const { streamingSegmentId, getDisplayText } = useTranscriptStreaming(
-        displaySegments,
-        isRecording,
-        enableStreaming
-    );
-
-    // Infinite scroll: IntersectionObserver to trigger loading more
-    useEffect(() => {
-        if (!onLoadMore || !hasMore || isLoadingMore || isRecording || displaySegments.length === 0) {
-            return;
-        }
-
-        const triggerElement = loadMoreTriggerRef.current;
-        if (!triggerElement) return;
-
-        const observer = new IntersectionObserver(
-            (entries) => {
-                if (entries[0].isIntersecting && hasMore && !isLoadingMore) {
-                    onLoadMore();
-                }
-            },
-            {
-                root: null,
-                rootMargin: '100px',
-                threshold: 0,
-            }
-        );
-
-        observer.observe(triggerElement);
-
-        return () => observer.disconnect();
-    }, [hasMore, isLoadingMore, onLoadMore, isRecording, displaySegments.length]);
-
-    // Scroll-based fallback for fast scrolling
-    useEffect(() => {
-        if (!onLoadMore || !hasMore || isLoadingMore || isRecording) return;
-
-        const scrollElement = scrollRef.current;
-        if (!scrollElement) return;
-
-        let ticking = false;
-
-        const handleScroll = () => {
-            if (ticking || isLoadingMore || !hasMore) return;
-
-            ticking = true;
-            requestAnimationFrame(() => {
-                const { scrollTop, scrollHeight, clientHeight } = scrollElement;
-                const scrollBottom = scrollHeight - scrollTop - clientHeight;
-
-                // Trigger load when within 200px of bottom
-                if (scrollBottom < 200 && hasMore && !isLoadingMore) {
-                    onLoadMore();
-                }
-                ticking = false;
-            });
-        };
-
-        scrollElement.addEventListener('scroll', handleScroll, { passive: true });
-        return () => scrollElement.removeEventListener('scroll', handleScroll);
-    }, [onLoadMore, hasMore, isLoadingMore, isRecording]);
-
-    // Use simple rendering for small lists, virtualization for large lists
-    const useVirtualization = displaySegments.length >= VIRTUALIZATION_THRESHOLD;
-
-    return (
-        <div
-            ref={scrollRef}
-            className="flex flex-col h-full overflow-y-auto px-4 py-2"
-            style={isRecording ? { scrollPaddingBottom: '10rem' } : undefined}
-        >
-            {/* Content */}
-            <div className={isRecording ? 'pt-2 pb-4' : ''}>
-            {displaySegments.length === 0 ? (
-                // Empty state
-                <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="text-center text-gray-500 mt-8"
-                >
-                    {isRecording ? (
-                        <>
-                            <div className="flex items-center justify-center mb-3">
-                                <div className={`w-3 h-3 rounded-full ${isPaused ? 'bg-orange-500' : 'bg-blue-500 animate-pulse'}`}></div>
-                            </div>
-                            <p className="text-sm text-gray-600">
-                                {isPaused ? 'Recording paused' : 'Listening for speech...'}
-                            </p>
-                            <p className="text-xs mt-1 text-gray-400">
-                                {isPaused ? 'Click resume to continue recording' : 'Speak to see live transcription'}
-                            </p>
-                        </>
-                    ) : (
-                        <>
-                            <p className="text-lg font-semibold">
-                                {userName ? `Welcome back, ${userName}!` : 'Welcome to Meetily · Actually Free'}
-                            </p>
-                            <p className="text-xs mt-1">Start recording to see live transcription</p>
-                        </>
-                    )}
-                </motion.div>
-            ) : useVirtualization ? (
-                // Virtualized rendering for large lists
-                <>
-                    <div
-                        style={{
-                            height: virtualizer.getTotalSize(),
-                            width: "100%",
-                            position: "relative",
-                        }}
-                    >
-                        {virtualizer.getVirtualItems().map((virtualRow) => {
-                            const segment = displaySegments[virtualRow.index];
-                            const isStreaming = streamingSegmentId === segment.id;
-
-                            return (
-                                <div
-                                    key={segment.id}
-                                    data-index={virtualRow.index}
-                                    ref={virtualizer.measureElement}
-                                    style={{
-                                        position: "absolute",
-                                        top: 0,
-                                        left: 0,
-                                        width: "100%",
-                                        transform: `translateY(${virtualRow.start}px)`,
-                                    }}
-                                >
-                                    <TranscriptSegment
-                                        id={segment.id}
-                                        timestamp={segment.timestamp}
-                                        endTime={segment.endTime}
-                                        text={getDisplayText(segment)}
-                                        onSeekAudio={onSeekAudio}
-                                        activeAudioTime={activeAudioTime}
-                                        cleanView={cleanView}
-                                        provisional={segment.provisional}
-                                        confidence={segment.confidence}
-                                        isStreaming={isStreaming}
-                                        showConfidence={showConfidence}
-                                        speaker={segment.speaker}
-                                        colorIndex={colorIndices.get(speakerKey(segment.speaker))}
-                                        userName={userName}
-                                        onRenameSpeaker={segment.provisional ? undefined : onRenameSpeaker}
-                                        onMergeSpeaker={segment.provisional ? undefined : onMergeSpeaker}
-                                    />
-                                </div>
-                            );
-                        })}
-                    </div>
-
-                    {/* Infinite scroll trigger and loading indicator */}
-                    {(hasMore || isLoadingMore) && !isRecording && displaySegments.length > 0 && (
-                        <div ref={loadMoreTriggerRef} className="flex justify-center items-center py-4 mt-2">
-                            {isLoadingMore ? (
-                                <div className="flex items-center gap-2 text-gray-500">
-                                    <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
-                                    <span className="text-sm">Loading more...</span>
-                                </div>
-                            ) : hasMore && totalCount > 0 ? (
-                                <span className="text-sm text-gray-400">
-                                    Showing {loadedCount} of {totalCount} segments
-                                </span>
-                            ) : null}
-                        </div>
-                    )}
-
-                    {/* Status line — always reserve space while recording so pause
-                        doesn't collapse layout and shove bubbles under the bar. */}
-                    {!isStopping && isRecording && !isProcessing && displaySegments.length > 0 && (
-                        <div className="flex items-center gap-2 mt-4 mb-2 min-h-[1.25rem] text-gray-500">
-                            {!isPaused && (
-                                <>
-                                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-                                    <span className="text-sm">Listening…</span>
-                                </>
-                            )}
-                            {isPaused && (
-                                <span className="text-sm text-orange-400/80">Paused</span>
-                            )}
-                        </div>
-                    )}
-                </>
-            ) : (
-                // Simple rendering for small lists (better animations)
-                <>
-                    <div className="space-y-1">
-                        {displaySegments.map((segment) => {
-                            const isStreaming = streamingSegmentId === segment.id;
-
-                            return (
-                                <motion.div
-                                    key={segment.id}
-                                    initial={{ opacity: 0, y: 5 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={{ duration: 0.15 }}
-                                >
-                                    <TranscriptSegment
-                                        id={segment.id}
-                                        timestamp={segment.timestamp}
-                                        endTime={segment.endTime}
-                                        text={getDisplayText(segment)}
-                                        onSeekAudio={onSeekAudio}
-                                        activeAudioTime={activeAudioTime}
-                                        cleanView={cleanView}
-                                        provisional={segment.provisional}
-                                        confidence={segment.confidence}
-                                        isStreaming={isStreaming}
-                                        showConfidence={showConfidence}
-                                        speaker={segment.speaker}
-                                        colorIndex={colorIndices.get(speakerKey(segment.speaker))}
-                                        userName={userName}
-                                        onRenameSpeaker={segment.provisional ? undefined : onRenameSpeaker}
-                                        onMergeSpeaker={segment.provisional ? undefined : onMergeSpeaker}
-                                    />
-                                </motion.div>
-                            );
-                        })}
-                    </div>
-
-                    {/* Infinite scroll trigger (for small lists that grow) */}
-                    {(hasMore || isLoadingMore) && !isRecording && displaySegments.length > 0 && (
-                        <div ref={loadMoreTriggerRef} className="flex justify-center items-center py-4 mt-2">
-                            {isLoadingMore ? (
-                                <div className="flex items-center gap-2 text-gray-500">
-                                    <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
-                                    <span className="text-sm">Loading more...</span>
-                                </div>
-                            ) : hasMore && totalCount > 0 ? (
-                                <span className="text-sm text-gray-400">
-                                    Showing {loadedCount} of {totalCount} segments
-                                </span>
-                            ) : null}
-                        </div>
-                    )}
-
-                    {!isStopping && isRecording && !isProcessing && displaySegments.length > 0 && (
-                        <div className="flex items-center gap-2 mt-4 mb-2 min-h-[1.25rem] text-gray-500">
-                            {!isPaused && (
-                                <>
-                                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-                                    <span className="text-sm">Listening…</span>
-                                </>
-                            )}
-                            {isPaused && (
-                                <span className="text-sm text-orange-400/80">Paused</span>
-                            )}
-                        </div>
-                    )}
-                </>
-            )}
-            </div>
+  const footer = (
+    <>
+      {(hasMore || isLoadingMore) && !isRecording && turns.length > 0 && (
+        <div ref={loadMoreTriggerRef} className="mt-2 flex items-center justify-center py-4">
+          {isLoadingMore ? (
+            <span className="flex items-center gap-2 text-xs text-af-text-3">
+              <Spinner className="h-4 w-4" /> Loading more…
+            </span>
+          ) : hasMore && totalCount > 0 ? (
+            <span className="text-xs text-af-text-4">
+              Showing {loadedCount} of {totalCount} lines
+            </span>
+          ) : null}
         </div>
-    );
+      )}
+      {!isStopping && isRecording && !isProcessing && turns.length > 0 && (
+        <div className="mb-2 mt-4 flex min-h-[1.25rem] items-center gap-2 text-af-text-3">
+          {isPaused ? (
+            <span className="text-xs text-af-warning">Paused</span>
+          ) : (
+            <>
+              <span className="h-2 w-2 animate-af-breathe rounded-full bg-af-accent" />
+              <span className="text-xs">Listening…</span>
+            </>
+          )}
+        </div>
+      )}
+    </>
+  );
+
+  return (
+    <div
+      ref={scrollRef}
+      className="flex h-full flex-col overflow-y-auto px-4 py-3"
+      style={bottomInset ? { scrollPaddingBottom: bottomInset } : undefined}
+    >
+      <div className={isRecording ? 'pb-4 pt-2' : ''} style={bottomInset ? { paddingBottom: bottomInset } : undefined}>
+        {turns.length === 0 ? (
+          isRecording ? (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-16 flex flex-col items-center text-center">
+              <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-af-accent/[0.12] text-af-accent">
+                <Mic className={cn('h-4 w-4', !isPaused && 'animate-af-breathe')} />
+              </span>
+              <p className="text-sm font-medium text-af-text">{isPaused ? 'Recording paused' : 'Listening for speech…'}</p>
+              <p className="mt-1 text-xs text-af-text-3">{isPaused ? 'Resume to keep transcribing.' : 'Lines appear here as people talk.'}</p>
+            </motion.div>
+          ) : (
+            emptyState ?? <p className="mt-10 text-center text-sm text-af-text-3">No transcript yet.</p>
+          )
+        ) : useVirtualization ? (
+          <>
+            <div style={{ height: virtualizer.getTotalSize(), width: '100%', position: 'relative' }}>
+              {virtualizer.getVirtualItems().map((item) => {
+                const turn = turns[item.index];
+                return (
+                  <div
+                    key={turn.id}
+                    data-index={item.index}
+                    ref={virtualizer.measureElement}
+                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${item.start}px)` }}
+                  >
+                    {row(turn, item.index)}
+                  </div>
+                );
+              })}
+            </div>
+            {footer}
+          </>
+        ) : (
+          <>
+            <div className="space-y-1">
+              {turns.map((turn, index) => (
+                <motion.div key={turn.id} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.15 }}>
+                  {row(turn, index)}
+                </motion.div>
+              ))}
+            </div>
+            {footer}
+          </>
+        )}
+      </div>
+    </div>
+  );
 };

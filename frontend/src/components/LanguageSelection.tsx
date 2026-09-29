@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Globe } from 'lucide-react';
+import { AlertTriangle, Globe, Info, Languages } from 'lucide-react';
 import Analytics from '@/lib/analytics';
 import { toast } from 'sonner';
 import { useConfig } from '@/contexts/ConfigContext';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 export interface Language {
   code: string;
@@ -179,53 +180,64 @@ export function LanguageSelection({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Globe className="h-4 w-4 text-gray-600" />
-          <h4 className="text-sm font-medium text-gray-900">Transcription Language</h4>
+          <Globe className="h-4 w-4 text-af-text-2" />
+          <h4 className="text-sm font-medium text-af-text">Transcription Language</h4>
         </div>
       </div>
 
       <div className="space-y-2">
-        <select
-          value={selectedLanguage}
-          onChange={(e) => handleLanguageChange(e.target.value)}
-          disabled={disabled || saving}
-          className="w-full px-3 py-2 text-sm bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500"
-        >
-          {availableLanguages.map((language) => (
-            <option key={language.code} value={language.code}>
-              {language.name}
-              {language.code !== 'auto' && language.code !== 'auto-translate' && ` (${language.code})`}
-            </option>
-          ))}
-        </select>
+        <Select value={selectedLanguage} onValueChange={handleLanguageChange} disabled={disabled || saving}>
+          <SelectTrigger aria-label="Transcription language">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {availableLanguages.map((language) => (
+              <SelectItem key={language.code} value={language.code}>
+                {language.name}
+                {language.code !== 'auto' && language.code !== 'auto-translate' && (
+                  <span className="ml-1.5 text-af-text-4">{language.code}</span>
+                )}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
         {/* Parakeet language limitation warning */}
         {isParakeet && (
-          <div className="p-2 bg-amber-50 border border-amber-200 rounded text-amber-800">
-            <p className="font-medium">ℹ️ Parakeet Language Support</p>
-            <p className="mt-1 text-xs">Parakeet currently only supports automatic language detection. Manual language selection is not available. Use Whisper if you need to specify a particular language.</p>
+          <div className="flex gap-2.5 rounded-lg border border-af-border bg-af-panel-2 px-3 py-2.5 text-xs text-af-text-2">
+            <Info className="mt-px h-4 w-4 shrink-0 text-af-text-3" />
+            <div>
+              <p className="font-medium text-af-text">Parakeet detects the language itself</p>
+              <p className="mt-0.5">It can't be set to a particular language. Use Whisper if you need to choose one.</p>
+            </div>
           </div>
         )}
 
         {/* Info text */}
         <div className="text-xs space-y-2 pt-2">
-          <p className="text-gray-600">
+          <p className="text-af-text-2">
             <strong>Current:</strong> {selectedLanguageName}
           </p>
           {selectedLanguage === 'auto' && (
-            <div className="p-2 bg-yellow-50 border border-yellow-200 rounded text-yellow-800">
-              <p className="font-medium">⚠️ Auto Detect may produce incorrect results</p>
-              <p className="mt-1">For best accuracy, select your specific language (e.g., English, Spanish, etc.)</p>
+            <div className="flex gap-2.5 rounded-lg border border-af-warning/35 bg-af-warning/10 px-3 py-2.5 text-af-text-2">
+              <AlertTriangle className="mt-px h-4 w-4 shrink-0 text-af-warning" />
+              <div>
+                <p className="font-medium text-af-text">Auto detect can pick the wrong language</p>
+                <p className="mt-0.5">For the best accuracy, choose the language people speak.</p>
+              </div>
             </div>
           )}
           {selectedLanguage === 'auto-translate' && (
-            <div className="p-2 bg-blue-50 border border-blue-200 rounded text-blue-800">
-              <p className="font-medium">🌐 Translation Mode Active</p>
-              <p className="mt-1">All audio will be automatically translated to English. Best for multilingual meetings where you need English output.</p>
+            <div className="flex gap-2.5 rounded-lg border border-af-accent/35 bg-af-accent/10 px-3 py-2.5 text-af-text-2">
+              <Languages className="mt-px h-4 w-4 shrink-0 text-af-accent" />
+              <div>
+                <p className="font-medium text-af-text">Transcripts are translated to English</p>
+                <p className="mt-0.5">Useful for meetings in several languages when you want English notes.</p>
+              </div>
             </div>
           )}
           {selectedLanguage !== 'auto' && selectedLanguage !== 'auto-translate' && (
-            <p className="text-gray-600">
+            <p className="text-af-text-2">
               Transcription will be optimized for <strong>{selectedLanguageName}</strong>
             </p>
           )}

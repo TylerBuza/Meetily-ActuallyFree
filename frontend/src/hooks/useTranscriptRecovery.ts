@@ -11,6 +11,8 @@ import { indexedDBService, MeetingMetadata, StoredTranscript } from '@/services/
 import { storageService } from '@/services/storageService';
 import { applyPinnedSummaryLanguageToMeeting } from '@/lib/summary-language-preferences';
 import { toast } from 'sonner';
+import { announceChange } from '@/lib/workspace-api';
+import { editedSpeaker } from '@/lib/live-speaker-edits';
 
 interface AudioRecoveryStatus {
   status: string; // "success" | "partial" | "failed" | "none"
@@ -174,7 +176,7 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
         audio_end_time: (t as any).audio_end_time,
         duration: (t as any).duration,
         // IndexedDB stores the live event shape (`source`); map it to speaker.
-        speaker: (t as any).speaker ?? (t as any).source ?? undefined,
+        speaker: editedSpeaker(meetingId, t.sequenceId ?? index, (t as any).speaker ?? (t as any).source ?? undefined),
       }));
 
       // 6. Save to backend database using existing save utilities
@@ -186,6 +188,8 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
       );
 
       const savedMeetingId = saveResponse.meeting_id;
+      // Named speakers in the recovered lines became contacts.
+      announceChange('people');
 
       try {
         await applyPinnedSummaryLanguageToMeeting(savedMeetingId);

@@ -64,11 +64,7 @@ fn should_emit_transcript(transcript: &str, _confidence: Option<f32>) -> bool {
     if trimmed.is_empty() {
         return false;
     }
-    // Filter out common Whisper single-word silence hallucinations
-    let lower = trimmed.to_lowercase();
-    if lower == "you" || lower == "you." {
-        return false;
-    }
+    // Content alone cannot distinguish a valid short reply from hallucination.
     true
 }
 
@@ -599,7 +595,7 @@ async fn transcribe_chunk_with_provider(
     let peak = speech_samples.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
 
     // Skip silent chunks to avoid Whisper silence hallucinations
-    if rms < 0.005 && peak < 0.01 {
+    if peak == 0.0 {
         info!(
             "Audio chunk {} has near-zero energy (rms: {:.6}, peak: {:.6}), skipping transcription",
             chunk.chunk_id, rms, peak
@@ -631,16 +627,8 @@ async fn transcribe_chunk_with_provider(
                         return Ok((String::new(), Some(confidence), is_partial));
                     }
 
-                    // Filter out known Whisper silence hallucinations if energy is low
-                    let lower = cleaned_text.to_lowercase();
-                    let is_hallucination = (lower == "you" || lower == "you." || lower == "thank you." || lower == "thank you" || lower == "thanks." || lower == "bye." || lower == "bye") && rms < 0.02;
-                    if is_hallucination {
-                        warn!(
-                            "Dropping suspected silence hallucination for chunk {}: '{}' (rms={:.5}, conf={:.2})",
-                            chunk.chunk_id, cleaned_text, rms, confidence
-                        );
-                        return Ok((String::new(), Some(confidence), is_partial));
-                    }
+                    // Quiet replies such as "you" and "thanks" remain valid speech.
+                    // Native no-speech checks own rejection, not a phrase blacklist.
 
                     info!(
                         "Whisper transcription complete for chunk {}: '{}' (confidence: {:.2}, partial: {})",
@@ -758,6 +746,9 @@ mod tests {
     #[test]
     fn short_transcript_is_not_rejected_by_placeholder_confidence() {
         assert!(should_emit_transcript("yes", Some(0.13)));
+        assert!(should_emit_transcript("you", Some(0.13)));
+        assert!(should_emit_transcript("You.", Some(0.9)));
+        assert!(should_emit_transcript("thanks", None));
         assert!(!should_emit_transcript("   ", Some(0.9)));
     }
 }

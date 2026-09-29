@@ -297,6 +297,11 @@ impl AudioStream {
     ) -> Result<Self> {
         info!("🎯 Creating per-app audio stream for {} target(s)", targets.len());
 
+        #[cfg(target_os = "macos")]
+        if targets.len() > 1 {
+            anyhow::bail!("macOS currently supports one selected app at a time. Select one app or use all computer audio.");
+        }
+
         let mut running_targets = Vec::new();
         for target in &targets {
             if let Some(pid) = crate::audio::capture::per_app::find_pid_for_app(&target.executable) {
@@ -324,13 +329,17 @@ impl AudioStream {
         #[cfg(windows)]
         {
             let stop_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let thread_handles = crate::audio::capture::per_app::windows_loopback::start_multi_process_loopback(
-                device.clone(),
-                state.clone(),
-                recording_sender,
-                running_targets,
-                stop_flag.clone(),
-            )?;
+            let capture_device = device.clone();
+            let capture_stop = stop_flag.clone();
+            let thread_handles = tokio::task::spawn_blocking(move || {
+                crate::audio::capture::per_app::windows_loopback::start_multi_process_loopback(
+                    capture_device,
+                    state,
+                    recording_sender,
+                    running_targets,
+                    capture_stop,
+                )
+            }).await??;
 
             Ok(Self {
                 device,

@@ -29,7 +29,7 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
       const data = await invoke('api_get_model_config') as any;
       if (data && data.provider !== null) {
         // Fetch API key if not included and provider requires it
-        if (data.provider !== 'ollama' && data.provider !== 'builtin-ai' && !data.apiKey) {
+        if (data.provider !== 'ollama' && data.provider !== 'builtin-ai' && data.provider !== 'claude-cli' && !data.apiKey) {
           try {
             const apiKeyData = await invoke('api_get_api_key', {
               provider: data.provider
@@ -108,6 +108,7 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
         apiKey: config.apiKey,
         ollamaEndpoint: config.ollamaEndpoint,
         summaryMaxTokens: config.summaryMaxTokens ?? null,
+        claudeCliPath: config.claudeCliPath ?? null,
       });
 
       setModelConfig(config);
@@ -125,22 +126,22 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
 
   return (
     <div className='flex flex-col gap-4'>
-      <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-        <div className="flex items-center justify-between">
+      <div className="rounded-2xl border border-af-border bg-af-panel-2/40 p-5">
+        <div className="flex items-center justify-between gap-4">
           <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Auto Summary</h3>
-            <p className="text-sm text-gray-600">Auto Generating summary after meeting completion(Stopping)</p>
+            <h3 className="text-[15px] font-semibold text-af-text">Summarize automatically</h3>
+            <p className="mt-0.5 text-[13px] leading-relaxed text-af-text-3">Write a summary as soon as a recording is saved. When off, generate one from the meeting page whenever you like.</p>
           </div>
-          <Switch checked={isAutoSummary} onCheckedChange={toggleIsAutoSummary} />
+          <Switch checked={isAutoSummary} onCheckedChange={toggleIsAutoSummary} className="shrink-0" />
         </div>
       </div>
 
       <SummaryLanguageSettings />
 
-      <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
-        <h3 className="text-lg font-semibold mb-4">Summary Model Configuration</h3>
-        <p className="text-sm text-gray-600 mb-6">
-          Configure the AI model used for generating meeting summaries.
+      <div className="rounded-2xl border border-af-border bg-af-panel-2/40 p-5">
+        <h3 className="text-[15px] font-semibold text-af-text">Summary model</h3>
+        <p className="mb-5 mt-0.5 text-[13px] leading-relaxed text-af-text-3">
+          Writes summaries and answers Ask AI. Local models keep everything on this computer; a cloud provider receives the parts of a meeting it needs.
         </p>
 
         <ModelSettingsModal

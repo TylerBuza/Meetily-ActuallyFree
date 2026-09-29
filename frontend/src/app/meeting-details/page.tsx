@@ -6,7 +6,8 @@ import PageContent from "./page-content";
 import { useRouter, useSearchParams } from "next/navigation";
 import Analytics from "@/lib/analytics";
 import { invoke } from "@tauri-apps/api/core";
-import { LoaderIcon } from "lucide-react";
+import { PostCallHandoffCard } from "@/components/PostCallHandoffCard";
+import { Spinner } from "@/components/ui/spinner";
 import { useConfig } from "@/contexts/ConfigContext";
 import { usePaginatedTranscripts } from "@/hooks/usePaginatedTranscripts";
 import { shouldSetUpAutoSummary } from "@/lib/meeting-summary-policy";
@@ -24,11 +25,16 @@ function MeetingDetailsContent() {
   const searchParams = useSearchParams();
   const meetingId = searchParams.get('id');
   const source = searchParams.get('source'); // Check if navigated from recording
-  const { setCurrentMeeting, refetchMeetings, stopSummaryPolling } = useSidebar();
+  // Search results link straight to a line (t) and a moment in the audio (ts).
+  const focusTranscriptId = searchParams.get('t');
+  const focusTimeParam = searchParams.get('ts');
+  const focusTime = focusTimeParam !== null && Number.isFinite(Number(focusTimeParam)) ? Number(focusTimeParam) : null;
+  const { setCurrentMeeting, refetchMeetings, stopSummaryPolling, isCollapsed: sidebarCollapsed } = useSidebar();
   const { isAutoSummary, setModelConfig } = useConfig(); // Get auto-summary toggle state
   const router = useRouter();
   const [meetingDetails, setMeetingDetails] = useState<MeetingDetailsResponse | null>(null);
   const [meetingSummary, setMeetingSummary] = useState<Summary | null>(null);
+  const [summaryUserEdited, setSummaryUserEdited] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [shouldAutoGenerate, setShouldAutoGenerate] = useState<boolean>(false);
@@ -225,6 +231,7 @@ function MeetingDetailsContent() {
         }) as any;
 
         console.log('FETCH SUMMARY: Raw response:', summary);
+        if (active) setSummaryUserEdited(!!summary?.userEdited);
 
         // Check if the summary request failed with 404 or error status, or if no summary exists yet (idle)
         // Note: 'cancelled' and 'failed' statuses can still have data if backup was restored
@@ -368,12 +375,12 @@ function MeetingDetailsContent() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex h-full items-center justify-center">
         <div className="text-center">
-          <p className="text-red-500 mb-4">{error}</p>
+          <p className="text-af-danger mb-4">{error}</p>
           <button
             onClick={() => router.push('/')}
-            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            className="px-4 py-2 bg-af-accent text-af-on-accent rounded hover:bg-af-accent-hover"
           >
             Go Back
           </button>
@@ -386,14 +393,30 @@ function MeetingDetailsContent() {
   // flipping isLoadingTranscripts used to unmount it and wipe in-flight summary
   // state (status + just-generated aiSummary).
   if (!meetingDetails) {
-    return <div className="flex items-center justify-center h-screen">
-      <LoaderIcon className="animate-spin size-6 " />
-    </div>;
+    return (
+      <div className="h-full bg-[var(--af-panel)]">
+        {source === 'recording' ? (
+          <PostCallHandoffCard
+            busy
+            title="Opening your meeting"
+            detail="Getting the transcript ready."
+          />
+        ) : (
+          // Shown only if loading takes a moment; quick loads go straight to the meeting.
+          <div className="af-appear flex h-full items-center justify-center" style={{ '--af-i': 10 } as React.CSSProperties}>
+            <Spinner className="h-6 w-6 text-[var(--af-text-2)]" />
+          </div>
+        )}
+      </div>
+    );
   }
 
   return <PageContent
     meeting={meetingDetails}
     summaryData={meetingSummary}
+    summaryUserEdited={summaryUserEdited}
+    focusTranscriptId={focusTranscriptId}
+    focusTime={focusTime}
     isPostCallRecording={source === 'recording'}
     shouldAutoGenerate={shouldAutoGenerate}
     onAutoGenerateComplete={() => setShouldAutoGenerate(false)}
@@ -415,8 +438,8 @@ function MeetingDetailsContent() {
 export default function MeetingDetails() {
   return (
     <Suspense fallback={
-      <div className="flex items-center justify-center h-screen">
-        <LoaderIcon className="animate-spin size-6" />
+      <div className="af-appear flex h-full items-center justify-center" style={{ '--af-i': 10 } as React.CSSProperties}>
+        <Spinner className="h-6 w-6 text-[var(--af-text-2)]" />
       </div>
     }>
       <MeetingDetailsContent />

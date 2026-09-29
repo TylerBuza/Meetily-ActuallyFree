@@ -1,3 +1,4 @@
+import type { ActionItem } from '@/lib/workspace-api';
 export interface Message {
   id: string;
   content: string;
@@ -153,16 +154,30 @@ export interface PersonProfileMeeting {
   excerpt?: string;
 }
 
+export interface PersonGroupRef {
+  id: string;
+  name: string;
+  color?: string | null;
+  meetingCount: number;
+}
+
 export interface PersonProfile {
   id: string;
   displayName: string;
   notes?: string;
+  email?: string | null;
+  company?: string | null;
+  role?: string | null;
+  phone?: string | null;
   meetingCount: number;
   messageCount: number;
   totalSpeakingSeconds: number;
   firstSeenAt?: string;
   lastSeenAt?: string;
   meetings: PersonProfileMeeting[];
+  groups?: PersonGroupRef[];
+  /** Items this person owns, each linked back to its meeting. */
+  actionItems?: ActionItem[];
 }
 
 export interface DetectedSpeaker {

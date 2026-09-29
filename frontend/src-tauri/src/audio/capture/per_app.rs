@@ -315,6 +315,7 @@ pub mod windows_loopback {
         target_pid: u32,
         app_name: String,
         stop_flag: Arc<AtomicBool>,
+        ready: std::sync::mpsc::Sender<()>,
         mut on_samples: F,
     ) where
         F: FnMut(&[f32]) + Send + 'static,
@@ -495,6 +496,8 @@ pub mod windows_loopback {
         }
 
         log::info!("✅ Process loopback started successfully for '{}' (PID {})", app_name, target_pid);
+        let _ = ready.send(());
+        drop(ready);
 
         let mut f32_buffer = Vec::new();
 
@@ -565,6 +568,10 @@ pub mod windows_loopback {
         target_pids: Vec<(String, u32)>,
         stop_flag: Arc<AtomicBool>,
     ) -> Result<Vec<std::thread::JoinHandle<()>>> {
+        // Startup is acknowledged only after every selected AudioClient starts.
+        // A worker returning early drops its sender; the caller tears down peers.
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let target_count = target_pids.len();
         let processor = Arc::new(crate::audio::pipeline::AudioCapture::new(
             device,
             state,
@@ -579,11 +586,12 @@ pub mod windows_loopback {
             let stop_flag_clone = stop_flag.clone();
             let proc = processor.clone();
             let handle = std::thread::spawn(move || {
-                run_single_process_loopback_session(pid, app_name, stop_flag_clone, move |data| {
+                run_single_process_loopback_session(pid, app_name, stop_flag_clone, ready_tx, move |data| {
                     proc.process_audio_data(data);
                 });
             });
-            return Ok(vec![handle]);
+            let handles = vec![handle];
+            return await_capture_start(ready_rx, 1, stop_flag, handles);
         }
 
         // Multiple target apps: create queues and mixer thread
@@ -596,10 +604,11 @@ pub mod windows_loopback {
         let mut handles = Vec::new();
 
         for (idx, (app_name, pid)) in target_pids.into_iter().enumerate() {
+            let ready = ready_tx.clone();
             let stop_flag_worker = stop_flag.clone();
             let queues_clone = queues.clone();
             let handle = std::thread::spawn(move || {
-                run_single_process_loopback_session(pid, app_name, stop_flag_worker, move |data| {
+                run_single_process_loopback_session(pid, app_name, stop_flag_worker, ready, move |data| {
                     if let Ok(mut q) = queues_clone[idx].lock() {
                         let q_len = q.len();
                         if q_len + data.len() > 19200 {
@@ -663,6 +672,26 @@ pub mod windows_loopback {
         });
 
         handles.push(mixer_handle);
+        drop(ready_tx);
+        await_capture_start(ready_rx, target_count, stop_flag, handles)
+    }
+
+    fn await_capture_start(
+        ready: std::sync::mpsc::Receiver<()>,
+        count: usize,
+        stop: Arc<AtomicBool>,
+        handles: Vec<std::thread::JoinHandle<()>>,
+    ) -> Result<Vec<std::thread::JoinHandle<()>>> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+        for _ in 0..count {
+            if ready.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())).is_err() {
+                stop.store(true, Ordering::Relaxed);
+                // Do not block the command indefinitely on a stalled native API.
+                // The stop flag remains owned by each worker until it exits.
+                for handle in handles { if handle.is_finished() { let _ = handle.join(); } }
+                anyhow::bail!("Could not start audio capture for every selected app. Check that the apps are running and Windows supports process loopback capture.");
+            }
+        }
         Ok(handles)
     }
 
@@ -681,5 +710,31 @@ pub mod windows_loopback {
             stop_flag,
         )?;
         Ok(handles.remove(0))
+    }
+
+    #[cfg(test)]
+    mod startup_tests {
+        use super::*;
+
+        #[test]
+        fn partial_startup_failure_stops_all_selected_apps() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            tx.send(()).unwrap();
+            drop(tx); // Second capture failed before acknowledging Start.
+            let stop = Arc::new(AtomicBool::new(false));
+            assert!(await_capture_start(rx, 2, stop.clone(), vec![]).is_err());
+            assert!(stop.load(Ordering::Relaxed));
+        }
+
+        #[test]
+        fn all_selected_apps_must_acknowledge_startup() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            tx.send(()).unwrap();
+            tx.send(()).unwrap();
+            drop(tx);
+            let stop = Arc::new(AtomicBool::new(false));
+            assert!(await_capture_start(rx, 2, stop.clone(), vec![]).is_ok());
+            assert!(!stop.load(Ordering::Relaxed));
+        }
     }
 }

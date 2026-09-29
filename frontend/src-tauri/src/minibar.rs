@@ -20,8 +20,11 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 
 const MINIBAR_LABEL: &str = "minibar";
-const MINIBAR_WIDTH: f64 = 580.0;
-const MINIBAR_HEIGHT: f64 = 76.0;
+const MINIBAR_WIDTH: f64 = 680.0;
+// Matches the bar's rendered height. The window is clipped to this rounded
+// rectangle so Windows does not draw a square frame around it.
+const MINIBAR_HEIGHT: f64 = 72.0;
+const MINIBAR_RADIUS: f64 = 24.0;
 const IPC_CLOSE_DELAY: Duration = Duration::from_millis(500);
 
 // Serialize window lifecycle changes so a queued minimize request cannot race a
@@ -29,6 +32,53 @@ const IPC_CLOSE_DELAY: Duration = Duration::from_millis(500);
 static MINIBAR_LIFECYCLE: Mutex<()> = Mutex::new(());
 static MAIN_HIDDEN_BY_MINIBAR: AtomicBool = AtomicBool::new(false);
 static MINIBAR_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Drop the square window frame and clip the HWND to the bar's rounded rect.
+fn fit_minibar_shape<R: Runtime>(window: &tauri::WebviewWindow<R>) {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED,
+            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_BORDER, WS_CAPTION,
+            WS_THICKFRAME,
+        };
+
+        let Ok(handle) = window.hwnd() else {
+            return;
+        };
+        let hwnd = handle.0;
+        let scale = window.scale_factor().unwrap_or(1.0);
+        let width = (MINIBAR_WIDTH * scale).round() as i32;
+        let height = (MINIBAR_HEIGHT * scale).round() as i32;
+        let radius = (MINIBAR_RADIUS * scale).round() as i32;
+
+        unsafe {
+            let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+            let cleaned = style & !(WS_CAPTION as isize | WS_THICKFRAME as isize | WS_BORDER as isize);
+            SetWindowLongPtrW(hwnd, GWL_STYLE, cleaned);
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+            // Right and bottom edges are exclusive.
+            let region = CreateRoundRectRgn(0, 0, width + 1, height + 1, radius * 2, radius * 2);
+            if !region.is_null() {
+                SetWindowRgn(hwnd, region, 1);
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window;
+    }
+}
 
 fn close_minibar_locked<R: Runtime>(app: &AppHandle<R>) -> Result<bool, String> {
     if let Some(bar) = app.get_webview_window(MINIBAR_LABEL) {
@@ -189,9 +239,12 @@ pub async fn enter_compact_mode<R: Runtime>(
             let _ = window.set_position(tauri::LogicalPosition::new(x.max(0.0), 12.0));
         }
 
+        fit_minibar_shape(&window);
         window
     };
 
+    // Hide the main window before the bar is shown so the two never paint
+    // on screen together. Overlap was reading as a flicker.
     if let Some(main) = app.get_webview_window("main") {
         if let Err(error) = main.hide() {
             let _ = close_minibar_locked(&app);

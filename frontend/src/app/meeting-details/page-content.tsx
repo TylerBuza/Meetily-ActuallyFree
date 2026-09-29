@@ -1,124 +1,211 @@
-﻿"use client";
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+"use client";
+
+/**
+ * The meeting page: header, transcript (with playback), and the meeting's
+ * document (notes, action items, summary, Ask AI) side by side.
+ */
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { motion } from 'framer-motion';
-import { Summary, SummaryResponse, Transcript } from '@/types';
-import { useSidebar } from '@/components/Sidebar/SidebarProvider';
-import Analytics from '@/lib/analytics';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
-import { TranscriptPanel } from '@/components/MeetingDetails/TranscriptPanel';
-import { SummaryPanel } from '@/components/MeetingDetails/SummaryPanel';
+import type { Summary, Transcript, TranscriptSegmentData } from '@/types';
+import Analytics from '@/lib/analytics';
+import { useSidebar } from '@/components/Sidebar/SidebarProvider';
+import { useConfig } from '@/contexts/ConfigContext';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { TemplateEditorModal } from '@/components/MeetingDetails/TemplateEditorModal';
+import { MeetingExportDialog } from '@/components/MeetingDetails/MeetingExportDialog';
+import { PostCallProcessingDialog } from '@/components/MeetingDetails/PostCallProcessingDialog';
 import { ModelConfig } from '@/components/ModelSettingsModal';
-
-// Custom hooks
+import { VirtualizedTranscriptView } from '@/components/VirtualizedTranscriptView';
+import { MeetingHeader } from '@/components/meeting/MeetingHeader';
+import { MeetingDocument } from '@/components/meeting/MeetingDocument';
+import { AudioPlayerBar } from '@/components/meeting/AudioPlayerBar';
+import { PersonCard, type PersonCardTarget } from '@/components/people/PersonCard';
+import { SpeakerIdentityDialog } from '@/components/people/SpeakerIdentityDialog';
 import { useMeetingData } from '@/hooks/meeting-details/useMeetingData';
 import { useSummaryGeneration } from '@/hooks/meeting-details/useSummaryGeneration';
 import { useTemplates } from '@/hooks/meeting-details/useTemplates';
 import { useCopyOperations } from '@/hooks/meeting-details/useCopyOperations';
 import { useMeetingOperations } from '@/hooks/meeting-details/useMeetingOperations';
-import { useConfig } from '@/contexts/ConfigContext';
-import { PostCallProcessingDialog } from '@/components/MeetingDetails/PostCallProcessingDialog';
-import { MeetingExportDialog } from '@/components/MeetingDetails/MeetingExportDialog';
-import { SummaryRegenerationDialog } from '@/components/MeetingDetails/SummaryRegenerationDialog';
-import { cleanTranscriptText, loadLabsPreferences } from '@/lib/labs';
+import { PLAYBACK_RATES, SLOW_PLAYBACK_RATES, useMeetingAudio } from '@/hooks/useMeetingAudio';
+import { useWaveform } from '@/hooks/useWaveform';
+import { useLabs } from '@/hooks/useLabs';
+import { cleanTranscriptText } from '@/lib/labs';
+import { useUserName } from '@/hooks/useUserName';
+import { announceChange, getMeetingGroup, setMeetingGroup } from '@/lib/workspace-api';
+import { deleteMeetings, renameMeeting } from '@/lib/meeting-actions';
+import { displayTitle } from '@/lib/meeting-titles';
+import { cn } from '@/lib/utils';
+import { displaySpeaker, speakerColorIndexMap, speakerKey } from '@/utils/speakerUtils';
 
 // Page remounts join the same backend-start attempt. Only accepted attempts are
 // persisted in sessionStorage below; failed preflight attempts remain retryable.
 const autoSummaryInFlight = new Map<string, Promise<boolean>>();
+const NOTES_WIDTH_KEY = 'af-meeting-notes-width';
+const TRANSCRIPT_MIN = 340;
+const DOCUMENT_MIN = 380;
+
+function clampDocumentWidth(width: number, frame: number) {
+  const max = Math.max(DOCUMENT_MIN, frame - 6 - TRANSCRIPT_MIN);
+  return Math.round(Math.min(max, Math.max(DOCUMENT_MIN, width)));
+}
 
 export default function PageContent({
   meeting,
   summaryData,
+  summaryUserEdited = false,
   isPostCallRecording = false,
   shouldAutoGenerate = false,
   onAutoGenerateComplete,
   onSummaryReady,
   onMeetingUpdated,
   onRefetchTranscripts,
-  // Pagination props for efficient transcript loading
   segments,
   hasMore,
   isLoadingMore,
   totalCount,
   loadedCount,
   onLoadMore,
+  focusTranscriptId,
+  focusTime,
 }: {
   meeting: any;
   summaryData: Summary | null;
+  summaryUserEdited?: boolean;
   isPostCallRecording?: boolean;
   shouldAutoGenerate?: boolean;
   onAutoGenerateComplete?: () => void;
-  /** Lift a freshly generated summary up so parent state survives remounts. */
   onSummaryReady?: (summary: Summary) => void;
   onMeetingUpdated?: () => Promise<void>;
   onRefetchTranscripts?: () => Promise<void>;
-  // Pagination props
-  segments?: any[];
+  segments?: TranscriptSegmentData[];
   hasMore?: boolean;
   isLoadingMore?: boolean;
   totalCount?: number;
   loadedCount?: number;
   onLoadMore?: () => void;
+  focusTranscriptId?: string | null;
+  focusTime?: number | null;
 }) {
-  console.log('ðŸ“„ PAGE CONTENT: Initializing with data:', {
-    meetingId: meeting.id,
-    summaryDataKeys: summaryData ? Object.keys(summaryData) : null,
-    transcriptsCount: meeting.transcripts?.length
+  const { setCurrentMeeting } = useSidebar();
+  const { modelConfig, setModelConfig } = useConfig();
+  const { people } = useWorkspace();
+  const userName = useUserName();
+
+  const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [postCallDoneFor, setPostCallDoneFor] = useState<string | null>(null);
+  const [documentWidth, setDocumentWidth] = useState(520);
+  const [stacked, setStacked] = useState(false);
+  const [draggingSplit, setDraggingSplit] = useState(false);
+  const frameRef = useRef<HTMLDivElement>(null);
+  const [title, setTitle] = useState<string>(displayTitle(meeting.title, meeting.created_at));
+  const [groupId, setGroupId] = useState<string | null>(null);
+  const [follow, setFollow] = useState(true);
+  const [cardTarget, setCardTarget] = useState<PersonCardTarget | null>(null);
+  const [identity, setIdentity] = useState<{ speaker: string; transcriptId: string | null } | null>(null);
+  const [regenerateRequest, setRegenerateRequest] = useState<{ open: boolean; context: string; reason?: string } | null>(null);
+
+  const meetingData = useMeetingData({ meeting, summaryData });
+  const templates = useTemplates();
+  const meetingOperations = useMeetingOperations({ meeting });
+  const audio = useMeetingAudio(meeting.id);
+  // Labs: waveform and slower speeds in the player, Clean/Verbatim transcript.
+  const { labs, ready: labsReady } = useLabs();
+  const waveform = useWaveform(audio.path, labs.transcriptScrubbing);
+  const [textMode, setTextMode] = useState<'clean' | 'verbatim'>('clean');
+
+  useEffect(() => setTitle(displayTitle(meeting.title, meeting.created_at)), [meeting.title, meeting.created_at]);
+
+  useEffect(() => {
+    Analytics.trackPageView('meeting_details');
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getMeetingGroup(meeting.id)
+      .then((group) => !cancelled && setGroupId(group?.id ?? null))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [meeting.id]);
+
+  // Layout: side by side on wide windows, stacked on narrow ones.
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 900px)');
+    const apply = () => setStacked(query.matches);
+    apply();
+    query.addEventListener('change', apply);
+    return () => query.removeEventListener('change', apply);
+  }, []);
+
+  useEffect(() => {
+    const frame = frameRef.current?.clientWidth ?? window.innerWidth;
+    const stored = Number(localStorage.getItem(NOTES_WIDTH_KEY));
+    setDocumentWidth(clampDocumentWidth(Number.isFinite(stored) && stored > 0 ? stored : Math.round(frame * 0.48), frame));
+    const onResize = () => {
+      const width = frameRef.current?.clientWidth;
+      if (width) setDocumentWidth((current) => clampDocumentWidth(current, width));
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  const startSplitDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const originX = event.clientX;
+    const origin = documentWidth;
+    setDraggingSplit(true);
+    const move = (moveEvent: PointerEvent) => {
+      const frame = frameRef.current?.clientWidth ?? origin + TRANSCRIPT_MIN;
+      setDocumentWidth(clampDocumentWidth(origin - (moveEvent.clientX - originX), frame));
+    };
+    const stop = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+      setDraggingSplit(false);
+      setDocumentWidth((current) => {
+        localStorage.setItem(NOTES_WIDTH_KEY, String(current));
+        return current;
+      });
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+  };
+
+  // ---- Summary state ---------------------------------------------------------
+  const setAiSummary = useCallback(
+    (summary: Summary | null) => {
+      meetingData.setAiSummary(summary);
+      if (summary && onSummaryReady) onSummaryReady(summary);
+    },
+    [meetingData.setAiSummary, onSummaryReady],
+  );
+
+  const handleSummaryChange = useCallback(
+    (summary: any, source: 'user' | 'system') => {
+      meetingData.setAiSummary(summary);
+      if (source === 'system' && onSummaryReady) onSummaryReady(summary);
+    },
+    [meetingData.setAiSummary, onSummaryReady],
+  );
+
+  const openModelSettingsRef = useRef<(() => void) | null>(null);
+  const summaryGeneration = useSummaryGeneration({
+    meeting,
+    transcripts: meetingData.transcripts,
+    modelConfig,
+    isModelConfigLoading: false,
+    selectedTemplate: templates.selectedTemplate,
+    onMeetingUpdated,
+    setAiSummary,
+    onOpenModelSettings: () => openModelSettingsRef.current?.(),
+    // New summaries are written from the clean text when Labs asks for it.
+    cleanText: labs.cleanTranscript ? cleanTranscriptText : undefined,
   });
 
-  // State
-  const [customPrompt, setCustomPrompt] = useState<string>('');
-  const [cleanForSummary, setCleanForSummary] = useState(false);
-  const [labsReady, setLabsReady] = useState(false);
-  useEffect(() => {
-    setCleanForSummary(loadLabsPreferences().cleanTranscript);
-    setLabsReady(true);
-  }, []);
-  const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
-  const [isRecording] = useState(false);
-  const [summaryResponse] = useState<SummaryResponse | null>(null);
-  const [postCallProcessingCompletedMeetingId, setPostCallProcessingCompletedMeetingId] = useState<string | null>(null);
-  const [exportOpen, setExportOpen] = useState(false);
-  const [regenerationRequest, setRegenerationRequest] = useState<{
-    open: boolean;
-    initialContext: string;
-    speakerNamesChanged: boolean;
-  }>({ open: false, initialContext: '', speakerNamesChanged: false });
-
-  // Ref to store the modal open function from SummaryGeneratorButtonGroup
-  const openModelSettingsRef = useRef<(() => void) | null>(null);
-
-  // Sidebar context
-  const { serverAddress } = useSidebar();
-
-  // Get model config from ConfigContext
-  const { modelConfig, setModelConfig } = useConfig();
-
-  // Custom hooks
-  const meetingData = useMeetingData({ meeting, summaryData, onMeetingUpdated });
-  const summaryTranscripts = useMemo(() => cleanForSummary
-    ? meetingData.transcripts.map((turn: Transcript) => ({ ...turn, text: cleanTranscriptText(turn.text) }))
-    : meetingData.transcripts, [cleanForSummary, meetingData.transcripts]);
-  const templates = useTemplates();
-
-  // Callback to register the modal open function
-  const handleRegisterModalOpen = (openFn: () => void) => {
-    console.log('ðŸ“ Registering modal open function in PageContent');
-    openModelSettingsRef.current = openFn;
-  };
-
-  // Callback to trigger modal open (called from error handler)
-  const handleOpenModelSettings = () => {
-    console.log('ðŸ”” Opening model settings from PageContent');
-    if (openModelSettingsRef.current) {
-      openModelSettingsRef.current();
-    } else {
-      console.warn('âš ï¸ Modal open function not yet registered');
-    }
-  };
-
-  // Save model config to backend database and sync via event
   const handleSaveModelConfig = async (config?: ModelConfig) => {
     if (!config) return;
     try {
@@ -129,202 +216,321 @@ export default function PageContent({
         apiKey: config.apiKey ?? null,
         ollamaEndpoint: config.ollamaEndpoint ?? null,
         summaryMaxTokens: config.summaryMaxTokens ?? null,
+        claudeCliPath: config.claudeCliPath ?? null,
       });
-
-      // Emit event so ConfigContext and other listeners stay in sync
       const { emit } = await import('@tauri-apps/api/event');
       await emit('model-config-updated', config);
-
-      toast.success('Model settings saved successfully');
+      toast.success('Summary model saved');
     } catch (error) {
       console.error('Failed to save model config:', error);
-      toast.error('Failed to save model settings');
+      toast.error('Could not save the summary model');
     }
   };
 
-  // Wrap setAiSummary so the parent also learns about a finished summary.
-  // Without this, meetingSummary in page.tsx stays null and any remount of
-  // this component falls back to the empty "Generate summary" state.
-  const setAiSummary = useCallback((summary: Summary | null) => {
-    meetingData.setAiSummary(summary);
-    if (summary && onSummaryReady) {
-      onSummaryReady(summary);
-    }
-  }, [meetingData.setAiSummary, onSummaryReady]);
-
-  const summaryGeneration = useSummaryGeneration({
-    meeting,
-    transcripts: summaryTranscripts,
-    modelConfig: modelConfig,
-    isModelConfigLoading: false, // ConfigContext loads on mount
-    selectedTemplate: templates.selectedTemplate,
-    onMeetingUpdated,
-    setAiSummary,
-    onOpenModelSettings: handleOpenModelSettings,
-  });
-
   const copyOperations = useCopyOperations({
     meeting,
-    transcripts: meetingData.transcripts,
-    meetingTitle: meetingData.meetingTitle,
+    meetingTitle: title,
     aiSummary: meetingData.aiSummary,
-    blockNoteSummaryRef: meetingData.blockNoteSummaryRef,
   });
 
-  const meetingOperations = useMeetingOperations({
-    meeting,
-  });
-
-  // Track page view
+  // Auto-generate after a recording (or when the policy asks for it).
   useEffect(() => {
-    Analytics.trackPageView('meeting_details');
-  }, []);
-
-  // Auto-generate summary when flag is set
-  useEffect(() => {
-    const autoGenerate = async () => {
+    const run = async () => {
+      // The Labs choice decides which text the summary is written from.
       if (!labsReady) return;
-      if (
-        shouldAutoGenerate &&
-        meetingData.transcripts.length > 0 &&
-        (!isPostCallRecording || postCallProcessingCompletedMeetingId === meeting.id)
-      ) {
-        if (isPostCallRecording) {
-          const summaryStartKey = `post-call-summary-started:${meeting.id}`;
-          if (sessionStorage.getItem(summaryStartKey)) {
-            onAutoGenerateComplete?.();
-            return;
-          }
-
-          let attempt = autoSummaryInFlight.get(meeting.id);
-          if (!attempt) {
-            console.log(`ðŸ¤– Auto-generating summary with ${modelConfig.provider}/${modelConfig.model}...`);
-            attempt = summaryGeneration.handleGenerateSummary('');
-            autoSummaryInFlight.set(meeting.id, attempt);
-          }
-
-          let accepted = false;
-          try {
-            accepted = await attempt;
-          } finally {
-            if (autoSummaryInFlight.get(meeting.id) === attempt) {
-              autoSummaryInFlight.delete(meeting.id);
-            }
-          }
-
-          if (accepted) {
-            sessionStorage.setItem(summaryStartKey, 'started');
-            onAutoGenerateComplete?.();
-          }
+      if (!shouldAutoGenerate || meetingData.transcripts.length === 0) return;
+      if (isPostCallRecording && postCallDoneFor !== meeting.id) return;
+      if (isPostCallRecording) {
+        const key = `post-call-summary-started:${meeting.id}`;
+        if (sessionStorage.getItem(key)) {
+          onAutoGenerateComplete?.();
           return;
         }
-
-        console.log(`ðŸ¤– Auto-generating summary with ${modelConfig.provider}/${modelConfig.model}...`);
-        await summaryGeneration.handleGenerateSummary('');
-        onAutoGenerateComplete?.();
+        let attempt = autoSummaryInFlight.get(meeting.id);
+        if (!attempt) {
+          attempt = summaryGeneration.handleGenerateSummary('');
+          autoSummaryInFlight.set(meeting.id, attempt);
+        }
+        let accepted = false;
+        try {
+          accepted = await attempt;
+        } finally {
+          if (autoSummaryInFlight.get(meeting.id) === attempt) autoSummaryInFlight.delete(meeting.id);
+        }
+        if (accepted) {
+          sessionStorage.setItem(key, 'started');
+          onAutoGenerateComplete?.();
+        }
+        return;
       }
+      await summaryGeneration.handleGenerateSummary('');
+      onAutoGenerateComplete?.();
     };
-
-    void autoGenerate();
+    void run();
   }, [
     labsReady,
     shouldAutoGenerate,
     meeting.id,
     meetingData.transcripts.length,
     isPostCallRecording,
-    postCallProcessingCompletedMeetingId,
-    modelConfig.provider,
-    modelConfig.model,
+    postCallDoneFor,
     summaryGeneration.handleGenerateSummary,
     onAutoGenerateComplete,
   ]);
 
+  // ---- Transcript data -------------------------------------------------------
+  const transcriptSegments = useMemo<TranscriptSegmentData[]>(
+    () =>
+      segments ??
+      (meetingData.transcripts as Transcript[]).map((t) => ({
+        id: t.id,
+        timestamp: t.audio_start_time ?? 0,
+        endTime: t.audio_end_time,
+        text: t.text,
+        confidence: t.confidence,
+        speaker: t.speaker,
+      })),
+    [segments, meetingData.transcripts],
+  );
+
+  const speakers = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const segment of transcriptSegments) {
+      const label = segment.speaker?.trim();
+      if (label) counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return [...counts.entries()].map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count);
+  }, [transcriptSegments]);
+
+  // One colour per speaker, in the order they first spoke, shared by the
+  // transcript, the person card and the identify dialog.
+  const colorIndices = useMemo(
+    () => speakerColorIndexMap(transcriptSegments.map((segment) => segment.speaker ?? '').filter(Boolean)),
+    [transcriptSegments],
+  );
+  const colorIndexOf = useCallback((label: string) => colorIndices.get(speakerKey(label)), [colorIndices]);
+
+
+  // Deep link from search or an action item: the line itself, or the line
+  // spoken at the linked time. Load pages until it is present, then show it.
+  const focusLineId = useMemo(() => {
+    if (focusTranscriptId) return focusTranscriptId;
+    if (focusTime == null) return null;
+    let match: string | null = null;
+    for (const segment of transcriptSegments) {
+      if (segment.timestamp <= focusTime + 0.5) match = segment.id;
+      else break;
+    }
+    return match;
+  }, [focusTranscriptId, focusTime, transcriptSegments]);
+  const focusAttempts = useRef(0);
+  useEffect(() => {
+    if (!onLoadMore || (!focusTranscriptId && focusTime == null)) return;
+    const last = transcriptSegments[transcriptSegments.length - 1];
+    const present = focusTranscriptId
+      ? transcriptSegments.some((segment) => segment.id === focusTranscriptId)
+      : !!last && (last.endTime ?? last.timestamp) >= (focusTime ?? 0);
+    if (present || !hasMore || isLoadingMore || focusAttempts.current > 40) return;
+    focusAttempts.current += 1;
+    onLoadMore();
+  }, [focusTranscriptId, focusTime, transcriptSegments, hasMore, isLoadingMore, onLoadMore]);
+
+  const focusedAudio = useRef(false);
+  useEffect(() => {
+    if (focusedAudio.current || focusTime == null || audio.status !== 'ready') return;
+    focusedAudio.current = true;
+    audio.seek(focusTime);
+  }, [focusTime, audio]);
+
+  const refreshAfterSpeakerChange = useCallback(
+    async (rename?: { from: string; to: string; removedName: boolean }) => {
+      await onRefetchTranscripts?.();
+      announceChange('people');
+      if (rename && meetingData.aiSummary) {
+        setRegenerateRequest({
+          open: true,
+          context: rename.removedName
+            ? `The name "${rename.from}" was removed. Use the meeting-local label "${rename.to}".`
+            : `Use the updated speaker name "${rename.to}" and the other speaker labels from the transcript.`,
+          reason: 'Speaker names changed. Regenerate the summary so it uses them?',
+        });
+      }
+    },
+    [onRefetchTranscripts, meetingData.aiSummary],
+  );
+
+  const mergeSpeakers = async (source: string, target: string) => {
+    try {
+      await invoke('rename_meeting_speaker', { meetingId: meeting.id, from: source, to: target });
+      toast.success(`Merged ${displaySpeaker(source, userName)} into ${displaySpeaker(target, userName)}`);
+      await refreshAfterSpeakerChange({ from: source, to: target, removedName: false });
+    } catch (error) {
+      toast.error('Could not merge the speakers', { description: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
+  const markMe = async (speaker: string) => {
+    try {
+      await invoke('rename_meeting_speaker', { meetingId: meeting.id, from: speaker, to: 'You' });
+      toast.success(`${speaker} is now you`);
+      await refreshAfterSpeakerChange({ from: speaker, to: 'You', removedName: false });
+    } catch (error) {
+      toast.error('Could not update the speaker', { description: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
+  const hasTranscript = (totalCount ?? meetingData.transcripts.length) > 0;
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={isPostCallRecording ? false : { opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, ease: 'easeOut' }}
-      className="flex flex-col h-screen bg-[var(--af-bg)]"
+      transition={{ duration: isPostCallRecording ? 0 : 0.25, ease: [0.22, 1, 0.36, 1] }}
+      className="flex h-full min-w-0 flex-col bg-af-panel"
     >
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--af-bg)] md:flex-row">
-        <TranscriptPanel
-          transcripts={meetingData.transcripts}
-          title={meetingData.meetingTitle}
-          createdAt={meeting.created_at}
-          customPrompt={customPrompt}
-          onPromptChange={setCustomPrompt}
-          onCopyTranscript={copyOperations.handleCopyTranscript}
-          onOpenExport={() => setExportOpen(true)}
-          onSpeakerRenamed={({ from, to, removedName }) => {
-            if (!meetingData.aiSummary) return;
-            setRegenerationRequest({
-              open: true,
-              initialContext: removedName
-                ? `The person name "${from}" was removed. Use the restored meeting-local label "${to}" and do not associate it with a person profile.`
-                : `Use the updated speaker name "${to}" and the other speaker labels from the transcript when writing the summary.`,
-              speakerNamesChanged: true,
-            });
-          }}
-          onOpenMeetingFolder={meetingOperations.handleOpenMeetingFolder}
-          isRecording={isRecording}
-          disableAutoScroll={true}
-          // Pagination props for efficient loading
-          usePagination={true}
-          segments={segments}
-          hasMore={hasMore}
-          isLoadingMore={isLoadingMore}
-          totalCount={totalCount}
-          loadedCount={loadedCount}
-          onLoadMore={onLoadMore}
-          // Retranscription props
-          meetingId={meeting.id}
-          meetingFolderPath={meeting.folder_path}
-          onRefetchTranscripts={onRefetchTranscripts}
-        />
-        <SummaryPanel
-          meeting={meeting}
-          meetingTitle={meetingData.meetingTitle}
-          onTitleChange={meetingData.handleTitleChange}
-          isEditingTitle={meetingData.isEditingTitle}
-          onStartEditTitle={() => meetingData.setIsEditingTitle(true)}
-          onFinishEditTitle={() => meetingData.setIsEditingTitle(false)}
-          isTitleDirty={meetingData.isTitleDirty}
-          summaryRef={meetingData.blockNoteSummaryRef}
-          isSaving={meetingData.isSaving}
-          onSaveAll={meetingData.saveAllChanges}
-          onCopySummary={copyOperations.handleCopySummary}
-          onCopyTranscript={copyOperations.handleCopyTranscript}
-          onOpenExport={() => setExportOpen(true)}
-          onOpenFolder={meetingOperations.handleOpenMeetingFolder}
-          aiSummary={meetingData.aiSummary}
-          summaryStatus={summaryGeneration.summaryStatus}
-          transcripts={meetingData.transcripts}
-          modelConfig={modelConfig}
-          setModelConfig={setModelConfig}
-          onSaveModelConfig={handleSaveModelConfig}
-          onGenerateSummary={summaryGeneration.handleGenerateSummary}
-          onStopGeneration={summaryGeneration.handleStopGeneration}
-          customPrompt={customPrompt}
-          summaryResponse={summaryResponse}
-          onSaveSummary={meetingData.handleSaveSummary}
-          onSummaryChange={meetingData.handleSummaryChange}
-          onDirtyChange={meetingData.setIsSummaryDirty}
-          summaryError={summaryGeneration.summaryError}
-          onRequestRegenerate={() => setRegenerationRequest({
-            open: true,
-            initialContext: '',
-            speakerNamesChanged: false,
-          })}
-          getSummaryStatusMessage={summaryGeneration.getSummaryStatusMessage}
-          availableTemplates={templates.availableTemplates}
-          selectedTemplate={templates.selectedTemplate}
-          onTemplateSelect={templates.handleTemplateSelection}
-          onManageTemplates={() => setTemplateEditorOpen(true)}
-          isModelConfigLoading={false}
-          onOpenModelSettings={handleRegisterModalOpen}
-        />
+      <MeetingHeader
+        meetingId={meeting.id}
+        title={title}
+        createdAt={meeting.created_at}
+        durationSeconds={transcriptSegments.reduce((max, segment) => Math.max(max, segment.endTime ?? segment.timestamp ?? 0), 0) || undefined}
+        folderPath={meeting.folder_path}
+        groupId={groupId}
+        onGroupChange={async (next) => {
+          const previous = groupId;
+          setGroupId(next);
+          try {
+            await setMeetingGroup(meeting.id, next);
+            announceChange('meetings', { meetingId: meeting.id });
+            announceChange('groups');
+          } catch (error) {
+            setGroupId(previous);
+            toast.error('Could not change the group', { description: error instanceof Error ? error.message : String(error) });
+          }
+        }}
+        onRename={async (next) => {
+          const ok = await renameMeeting(meeting.id, next);
+          if (ok) {
+            setTitle(next);
+            setCurrentMeeting({ id: meeting.id, title: next });
+          }
+          return ok;
+        }}
+        people={speakers.map((speaker) => speaker.label)}
+        onPersonClick={(label, anchor) => setCardTarget({ speaker: label, segmentId: '', rect: anchor.getBoundingClientRect() })}
+        onExport={() => setExportOpen(true)}
+        onCopyTranscript={copyOperations.handleCopyTranscript}
+        onCopySummary={copyOperations.handleCopySummary}
+        hasSummary={!!meetingData.aiSummary}
+        onOpenFolder={meetingOperations.handleOpenMeetingFolder}
+        onDelete={async () => {
+          await deleteMeetings([meeting.id]);
+        }}
+        onTranscriptChanged={() => refreshAfterSpeakerChange()}
+      />
+
+      <div
+        ref={frameRef}
+        className={cn('flex min-h-0 min-w-0 flex-1 overflow-hidden', stacked ? 'flex-col' : 'flex-row', draggingSplit && 'select-none')}
+      >
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label="Transcript">
+          <div className="min-h-0 flex-1">
+            <VirtualizedTranscriptView
+              segments={transcriptSegments}
+              disableAutoScroll
+              hasMore={hasMore}
+              isLoadingMore={isLoadingMore}
+              totalCount={totalCount}
+              loadedCount={loadedCount}
+              onLoadMore={onLoadMore}
+              playbackTime={audio.status === 'ready' && (audio.playing || audio.currentTime > 0) ? audio.currentTime : null}
+              followPlayback={follow && audio.playing}
+              onSeek={audio.status === 'ready' ? (seconds) => audio.seek(seconds, true) : undefined}
+              highlightSegmentId={focusLineId}
+              onSpeakerClick={(speaker, segmentId, anchor) => setCardTarget({ speaker, segmentId, rect: anchor.getBoundingClientRect() })}
+              emptyState={<p className="mt-16 text-center text-sm text-af-text-3">This meeting has no transcript.</p>}
+              textMode={labs.cleanTranscript ? textMode : 'tidy'}
+              colorIndices={colorIndices}
+            />
+          </div>
+          <AudioPlayerBar
+            audio={audio}
+            follow={follow}
+            onFollowChange={setFollow}
+            waveform={labs.transcriptScrubbing ? waveform : null}
+            rates={labs.transcriptScrubbing ? SLOW_PLAYBACK_RATES : PLAYBACK_RATES}
+            textMode={labs.cleanTranscript ? textMode : undefined}
+            onTextModeChange={labs.cleanTranscript ? setTextMode : undefined}
+          />
+        </section>
+
+        {!stacked && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize transcript and notes"
+            onPointerDown={startSplitDrag}
+            className="group relative z-10 w-1.5 shrink-0 cursor-col-resize"
+          >
+            <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-af-border transition-colors group-hover:bg-af-accent group-active:bg-af-accent" />
+          </div>
+        )}
+
+        {/* Above the divider, so the editor's toolbar and slash menu can overlap it. */}
+        <aside
+          className={cn('relative z-20 flex min-h-0 min-w-0 flex-col', stacked ? 'flex-1 border-t border-af-border' : 'shrink-0')}
+          style={stacked ? undefined : { width: documentWidth }}
+          aria-label="Notes and summary"
+        >
+          <MeetingDocument
+            meetingId={meeting.id}
+            aiSummary={meetingData.aiSummary}
+            summaryUserEdited={summaryUserEdited}
+            onSummaryChange={handleSummaryChange}
+            summaryStatus={summaryGeneration.summaryStatus}
+            summaryError={summaryGeneration.summaryError}
+            statusMessage={summaryGeneration.getSummaryStatusMessage}
+            onGenerate={() => void summaryGeneration.handleGenerateSummary('')}
+            onRegenerate={async (instructions) => {
+              await summaryGeneration.handleRegenerateSummary(instructions);
+            }}
+            onStop={summaryGeneration.handleStopGeneration}
+            hasTranscript={hasTranscript}
+            transcript={transcriptSegments}
+            onSeek={(seconds) => audio.seek(seconds, true)}
+            modelConfig={modelConfig}
+            setModelConfig={setModelConfig}
+            onSaveModelConfig={handleSaveModelConfig}
+            templates={templates.availableTemplates}
+            selectedTemplate={templates.selectedTemplate}
+            onTemplateSelect={templates.handleTemplateSelection}
+            onManageTemplates={() => setTemplateEditorOpen(true)}
+            regenerateRequest={regenerateRequest}
+            onRegenerateRequestHandled={() => setRegenerateRequest(null)}
+          />
+        </aside>
       </div>
 
+      <PersonCard
+        target={cardTarget}
+        onClose={() => setCardTarget(null)}
+        lineCount={cardTarget ? speakers.find((speaker) => speaker.label === cardTarget.speaker)?.count : undefined}
+        onIdentify={(speaker, segmentId) => setIdentity({ speaker, transcriptId: segmentId || null })}
+        onMerge={(speaker) => setIdentity({ speaker, transcriptId: null })}
+        onMarkMe={markMe}
+        colorIndex={cardTarget ? colorIndexOf(cardTarget.speaker) : undefined}
+        meetingId={meeting.id}
+      />
+      <SpeakerIdentityDialog
+        open={identity !== null}
+        onOpenChange={(open) => !open && setIdentity(null)}
+        speaker={identity?.speaker ?? null}
+        transcriptId={identity?.transcriptId}
+        meetingId={meeting.id}
+        speakers={speakers.map((speaker) => speaker.label)}
+        onRenamed={(rename) => refreshAfterSpeakerChange(rename)}
+        onMerge={mergeSpeakers}
+        colorIndexOf={colorIndexOf}
+      />
       <TemplateEditorModal
         open={templateEditorOpen}
         onClose={() => setTemplateEditorOpen(false)}
@@ -335,23 +541,16 @@ export default function PageContent({
       <MeetingExportDialog
         open={exportOpen}
         onOpenChange={setExportOpen}
-        hasTranscript={(totalCount ?? meetingData.transcripts.length) > 0}
+        hasTranscript={hasTranscript}
         hasSummary={!!meetingData.aiSummary}
         onExport={copyOperations.handleExportMeeting}
-      />
-      <SummaryRegenerationDialog
-        open={regenerationRequest.open}
-        onOpenChange={(open) => setRegenerationRequest((current) => ({ ...current, open }))}
-        initialContext={regenerationRequest.initialContext}
-        speakerNamesChanged={regenerationRequest.speakerNamesChanged}
-        onRegenerate={summaryGeneration.handleRegenerateSummary}
       />
       <PostCallProcessingDialog
         enabled={isPostCallRecording}
         meetingId={meeting.id}
         meetingFolderPath={meeting.folder_path}
         onRefetchTranscripts={onRefetchTranscripts}
-        onComplete={() => setPostCallProcessingCompletedMeetingId(meeting.id)}
+        onComplete={() => setPostCallDoneFor(meeting.id)}
       />
     </motion.div>
   );

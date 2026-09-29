@@ -1,0 +1,279 @@
+/* ============================================================
+   Icon motion
+
+   When the control around an icon is hovered or focused from the keyboard,
+   the icon makes one small gesture that fits what it stands for: the gear
+   turns a tooth, the layers fan apart, the mic pulses, arrows point the way
+   things will go.
+
+   How it is wired:
+   - Every control sets --af-hot for its own contents (1 while hovered or
+     focused) and resets it to 0 for controls nested inside it, so a button in
+     a hoverable row moves only when that button is hovered.
+   - Icons read the flag with a style container query.
+   - Motion uses the individual rotate / translate / scale properties, so it
+     adds to any transform an icon already has (a chevron flipped open).
+   - Icons that already run an animation (a spinning refresh while busy)
+     keep it, and nothing moves with reduced motion.
+   Icons are matched by the class lucide gives each one (lucide-<name>); the
+   part selectors follow lucide-react 0.469's drawings.
+   ============================================================ */
+
+:where(button, a[href], summary, label, [role='button'], [role='link'], [role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'], [role='tab'], [role='option'], [role='switch'], [role='radio'], [role='checkbox']) {
+  --af-hot: 0;
+}
+:where(button, a[href], summary, label, [role='button'], [role='link'], [role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'], [role='tab'], [role='option'], [role='switch'], [role='radio'], [role='checkbox']):where(:hover, :focus-visible, [data-highlighted]):not(:disabled, [aria-disabled='true'], [data-disabled]) {
+  --af-hot: 1;
+}
+
+svg.lucide {
+  /* Moving parts may cross the 24px drawing box by a pixel or two. */
+  overflow: visible;
+  transition-property: color, stroke, fill, opacity, transform, translate, rotate, scale;
+  transition-duration: 200ms;
+  transition-timing-function: var(--af-ease);
+}
+svg.lucide > * {
+  transition: translate 240ms var(--af-ease), rotate 320ms var(--af-ease), scale 240ms var(--af-ease), opacity 200ms ease;
+}
+
+/* Pivot points for icon parts that turn or scale. */
+.lucide-list-filter > *,
+.lucide-cpu > :nth-child(2),
+.lucide-audio-lines > * {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+:is(.lucide-trash2, .lucide-trash) > :is(:nth-child(1), :nth-child(3)) {
+  transform-box: view-box;
+  transform-origin: 3px 6px;
+}
+.lucide-radar > :last-child,
+.lucide-clock > polyline {
+  transform-box: view-box;
+  transform-origin: 12px 12px;
+}
+:is(.lucide-bell, .lucide-bell-ring) {
+  transform-origin: 50% 15%;
+}
+.lucide-settings2 > :nth-child(1) {
+  transform-box: view-box;
+  transform-origin: 20px 7px;
+}
+.lucide-settings2 > :nth-child(2) {
+  transform-box: view-box;
+  transform-origin: 5px 17px;
+}
+
+/* One-shot gestures. Turns end on a symmetric pose, so the reset is invisible. */
+@keyframes af-icon-tooth { to { rotate: 60deg; } }
+@keyframes af-icon-quarter { to { rotate: 90deg; } }
+@keyframes af-icon-half { to { rotate: 180deg; } }
+@keyframes af-icon-round { to { rotate: 360deg; } }
+@keyframes af-icon-round-back { to { rotate: -360deg; } }
+@keyframes af-icon-beat {
+  0%, 100% { scale: 1; }
+  35% { scale: 1.16; }
+  65% { scale: 0.96; }
+}
+@keyframes af-icon-look {
+  0%, 100% { rotate: 0deg; scale: 1; }
+  35% { rotate: -14deg; scale: 1.08; }
+  70% { rotate: 6deg; }
+}
+@keyframes af-icon-tilt {
+  0%, 100% { rotate: 0deg; }
+  40% { rotate: -8deg; }
+  75% { rotate: 3deg; }
+}
+@keyframes af-icon-scribble {
+  0%, 100% { rotate: 0deg; }
+  25% { rotate: -12deg; }
+  55% { rotate: 8deg; }
+  80% { rotate: -3deg; }
+}
+@keyframes af-icon-ring {
+  0%, 100% { rotate: 0deg; }
+  15% { rotate: 14deg; }
+  35% { rotate: -12deg; }
+  55% { rotate: 8deg; }
+  75% { rotate: -4deg; }
+}
+@keyframes af-icon-twinkle {
+  0%, 100% { scale: 1; rotate: 0deg; }
+  45% { scale: 1.14; rotate: 10deg; }
+}
+@keyframes af-icon-level {
+  0%, 100% { scale: 1 1; }
+  30% { scale: 1 0.45; }
+  60% { scale: 1 1.15; }
+}
+@keyframes af-icon-hop {
+  0%, 100% { translate: 0 0; }
+  40% { translate: 0 -2px; }
+  70% { translate: 0 0.5px; }
+}
+@keyframes af-icon-core {
+  0%, 100% { scale: 1; }
+  50% { scale: 1.3; }
+}
+@keyframes af-icon-draw {
+  from { stroke-dashoffset: 23; }
+}
+@keyframes af-icon-dot {
+  0%, 100% { translate: 0 0; }
+  40% { translate: 0 -1.5px; }
+}
+@keyframes af-icon-wave {
+  0%, 100% { opacity: 1; }
+  40% { opacity: 0.25; }
+}
+@keyframes af-icon-blink {
+  0%, 100% { scale: 1 1; }
+  45% { scale: 1 0.1; }
+}
+@keyframes af-icon-flash {
+  0%, 100% { scale: 1; rotate: 0deg; }
+  40% { scale: 1.18; rotate: -8deg; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @container style(--af-hot: 1) {
+    /* Settings: the gear turns one tooth. */
+    .lucide-settings:not([class*='animate-']) { animation: af-icon-tooth 700ms var(--af-ease); }
+    /* General settings: each knob slides along its slider and its track
+       shortens to match, so knob and line never overlap. */
+    .lucide-settings2 > :nth-child(4) { translate: 2px 0; }
+    .lucide-settings2 > :nth-child(1) { scale: 0.778 1; }
+    .lucide-settings2 > :nth-child(3) { translate: -2px 0; }
+    .lucide-settings2 > :nth-child(2) { scale: 0.778 1; }
+
+    /* Recording: the mic pulses like a voice. */
+    .lucide-mic:not([class*='animate-']) { animation: af-icon-beat 460ms var(--af-ease); }
+    /* Transcription: the levels jump. */
+    .lucide-audio-lines > * { animation: af-icon-level 620ms ease-in-out; }
+    .lucide-audio-lines > :nth-child(2) { animation-delay: 50ms; }
+    .lucide-audio-lines > :nth-child(3) { animation-delay: 100ms; }
+    .lucide-audio-lines > :nth-child(4) { animation-delay: 150ms; }
+    .lucide-audio-lines > :nth-child(5) { animation-delay: 200ms; }
+    .lucide-audio-lines > :nth-child(6) { animation-delay: 250ms; }
+    /* Meeting detection: the radar sweeps. */
+    .lucide-radar > :last-child { animation: af-icon-round 900ms var(--af-ease); }
+    /* Local AI: the core pulses. */
+    .lucide-cpu > :nth-child(2) { animation: af-icon-core 520ms var(--af-ease); }
+    /* About: the dot of the i hops. */
+    .lucide-info > :last-child { animation: af-icon-hop 520ms var(--af-ease); }
+    /* AI (summaries, Ask AI): the sparkle twinkles. */
+    .lucide-sparkles:not([class*='animate-']) { animation: af-icon-twinkle 560ms var(--af-ease); }
+
+    /* Search: the lens looks around. */
+    .lucide-search:not([class*='animate-']) { animation: af-icon-look 560ms var(--af-ease); }
+    /* Contacts: the card tilts as if picked up. */
+    :is(.lucide-contact, .lucide-contact-round, .lucide-book-user):not([class*='animate-']) { animation: af-icon-tilt 520ms var(--af-ease); }
+    /* People: a small hop. */
+    :is(.lucide-users, .lucide-users-round, .lucide-user, .lucide-user-round, .lucide-user-plus, .lucide-user-check):not([class*='animate-']) {
+      animation: af-icon-hop 480ms var(--af-ease);
+    }
+    /* Groups: the layers fan apart. */
+    .lucide-layers > :first-child { translate: 0 -1.5px; }
+    .lucide-layers > :last-child { translate: 0 1.5px; }
+    /* All meetings: a book comes off the shelf. */
+    .lucide-library > :nth-child(2) { translate: 0 -2px; }
+    /* Filter: the top line narrows. */
+    .lucide-list-filter > :first-child { scale: 0.75 1; }
+
+    /* Rail toggle: the arrow points the way the rail will go. */
+    .lucide-panel-left-close > :last-child { translate: -1.5px 0; }
+    .lucide-panel-left-open > :last-child { translate: 1.5px 0; }
+    /* Chevrons and arrows point where things will open or go. */
+    .lucide-chevron-down { translate: 0 1.5px; }
+    .lucide-chevron-up { translate: 0 -1.5px; }
+    .lucide-chevron-right,
+    .lucide-arrow-right { translate: 1.5px 0; }
+    .lucide-chevron-left,
+    .lucide-arrow-left { translate: -1.5px 0; }
+    .lucide-arrow-up-right,
+    .lucide-external-link { translate: 1px -1px; }
+
+    /* Import, export, move: the arrow goes the way the file goes. */
+    .lucide-upload > :not(:first-child) { translate: 0 -1.5px; }
+    .lucide-download > :not(:first-child) { translate: 0 1.5px; }
+    .lucide-folder-input > :not(:first-child) { translate: 1.5px 0; }
+    /* Copy: the top sheet shifts. */
+    .lucide-copy > :first-child { translate: 1px 1px; }
+
+    /* Add and close: a quarter turn. */
+    :is(.lucide-plus, .lucide-x):not([class*='animate-']) { animation: af-icon-quarter 360ms var(--af-ease); }
+    /* Edit and notes: a quick scribble. */
+    :is(.lucide-pencil, .lucide-pen, .lucide-pen-line, .lucide-square-pen, .lucide-notebook-pen):not([class*='animate-']) {
+      animation: af-icon-scribble 520ms var(--af-ease);
+    }
+    /* Delete: the lid lifts. */
+    :is(.lucide-trash2, .lucide-trash) > :is(:nth-child(1), :nth-child(3)) { translate: 0 -1px; rotate: -6deg; }
+
+    /* Regenerate and refresh: the arrows go round. */
+    :is(.lucide-refresh-cw, .lucide-refresh-ccw):not([class*='animate-']) { animation: af-icon-half 620ms var(--af-ease); }
+    .lucide-rotate-cw:not([class*='animate-']) { animation: af-icon-round 700ms var(--af-ease); }
+    .lucide-rotate-ccw:not([class*='animate-']) { animation: af-icon-round-back 700ms var(--af-ease); }
+
+    /* Notifications: the bell rings. */
+    :is(.lucide-bell, .lucide-bell-ring):not([class*='animate-']) { animation: af-icon-ring 700ms var(--af-ease); }
+    /* Theme and language: a light tilt. */
+    :is(.lucide-palette, .lucide-languages, .lucide-globe):not([class*='animate-']) { animation: af-icon-tilt 520ms var(--af-ease); }
+    /* Time: the hands move on. */
+    .lucide-clock > polyline { rotate: 45deg; }
+    /* Dates: the calendar hops. */
+    :is(.lucide-calendar, .lucide-calendar-days, .lucide-calendar-clock):not([class*='animate-']) { animation: af-icon-hop 480ms var(--af-ease); }
+
+    /* Playback: play leans forward, pause and stop press in. */
+    .lucide-play { translate: 1px 0; }
+    .lucide-pause,
+    .lucide-square { scale: 0.88; }
+
+    /* More: the dots ripple, left to right. */
+    .lucide-ellipsis > * { animation: af-icon-dot 420ms var(--af-ease); }
+    .lucide-ellipsis > :nth-child(1) { animation-delay: 60ms; }
+    .lucide-ellipsis > :nth-child(2) { animation-delay: 120ms; }
+    /* Sound: the waves go out. */
+    .lucide-volume2 > :nth-child(2) { animation: af-icon-wave 600ms ease-in-out; }
+    .lucide-volume2 > :nth-child(3) { animation: af-icon-wave 600ms ease-in-out 120ms; }
+    /* Show: the eye blinks. */
+    .lucide-eye:not([class*='animate-']) { animation: af-icon-blink 320ms ease-in-out; }
+    /* Lock and unlock: the shackle lifts. */
+    :is(.lucide-lock, .lucide-lock-open) > :last-child { translate: 0 -1.5px; }
+    /* Send and up: they head off the way they point. */
+    .lucide-send { translate: 1.5px -1.5px; }
+    .lucide-arrow-up { translate: 0 -1.5px; }
+    /* Pick from a list: the chevrons spread. */
+    .lucide-chevrons-up-down > :nth-child(1) { translate: 0 1px; }
+    .lucide-chevrons-up-down > :nth-child(2) { translate: 0 -1px; }
+    /* Bigger and smaller. */
+    .lucide-maximize2 { scale: 1.12; }
+    .lucide-minimize2 { scale: 0.88; }
+    /* Loop: the arrows go round. */
+    .lucide-repeat:not([class*='animate-']) { animation: af-icon-half 620ms var(--af-ease); }
+    /* Energy: a flash. Magic: a flick of the wand. */
+    .lucide-zap:not([class*='animate-']) { animation: af-icon-flash 460ms var(--af-ease); }
+    .lucide-wand-sparkles:not([class*='animate-']) { animation: af-icon-scribble 520ms var(--af-ease); }
+    /* Calls: the phone rings. */
+    .lucide-phone:not([class*='animate-']) { animation: af-icon-ring 700ms var(--af-ease); }
+    /* Things with a beat or a focus pulse once. */
+    :is(.lucide-heart, .lucide-brain-circuit, .lucide-target, .lucide-circle-check, .lucide-git-merge, .lucide-mic-off):not([class*='animate-']) {
+      animation: af-icon-beat 460ms var(--af-ease);
+    }
+    /* Folders, pins, links out and shields tilt. */
+    :is(.lucide-folder-open, .lucide-pin, .lucide-github, .lucide-shield, .lucide-shield-check, .lucide-volume-x):not([class*='animate-']) {
+      animation: af-icon-tilt 520ms var(--af-ease);
+    }
+    /* Files, mail, home, notes and storage hop. */
+    :is(.lucide-house, .lucide-mail, .lucide-clipboard, .lucide-clipboard-copy, .lucide-files, .lucide-file-text, .lucide-file-audio, .lucide-file-json, .lucide-file-type, .lucide-file-archive, .lucide-hard-drive, .lucide-message-square-text):not([class*='animate-']) {
+      animation: af-icon-hop 480ms var(--af-ease);
+    }
+  }
+
+  /* A tick draws itself in when a checkbox or menu item becomes checked. */
+  [data-state='checked'] .lucide-check {
+    stroke-dasharray: 23;
+    animation: af-icon-draw 260ms var(--af-ease) both;
+  }
+}

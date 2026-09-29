@@ -12,6 +12,10 @@ const PEOPLE_MIGRATION_LF_CHECKSUM: &str =
     "3722B8A73598E02E31D989430BF2E756539BA575BC4C4A7D981BEE4FB218E549AB36C93071EAA73C006E14CF6CF58B1B";
 const PEOPLE_MIGRATION_CRLF_CHECKSUM: &str =
     "75A90F5D84A2D6E6FE0AF8ABC583FEE66A10816AA39916AE2CB73AA728BD5F9FAB199C62CFEDD1F5D1083D795BD09B57";
+// 20260928000000_unified_workspace adds these to `people` with ALTER TABLE.
+// SQLite appends them to the stored definition, in this order.
+const PEOPLE_WORKSPACE_COLUMNS: &str = ", email TEXT, company TEXT, role TEXT, phone TEXT, \
+     is_manual INTEGER NOT NULL DEFAULT 0 CHECK (is_manual IN (0, 1))";
 
 #[derive(Clone)]
 pub struct DatabaseManager {
@@ -144,8 +148,7 @@ impl DatabaseManager {
                 |((object_type, name, sql), (expected_type, expected_name, expected_sql))| {
                     object_type == expected_type
                         && name == expected_name
-                        && Self::normalize_schema_sql(sql)
-                            == Self::normalize_schema_sql(expected_sql)
+                        && Self::schema_sql_matches(name, sql, expected_sql)
                 },
             );
         if !schema_matches {
@@ -179,6 +182,20 @@ impl DatabaseManager {
             PEOPLE_MIGRATION_VERSION
         );
         Ok(())
+    }
+
+    /// A database repaired after the workspace migration has the original
+    /// `people` table plus exactly the workspace columns. Anything else differs.
+    fn schema_sql_matches(name: &str, sql: &str, expected_sql: &str) -> bool {
+        let actual = Self::normalize_schema_sql(sql);
+        let expected = Self::normalize_schema_sql(expected_sql);
+        if actual == expected {
+            return true;
+        }
+        name == "people"
+            && expected.strip_suffix(')').is_some_and(|columns| {
+                actual == format!("{columns}{})", Self::normalize_schema_sql(PEOPLE_WORKSPACE_COLUMNS))
+            })
     }
 
     fn normalize_schema_sql(sql: &str) -> String {
@@ -416,6 +433,26 @@ mod tests {
             .await
             .unwrap();
         sqlx::query("CREATE INDEX idx_people_display_name ON people(normalized_name)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE _sqlx_migrations SET checksum = X'75A90F5D84A2D6E6FE0AF8ABC583FEE66A10816AA39916AE2CB73AA728BD5F9FAB199C62CFEDD1F5D1083D795BD09B57' WHERE version = ?",
+        )
+        .bind(PEOPLE_MIGRATION_VERSION)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let error = DatabaseManager::run_migrations(&pool).await.unwrap_err();
+        assert!(error.to_string().contains("schema differs"));
+    }
+
+    #[tokio::test]
+    async fn rejects_known_checksum_when_people_has_unexpected_columns() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        MIGRATOR.run(&pool).await.unwrap();
+        sqlx::query("ALTER TABLE people ADD COLUMN nickname TEXT")
             .execute(&pool)
             .await
             .unwrap();

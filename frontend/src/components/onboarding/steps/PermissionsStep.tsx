@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { toast } from 'sonner';
 import { Mic, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { OnboardingContainer } from '../OnboardingContainer';
@@ -32,7 +33,9 @@ export function PermissionsStep() {
       try {
         await invoke('open_system_settings');
       } catch {
-        alert('Please enable microphone access in System Preferences > Security & Privacy > Microphone');
+        toast.info('Allow microphone access', {
+          description: 'Open System Settings → Privacy & Security → Microphone and turn on Meetily.',
+        });
       }
       return;
     }
@@ -64,7 +67,9 @@ export function PermissionsStep() {
       try {
         await invoke('open_system_settings');
       } catch {
-        alert('Please enable Audio Capture in System Settings → Privacy & Security → Audio Capture');
+        toast.info('Allow Audio Capture', {
+          description: 'Open System Settings → Privacy & Security → Audio Capture and turn on Meetily.',
+        });
       }
       return;
     }
@@ -152,7 +157,7 @@ export function PermissionsStep() {
 
           <button
             onClick={handleSkip}
-            className="text-sm text-neutral-500 hover:text-neutral-700 transition-colors"
+            className="text-sm text-af-text-3 hover:text-af-text-2 transition-colors"
           >
             I'll do this later
           </button>

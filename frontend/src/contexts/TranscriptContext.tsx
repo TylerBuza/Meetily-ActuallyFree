@@ -7,7 +7,8 @@ import { useRecordingState } from './RecordingStateContext';
 import { transcriptService } from '@/services/transcriptService';
 import { recordingService } from '@/services/recordingService';
 import { indexedDBService } from '@/services/indexedDBService';
-import { resolveSpeaker, isUserSpeaker, speakerColorIndexMap, speakerKey } from '@/utils/speakerUtils';
+import { isUserSpeaker, speakerColorIndexMap, speakerKey } from '@/utils/speakerUtils';
+import { activeSpeakerMeeting, editedSpeaker, persistSpeakerRename, persistTurnSpeaker } from '@/lib/live-speaker-edits';
 
 interface TranscriptContextType {
   transcripts: Transcript[];
@@ -15,7 +16,6 @@ interface TranscriptContextType {
   addTranscript: (update: TranscriptUpdate) => void;
   copyTranscript: () => void;
   flushBuffer: () => void;
-  transcriptContainerRef: React.RefObject<HTMLDivElement>;
   meetingTitle: string;
   setMeetingTitle: (title: string) => void;
   clearTranscripts: () => void;
@@ -24,6 +24,7 @@ interface TranscriptContextType {
   detectedSpeakers: DetectedSpeaker[];
   speakerMap: Record<string, string>;
   renameSpeaker: (oldName: string, newName: string) => void;
+  reassignSegment: (segmentId: string, newSpeaker: string) => void;
   mergeSpeakers: (sourceSpeaker: string, targetSpeaker: string) => void;
 }
 
@@ -45,52 +46,12 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
 
   // Refs for transcript management
   const transcriptsRef = useRef<Transcript[]>(transcripts);
-  const isUserAtBottomRef = useRef<boolean>(true);
-  const transcriptContainerRef = useRef<HTMLDivElement>(null);
   const finalFlushRef = useRef<(() => void) | null>(null);
   const transcriptBufferRef = useRef<Map<number, Transcript>>(new Map());
 
   // Keep ref updated with current transcripts
   useEffect(() => {
     transcriptsRef.current = transcripts;
-  }, [transcripts]);
-
-  // Smart auto-scroll: Track user scroll position
-  useEffect(() => {
-    const handleScroll = () => {
-      const container = transcriptContainerRef.current;
-      if (!container) return;
-
-      const { scrollTop, scrollHeight, clientHeight } = container;
-      const isAtBottom = scrollTop + clientHeight >= scrollHeight - 10; // 10px tolerance
-      isUserAtBottomRef.current = isAtBottom;
-    };
-
-    const container = transcriptContainerRef.current;
-    if (container) {
-      container.addEventListener('scroll', handleScroll);
-      return () => container.removeEventListener('scroll', handleScroll);
-    }
-  }, []);
-
-  // Auto-scroll when transcripts change (only if user is at bottom)
-  useEffect(() => {
-    // Only auto-scroll if user was at the bottom before new content
-    if (isUserAtBottomRef.current && transcriptContainerRef.current) {
-      // Wait for Framer Motion animation to complete (150ms) before scrolling
-      // This ensures scrollHeight includes the full rendered height of the new transcript
-      const scrollTimeout = setTimeout(() => {
-        const container = transcriptContainerRef.current;
-        if (container) {
-          container.scrollTo({
-            top: container.scrollHeight,
-            behavior: 'smooth'
-          });
-        }
-      }, 150); // Match Framer Motion transition duration
-
-      return () => clearTimeout(scrollTimeout);
-    }
   }, [transcripts]);
 
   // Initialize IndexedDB and listen for recording-started/stopped events
@@ -318,7 +279,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
 
           // Create transcript for buffer with NEW timestamp fields and real-time speaker resolution
           const rawSpeaker = (update as any).source || 'Speaker 1';
-          const effectiveSpeaker = resolveSpeaker(rawSpeaker, speakerMapRef.current);
+          const effectiveSpeaker = editedSpeaker(activeSpeakerMeeting(), update.sequence_id, rawSpeaker);
 
           const newTranscript: Transcript = {
             id: `${Date.now()}-${transcriptCounter++}`,
@@ -357,7 +318,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
         console.log('✅ MAIN transcript listener setup complete');
       } catch (error) {
         console.error('❌ Failed to setup MAIN transcript listener:', error);
-        alert('Failed to setup transcript listener. Check console for details.');
+        toast.error('Live transcript is unavailable', { description: 'Restart Meetily. If it keeps happening, check the logs.' });
       }
     };
 
@@ -402,7 +363,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
             audio_start_time: segment.audio_start_time,
             audio_end_time: segment.audio_end_time,
             duration: segment.duration,
-            speaker: segment.speaker ?? undefined,
+            speaker: editedSpeaker(activeSpeakerMeeting(), segment.sequence_id, segment.speaker ?? undefined),
           }));
 
           setTranscripts(formattedTranscripts);
@@ -434,7 +395,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
     });
 
     const rawSpeaker = (update as any).source || 'Speaker 1';
-    const effectiveSpeaker = resolveSpeaker(rawSpeaker, speakerMapRef.current);
+    const effectiveSpeaker = editedSpeaker(activeSpeakerMeeting(), update.sequence_id, rawSpeaker);
 
     const newTranscript: Transcript = {
       id: update.sequence_id ? update.sequence_id.toString() : Date.now().toString(),
@@ -509,6 +470,11 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
     const trimmedOld = oldName.trim();
     const trimmedNew = newName.trim();
     if (!trimmedOld || !trimmedNew || trimmedOld === trimmedNew) return;
+    try {
+      const id = activeSpeakerMeeting();
+      if (!id) throw new Error('No active meeting');
+      persistSpeakerRename(id, trimmedOld, trimmedNew);
+    } catch { toast.error('Could not save speaker name. Please retry.'); return; }
 
     setSpeakerMap(prev => {
       const next = { ...prev, [trimmedOld]: trimmedNew };
@@ -536,8 +502,27 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
         }
       }
     }
+  }, []);
 
-    toast.success(`Renamed "${trimmedOld}" to "${trimmedNew}"`);
+  const reassignSegment = useCallback((segmentId: string, newSpeaker: string) => {
+    const nextSpeaker = newSpeaker.trim();
+    if (!segmentId) return;
+    try {
+      const id = activeSpeakerMeeting();
+      const turn = transcriptsRef.current.find(t => t.id === segmentId);
+      if (!id || turn?.sequence_id === undefined) throw new Error('No active transcript');
+      persistTurnSpeaker(id, turn.sequence_id, nextSpeaker);
+    } catch { toast.error('Could not save speaker assignment. Please retry.'); return; }
+    const speaker = nextSpeaker || undefined;
+    transcriptsRef.current = transcriptsRef.current.map((t) =>
+      t.id === segmentId ? { ...t, speaker } : t
+    );
+    setTranscripts((prev) => prev.map((t) => (t.id === segmentId ? { ...t, speaker } : t)));
+    if (transcriptBufferRef.current) {
+      for (const [seqId, t] of transcriptBufferRef.current.entries()) {
+        if (t.id === segmentId) transcriptBufferRef.current.set(seqId, { ...t, speaker });
+      }
+    }
   }, []);
 
   // Merge speakers across active session
@@ -545,6 +530,11 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
     const trimmedSource = sourceSpeaker.trim();
     const trimmedTarget = targetSpeaker.trim();
     if (!trimmedSource || !trimmedTarget || trimmedSource === trimmedTarget) return;
+    try {
+      const id = activeSpeakerMeeting();
+      if (!id) throw new Error('No active meeting');
+      persistSpeakerRename(id, trimmedSource, trimmedTarget);
+    } catch { toast.error('Could not save speaker merge. Please retry.'); return; }
 
     setSpeakerMap(prev => {
       const next = { ...prev, [trimmedSource]: trimmedTarget };
@@ -637,7 +627,6 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
     addTranscript,
     copyTranscript,
     flushBuffer,
-    transcriptContainerRef,
     meetingTitle,
     setMeetingTitle,
     clearTranscripts,
@@ -646,6 +635,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
     detectedSpeakers,
     speakerMap,
     renameSpeaker,
+    reassignSegment,
     mergeSpeakers,
   };
 

@@ -36,7 +36,7 @@ function Pill({ ok, label }: { ok: boolean; label: string }) {
     <span
       className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
         ok
-          ? 'bg-emerald-500/15 text-emerald-300'
+          ? 'bg-af-success/15 text-af-success'
           : 'bg-[var(--af-panel-2)] text-[var(--af-text-3)]'
       }`}
     >
@@ -124,9 +124,9 @@ export function LocalStackStatus() {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <div className="rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] p-4">
+        <div className="rounded-2xl border border-af-border bg-af-panel-2/40 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--af-text)]">
-            <Zap size={16} className="text-amber-400" /> Live STT (Parakeet preferred)
+            <Zap size={16} className="text-af-warning" /> Live STT (Parakeet preferred)
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Pill
@@ -140,9 +140,9 @@ export function LocalStackStatus() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] p-4">
+        <div className="rounded-2xl border border-af-border bg-af-panel-2/40 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--af-text)]">
-            <Cpu size={16} className="text-cyan-400" /> Post-call STT (Whisper)
+            <Cpu size={16} className="text-af-accent" /> Post-call STT (Whisper)
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Pill
@@ -156,9 +156,9 @@ export function LocalStackStatus() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] p-4">
+        <div className="rounded-2xl border border-af-border bg-af-panel-2/40 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--af-text)]">
-            <HardDrive size={16} className="text-blue-400" /> Disk
+            <HardDrive size={16} className="text-af-accent" /> Disk
           </div>
           <p className="text-xs text-[var(--af-text-2)]">
             Models: <strong>{formatBytes(status?.modelsDirBytes)}</strong>
@@ -172,9 +172,9 @@ export function LocalStackStatus() {
           )}
         </div>
 
-        <div className="rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] p-4">
+        <div className="rounded-2xl border border-af-border bg-af-panel-2/40 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--af-text)]">
-            <Cpu size={16} className="text-purple-400" /> Transcription acceleration
+            <Cpu size={16} className="text-af-accent" /> Transcription acceleration
           </div>
           <div className="space-y-2 text-xs text-[var(--af-text-2)]">
             <div className="flex items-center justify-between gap-3">
@@ -198,7 +198,7 @@ export function LocalStackStatus() {
           </p>}
         </div>
 
-        <div className="rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] p-4">
+        <div className="rounded-2xl border border-af-border bg-af-panel-2/40 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--af-text)]">
             <RefreshCw size={16} className="text-[var(--af-text-3)]" /> Idle unload
           </div>
@@ -211,16 +211,16 @@ export function LocalStackStatus() {
             {formatAgo(status?.llmLastUnloadSecs)}
           </p>
           {status?.recording && (
-            <p className="mt-1 text-xs text-amber-300">Recording — unload is paused.</p>
+            <p className="mt-1 text-xs text-af-warning">Recording — unload is paused.</p>
           )}
         </div>
 
-        <div className="rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] p-4">
+        <div className="rounded-2xl border border-af-border bg-af-panel-2/40 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--af-text)]">
-            <Network size={16} className="text-emerald-400" /> Network
+            <Network size={16} className="text-af-success" /> Network
           </div>
           <div className="flex items-center gap-2">
-            <Shield size={14} className="text-emerald-400" />
+            <Shield size={14} className="text-af-success" />
             <Pill ok label="Local-first · no telemetry" />
           </div>
           <p className="mt-2 text-xs text-[var(--af-text-3)]">

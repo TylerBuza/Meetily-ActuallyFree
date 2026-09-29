@@ -1,140 +1,186 @@
 'use client';
 
+/**
+ * The recorder. With nothing recording it is the home page (search, quick
+ * actions, what's next); during a call it is the live session. The record
+ * card floats at the bottom in both.
+ */
 import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
+import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import { RecordingControls } from '@/components/RecordingControls';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { usePermissionCheck } from '@/hooks/usePermissionCheck';
 import { useRecordingState, RecordingStatus } from '@/contexts/RecordingStateContext';
-import { useTranscripts } from '@/contexts/TranscriptContext';
 import { useConfig } from '@/contexts/ConfigContext';
-import { StatusOverlays } from '@/app/_components/StatusOverlays';
+import { PostCallHandoffCard } from '@/components/PostCallHandoffCard';
+import { RecordingCardSlot } from '@/components/RecordingCardSlot';
+import { HomeDashboard } from '@/components/home/HomeDashboard';
+import { LiveSession } from '@/components/recording/LiveSession';
+import Analytics from '@/lib/analytics';
 import { SettingsModals } from './_components/SettingsModal';
-import { TranscriptPanel } from './_components/TranscriptPanel';
 import { useModalState } from '@/hooks/useModalState';
 import { useRecordingStateSync } from '@/hooks/useRecordingStateSync';
 import { useRecordingStart } from '@/hooks/useRecordingStart';
 import { useRecordingStop } from '@/hooks/useRecordingStop';
+import { useTranscriptRecovery } from '@/hooks/useTranscriptRecovery';
+import { TranscriptRecovery } from '@/components/TranscriptRecovery';
+import { indexedDBService } from '@/services/indexedDBService';
 
 export default function Home() {
-  // Local page state (not moved to contexts)
   const [isRecording, setIsRecordingState] = useState(false);
-  const [barHeights, setBarHeights] = useState(['58%', '76%', '58%']);
+  const [showRecoveryDialog, setShowRecoveryDialog] = useState(false);
 
-  // Use contexts for state management
-  const { meetingTitle } = useTranscripts();
   const { transcriptModelConfig, selectedDevices } = useConfig();
   const recordingState = useRecordingState();
+  const { status, isStopping, isProcessing } = recordingState;
 
-  // Extract status from global state
-  const { status, isStopping, isProcessing, isSaving } = recordingState;
-
-  // Hooks
   const { hasMicrophone } = usePermissionCheck();
-  const { setIsMeetingActive, isCollapsed: sidebarCollapsed } = useSidebar();
+  const { setIsMeetingActive, refetchMeetings } = useSidebar();
   const { modals, messages, showModal, hideModal } = useModalState(transcriptModelConfig);
   const { isRecordingDisabled, setIsRecordingDisabled } = useRecordingStateSync(isRecording, setIsRecordingState, setIsMeetingActive);
   const { handleRecordingStart } = useRecordingStart(isRecording, setIsRecordingState, showModal);
+  const { handleRecordingStop, setIsStopping } = useRecordingStop(setIsRecordingState, setIsRecordingDisabled);
 
-  // Get handleRecordingStop function and setIsStopping (state comes from global context)
-  const { handleRecordingStop, setIsStopping } = useRecordingStop(
-    setIsRecordingState,
-    setIsRecordingDisabled
-  );
+  const {
+    recoverableMeetings,
+    checkForRecoverableTranscripts,
+    recoverMeeting,
+    loadMeetingTranscripts,
+    deleteRecoverableMeeting,
+  } = useTranscriptRecovery();
 
-  useEffect(() => {
-    const stop = () => {
-      if (sessionStorage.getItem('labsAutoStopPending') === 'true' && recordingState.isRecording) {
-        sessionStorage.removeItem('labsAutoStopPending');
-        void handleRecordingStop(true);
-      }
-    };
-    stop();
-    window.addEventListener('stop-recording-from-labs', stop);
-    return () => window.removeEventListener('stop-recording-from-labs', stop);
-  }, [handleRecordingStop, recordingState.isRecording]);
+  const router = useRouter();
 
   useEffect(() => {
-    if (recordingState.isRecording) {
-      const interval = setInterval(() => {
-        setBarHeights(prev => {
-          const newHeights = [...prev];
-          newHeights[0] = Math.random() * 20 + 10 + 'px';
-          newHeights[1] = Math.random() * 20 + 10 + 'px';
-          newHeights[2] = Math.random() * 20 + 10 + 'px';
-          return newHeights;
-        });
-      }, 300);
+    Analytics.trackPageView('home');
+  }, []);
 
-      return () => clearInterval(interval);
+  // On startup, tidy the crash-recovery store and look for unsaved recordings.
+  useEffect(() => {
+    const busy =
+      recordingState.isRecording ||
+      status === RecordingStatus.STOPPING ||
+      status === RecordingStatus.PROCESSING_TRANSCRIPTS ||
+      status === RecordingStatus.SAVING;
+    if (busy) return;
+    void (async () => {
+      await indexedDBService.deleteOldMeetings(7).catch((error) => console.warn('Failed to clean up old meetings:', error));
+      await indexedDBService.deleteSavedMeetings(24).catch((error) => console.warn('Failed to clean up saved meetings:', error));
+      await checkForRecoverableTranscripts().catch((error) => console.error('Failed to check for recoverable meetings:', error));
+    })();
+  }, [checkForRecoverableTranscripts, recordingState.isRecording, status]);
+
+  // Offer recovery once per session.
+  useEffect(() => {
+    if (recoverableMeetings.length === 0) return;
+    if (!sessionStorage.getItem('recovery_dialog_shown')) {
+      setShowRecoveryDialog(true);
+      sessionStorage.setItem('recovery_dialog_shown', 'true');
     }
-  }, [recordingState.isRecording]);
+  }, [recoverableMeetings]);
 
-  // Computed values using global status
+  const handleRecovery = async (meetingId: string) => {
+    try {
+      const result = await recoverMeeting(meetingId);
+      if (!result.success) return;
+      toast.success('Meeting recovered', {
+        description: result.audioRecoveryStatus?.status === 'success' ? 'Transcript and audio recovered.' : 'Transcript recovered (no audio was available).',
+        action: result.meetingId
+          ? { label: 'Open', onClick: () => router.push(`/meeting-details?id=${result.meetingId}`) }
+          : undefined,
+        duration: 10000,
+      });
+      await refetchMeetings();
+      if (recoverableMeetings.length === 0) sessionStorage.removeItem('recovery_dialog_shown');
+      if (result.meetingId) setTimeout(() => router.push(`/meeting-details?id=${result.meetingId}`), 2000);
+    } catch (error) {
+      toast.error('Could not recover the meeting', {
+        description: error instanceof Error ? error.message : 'Unknown error',
+      });
+      throw error;
+    }
+  };
+
+  const handleDialogClose = () => {
+    setShowRecoveryDialog(false);
+    // Let the dialog show again next session if new recordings turn up.
+    if (recoverableMeetings.length === 0) sessionStorage.removeItem('recovery_dialog_shown');
+  };
+
   const isProcessingStop = status === RecordingStatus.PROCESSING_TRANSCRIPTS || isProcessing;
+  const handingOff =
+    status === RecordingStatus.PROCESSING_TRANSCRIPTS ||
+    status === RecordingStatus.SAVING ||
+    status === RecordingStatus.COMPLETED;
+  const live = recordingState.isRecording || isRecording || isStopping || handingOff;
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.3, ease: 'easeOut' }}
-      className="flex flex-col h-screen bg-gray-50"
-    >
-      {/* All Modals supported*/}
-      <SettingsModals
-        modals={modals}
-        messages={messages}
-        onClose={hideModal}
+    <div className="flex h-full flex-col bg-af-panel">
+      <SettingsModals modals={modals} messages={messages} onClose={hideModal} />
+
+      <TranscriptRecovery
+        isOpen={showRecoveryDialog}
+        onClose={handleDialogClose}
+        recoverableMeetings={recoverableMeetings}
+        onRecover={handleRecovery}
+        onDelete={deleteRecoverableMeeting}
+        onLoadPreview={loadMeetingTranscripts}
       />
 
-      <div className="flex flex-1 overflow-hidden">
-        <TranscriptPanel
-          isProcessingStop={isProcessingStop}
-          isStopping={isStopping}
-          showModal={showModal}
-        />
-
-        {/* Recording controls - only show when permissions are granted or already recording and not showing status messages */}
-        {(hasMicrophone || isRecording) &&
-          status !== RecordingStatus.PROCESSING_TRANSCRIPTS &&
-          status !== RecordingStatus.SAVING && (
-            <div className="fixed bottom-12 left-0 right-0 z-30 pointer-events-none">
-              <div
-                className="flex justify-center pl-8 transition-[margin] duration-300 pointer-events-none"
-                style={{
-                  marginLeft: sidebarCollapsed ? '4rem' : '16rem'
-                }}
-              >
-                <div className="w-2/3 max-w-[750px] flex justify-center pointer-events-auto">
-                  <div className="flex items-center">
-                    <RecordingControls
-                      isRecording={recordingState.isRecording}
-                      onRecordingStop={(callApi = true) => handleRecordingStop(callApi)}
-                      onRecordingStart={handleRecordingStart}
-                      onTranscriptReceived={() => { }} // Not actually used by RecordingControls
-                      onStopInitiated={() => setIsStopping(true)}
-                      barHeights={barHeights}
-                      onTranscriptionError={(message) => {
-                        showModal('errorAlert', message);
-                      }}
-                      isRecordingDisabled={isRecordingDisabled}
-                      isParentProcessing={isProcessingStop}
-                      selectedDevices={selectedDevices}
-                      meetingName={meetingTitle}
-                    />
-                  </div>
-                </div>
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={live ? 'live' : 'home'}
+            className="flex min-h-0 min-w-0 flex-1"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {live ? (
+              <LiveSession
+                isProcessingStop={isProcessingStop}
+                isStopping={isStopping || handingOff}
+                onLanguageSettings={() => showModal('languageSettings')}
+              />
+            ) : (
+              <div className="min-w-0 flex-1">
+                <HomeDashboard />
               </div>
-            </div>
-          )}
+            )}
+          </motion.div>
+        </AnimatePresence>
 
-        {/* Status Overlays - Processing and Saving */}
-        <StatusOverlays
-          isProcessing={status === RecordingStatus.PROCESSING_TRANSCRIPTS && !recordingState.isRecording}
-          isSaving={status === RecordingStatus.SAVING}
-          sidebarCollapsed={sidebarCollapsed}
-        />
+        {(hasMicrophone || isRecording) && !handingOff && (
+          <RecordingCardSlot>
+            <RecordingControls
+              isRecording={recordingState.isRecording}
+              onRecordingStop={(callApi = true) => handleRecordingStop(callApi)}
+              onRecordingStart={handleRecordingStart}
+              onStopInitiated={() => setIsStopping(true)}
+              onTranscriptionError={(message) => showModal('errorAlert', message)}
+              isRecordingDisabled={isRecordingDisabled}
+              selectedDevices={selectedDevices}
+            />
+          </RecordingCardSlot>
+        )}
+
+        {handingOff && (
+          <PostCallHandoffCard
+            busy
+            title={
+              status === RecordingStatus.SAVING
+                ? 'Saving your meeting'
+                : status === RecordingStatus.COMPLETED
+                  ? 'Opening your meeting'
+                  : 'Finishing your recording'
+            }
+            detail={recordingState.statusMessage || 'The transcript is being finished and saved.'}
+          />
+        )}
       </div>
-    </motion.div>
+    </div>
   );
 }

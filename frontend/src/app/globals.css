@@ -2,150 +2,321 @@
 @tailwind components;
 @tailwind utilities;
 
-@keyframes vibrate {
-  0% {
-    transform: translate(0);
-  }
+/* ============================================================
+   Themes
+   Every theme defines the same RGB channel tokens. Components read
+   them through Tailwind (`bg-af-panel`, `text-af-text-2/60`) or the
+   derived `--af-*` colors below; nothing should hard-code a palette
+   value. <html data-theme="…"> selects the theme and dark themes also
+   carry the `dark` class for `dark:` variants and BlockNote.
+   The shadcn HSL variables mirror the same palette for BlockNote.
+   ============================================================ */
 
-  20% {
-    transform: translate(-2px, 2px);
-  }
+/* Midnight (default) */
+:root,
+:root[data-theme='midnight'] {
+  color-scheme: dark;
+  --af-bg-rgb: 10 12 16;
+  --af-panel-rgb: 15 18 24;
+  --af-panel-2-rgb: 21 25 34;
+  --af-elevated-rgb: 24 29 39;
+  --af-hover-rgb: 26 31 41;
+  --af-active-rgb: 34 40 53;
+  --af-raised-rgb: 40 47 62;
+  --af-border-rgb: 31 37 48;
+  --af-border-strong-rgb: 44 52 66;
+  --af-text-rgb: 230 237 245;
+  --af-text-2-rgb: 162 174 192;
+  --af-text-3-rgb: 119 132 154;
+  --af-text-4-rgb: 82 93 109;
+  --af-accent-rgb: 59 124 240;
+  --af-accent-hover-rgb: 90 147 247;
+  --af-on-accent-rgb: 255 255 255;
+  --af-record-rgb: 239 68 68;
+  --af-danger-rgb: 224 70 63;
+  --af-on-danger-rgb: 255 255 255;
+  --af-success-rgb: 79 201 138;
+  --af-warning-rgb: 242 184 75;
+  --af-shadow-rgb: 0 0 0;
+  --af-soft: 0.15;
+  --af-scrim: 0.62;
+  --background: 220 23.1% 7.6%;
+  --foreground: 212 42.9% 93.1%;
+  --card: 220 23.1% 7.6%;
+  --card-foreground: 212 42.9% 93.1%;
+  --popover: 220 23.8% 12.4%;
+  --popover-foreground: 212 42.9% 93.1%;
+  --primary: 218 85.8% 58.6%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 222 23.6% 10.8%;
+  --secondary-foreground: 212 42.9% 93.1%;
+  --muted: 222 23.6% 10.8%;
+  --muted-foreground: 218 14.8% 53.5%;
+  --accent: 220 22.4% 13.1%;
+  --accent-foreground: 212 42.9% 93.1%;
+  --destructive: 3 72.2% 56.3%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 219 21.5% 15.5%;
+  --input: 218 20% 21.6%;
+  --ring: 218 85.8% 58.6%;
 
-  40% {
-    transform: translate(-2px, -2px);
-  }
-
-  60% {
-    transform: translate(2px, 2px);
-  }
-
-  80% {
-    transform: translate(2px, -2px);
-  }
-
-  100% {
-    transform: translate(0);
-  }
+  /* Group colors, tuned for dark surfaces. */
+  --af-c-slate: #94a3b8;
+  --af-c-red: #f87171;
+  --af-c-orange: #fb923c;
+  --af-c-amber: #fbbf24;
+  --af-c-green: #4ade80;
+  --af-c-teal: #2dd4bf;
+  --af-c-sky: #38bdf8;
+  --af-c-blue: #60a5fa;
+  --af-c-violet: #a78bfa;
+  --af-c-pink: #f472b6;
 }
 
-.animate-vibrate {
-  animation: vibrate 0.3s linear;
+/* Vanilla */
+:root[data-theme='vanilla'] {
+  color-scheme: light;
+  --af-bg-rgb: 239 232 220;
+  --af-panel-rgb: 250 246 239;
+  --af-panel-2-rgb: 243 237 227;
+  --af-elevated-rgb: 255 252 247;
+  --af-hover-rgb: 236 228 214;
+  --af-active-rgb: 227 216 198;
+  --af-raised-rgb: 255 253 249;
+  --af-border-rgb: 228 218 203;
+  --af-border-strong-rgb: 207 193 170;
+  --af-text-rgb: 42 35 25;
+  --af-text-2-rgb: 88 77 64;
+  --af-text-3-rgb: 123 111 96;
+  --af-text-4-rgb: 166 155 139;
+  --af-accent-rgb: 47 94 207;
+  --af-accent-hover-rgb: 38 78 178;
+  --af-on-accent-rgb: 255 255 255;
+  --af-record-rgb: 220 58 50;
+  --af-danger-rgb: 194 59 43;
+  --af-on-danger-rgb: 255 255 255;
+  --af-success-rgb: 45 132 83;
+  --af-warning-rgb: 168 109 18;
+  --af-shadow-rgb: 74 56 33;
+  --af-soft: 0.1;
+  --af-scrim: 0.32;
+  --background: 38 52.4% 95.9%;
+  --foreground: 35 25.4% 13.1%;
+  --card: 38 52.4% 95.9%;
+  --card-foreground: 35 25.4% 13.1%;
+  --popover: 38 100% 98.4%;
+  --popover-foreground: 35 25.4% 13.1%;
+  --primary: 222 63% 49.8%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 38 40% 92.2%;
+  --secondary-foreground: 35 25.4% 13.1%;
+  --muted: 38 40% 92.2%;
+  --muted-foreground: 33 12.3% 42.9%;
+  --accent: 38 36.7% 88.2%;
+  --accent-foreground: 35 25.4% 13.1%;
+  --destructive: 6 63.7% 46.5%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 36 31.6% 84.5%;
+  --input: 37 27.8% 73.9%;
+  --ring: 222 63% 49.8%;
+
+  /* Group colors, deepened to stay legible on cream. */
+  --af-c-slate: #5b6778;
+  --af-c-red: #c0392b;
+  --af-c-orange: #c2570c;
+  --af-c-amber: #a86a06;
+  --af-c-green: #2e7d46;
+  --af-c-teal: #0f7a70;
+  --af-c-sky: #0b6fa4;
+  --af-c-blue: #2f5ecf;
+  --af-c-violet: #6d3fd1;
+  --af-c-pink: #b8306f;
 }
 
-@keyframes fade-in {
-  0% {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
+/* Charcoal */
+:root[data-theme='charcoal'] {
+  color-scheme: dark;
+  --af-bg-rgb: 20 18 17;
+  --af-panel-rgb: 27 25 23;
+  --af-panel-2-rgb: 33 30 28;
+  --af-elevated-rgb: 38 35 33;
+  --af-hover-rgb: 41 38 36;
+  --af-active-rgb: 50 46 43;
+  --af-raised-rgb: 57 53 50;
+  --af-border-rgb: 44 41 38;
+  --af-border-strong-rgb: 61 57 53;
+  --af-text-rgb: 240 237 233;
+  --af-text-2-rgb: 199 193 187;
+  --af-text-3-rgb: 150 143 136;
+  --af-text-4-rgb: 110 104 98;
+  --af-accent-rgb: 222 132 98;
+  --af-accent-hover-rgb: 231 150 118;
+  --af-on-accent-rgb: 28 21 18;
+  --af-record-rgb: 232 84 74;
+  --af-danger-rgb: 226 92 80;
+  --af-on-danger-rgb: 255 255 255;
+  --af-success-rgb: 132 190 146;
+  --af-warning-rgb: 224 176 96;
+  --af-shadow-rgb: 0 0 0;
+  --af-soft: 0.14;
+  --af-scrim: 0.6;
+  --background: 30 8% 9.8%;
+  --foreground: 34 18.9% 92.7%;
+  --card: 30 8% 9.8%;
+  --card-foreground: 34 18.9% 92.7%;
+  --popover: 24 7% 13.9%;
+  --popover-foreground: 34 18.9% 92.7%;
+  --primary: 16 65.3% 62.7%;
+  --primary-foreground: 18 21.7% 9%;
+  --secondary: 24 8.2% 12%;
+  --secondary-foreground: 34 18.9% 92.7%;
+  --muted: 24 8.2% 12%;
+  --muted-foreground: 30 6.3% 56.1%;
+  --accent: 24 6.5% 15.1%;
+  --accent-foreground: 34 18.9% 92.7%;
+  --destructive: 5 71.6% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 30 7.3% 16.1%;
+  --input: 30 7% 22.4%;
+  --ring: 16 65.3% 62.7%;
 
-  100% {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  --af-c-slate: #a8a29e;
+  --af-c-red: #f28b82;
+  --af-c-orange: #f5a25d;
+  --af-c-amber: #f2c14e;
+  --af-c-green: #8fd19e;
+  --af-c-teal: #6fd3c1;
+  --af-c-sky: #7cc4ef;
+  --af-c-blue: #8fb0f5;
+  --af-c-violet: #b9a2f2;
+  --af-c-pink: #f09ac0;
 }
 
-.animate-fade-in {
-  animation: fade-in 0.4s ease-out;
+/* Colors derived from the active theme's channels. */
+:root {
+  --af-bg: rgb(var(--af-bg-rgb));
+  --af-panel: rgb(var(--af-panel-rgb));
+  --af-panel-2: rgb(var(--af-panel-2-rgb));
+  --af-elevated: rgb(var(--af-elevated-rgb));
+  --af-hover: rgb(var(--af-hover-rgb));
+  --af-active: rgb(var(--af-active-rgb));
+  --af-raised: rgb(var(--af-raised-rgb));
+  --af-border: rgb(var(--af-border-rgb));
+  --af-border-strong: rgb(var(--af-border-strong-rgb));
+  --af-text: rgb(var(--af-text-rgb));
+  --af-text-2: rgb(var(--af-text-2-rgb));
+  --af-text-3: rgb(var(--af-text-3-rgb));
+  --af-text-4: rgb(var(--af-text-4-rgb));
+  --af-accent: rgb(var(--af-accent-rgb));
+  --af-accent-hover: rgb(var(--af-accent-hover-rgb));
+  --af-accent-soft: rgb(var(--af-accent-rgb) / var(--af-soft));
+  --af-on-accent: rgb(var(--af-on-accent-rgb));
+  --af-record: rgb(var(--af-record-rgb));
+  --af-danger: rgb(var(--af-danger-rgb));
+  --af-danger-soft: rgb(var(--af-danger-rgb) / var(--af-soft));
+  --af-success: rgb(var(--af-success-rgb));
+  --af-success-soft: rgb(var(--af-success-rgb) / var(--af-soft));
+  --af-warning: rgb(var(--af-warning-rgb));
+  --af-warning-soft: rgb(var(--af-warning-rgb) / var(--af-soft));
+  --af-scrim-color: rgb(var(--af-shadow-rgb) / var(--af-scrim));
+
+  /* Layered shadows read as depth; a single heavy blur reads as a smudge. */
+  --af-shadow-sm: 0 1px 2px rgb(var(--af-shadow-rgb) / 0.18);
+  --af-shadow-md: 0 2px 6px rgb(var(--af-shadow-rgb) / 0.2), 0 1px 2px rgb(var(--af-shadow-rgb) / 0.16);
+  --af-shadow-lg: 0 12px 32px rgb(var(--af-shadow-rgb) / 0.28), 0 2px 8px rgb(var(--af-shadow-rgb) / 0.16);
+  --af-shadow-xl: 0 24px 64px rgb(var(--af-shadow-rgb) / 0.38), 0 4px 16px rgb(var(--af-shadow-rgb) / 0.2);
+
+  --af-radius: 12px;
+  --af-radius-sm: 9px;
+  --radius: 0.75rem;
+  --af-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Height of the app's own title strip (see lib/window-chrome); 0 when the
+     system draws the title bar. */
+  --af-chrome-h: 0px;
+}
+:root.af-custom-chrome {
+  --af-chrome-h: 2rem;
 }
 
-@keyframes fade-in-up {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-fade-in-up {
-  animation: fade-in-up 0.5s ease-out forwards;
-}
-
-.delay-75 {
-  animation-delay: 75ms;
-}
-
-.delay-100 {
-  animation-delay: 100ms;
-}
-
-.delay-150 {
-  animation-delay: 150ms;
-}
-
-@layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 0 0% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 0 0% 3.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 3.9%;
-    --primary: 0 0% 9%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 0 0% 96.1%;
-    --secondary-foreground: 0 0% 9%;
-    --muted: 0 0% 96.1%;
-    --muted-foreground: 0 0% 45.1%;
-    --accent: 0 0% 96.1%;
-    --accent-foreground: 0 0% 9%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 89.8%;
-    --input: 0 0% 89.8%;
-    --ring: 0 0% 3.9%;
-    --radius: 0.5rem;
-    --chart-1: 12 76% 61%;
-    --chart-2: 173 58% 39%;
-    --chart-3: 197 37% 24%;
-    --chart-4: 43 74% 66%;
-    --chart-5: 27 87% 67%;
-  }
-
-  .dark {
-    --background: 0 0% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 0 0% 9%;
-    --secondary: 0 0% 14.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 14.9%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 0 0% 14.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 14.9%;
-    --input: 0 0% 14.9%;
-    --ring: 0 0% 83.1%;
-    --chart-1: 220 70% 50%;
-    --chart-2: 160 60% 45%;
-    --chart-3: 30 80% 55%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 340 75% 55%;
-  }
-}
-
+/* ============================================================
+   Base
+   ============================================================ */
 @layer base {
   * {
-    @apply border-border;
+    @apply border-af-border;
   }
 
-  /* html, */
+  html,
   body {
-    @apply bg-background text-foreground;
+    background-color: var(--af-bg);
+    color: var(--af-text);
+  }
+
+  body {
     overflow: hidden;
     height: 100%;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 
-  /* Make the window draggable */
+  /* One typeface for the product, including native controls. */
+  button,
+  input,
+  textarea,
+  select,
+  option {
+    font-family: inherit;
+  }
+
+  /* Native fields that no component styles still match the theme. `:where`
+     keeps this at zero specificity so any utility class wins. */
+  :where(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])),
+  :where(textarea),
+  :where(select) {
+    background-color: var(--af-panel-2);
+    color: var(--af-text);
+  }
+
+  :where(input, textarea)::placeholder {
+    color: var(--af-text-4);
+  }
+
+  /* Native number spinners ignore the theme; arrow keys still step the value. */
+  input[type='number'] {
+    appearance: textfield;
+  }
+  input[type='number']::-webkit-inner-spin-button,
+  input[type='number']::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  h1, h2, h3,
+  .text-xl, .text-2xl, .text-3xl, .text-4xl {
+    letter-spacing: -0.015em;
+  }
+
+  ::selection {
+    background-color: rgb(var(--af-accent-rgb) / 0.28);
+    color: var(--af-text);
+  }
+
+  /* A soft accent ring for keyboard users; mouse clicks show nothing. */
+  :where(:focus-visible) {
+    outline: 2px solid rgb(var(--af-accent-rgb) / 0.7);
+    outline-offset: 2px;
+  }
+
+  /* Calm, uniform state changes. Components can still override the
+     transition with their own utility classes. */
+  :where(button, a, [role='button'], [role='menuitem'], [role='option'], [role='tab'], input, textarea, select) {
+    transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+    transition-duration: 140ms;
+    transition-timing-function: ease;
+  }
+
+  /* Draggable window regions */
   .titlebar {
     -webkit-app-region: drag;
     app-region: drag;
@@ -155,444 +326,600 @@
     -webkit-app-region: no-drag;
     app-region: no-drag;
   }
-
-  /* Custom scrollbar styles */
-  .custom-scrollbar::-webkit-scrollbar {
-    width: 6px;
-  }
-
-  .custom-scrollbar::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: #d1d5db;
-    border-radius: 3px;
-  }
-
-  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: #9ca3af;
-  }
-
-  /* Firefox scrollbar */
-  .custom-scrollbar {
-    scrollbar-width: thin;
-    scrollbar-color: #d1d5db transparent;
-  }
-
-  /* BlockNote Editor - Override fixed dimensions for responsive layout */
-  .bn-container {
-    width: 100% !important;
-    max-width: none !important;
-    overflow: visible !important;
-  }
-
-  .bn-editor {
-    width: 100% !important;
-    max-width: none !important;
-    overflow: visible !important;
-  }
-
-  /* Disable internal scrolling - let parent handle all scrolling */
-  .ProseMirror {
-    overflow: visible !important;
-  }
-
-  /* Ensure BlockNote content area is responsive */
-  .bn-block-outer {
-    max-width: 100% !important;
-  }
-
-  .bn-default-styles {
-    max-width: none !important;
-  }
-
-  /* Disable scrolling on any BlockNote wrapper elements */
-  [data-node-type] {
-    overflow: visible !important;
-  }
 }
+
+/* Scrollbars. This app is mostly long scrolling surfaces, so default
+   Windows scrollbars would be a constant distraction. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--af-text-rgb) / 0.16) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background-color: rgb(var(--af-text-rgb) / 0.14);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: rgb(var(--af-text-rgb) / 0.26); }
+::-webkit-scrollbar-corner { background: transparent; }
+
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
 /* ============================================================
-   "Actually Free" semantic palette
-   Components use these tokens in both themes. Light is the base palette;
-   <html class="dark"> switches the same surfaces to the deep-navy skin.
+   Toasts: centred in the main pane, following the sidebar.
    ============================================================ */
-:root {
-  /* Tell the engine which scheme native controls should paint in. Without this,
-     WebKitGTK renders <select>, its option popup, scrollbars and date pickers
-     with the light system theme regardless of our tokens — which left the
-     selected value in a <select> unreadable once the app was in dark mode. */
-  color-scheme: light;
-
-  --af-bg: #f6f8fb;
-  --af-panel: #ffffff;
-  --af-panel-2: #eef3f8;
-  --af-hover: #e6edf5;
-  --af-active: #dce7f3;
-
-  --af-border: #dce3ec;
-  --af-border-strong: #c2cedd;
-
-  --af-text: #172033;
-  --af-text-2: #475569;
-  --af-text-3: #64748b;
-
-  --af-accent: #2563eb;
-  --af-accent-soft: #e7efff;
-
-  --af-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);
-  --af-shadow-md: 0 2px 6px rgba(15, 23, 42, 0.10), 0 1px 2px rgba(15, 23, 42, 0.07);
-  --af-shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.16), 0 2px 8px rgba(15, 23, 42, 0.08);
-
-  --af-radius: 12px;
-  --af-radius-sm: 9px;
+[data-sonner-toaster][data-x-position='center'] {
+  left: calc(50% + (var(--af-sidebar-width, 0px) / 2)) !important;
+  transition: left 300ms var(--af-ease);
 }
 
-html.dark {
-  /* Repaint native controls dark too — see the note on :root. */
-  color-scheme: dark;
-
-  /* Elevation ramp. Each step is a deliberate, small lift — enough to read as
-     a distinct layer without the surfaces looking striped. */
-  --af-bg: #0a0c10;       /* app canvas — near-black with a cool cast */
-  --af-panel: #0f1218;    /* level 1: sidebar, cards */
-  --af-panel-2: #151922;  /* level 2: nested/raised surfaces, inputs */
-  --af-hover: #1a1f29;    /* interactive hover */
-  --af-active: #212734;   /* pressed / selected */
-
-  /* Borders whisper. In a dark UI, contrast between surfaces does most of the
-     separating; loud borders are what make an interface look boxy. */
-  --af-border: #1d232e;         /* default hairline */
-  --af-border-strong: #2a3240;  /* only where real definition is needed */
-
-  --af-text: #e6edf5;
-  --af-text-2: #9aa8bd;
-  --af-text-3: #6b7887;
-
-  --af-accent: #4a8bff;
-  --af-accent-soft: #16233d;
-
-  /* Layered shadows read as depth; a single heavy blur reads as a smudge. */
-  --af-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
-  --af-shadow-md: 0 2px 6px rgba(0, 0, 0, 0.32), 0 1px 2px rgba(0, 0, 0, 0.28);
-  --af-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.42), 0 2px 8px rgba(0, 0, 0, 0.30);
-
-}
-
-html, body { background-color: var(--af-bg); color: var(--af-text); }
-
-.dark .bg-white { background-color: var(--af-panel) !important; }
-.dark .bg-gray-50, .dark .bg-slate-50, .dark .bg-neutral-50 { background-color: var(--af-panel-2) !important; }
-.dark .bg-gray-100 { background-color: var(--af-panel-2) !important; }
-.dark .bg-gray-200 { background-color: var(--af-hover) !important; }
-
-.dark .text-black, .dark .text-gray-900, .dark .text-gray-800, .dark .text-gray-700 { color: var(--af-text) !important; }
-.dark .text-gray-600, .dark .text-gray-500 { color: var(--af-text-2) !important; }
-.dark .text-gray-400, .dark .text-gray-300 { color: var(--af-text-3) !important; }
-
-.dark .border, .dark .border-gray-100, .dark .border-gray-200, .dark .border-gray-300 { border-color: var(--af-border) !important; }
-
-.dark .hover\:bg-gray-50:hover, .dark .hover\:bg-gray-100:hover { background-color: var(--af-hover) !important; }
-.dark .hover\:bg-gray-200:hover { background-color: #2f4370 !important; }
-
-.dark input, .dark textarea, .dark select {
-  background-color: var(--af-panel) !important;
+[data-sonner-toaster] [data-sonner-toast] {
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif !important;
+  background: var(--af-elevated) !important;
+  border: 1px solid var(--af-border-strong) !important;
   color: var(--af-text) !important;
-  border-color: var(--af-border) !important;
+  border-radius: 12px !important;
+  box-shadow: var(--af-shadow-lg) !important;
+  padding-right: 2.75rem !important;
 }
-.dark input::placeholder, .dark textarea::placeholder { color: var(--af-text-3) !important; }
+
+[data-sonner-toast] [data-description] {
+  color: var(--af-text-2) !important;
+}
+
+[data-sonner-toast] [data-button] {
+  background: var(--af-accent) !important;
+  color: var(--af-on-accent) !important;
+  border-radius: 8px !important;
+  font-weight: 500 !important;
+}
+
+/* A thin edge and a tinted icon. The card itself stays the same. */
+[data-sonner-toast][data-type='success'] { box-shadow: inset 3px 0 0 var(--af-success), var(--af-shadow-lg) !important; }
+[data-sonner-toast][data-type='success'] [data-icon] { color: var(--af-success) !important; }
+[data-sonner-toast][data-type='error'] { box-shadow: inset 3px 0 0 var(--af-danger), var(--af-shadow-lg) !important; }
+[data-sonner-toast][data-type='error'] [data-icon] { color: var(--af-danger) !important; }
+[data-sonner-toast][data-type='warning'] { box-shadow: inset 3px 0 0 var(--af-warning), var(--af-shadow-lg) !important; }
+[data-sonner-toast][data-type='warning'] [data-icon] { color: var(--af-warning) !important; }
+[data-sonner-toast][data-type='info'] { box-shadow: inset 3px 0 0 var(--af-accent), var(--af-shadow-lg) !important; }
+[data-sonner-toast][data-type='info'] [data-icon] { color: var(--af-accent) !important; }
+
+[data-sonner-toast][data-styled='true'] [data-close-button] {
+  left: auto !important;
+  right: 8px !important;
+  top: 50% !important;
+  width: 28px !important;
+  height: 28px !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  color: var(--af-text-3) !important;
+  transform: translateY(-50%) !important;
+  box-shadow: none !important;
+}
+
+[data-sonner-toast][data-styled='true'] [data-close-button]:hover {
+  background: var(--af-hover) !important;
+  color: var(--af-text) !important;
+}
+
+/* ============================================================
+   App chrome and shared component classes
+   ============================================================ */
+html[data-sidebar-drag] main,
+html[data-sidebar-drag] .af-recording-slot,
+html[data-sidebar-drag] .af-rail,
+html[data-sidebar-drag] .af-rail > * {
+  transition: none !important;
+}
+
+.af-rail {
+  background: var(--af-panel);
+  border-right: 1px solid var(--af-border);
+}
+.af-rail:has(.af-rail-resize:hover),
+.af-rail.is-resizing {
+  border-right-color: var(--af-accent);
+}
+
+.custom-scrollbar::-webkit-scrollbar { width: 6px; }
+
+/* Text that must leave the row slides closed instead of popping or wrapping. */
+.af-text-reveal {
+  display: grid;
+  grid-template-columns: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-columns 220ms var(--af-ease),
+    opacity 180ms ease;
+}
+.af-text-reveal[data-open='false'] {
+  grid-template-columns: 0fr;
+  opacity: 0;
+}
+.af-text-reveal > * {
+  overflow: hidden;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+@keyframes af-settle {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.af-settle { animation: af-settle 180ms var(--af-ease); }
+
+/* A page fading in as it opens (MainContent). Opacity only, so fixed
+   children such as the record card never shift. */
+@keyframes af-page-enter {
+  from { opacity: 0; }
+}
+.af-page-enter { animation: af-page-enter 200ms var(--af-ease) backwards; }
+
+/* Content that arrives after its page (lists replacing skeletons) rises in,
+   one row after another. Set --af-i on each row for the stagger. */
+.af-appear {
+  animation: af-settle 260ms var(--af-ease) backwards;
+  animation-delay: calc(min(var(--af-i, 0), 10) * 28ms);
+}
+
+@keyframes af-spin { to { transform: rotate(360deg); } }
+.af-spinner { animation: af-spin 0.7s linear infinite; }
+
+.af-record-button {
+  background: var(--af-record);
+  color: #fff;
+}
+.af-record-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--af-record) 86%, black);
+}
+.af-record-button[data-loading='true'] {
+  background: color-mix(in srgb, var(--af-record) 62%, var(--af-panel));
+}
+
+/* Skeleton shimmer for loading placeholders. */
+.af-skeleton {
+  background: linear-gradient(
+    90deg,
+    rgb(var(--af-text-rgb) / 0.05) 0%,
+    rgb(var(--af-text-rgb) / 0.1) 50%,
+    rgb(var(--af-text-rgb) / 0.05) 100%
+  );
+  background-size: 200% 100%;
+  animation: af-shimmer 1.6s linear infinite;
+}
+@keyframes af-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+/* A transcript bubble from someone else: a faint wash of the speaker's colour
+   (--chip, from speakerColorValue). In the components layer so the playing
+   line's highlight still wins. */
+@layer components {
+  .af-speaker-bubble {
+    background-color: color-mix(in srgb, var(--chip, var(--af-text-4)) 7%, var(--af-panel-2));
+    border-color: color-mix(in srgb, var(--chip, var(--af-text-4)) 24%, var(--af-border));
+  }
+}
+
+/* A user-chosen group color. Set --chip on the element (see GroupChip). */
+.af-tint {
+  color: var(--chip);
+  background-color: color-mix(in srgb, var(--chip) 14%, transparent);
+  border-color: color-mix(in srgb, var(--chip) 32%, transparent);
+}
+.af-tint-dot { background-color: var(--chip); }
+
+/* Range sliders (gain controls) */
+.af-volume {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 18px;
+  background: transparent !important;
+  border: 0 !important;
+  cursor: pointer;
+  padding: 0;
+}
+.af-volume::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--af-accent) var(--fill, 0%), var(--af-border-strong) var(--fill, 0%));
+}
+.af-volume::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 14px;
+  width: 14px;
+  margin-top: -5px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--af-text);
+  box-shadow: var(--af-shadow-sm);
+}
+.af-volume::-moz-range-track { height: 4px; border: 0; border-radius: 999px; background: var(--af-border-strong); }
+.af-volume::-moz-range-progress { height: 4px; border-radius: 999px; background: var(--af-accent); }
+.af-volume::-moz-range-thumb { height: 14px; width: 14px; border: 0; border-radius: 999px; background: var(--af-text); }
+
+@keyframes af-name-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(calc(-1 * var(--af-shift, 0px))); }
+}
+.af-name-scroll {
+  animation-name: af-name-scroll;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  animation-direction: normal;
+}
 
 /* Inputs that live inside their own styled container (e.g. the Ask-AI bar)
-   must not paint the app-wide input background over that container. The extra
-   class raises specificity above the blanket `.dark textarea` rule above. */
-.dark input.af-bare, .dark textarea.af-bare {
+   must not paint a second field surface. */
+input.af-bare,
+textarea.af-bare {
   background-color: transparent !important;
   border: 0 !important;
   box-shadow: none !important;
-}
-
-/* InputGroup (icon + field as one control) draws its own surface, and its inner
-   input is deliberately transparent. The blanket rule above would repaint that
-   inner input, so the wrapper and the field ended up painting two different
-   backgrounds - visible as a lighter box behind the search icon. Give the
-   surface to the wrapper and keep the control transparent. */
-.dark [data-slot="input-group"] {
-  background-color: var(--af-panel) !important;
-  border-color: var(--af-border) !important;
-}
-.dark [data-slot="input-group"] input,
-.dark [data-slot="input-group-control"] {
-  background-color: transparent !important;
-  border-color: transparent !important;
-}
-
-.dark .bg-blue-50 { background-color: #14284d !important; }
-.dark .bg-blue-100 { background-color: var(--af-panel-2) !important; }
-.dark .bg-blue-200, .dark .hover\:bg-blue-200:hover { background-color: var(--af-hover) !important; }
-.dark .hover\:bg-blue-100:hover { background-color: var(--af-hover) !important; }
-.dark .bg-gray-300, .dark .hover\:bg-gray-300:hover { background-color: var(--af-hover) !important; }
-.dark .text-blue-800 { color: #7aa2ff !important; }
-.dark .prose { color: var(--af-text) !important; }
-.dark .prose strong, .dark .prose h1, .dark .prose h2, .dark .prose h3 { color: var(--af-text) !important; }
-
-/* Graduated shadows. Previously every shadow class got the same heavy blur,
-   which flattened the hierarchy — a card and a modal looked equally lifted. */
-.dark .shadow-sm { box-shadow: var(--af-shadow-sm) !important; }
-.dark .shadow, .dark .shadow-md { box-shadow: var(--af-shadow-md) !important; }
-.dark .shadow-lg, .dark .shadow-xl, .dark .shadow-2xl { box-shadow: var(--af-shadow-lg) !important; }
-
-/* Gradient "pill" buttons (Generate/Regenerate/Enhance/Stop) use light gradient
-   stops that stay bright in dark mode — flatten them to a readable dark button. */
-.dark [class*="from-blue-50"],
-.dark [class*="from-purple-50"],
-.dark [class*="from-red-50"],
-.dark [class*="from-orange-50"],
-.dark [class*="from-green-50"],
-.dark [class*="to-purple-50"],
-.dark [class*="to-orange-50"] {
-  background-image: none !important;
-  background-color: var(--af-panel-2) !important;
-  color: var(--af-text) !important;
-}
-.dark [class*="from-blue-50"]:hover,
-.dark [class*="from-red-50"]:hover,
-.dark [class*="from-purple-50"]:hover { background-color: var(--af-hover) !important; }
-.dark [class*="border-blue-200"],
-.dark [class*="border-red-200"],
-.dark [class*="border-purple-200"],
-.dark [class*="border-green-200"] { border-color: var(--af-border) !important; }
-
-/* Green "completed" banners readable on dark */
-.dark .bg-green-50 { background-color: #12251a !important; }
-.dark .text-green-800, .dark .text-green-700 { color: #7ee2a8 !important; }
-
-/* ============================================================
-   Selection Cards (Diarization, STT models, etc.)
-   Ensure selectable option boxes are crisp, vibrant, and
-   unmistakable in both light and dark mode.
-   ============================================================ */
-.af-select-card {
-  background-color: #ffffff !important;
-  border: 2px solid #cbd5e1 !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.af-select-card:hover {
-  background-color: #f8fafc !important;
-  border-color: #94a3b8 !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
-}
-.af-select-card-active-blue {
-  background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%) !important;
-  background-color: #eff6ff !important;
-  border: 2px solid #2563eb !important;
-  box-shadow: 0 0 0 1px #2563eb, 0 6px 20px rgba(37, 99, 235, 0.20) !important;
-}
-.af-select-card-active-purple {
-  background: linear-gradient(180deg, #faf5ff 0%, #f3e8ff 100%) !important;
-  background-color: #faf5ff !important;
-  border: 2px solid #9333ea !important;
-  box-shadow: 0 0 0 1px #9333ea, 0 6px 20px rgba(147, 51, 234, 0.20) !important;
-}
-
-.dark .af-select-card {
-  background: linear-gradient(180deg, #1b2333 0%, #141a27 100%) !important;
-  background-color: #161c28 !important;
-  border: 2px solid #414f68 !important;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35) !important;
-  color: #f1f5f9 !important;
-}
-.dark .af-select-card:hover {
-  background: linear-gradient(180deg, #222d42 0%, #192233 100%) !important;
-  background-color: #1e2638 !important;
-  border-color: #64748b !important;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.50) !important;
-}
-.dark .af-select-card-active-blue {
-  background: linear-gradient(180deg, rgba(37, 99, 235, 0.28) 0%, rgba(15, 23, 42, 0.85) 100%) !important;
-  background-color: #0e1e3e !important;
-  border: 2px solid #3b82f6 !important;
-  box-shadow: 0 0 0 1px #3b82f6, 0 8px 28px rgba(37, 99, 235, 0.40) !important;
-  color: #ffffff !important;
-}
-.dark .af-select-card-active-purple {
-  background: linear-gradient(180deg, rgba(168, 85, 247, 0.28) 0%, rgba(24, 10, 40, 0.85) 100%) !important;
-  background-color: #220b38 !important;
-  border: 2px solid #c084fc !important;
-  box-shadow: 0 0 0 1px #c084fc, 0 8px 28px rgba(168, 85, 247, 0.40) !important;
-  color: #ffffff !important;
-}
-
-/* ============================================================
-   Polish layer
-   The details that separate a designed interface from a dark
-   repaint: typography rendering, consistent corners, calm
-   motion, deliberate focus states and styled scrollbars.
-   ============================================================ */
-
-html.dark {
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-}
-
-/* Tighter tracking on large text. Default tracking is tuned for body copy and
-   makes headings look loose and amateurish at display sizes. */
-.dark h1, .dark h2, .dark h3,
-.dark .text-2xl, .dark .text-3xl, .dark .text-xl {
-  letter-spacing: -0.018em;
-}
-
-/* Softer, consistent corners. Tailwind's default rounded-lg (8px) reads sharp
-   next to modern desktop UI; card-level surfaces get a touch more. */
-.dark .rounded-lg { border-radius: var(--af-radius) !important; }
-.dark .rounded-md { border-radius: var(--af-radius-sm) !important; }
-
-/* Calm, uniform motion. Without this, some elements snap and others ease,
-   which is a large part of why an interface feels unfinished. */
-.dark button,
-.dark a,
-.dark [role="button"],
-.dark input,
-.dark textarea,
-.dark select,
-.dark [data-slot="input-group"] {
-  transition:
-    background-color 140ms ease,
-    border-color 140ms ease,
-    color 140ms ease,
-    box-shadow 140ms ease,
-    opacity 140ms ease;
-}
-
-/* Focus: a soft accent ring instead of the browser's hard outline. Visible for
-   keyboard users, unobtrusive for mouse users. */
-.dark :focus-visible {
   outline: none !important;
-  box-shadow: 0 0 0 2px var(--af-bg), 0 0 0 4px rgba(74, 139, 255, 0.55) !important;
-  border-radius: var(--af-radius-sm);
-}
-.dark input:focus, .dark textarea:focus, .dark [data-slot="input-group"]:focus-within {
-  border-color: rgba(74, 139, 255, 0.55) !important;
-  box-shadow: 0 0 0 3px rgba(74, 139, 255, 0.12) !important;
 }
 
-/* Command inputs draw focus on their wrapper. Suppressing the nested input's
-   global ring avoids a second blue rectangle inside the control. */
-.dark [cmdk-input-wrapper] [cmdk-input]:focus,
-.dark [cmdk-input-wrapper] [cmdk-input]:focus-visible {
+/* Command palette input: one surface on the wrapper, none on the field. */
+[cmdk-input-wrapper] [cmdk-input],
+[cmdk-input-wrapper] [cmdk-input]:focus,
+[cmdk-input-wrapper] [cmdk-input]:focus-visible {
+  background-color: transparent !important;
   border-color: transparent !important;
   box-shadow: none !important;
   outline: none !important;
 }
 
-/* Transcript actions respond to the transcript column rather than the viewport.
-   A wide window can still have a narrow transcript beside the summary panel. */
+/* Transcript and summary toolbars respond to their column, not the viewport. */
 .transcript-actions-container {
   container-type: inline-size;
   container-name: transcript-actions;
 }
-
-.transcript-action-label {
-  display: none;
-}
-
-@container transcript-actions (min-width: 520px) {
-  .transcript-action-button {
-    width: auto;
-    padding-inline: 0.75rem;
-  }
-
-  .transcript-action-label {
-    display: inline;
-  }
-}
-
-/* These toolbars can be narrow even on a wide screen. Keep every action in
-   reach by wrapping groups; never require horizontal scrolling to find Export. */
+.transcript-action-label { display: none; }
 .meeting-toolbar-group {
   flex-wrap: wrap;
   max-width: 100%;
   gap: 0.25rem;
 }
-.meeting-toolbar-group > button {
-  border-width: 1px !important;
-  border-radius: 0.375rem !important;
-}
-.summary-actions-container {
-  container: summary-actions / inline-size;
-}
-.summary-toolbar .summary-action-label {
-  display: none;
-}
-.summary-toolbar .meeting-toolbar-group > button {
-  height: 2.25rem;
-  padding-inline: 0.5rem;
-  flex-shrink: 0;
-}
-.summary-toolbar .meeting-toolbar-group > button > svg {
-  margin: 0;
-}
-@container summary-actions (min-width: 560px) {
-  .summary-toolbar .summary-primary-label { display: inline; }
-}
-@container summary-actions (min-width: 800px) {
-  .summary-toolbar .summary-action-label { display: inline; }
-  .summary-toolbar .meeting-toolbar-group > button { padding-inline: 0.75rem; }
-}
+.summary-actions-container { container: summary-actions / inline-size; }
+.summary-toolbar .summary-action-label { display: none; }
+.summary-toolbar .summary-primary-label { display: inline; }
+.summary-toolbar { overflow: hidden; }
+.summary-toolbar .meeting-toolbar-group { flex-wrap: nowrap; }
 
-/* Scrollbars. Default Windows scrollbars are bright and heavy, and this app is
-   mostly long scrolling surfaces (transcripts, summaries), so they're a
-   constant visual distraction if left alone. */
-.dark * {
-  scrollbar-width: thin;
-  scrollbar-color: var(--af-active) transparent;
-}
-.dark ::-webkit-scrollbar { width: 10px; height: 10px; }
-.dark ::-webkit-scrollbar-track { background: transparent; }
-.dark ::-webkit-scrollbar-thumb {
-  background-color: var(--af-active);
-  border-radius: 999px;
-  border: 3px solid transparent;
-  background-clip: content-box;
-}
-.dark ::-webkit-scrollbar-thumb:hover { background-color: #2f3a4b; }
-.dark ::-webkit-scrollbar-corner { background: transparent; }
-
-/* Scrollable-but-chromeless: used by the Settings tab strip so it can scroll
-   horizontally on narrow windows without showing a scrollbar. */
-.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-.no-scrollbar::-webkit-scrollbar { display: none; }
-
-/* The compact recording bar is a transparent, frameless window. The page must
-   not paint a background of its own or the rounded corners square off — hence
-   overriding the app-wide dark canvas here. */
+/* The compact recording bar is a transparent, frameless window. */
 html.minibar-window,
-html.minibar-window body,
-html.dark.minibar-window,
-html.dark.minibar-window body {
+html.minibar-window body {
   background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
   overflow: hidden;
 }
 
-/* Selection in the brand accent rather than the OS default blue. */
-.dark ::selection {
-  background-color: rgba(74, 139, 255, 0.28);
+/* Selectable option cards (diarization, STT models, …) */
+.af-select-card {
+  background-color: var(--af-panel-2) !important;
+  border: 1px solid var(--af-border-strong) !important;
+  box-shadow: var(--af-shadow-sm) !important;
+  transition: all 0.2s var(--af-ease);
+}
+.af-select-card:hover {
+  background-color: var(--af-hover) !important;
+  border-color: rgb(var(--af-text-rgb) / 0.3) !important;
+}
+.af-select-card-active-blue,
+.af-select-card-active-purple {
+  background-color: var(--af-accent-soft) !important;
+  border: 1px solid var(--af-accent) !important;
+  box-shadow: 0 0 0 1px var(--af-accent), var(--af-shadow-md) !important;
+  color: var(--af-text) !important;
+}
+
+/* ============================================================
+   BlockNote (notes + summary editor)
+   ============================================================ */
+.bn-container {
+  width: 100% !important;
+  max-width: none !important;
+  overflow: visible !important;
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif !important;
+  --bn-colors-editor-text: var(--af-text);
+  --bn-colors-editor-background: transparent;
+  --bn-colors-menu-text: var(--af-text);
+  --bn-colors-menu-background: var(--af-elevated);
+  --bn-colors-tooltip-text: var(--af-text);
+  --bn-colors-tooltip-background: var(--af-elevated);
+  --bn-colors-hovered-text: var(--af-text);
+  --bn-colors-hovered-background: var(--af-hover);
+  --bn-colors-selected-text: var(--af-on-accent);
+  --bn-colors-selected-background: var(--af-accent);
+  --bn-colors-disabled-text: var(--af-text-4);
+  --bn-colors-disabled-background: var(--af-panel-2);
+  --bn-colors-shadow: rgb(var(--af-shadow-rgb) / 0.3);
+  --bn-colors-border: var(--af-border-strong);
+  --bn-colors-side-menu: var(--af-text-4);
+  --bn-font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+}
+.bn-container .bn-editor {
+  width: 100% !important;
+  max-width: none !important;
+  overflow: visible !important;
+  background: transparent !important;
+  color: var(--af-text) !important;
+}
+.bn-container .ProseMirror { overflow: visible !important; }
+.bn-block-outer { max-width: 100% !important; }
+.bn-default-styles { max-width: none !important; }
+[data-node-type] { overflow: visible !important; }
+/* BlockNote draws its own menus (the + and drag handle beside a line, the block
+   menu, slash menu and formatting toolbar) from shadcn variables scoped to
+   .bn-shadcn. Point them at the active theme. */
+:root .bn-shadcn,
+:root .bn-shadcn.dark,
+:root[data-theme='midnight'] .bn-shadcn {
+  --background: 220.0 23.1% 7.6%;
+  --foreground: 212.0 42.9% 93.1%;
+  --card: 220.0 23.8% 12.4%;
+  --card-foreground: 212.0 42.9% 93.1%;
+  --popover: 220.0 23.8% 12.4%;
+  --popover-foreground: 212.0 42.9% 93.1%;
+  --primary: 218.5 85.8% 58.6%;
+  --primary-foreground: 0.0 0.0% 100.0%;
+  --secondary: 221.5 23.6% 10.8%;
+  --secondary-foreground: 212.0 42.9% 93.1%;
+  --muted: 221.5 23.6% 10.8%;
+  --muted-foreground: 217.7 14.8% 53.5%;
+  --accent: 220.0 22.4% 13.1%;
+  --accent-foreground: 212.0 42.9% 93.1%;
+  --destructive: 2.6 72.2% 56.3%;
+  --destructive-foreground: 0.0 0.0% 100.0%;
+  --border: 218.2 20.0% 21.6%;
+  --input: 218.2 20.0% 21.6%;
+  --ring: 218.5 85.8% 58.6%;
+  --radius: 0.625rem;
+}
+:root[data-theme='vanilla'] .bn-shadcn,
+:root[data-theme='vanilla'] .bn-shadcn.dark {
+  --background: 38.2 52.4% 95.9%;
+  --foreground: 35.3 25.4% 13.1%;
+  --card: 37.5 100.0% 98.4%;
+  --card-foreground: 35.3 25.4% 13.1%;
+  --popover: 37.5 100.0% 98.4%;
+  --popover-foreground: 35.3 25.4% 13.1%;
+  --primary: 222.4 63.0% 49.8%;
+  --primary-foreground: 0.0 0.0% 100.0%;
+  --secondary: 37.5 40.0% 92.2%;
+  --secondary-foreground: 35.3 25.4% 13.1%;
+  --muted: 37.5 40.0% 92.2%;
+  --muted-foreground: 33.3 12.3% 42.9%;
+  --accent: 38.2 36.7% 88.2%;
+  --accent-foreground: 35.3 25.4% 13.1%;
+  --destructive: 6.4 63.7% 46.5%;
+  --destructive-foreground: 0.0 0.0% 100.0%;
+  --border: 37.3 27.8% 73.9%;
+  --input: 37.3 27.8% 73.9%;
+  --ring: 222.4 63.0% 49.8%;
+  --radius: 0.625rem;
+}
+:root[data-theme='charcoal'] .bn-shadcn,
+:root[data-theme='charcoal'] .bn-shadcn.dark {
+  --background: 30.0 8.0% 9.8%;
+  --foreground: 34.3 18.9% 92.7%;
+  --card: 24.0 7.0% 13.9%;
+  --card-foreground: 34.3 18.9% 92.7%;
+  --popover: 24.0 7.0% 13.9%;
+  --popover-foreground: 34.3 18.9% 92.7%;
+  --primary: 16.5 65.3% 62.7%;
+  --primary-foreground: 18.0 21.7% 9.0%;
+  --secondary: 24.0 8.2% 12.0%;
+  --secondary-foreground: 34.3 18.9% 92.7%;
+  --muted: 24.0 8.2% 12.0%;
+  --muted-foreground: 30.0 6.3% 56.1%;
+  --accent: 24.0 6.5% 15.1%;
+  --accent-foreground: 34.3 18.9% 92.7%;
+  --destructive: 4.9 71.6% 60.0%;
+  --destructive-foreground: 0.0 0.0% 100.0%;
+  --border: 30.0 7.0% 22.4%;
+  --input: 30.0 7.0% 22.4%;
+  --ring: 16.5 65.3% 62.7%;
+  --radius: 0.625rem;
+}
+
+.bn-container [data-placeholder]::before,
+.bn-container .bn-inline-content:has(> .ProseMirror-trailingBreak:only-child)::before {
+  color: var(--af-text-4) !important;
+}
+
+/* The editor's block menus render into this page-level layer (see
+   components/editor/blocknote-menus.tsx). It takes no space; its menus are
+   fixed to the viewport above every panel. */
+.bn-container.af-blocknote-layer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0 !important;
+  height: 0;
+  z-index: 60;
+}
+/* A slash or emoji menu opened above the line (NotesEditor) hangs from its
+   bottom edge, and its empty frame takes no room below the line. */
+.af-blocknote-layer [data-af-menu-side='above'] {
+  height: 0;
+  align-items: flex-end;
+}
+
+/* Block menu, slash menu and formatting toolbar: the same surface, rows and
+   motion as the app's own menus. */
+.bn-container.bn-shadcn .bn-menu-dropdown,
+.bn-container.bn-shadcn .bn-suggestion-menu,
+.bn-container.bn-shadcn .bn-popover-content,
+.bn-container.bn-shadcn .bn-toolbar {
+  border: 1px solid var(--af-border-strong);
+  border-radius: 12px;
+  background: var(--af-elevated);
+  color: var(--af-text);
+  box-shadow: var(--af-shadow-lg);
+}
+.bn-container.bn-shadcn .bn-menu-dropdown,
+.bn-container.bn-shadcn .bn-suggestion-menu { padding: 4px; gap: 1px; }
+/* Slash menu rows: BlockNote repeats the row class on the icon, title and
+   subtitle, so rows are matched by role. */
+.bn-container.bn-shadcn .bn-menu-item,
+.bn-container.bn-shadcn .bn-suggestion-menu [role='option'] {
+  gap: 10px;
+  min-height: 30px;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 13px;
+  color: var(--af-text-2);
+  cursor: default;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.bn-container.bn-shadcn .bn-suggestion-menu [role='option'] { padding: 5px 8px; }
+.bn-container.bn-shadcn .bn-menu-item:focus,
+.bn-container.bn-shadcn .bn-menu-item[data-highlighted],
+.bn-container.bn-shadcn .bn-menu-item[data-state='open'],
+.bn-container.bn-shadcn .bn-suggestion-menu [role='option']:hover,
+.bn-container.bn-shadcn .bn-suggestion-menu [role='option'][aria-selected='true'] {
+  background: var(--af-hover);
   color: var(--af-text);
 }
-
-/* Dividers should separate, not partition. */
-.dark hr,
-.dark .border-t, .dark .border-b, .dark .border-l, .dark .border-r {
-  border-color: var(--af-border) !important;
+.bn-container.bn-shadcn .bn-suggestion-menu [role='option'] * { background: none; }
+.bn-container.bn-shadcn .bn-menu-item svg { width: 16px; height: 16px; color: var(--af-text-3); }
+.bn-container.bn-shadcn .bn-suggestion-menu { width: 264px; }
+.bn-container.bn-shadcn .bn-suggestion-menu-label {
+  padding: 8px 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--af-text-4);
+}
+.bn-container.bn-shadcn .bn-suggestion-menu [role='option'] > [data-position='left'] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid var(--af-border);
+  border-radius: 7px;
+  background: var(--af-panel);
+  color: var(--af-text-3);
+  transition: color 100ms ease, border-color 100ms ease;
+}
+.bn-container.bn-shadcn .bn-suggestion-menu [role='option'][aria-selected='true'] > [data-position='left'] {
+  border-color: var(--af-border-strong);
+  color: var(--af-text);
+}
+.bn-container.bn-shadcn .bn-suggestion-menu [role='option'] > [data-position='left'] svg { width: 16px; height: 16px; }
+.bn-container.bn-shadcn .bn-suggestion-menu .bn-suggestion-menu-item-small[role='option'] > [data-position='left'] {
+  width: auto;
+  height: auto;
+  border: 0;
+  background: none;
+}
+.bn-container.bn-shadcn .bn-suggestion-menu [role='option'] .bn-text-base { font-size: 13px; font-weight: 500; line-height: 1.35; color: var(--af-text); }
+.bn-container.bn-shadcn .bn-suggestion-menu [role='option'] .bn-text-xs { font-size: 11.5px; line-height: 1.35; color: var(--af-text-3); }
+.bn-container.bn-shadcn .bn-suggestion-menu [role='option'] > [data-position='right'] > * {
+  border: 0;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--af-text-4);
+}
+.bn-container.bn-shadcn .bn-toolbar { padding: 3px; gap: 1px; border-radius: 10px; }
+.bn-container.bn-shadcn .bn-toolbar button {
+  height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+  border-radius: 7px;
+  color: var(--af-text-3);
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.bn-container.bn-shadcn .bn-toolbar button:hover { background: var(--af-hover); color: var(--af-text); }
+.bn-container.bn-shadcn .bn-toolbar button[data-state='on'],
+.bn-container.bn-shadcn .bn-toolbar button[aria-pressed='true'] { background: var(--af-active); color: var(--af-text); }
+.bn-container.bn-shadcn .bn-toolbar svg { width: 16px; height: 16px; }
+.bn-container.bn-shadcn .bn-suggestion-menu,
+.bn-container.bn-shadcn .bn-toolbar { animation: af-bn-pop 160ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes af-bn-pop {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
 }
 
-/* Accent surfaces: keep informational panels tinted rather than grey, so
-   "selected" and "info" states remain legible without shouting. */
-.dark .bg-blue-50 { background-color: var(--af-accent-soft) !important; }
-.dark .text-blue-600, .dark .text-blue-500 { color: var(--af-accent) !important; }
+/* The + and drag handle beside the hovered line: small, quiet, and centred on
+   its first line. Heights below match the notes type scale (14px body at 1.65,
+   headings 20.8 / 17.6 / 16px at 1.35, 3px block padding). */
+.af-notes-editor .bn-side-menu {
+  height: 29px;
+  gap: 0;
+  animation: af-bn-handle 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.af-notes-editor .bn-side-menu[data-block-type='heading'][data-level='1'] { height: 34px; }
+.af-notes-editor .bn-side-menu[data-block-type='heading'][data-level='2'] { height: 30px; }
+.af-notes-editor .bn-side-menu[data-block-type='heading'][data-level='3'] { height: 28px; }
+.af-notes-editor .bn-shadcn .bn-side-menu .bn-button {
+  width: 20px;
+  height: 22px;
+  min-width: 0;
+  padding: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--af-text-4);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.af-notes-editor .bn-shadcn .bn-side-menu .bn-button[draggable='true'] { width: 16px; cursor: grab; }
+.af-notes-editor .bn-shadcn .bn-side-menu .bn-button[draggable='true']:active { cursor: grabbing; }
+.af-notes-editor .bn-shadcn .bn-side-menu .bn-button:hover,
+.af-notes-editor .bn-shadcn .bn-side-menu .bn-button[data-state='open'] {
+  background: var(--af-hover);
+  color: var(--af-text-2);
+}
+.af-notes-editor .bn-shadcn .bn-side-menu .bn-button svg { width: 16px; height: 16px; }
+@keyframes af-bn-handle {
+  from { opacity: 0; transform: translateX(3px); }
+}
 
-/* Primary actions keep their colour — flattening every gradient earlier left
-   the UI with no visual anchor for the main action on a screen. */
-.dark .bg-blue-600 { background-color: var(--af-accent) !important; }
-.dark .bg-blue-600:hover, .dark .hover\:bg-blue-700:hover { background-color: #3b7ae8 !important; }
+/* ============================================================
+   Reduced motion
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  .af-text-reveal { transition: none; }
+  .af-settle { animation: none; }
+  .af-page-enter,
+  .af-appear { animation: none; }
+  .af-name-scroll { animation: none !important; }
+  .af-spinner { animation-duration: 1.4s; }
+  .af-skeleton { animation: none; }
+  .bn-container.bn-shadcn .bn-side-menu,
+  .bn-container.bn-shadcn .bn-suggestion-menu,
+  .bn-container.bn-shadcn .bn-toolbar { animation: none; }
+}
+
+/* Notes editor: keep the block handles in a slim gutter left of the text so
+   the text lines up with the headings around it. Parents leave >= 36px. */
+.af-notes-editor { margin-left: -36px; margin-right: -4px; }
+.af-notes-editor .bn-editor { padding-inline: 36px 4px !important; padding-block: 2px !important; }
+.af-notes-editor .bn-block-content { font-size: 14px; line-height: 1.65; }
+.af-notes-editor [data-content-type='heading'] { letter-spacing: -0.012em; }
+/* Document headings sized for a side column, not a full page. */
+.af-notes-editor [data-content-type='heading'] { --level: 1.3em; }
+.af-notes-editor [data-content-type='heading'][data-level='2'] { --level: 1.1em; }
+.af-notes-editor [data-content-type='heading'][data-level='3'] { --level: 1em; }
+.af-notes-editor [data-prev-level='1'] { --prev-level: 1.3em; }
+.af-notes-editor [data-prev-level='2'] { --prev-level: 1.1em; }
+.af-notes-editor [data-prev-level='3'] { --prev-level: 1em; }
+.af-notes-editor .bn-block-content[data-content-type='heading'] { font-weight: 650 !important; line-height: 1.35; }
+/* Space above headings sits outside the block, so the side menu (placed at the
+   block's top edge) stays level with the heading text. */
+.af-notes-editor .bn-block-group > .bn-block-outer:not(:first-child):has(> .bn-block > .bn-block-content[data-content-type='heading']) { margin-top: 11px; }
+.af-notes-editor [data-content-type='table'] th,
+.af-notes-editor [data-content-type='table'] td { border-color: var(--af-border); font-size: 13px; }
+.af-notes-editor [data-content-type='table'] th { background: var(--af-panel-2); font-weight: 600; }
+.af-notes-editor [data-content-type='quote'] blockquote { border-left-color: var(--af-border-strong); color: var(--af-text-3); }
+.af-notes-editor .bn-block-content[data-content-type='codeBlock'] { background: var(--af-panel-2); color: var(--af-text); border: 1px solid var(--af-border); }

@@ -28,17 +28,28 @@ import {
   CommandList,
 } from '@/components/ui/command';
 import { cn, isOllamaNotInstalledError } from '@/lib/utils';
+import { ClaudeCliSettings } from '@/components/ClaudeCliSettings';
+import {
+  CLAUDE_CLI_DEFAULT_MODEL,
+  CLAUDE_CLI_FALLBACK_MODELS,
+  ClaudeCliStatus,
+  getClaudeCliPath,
+  isClaudeCliReady,
+  listClaudeCliModels,
+} from '@/lib/claude-cli';
 import { toast } from 'sonner';
 import { claudeOutputBudget, parseClaudeOutputTokens } from '@/lib/claude-output-tokens';
 
 export interface ModelConfig {
-  provider: 'ollama' | 'groq' | 'claude' | 'openai' | 'openrouter' | 'builtin-ai' | 'custom-openai';
+  provider: 'ollama' | 'groq' | 'claude' | 'claude-cli' | 'openai' | 'openrouter' | 'builtin-ai' | 'custom-openai';
   model: string;
   whisperModel: string;
   apiKey?: string | null;
   ollamaEndpoint?: string | null;
   /** Cap on summary output length; null uses the provider default */
   summaryMaxTokens?: number | null;
+  // Claude Code CLI fields (only meaningful when provider is 'claude-cli')
+  claudeCliPath?: string | null;
   // Custom OpenAI fields
   customOpenAIEndpoint?: string | null;
   customOpenAIModel?: string | null;
@@ -162,6 +173,10 @@ export function ModelSettingsModal({
   const [summaryMaxTokens, setSummaryMaxTokens] = useState<string>(
     modelConfig.summaryMaxTokens?.toString() || ''
   );
+  // Claude Code CLI state
+  const [claudeCliPath, setClaudeCliPath] = useState<string>(modelConfig.claudeCliPath || '');
+  const [claudeCliModels, setClaudeCliModels] = useState<string[]>(CLAUDE_CLI_FALLBACK_MODELS);
+  const [claudeCliStatus, setClaudeCliStatus] = useState<ClaudeCliStatus | null>(null);
 
   // Combobox state
   const [modelComboboxOpen, setModelComboboxOpen] = useState<boolean>(false);
@@ -234,6 +249,7 @@ export function ModelSettingsModal({
   const modelOptions: Record<string, string[]> = {
     ollama: models.map((model) => model.name),
     claude: claudeModels.length > 0 ? claudeModels : CLAUDE_FALLBACK_MODELS,
+    'claude-cli': claudeCliModels,
     groq: groqModels.length > 0 ? groqModels : GROQ_FALLBACK_MODELS,
     openai: openaiModels.length > 0 ? openaiModels : OPENAI_FALLBACK_MODELS,
     openrouter: openRouterModels.map((m) => m.id),
@@ -257,10 +273,16 @@ export function ModelSettingsModal({
     !customOpenAIModel.trim()
   );
 
+  // The CLI provider has no key to validate, so readiness is the gate instead:
+  // saving a provider that cannot run would only fail later, at summary time.
+  const isClaudeCliInvalid =
+    modelConfig.provider === 'claude-cli' && !isClaudeCliReady(claudeCliStatus);
+
   const isDoneDisabled =
     (requiresApiKey && (!apiKey || (typeof apiKey === 'string' && !apiKey.trim()))) ||
     (modelConfig.provider === 'ollama' && ollamaEndpointChanged) ||
-    isCustomOpenAIInvalid;
+    isCustomOpenAIInvalid ||
+    isClaudeCliInvalid;
 
   useEffect(() => {
     const fetchModelConfig = async () => {
@@ -276,7 +298,7 @@ export function ModelSettingsModal({
           setModelConfig(data);
 
           // Fetch API key if not included in response and provider requires it
-          if (data.provider !== 'ollama' && !data.apiKey) {
+          if (data.provider !== 'ollama' && data.provider !== 'claude-cli' && !data.apiKey) {
             try {
               const apiKeyData = await invoke('api_get_api_key', {
                 provider: data.provider
@@ -294,6 +316,12 @@ export function ModelSettingsModal({
             // Don't set lastFetchedEndpoint here - it will be set after successful model fetch
           }
           hasLoadedInitialConfig.current = true; // Mark that initial config is loaded
+
+          // Sync the Claude Code CLI path when that provider is already active
+          if (data.provider === 'claude-cli') {
+            setClaudeCliPath(data.claudeCliPath || '');
+            loadClaudeCliModels();
+          }
 
           // Fetch Custom OpenAI config if that's the active provider
           if (data.provider === 'custom-openai') {
@@ -425,6 +453,13 @@ export function ModelSettingsModal({
   useEffect(() => {
     setSummaryMaxTokens(modelConfig.summaryMaxTokens?.toString() ?? '');
   }, [modelConfig.summaryMaxTokens]);
+  // Adopt a CLI path that arrived from the parent (skipInitialFetch callers own
+  // the fetch, so the field would otherwise stay on its initial empty value).
+  useEffect(() => {
+    if (modelConfig.provider === 'claude-cli' && modelConfig.claudeCliPath) {
+      setClaudeCliPath(modelConfig.claudeCliPath);
+    }
+  }, [modelConfig.provider, modelConfig.claudeCliPath]);
 
   // Manual fetch function for Ollama models
   const fetchOllamaModels = async (silent = false) => {
@@ -534,6 +569,18 @@ export function ModelSettingsModal({
     } catch (err) {
       console.error('Error loading Built-in AI models:', err);
       toast.error('Failed to load Built-in AI models');
+    }
+  };
+
+  const loadClaudeCliModels = async () => {
+    try {
+      const data = await listClaudeCliModels();
+      if (data.length > 0) {
+        setClaudeCliModels(data.map((m) => m.id));
+      }
+    } catch (err) {
+      // The static fallback list is already correct; a failure here is cosmetic.
+      console.error('Error loading Claude Code CLI models:', err);
     }
   };
 
@@ -664,6 +711,9 @@ export function ModelSettingsModal({
         ? (ollamaEndpoint.trim() || null)
         : (modelConfig.ollamaEndpoint || null),
       summaryMaxTokens: outputTokens,
+      claudeCliPath: modelConfig.provider === 'claude-cli'
+        ? (claudeCliPath.trim() || null)
+        : (modelConfig.claudeCliPath || null),
       // Include custom OpenAI fields
       customOpenAIEndpoint: modelConfig.provider === 'custom-openai' ? customOpenAIEndpoint.trim() : null,
       customOpenAIModel: modelConfig.provider === 'custom-openai' ? customOpenAIModel.trim() : null,
@@ -827,10 +877,6 @@ export function ModelSettingsModal({
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-semibold">Model Settings</h3>
-      </div>
-
       <div className="space-y-4">
         <div>
           <Label>Summarization Model</Label>
@@ -877,6 +923,17 @@ export function ModelSettingsModal({
                   loadBuiltinAiModels();
                 }
 
+                // Load the saved CLI path when the Claude Code CLI is selected.
+                // ClaudeCliSettings probes for the executable once it mounts.
+                if (provider === 'claude-cli') {
+                  loadClaudeCliModels();
+                  getClaudeCliPath()
+                    .then((saved) => setClaudeCliPath(saved || ''))
+                    .catch((err) => {
+                      console.error('Failed to load Claude Code CLI path:', err);
+                    });
+                }
+
                 // Load custom OpenAI config when selected
                 if (provider === 'custom-openai') {
                   invoke<any>('api_get_custom_openai_config').then((config) => {
@@ -899,7 +956,8 @@ export function ModelSettingsModal({
               </SelectTrigger>
               <SelectContent className="max-h-64 overflow-y-auto">
                 <SelectItem value="builtin-ai">Built-in AI (Offline, No API needed)</SelectItem>
-                <SelectItem value="claude">Claude</SelectItem>
+                <SelectItem value="claude">Claude (API key)</SelectItem>
+                <SelectItem value="claude-cli">Claude Code CLI (Claude subscription)</SelectItem>
                 <SelectItem value="custom-openai">Custom Server (OpenAI)</SelectItem>
                 <SelectItem value="groq">Groq</SelectItem>
                 <SelectItem value="ollama">Ollama</SelectItem>
@@ -1119,7 +1177,7 @@ export function ModelSettingsModal({
                     variant="ghost"
                     size="icon"
                     onClick={() => setIsApiKeyLocked(!isApiKeyLocked)}
-                    className={isLockButtonVibrating ? 'animate-vibrate text-red-500' : ''}
+                    className={isLockButtonVibrating ? 'animate-vibrate text-af-danger' : ''}
                     title={isApiKeyLocked ? 'Unlock to edit' : 'Lock to prevent editing'}
                   >
                     {isApiKeyLocked ? <Lock /> : <Unlock />}
@@ -1198,14 +1256,14 @@ export function ModelSettingsModal({
                       placeholder="http://localhost:11434"
                       className={cn(
                         "pr-10",
-                        endpointValidationState === 'invalid' && "border-red-500"
+                        endpointValidationState === 'invalid' && "border-af-danger/35"
                       )}
                     />
                     {endpointValidationState === 'valid' && (
-                      <CheckCircle2 className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-green-500" />
+                      <CheckCircle2 className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-af-success" />
                     )}
                     {endpointValidationState === 'invalid' && (
-                      <XCircle className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-red-500" />
+                      <XCircle className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-af-danger" />
                     )}
                   </div>
                   <Button
@@ -1230,8 +1288,8 @@ export function ModelSettingsModal({
                   </Button>
                 </div>
                 {ollamaEndpointChanged && !error && (
-                  <Alert className="mt-3 border-yellow-500 bg-yellow-50">
-                    <AlertDescription className="text-yellow-800">
+                  <Alert className="mt-3 border-af-warning/35 bg-af-warning/10">
+                    <AlertDescription className="text-af-text">
                       Endpoint changed. Please click "Fetch Models" to load models from the new endpoint before saving.
                     </AlertDescription>
                   </Alert>
@@ -1274,8 +1332,8 @@ export function ModelSettingsModal({
                 {ollamaNotInstalled ? (
                   /* Show Ollama download link when not installed */
                   <div className="space-y-4">
-                    <Alert className="border-orange-500 bg-orange-50">
-                      <AlertDescription className="text-orange-800">
+                    <Alert className="border-af-warning/35 bg-af-warning/10">
+                      <AlertDescription className="text-af-text">
                         Ollama is not installed or not running. Please download and install Ollama to use local models.
                       </AlertDescription>
                     </Alert>
@@ -1283,7 +1341,7 @@ export function ModelSettingsModal({
                       variant="default"
                       size="sm"
                       onClick={() => invoke('open_external_url', { url: 'https://ollama.com/download' })}
-                      className="w-full bg-blue-600 hover:bg-blue-700"
+                      className="w-full bg-af-accent hover:bg-af-accent-hover"
                     >
                       <ExternalLink className="mr-2 h-4 w-4" />
                       Download Ollama
@@ -1326,16 +1384,16 @@ export function ModelSettingsModal({
 
                         {/* Show progress for gemma3:1b download */}
                         {isDownloading('gemma3:1b') && getProgress('gemma3:1b') !== undefined && (
-                          <div className="bg-white rounded-md border p-3">
+                          <div className="bg-af-panel rounded-md border p-3">
                             <div className="flex items-center justify-between mb-2">
-                              <span className="text-sm font-medium text-blue-600">Downloading gemma3:1b</span>
-                              <span className="text-sm font-semibold text-blue-600">
+                              <span className="text-sm font-medium text-af-accent">Downloading gemma3:1b</span>
+                              <span className="text-sm font-semibold text-af-accent">
                                 {Math.round(getProgress('gemma3:1b')!)}%
                               </span>
                             </div>
-                            <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div className="w-full h-2 bg-af-hover rounded-full overflow-hidden">
                               <div
-                                className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all duration-300"
+                                className="h-full bg-af-panel-2 rounded-full transition-all duration-300"
                                 style={{ width: `${getProgress('gemma3:1b')}%` }}
                               />
                             </div>
@@ -1366,7 +1424,7 @@ export function ModelSettingsModal({
                           className={cn(
                             'bg-card p-2 m-0 rounded-md border transition-colors',
                             modelConfig.model === model.name
-                              ? 'ring-1 ring-blue-500 border-blue-500 background-blue-100'
+                              ? 'ring-1 ring-af-accent/50 border-af-accent/40 background-blue-100'
                               : 'hover:bg-muted/50',
                             !modelIsDownloading && 'cursor-pointer'
                           )}
@@ -1384,14 +1442,14 @@ export function ModelSettingsModal({
 
                           {/* Progress bar for downloading models */}
                           {modelIsDownloading && progress !== undefined && (
-                            <div className="mt-3 pt-3 border-t border-gray-200">
+                            <div className="mt-3 pt-3 border-t border-af-border">
                               <div className="flex items-center justify-between mb-2">
-                                <span className="text-sm font-medium text-blue-600">Downloading...</span>
-                                <span className="text-sm font-semibold text-blue-600">{Math.round(progress)}%</span>
+                                <span className="text-sm font-medium text-af-accent">Downloading...</span>
+                                <span className="text-sm font-semibold text-af-accent">{Math.round(progress)}%</span>
                               </div>
-                              <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                              <div className="w-full h-2 bg-af-hover rounded-full overflow-hidden">
                                 <div
-                                  className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all duration-300"
+                                  className="h-full bg-af-panel-2 rounded-full transition-all duration-300"
                                   style={{ width: `${progress}%` }}
                                 />
                               </div>
@@ -1405,6 +1463,16 @@ export function ModelSettingsModal({
               </ScrollArea>
             )}
           </div>
+        )}
+
+        {/* Claude Code CLI Section */}
+        {modelConfig.provider === 'claude-cli' && (
+          <ClaudeCliSettings
+            path={claudeCliPath}
+            onPathChange={setClaudeCliPath}
+            model={modelConfig.model || CLAUDE_CLI_DEFAULT_MODEL}
+            onStatusChange={setClaudeCliStatus}
+          />
         )}
 
         {/* Built-in AI Models Section */}
@@ -1422,7 +1490,7 @@ export function ModelSettingsModal({
       </div>
 
       {/* Auto-generate summaries toggle */}
-      {/* <div className="mt-6 pt-6 border-t border-gray-200">
+      {/* <div className="mt-6 pt-6 border-t border-af-border">
         <div className="flex items-center justify-between">
           <div className="flex-1">
             <Label htmlFor="auto-generate" className="text-base font-medium">
@@ -1443,8 +1511,8 @@ export function ModelSettingsModal({
       <div className="mt-6 flex justify-end">
         <Button
           className={cn(
-            'px-4 text-sm font-medium text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500',
-            isDoneDisabled ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+            'px-4 text-sm font-medium text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-af-accent/50',
+            isDoneDisabled ? 'bg-af-active cursor-not-allowed' : 'bg-af-accent hover:bg-af-accent-hover'
           )}
           onClick={handleSave}
           disabled={isDoneDisabled}

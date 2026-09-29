@@ -1,14 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import { RefreshCw, Mic, Speaker } from 'lucide-react';
-import { AudioLevelMeter, CompactAudioLevelMeter } from './AudioLevelMeter';
-import { AudioBackendSelector } from './AudioBackendSelector';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Label } from '@/components/ui/label';
-import Analytics from '@/lib/analytics';
-import { usePlatform } from '@/hooks/usePlatform';
-import { toDeviceOptionValue, deviceSelectValue, deviceDisplayName, UNAVAILABLE_DEVICE_VALUE } from '@/lib/audio-devices';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ChevronRight, Mic, Volume2 } from 'lucide-react';
+import { LiveAudioVisualizer } from './LiveAudioVisualizer';
+import { toDeviceOptionValue, deviceDisplayName } from '@/lib/audio-devices';
 
 export interface AudioDevice {
   name: string;
@@ -33,414 +26,487 @@ export interface AudioLevelUpdate {
   levels: AudioLevelData[];
 }
 
-interface DeviceSelectionProps {
-  selectedDevices: SelectedDevices;
-  onDeviceChange: (devices: SelectedDevices) => void;
+export function AudioDeviceCard({
+  kind,
+  label,
+  volumeLabel,
+  levelLabel,
+  deviceName,
+  devices,
+  selectedValue,
+  open,
+  onOpenChange,
+  onSelect,
+  disabled,
+  note,
+  unavailable,
+  gain,
+  onGainLive,
+  onGainCommit,
+  rmsLevel,
+  peakLevel,
+  levelTick,
+  meterActive = true,
+  source,
+  hideDevice = false,
+}: {
+  kind: 'mic' | 'system';
+  label: string;
+  volumeLabel: string;
+  levelLabel: string;
+  deviceName: string;
+  devices: AudioDevice[];
+  selectedValue: string | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSelect: (value: string) => void;
   disabled?: boolean;
-}
+  note?: string | null;
+  unavailable?: string | null;
+  gain?: number;
+  onGainLive?: (value: number) => void;
+  onGainCommit?: (value: number) => void;
+  rmsLevel: number;
+  peakLevel: number;
+  /** Preview sample clock. Omit it to use the live recording meter. */
+  levelTick?: number;
+  meterActive?: boolean;
+  /** Which audio to record (system audio: everything, or only chosen apps). */
+  source?: React.ReactNode;
+  /** The device is not used, e.g. while only chosen apps are recorded. */
+  hideDevice?: boolean;
+}) {
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const onOpenChangeRef = useRef(onOpenChange);
+  onOpenChangeRef.current = onOpenChange;
+  const closeTimer = useRef<number | null>(null);
+  const openTimer = useRef<number | null>(null);
+  const [place, setPlace] = useState<'right' | 'below' | 'above'>('right');
+  const Icon = kind === 'mic' ? Mic : Volume2;
+  const showVolume = typeof gain === 'number' && onGainLive && onGainCommit;
 
-export function DeviceSelection({ selectedDevices, onDeviceChange, disabled = false }: DeviceSelectionProps) {
-  const isMacOS = usePlatform() === 'macos';
-  const [devices, setDevices] = useState<AudioDevice[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [audioLevels, setAudioLevels] = useState<Map<string, AudioLevelData>>(new Map());
-  const [isMonitoring, setIsMonitoring] = useState(false);
-  const [showLevels, setShowLevels] = useState(false);
-  // One-way latch: a failed *refresh* leaves the last good list in place, so
-  // trust must never be downgraded once established.
-  const [hasLoadedDevices, setHasLoadedDevices] = useState(false);
-
-  // Filter devices by type
-  const inputDevices = devices.filter(device => device.device_type === 'Input');
-  const outputDevices = devices.filter(device => device.device_type === 'Output');
-
-  // Single source of truth for the option values, shared by the <SelectItem>s
-  // and the reconciliation below — a mismatch between the two is the bug.
-  const micOptions = inputDevices.map(toDeviceOptionValue);
-  const systemOptions = outputDevices.map(toDeviceOptionValue);
-
-  // A saved device that isn't in the current list. Guarded on the per-list
-  // length because get_audio_devices can succeed while list_pulse_sinks() failed
-  // server-side, yielding Input entries and zero Output entries — in which case
-  // we genuinely don't know whether the device is missing.
-  const micFellBack =
-    hasLoadedDevices && micOptions.length > 0 &&
-    !!selectedDevices.micDevice && !micOptions.includes(selectedDevices.micDevice);
-  const systemFellBack =
-    !isMacOS && hasLoadedDevices && systemOptions.length > 0 &&
-    !!selectedDevices.systemDevice && !systemOptions.includes(selectedDevices.systemDevice);
-
-  useEffect(() => {
-    if (isMacOS && selectedDevices.systemDevice !== null) {
-      onDeviceChange({ ...selectedDevices, systemDevice: null });
-    }
-  }, [isMacOS, onDeviceChange, selectedDevices]);
-
-  // Fetch available audio devices
-  const fetchDevices = async () => {
-    try {
-      setError(null);
-      const result = await invoke<AudioDevice[]>('get_audio_devices');
-      setDevices(result);
-      setHasLoadedDevices(true);
-      console.log('Fetched audio devices:', result);
-    } catch (err) {
-      console.error('Failed to fetch audio devices:', err);
-      setError('Failed to load audio devices. Please check your system audio settings.');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+  const cancelClose = () => {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
     }
   };
+  const cancelOpen = () => {
+    if (openTimer.current !== null) {
+      window.clearTimeout(openTimer.current);
+      openTimer.current = null;
+    }
+  };
+  const scheduleClose = () => {
+    cancelOpen();
+    cancelClose();
+    closeTimer.current = window.setTimeout(() => onOpenChangeRef.current(false), 160);
+  };
+  const revealMenu = (immediate = false) => {
+    if (disabled) return;
+    cancelClose();
+    if (immediate) {
+      cancelOpen();
+      onOpenChangeRef.current(true);
+      return;
+    }
+    if (openTimer.current !== null) return;
+    openTimer.current = window.setTimeout(() => {
+      openTimer.current = null;
+      onOpenChangeRef.current(true);
+    }, 90);
+  };
 
-  // Load devices on component mount
-  useEffect(() => {
-    fetchDevices();
+  useEffect(() => () => {
+    cancelClose();
+    cancelOpen();
   }, []);
 
-  // Set up audio level event listener
+  useLayoutEffect(() => {
+    if (!open || !popoverRef.current) return;
+    const rect = popoverRef.current.getBoundingClientRect();
+    const spaceRight = window.innerWidth - rect.right;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    if (spaceRight >= 296) setPlace('right');
+    else if (spaceBelow >= 200) setPlace('below');
+    else setPlace('above');
+  }, [open]);
+
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
-
-    const setupAudioLevelListener = async () => {
-      try {
-        unlisten = await listen<AudioLevelUpdate>('audio-levels', (event) => {
-          const levelUpdate = event.payload;
-          const newLevels = new Map<string, AudioLevelData>();
-
-          levelUpdate.levels.forEach(level => {
-            newLevels.set(level.device_name, level);
-          });
-
-          setAudioLevels(newLevels);
-        });
-      } catch (err) {
-        console.error('Failed to setup audio level listener:', err);
-      }
+    if (!open) return;
+    const onDocClick = (event: MouseEvent) => {
+      if (!popoverRef.current?.contains(event.target as Node)) onOpenChangeRef.current(false);
     };
-
-    setupAudioLevelListener();
-
-    // Cleanup function
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onOpenChangeRef.current(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
     return () => {
-      if (unlisten) {
-        unlisten();
-      }
-      // Stop monitoring when component unmounts
-      if (isMonitoring) {
-        stopAudioLevelMonitoring();
-      }
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
     };
-  }, [isMonitoring]);
-
-  // Handle device refresh
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    await fetchDevices();
-  };
-
-  // Helper function to detect device category and Bluetooth status
-  const getDeviceMetadata = (deviceName: string) => {
-    const nameLower = deviceName.toLowerCase();
-
-    // Detect if it's Bluetooth
-    const isBluetooth = nameLower.includes('airpods')
-      || nameLower.includes('bluetooth')
-      || nameLower.includes('wireless')
-      || nameLower.includes('wh-')  // Sony WH-* series
-      || nameLower.includes('bt ');
-
-    // Categorize device
-    let category = 'wired';
-    if (deviceName === 'default') {
-      category = 'default';
-    } else if (nameLower.includes('airpods')) {
-      category = 'airpods';
-    } else if (isBluetooth) {
-      category = 'bluetooth';
-    }
-
-    return { isBluetooth, category };
-  };
-
-  // Handle microphone device selection
-  const handleMicDeviceChange = (deviceName: string) => {
-    const newDevices = {
-      ...selectedDevices,
-      micDevice: deviceName === 'default' ? null : deviceName
-    };
-    onDeviceChange(newDevices);
-
-    // Track device selection analytics with enhanced metadata
-    const metadata = getDeviceMetadata(deviceName);
-    Analytics.track('microphone_selected', {
-      device_category: metadata.category,
-      is_bluetooth: metadata.isBluetooth.toString(),
-      has_system_audio: (!!selectedDevices.systemDevice).toString()
-    }).catch(err => console.error('Failed to track microphone selection:', err));
-  };
-
-  // Handle system audio device selection
-  const handleSystemDeviceChange = (deviceName: string) => {
-    const newDevices = {
-      ...selectedDevices,
-      systemDevice: deviceName === 'default' ? null : deviceName
-    };
-    onDeviceChange(newDevices);
-
-    // Track device selection analytics with enhanced metadata
-    const metadata = getDeviceMetadata(deviceName);
-    Analytics.track('system_audio_selected', {
-      device_category: metadata.category,
-      is_bluetooth: metadata.isBluetooth.toString(),
-      has_microphone: (!!selectedDevices.micDevice).toString()
-    }).catch(err => console.error('Failed to track system audio selection:', err));
-  };
-
-  // Start audio level monitoring
-  const startAudioLevelMonitoring = async () => {
-    try {
-      // Only monitor input devices for now (microphones)
-      const deviceNames = inputDevices.map(device => device.name);
-      if (deviceNames.length === 0) {
-        setError('No microphone devices found to monitor');
-        return;
-      }
-
-      await invoke('start_audio_level_monitoring', { deviceNames });
-      setIsMonitoring(true);
-      setShowLevels(true);
-      console.log('Started audio level monitoring for input devices:', deviceNames);
-    } catch (err) {
-      console.error('Failed to start audio level monitoring:', err);
-      setError('Failed to start audio level monitoring');
-    }
-  };
-
-  // Stop audio level monitoring
-  const stopAudioLevelMonitoring = async () => {
-    try {
-      await invoke('stop_audio_level_monitoring');
-      setIsMonitoring(false);
-      setAudioLevels(new Map());
-      console.log('Stopped audio level monitoring');
-    } catch (err) {
-      console.error('Failed to stop audio level monitoring:', err);
-    }
-  };
-
-  // Toggle audio level monitoring
-  const toggleAudioLevelMonitoring = async () => {
-    if (isMonitoring) {
-      await stopAudioLevelMonitoring();
-    } else {
-      await startAudioLevelMonitoring();
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="p-4 space-y-4">
-        <div className="animate-pulse">
-          <div className="h-4 bg-gray-200 rounded w-1/3 mb-4"></div>
-          <div className="h-10 bg-gray-200 rounded mb-3"></div>
-          <div className="h-10 bg-gray-200 rounded"></div>
-        </div>
-      </div>
-    );
-  }
+  }, [open]);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h4 className="text-sm font-medium text-gray-900">Audio Devices</h4>
-        <div className="flex items-center space-x-2">
-          {/* TODO: Monitoring */}
-          {/* <button */}
-          {/*   onClick={toggleAudioLevelMonitoring} */}
-          {/*   disabled={disabled || inputDevices.length === 0} */}
-          {/*   className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${ */}
-          {/*     isMonitoring */}
-          {/*       ? 'bg-red-100 text-red-700 hover:bg-red-200' */}
-          {/*       : 'bg-green-100 text-green-700 hover:bg-green-200' */}
-          {/*   } disabled:pointer-events-none disabled:opacity-50`} */}
-          {/*   title={inputDevices.length === 0 ? 'No microphones available to test' : ''} */}
-          {/* > */}
-          {/*   {isMonitoring ? 'Stop Test' : 'Test Mic'} */}
-          {/* </button> */}
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing || disabled}
-            className="h-8 w-8 p-0 inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors hover:bg-gray-100 disabled:pointer-events-none disabled:opacity-50"
-          >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
+    <div className="w-full max-w-[320px] rounded-2xl border border-af-border bg-af-elevated">
+      {!hideDevice && (
+      <div
+        ref={popoverRef}
+        className="relative"
+        onMouseEnter={() => revealMenu(false)}
+        onMouseLeave={(event) => {
+          const next = event.relatedTarget;
+          if (next instanceof Node && popoverRef.current?.contains(next)) return;
+          scheduleClose();
+        }}
+      >
+      <div className="overflow-hidden rounded-t-[15px]">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => revealMenu(true)}
+        onFocus={() => revealMenu(true)}
+        className="flex w-full cursor-pointer items-center gap-3 px-3.5 py-3 text-left transition-colors duration-150 hover:bg-[var(--af-hover)] disabled:cursor-default disabled:hover:bg-transparent"
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block text-[12px] font-medium text-[var(--af-text-3)]">{label}</span>
+          <span className="mt-0.5 line-clamp-2 text-[13px] leading-snug text-[var(--af-text)]">{deviceName}</span>
+        </span>
+        <ChevronRight size={16} className="shrink-0 text-[var(--af-text-3)]" />
+      </button>
       </div>
 
-      {error && (
-        <div className="p-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md">
-          {error}
+      {open && !disabled && (
+        <div
+          role="dialog"
+          aria-label={`${label} devices`}
+          onMouseEnter={cancelClose}
+          className={`absolute z-50 ${
+            place === 'below'
+              ? 'left-0 top-full pt-2'
+              : place === 'above'
+                ? 'bottom-full left-0 pb-2'
+                : 'left-full top-0 pl-2'
+          }`}
+        >
+          <div className="w-[280px] overflow-hidden rounded-xl border border-[var(--af-border-strong)] bg-[var(--af-panel)] py-1 shadow-[var(--af-shadow-lg)]">
+          <div className="max-h-72 overflow-y-auto" role="radiogroup" aria-label={label}>
+            {devices.length === 0 && (
+              <p className="px-3 py-3 text-[13px] text-[var(--af-text-3)]">No devices found</p>
+            )}
+            {devices.map((device) => {
+              const value = toDeviceOptionValue(device);
+              const selected = selectedValue === value;
+              return (
+                <DeviceChoice
+                  key={value}
+                  name={device.name}
+                  selected={selected}
+                  onSelect={() => onSelect(value)}
+                  icon={<Icon size={14} className="shrink-0 text-[var(--af-text-3)]" />}
+                />
+              );
+            })}
+          </div>
+          </div>
+        </div>
+      )}
+      </div>
+      )}
+
+      {source && (
+        <div className={`px-3.5 py-3${hideDevice ? '' : ' border-t border-[var(--af-border)]'}`}>
+          <div className="mb-2 text-[12px] font-medium text-[var(--af-text-3)]">{hideDevice ? label : 'Record'}</div>
+          {source}
         </div>
       )}
 
-      <div className="space-y-3">
-        {/* Microphone Selection */}
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <Mic className="h-4 w-4 text-gray-600" />
-            <Label htmlFor="mic-selection" className="text-sm font-medium text-gray-700">
-              Microphone
-            </Label>
-          </div>
-          <Select
-            value={deviceSelectValue(selectedDevices.micDevice, micOptions)}
-            onValueChange={handleMicDeviceChange}
+      {showVolume && (
+        <div className="border-t border-[var(--af-border)] px-3.5 py-3">
+          <div className="mb-2 text-[12px] font-medium text-[var(--af-text-3)]">{volumeLabel}</div>
+          <SmoothGainSlider
+            value={gain}
+            label={volumeLabel}
             disabled={disabled}
-          >
-            <SelectTrigger id="mic-selection" className="w-full">
-              <SelectValue placeholder="Select Microphone" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="default">Default Microphone</SelectItem>
-              {selectedDevices.micDevice && !micOptions.includes(selectedDevices.micDevice) && (
-                <SelectItem value={UNAVAILABLE_DEVICE_VALUE} disabled>
-                  {deviceDisplayName(selectedDevices.micDevice)} ({micFellBack ? 'unavailable' : 'saved device'})
-                </SelectItem>
-              )}
-              {inputDevices.map((device) => (
-                <SelectItem
-                  key={device.name}
-                  value={toDeviceOptionValue(device)}
-                >
-                  {device.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {inputDevices.length === 0 && (
-            <p className="text-xs text-gray-500">No microphone devices found</p>
-          )}
-          {micFellBack && (
-            <p className="text-xs text-amber-600">
-              “{deviceDisplayName(selectedDevices.micDevice!)}” isn’t available right now — using
-              the default microphone for new recordings. Refresh after reconnecting, or select Default Microphone to clear this preference.
-            </p>
-          )}
-
-          {/* Audio Level Meters for Input Devices */}
-          {showLevels && inputDevices.length > 0 && (
-            <div className="space-y-2 pt-2 border-t border-gray-100">
-              <p className="text-xs text-gray-600 font-medium">Microphone Levels:</p>
-              {inputDevices.map((device) => {
-                const levelData = audioLevels.get(device.name);
-                return (
-                  <div key={`level-${device.name}`} className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-gray-600 truncate max-w-[200px]">
-                        {device.name}
-                      </span>
-                      {levelData && (
-                        <CompactAudioLevelMeter
-                          rmsLevel={levelData.rms_level}
-                          peakLevel={levelData.peak_level}
-                          isActive={levelData.is_active}
-                        />
-                      )}
-                    </div>
-                    {levelData && (
-                      <AudioLevelMeter
-                        rmsLevel={levelData.rms_level}
-                        peakLevel={levelData.peak_level}
-                        isActive={levelData.is_active}
-                        deviceName={device.name}
-                        size="small"
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+            onLive={onGainLive}
+            onCommit={onGainCommit}
+          />
         </div>
+      )}
 
-        {/* System Audio Selection */}
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <Speaker className="h-4 w-4 text-gray-600" />
-            <Label htmlFor="system-selection" className="text-sm font-medium text-gray-700">
-              System Audio
-            </Label>
-          </div>
-
-          <Select
-            value={isMacOS ? 'default' : deviceSelectValue(selectedDevices.systemDevice, systemOptions)}
-            onValueChange={handleSystemDeviceChange}
-            disabled={disabled || isMacOS}
-          >
-            <SelectTrigger id="system-selection" className="w-full">
-              <SelectValue placeholder="Select System Audio" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="default">Default System Audio</SelectItem>
-              {!isMacOS && selectedDevices.systemDevice && !systemOptions.includes(selectedDevices.systemDevice) && (
-                <SelectItem value={UNAVAILABLE_DEVICE_VALUE} disabled>
-                  {deviceDisplayName(selectedDevices.systemDevice)} ({systemFellBack ? 'unavailable' : 'saved device'})
-                </SelectItem>
-              )}
-              {!isMacOS && outputDevices.map((device) => (
-                <SelectItem
-                  key={device.name}
-                  value={toDeviceOptionValue(device)}
-                >
-                  {device.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {outputDevices.length === 0 && (
-            <p className="text-xs text-gray-500">No system audio devices found</p>
-          )}
-          {systemFellBack && (
-            <p className="text-xs text-amber-600">
-              “{deviceDisplayName(selectedDevices.systemDevice!)}” isn’t available right now — using
-              the system default for new recordings. Refresh after reconnecting, or select Default System Audio to clear this preference.
-            </p>
-          )}
-          {isMacOS && outputDevices.length > 0 && (
-            <p className="text-xs text-gray-500">
-              macOS captures the current default output. Change the route in System Settings.
-            </p>
-          )}
-          {!isMacOS && outputDevices.length > 0 && (
-            <p className="text-xs text-gray-500">
-              Zoom and similar apps can use their own speaker. Set the app&apos;s Speaker to the same output selected here.
-            </p>
-          )}
-
-          {/* Backend Selection - available on all platforms */}
-          {!disabled && (
-            <div className="pt-3 border-t border-gray-100">
-              <AudioBackendSelector disabled={disabled} />
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Info text */}
-      <div className="text-xs text-gray-500 space-y-1">
-        <p>• <strong>Microphone:</strong> Records your voice and ambient sound</p>
-        <p>• <strong>System Audio:</strong> Records computer audio (music, calls, etc.)</p>
-        {isMonitoring && (
-          <p>• <strong>Mic Levels:</strong> Green = good, Yellow = loud, Red = too loud</p>
+      <div className="border-t border-[var(--af-border)] px-3.5 py-3">
+        <div className="mb-2 text-[12px] font-medium text-[var(--af-text-3)]">{levelLabel}</div>
+        {levelTick === undefined ? (
+          <LiveAudioVisualizer
+            active={meterActive}
+            source={kind === 'mic' ? 'mic' : 'system'}
+            bars={18}
+            fill
+            className="w-full"
+          />
+        ) : (
+          <LiveAudioVisualizer
+            active
+            source={kind === 'mic' ? 'mic' : 'system'}
+            bars={18}
+            fill
+            feedRms={rmsLevel}
+            feedPeak={peakLevel}
+            feedTick={levelTick}
+            displayGain={gain ?? 1}
+            className="w-full"
+          />
         )}
-        {!isMonitoring && inputDevices.length > 0 && (
-          <p>• <strong>Tip:</strong> Click "Test Mic" to check if your microphone is working</p>
+        {unavailable && (
+          <p className="mt-2 text-[11px] text-[var(--af-text-3)]">{unavailable} is not connected.</p>
         )}
+        {note && <p className="mt-2 text-[11px] text-[var(--af-text-3)]">{note}</p>}
       </div>
+    </div>
+  );
+}
+
+const NAME_GAP = 32;
+
+function textWidth(sample: HTMLElement, text: string) {
+  const cs = getComputedStyle(sample);
+  const probe = document.createElement('span');
+  probe.textContent = text;
+  probe.style.cssText = [
+    'position:fixed',
+    'left:-9999px',
+    'top:0',
+    'visibility:hidden',
+    'white-space:nowrap',
+    'width:auto',
+    'max-width:none',
+    `font:${cs.font}`,
+    `letter-spacing:${cs.letterSpacing}`,
+  ].join(';');
+  document.body.appendChild(probe);
+  const width = probe.getBoundingClientRect().width;
+  probe.remove();
+  return width;
+}
+
+function DeviceChoice({
+  name,
+  selected,
+  onSelect,
+  icon,
+}: {
+  name: string;
+  selected: boolean;
+  onSelect: () => void;
+  icon: React.ReactNode;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      onClick={onSelect}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      className={`mx-1 flex h-11 w-[calc(100%-8px)] cursor-pointer items-center gap-2.5 rounded-lg px-2.5 text-left ${
+        selected ? 'bg-[var(--af-hover)]' : 'hover:bg-[var(--af-hover)]'
+      }`}
+    >
+      {icon}
+      <ScrollName text={name} active={hovered} />
+      <span
+        className={`h-4 w-4 shrink-0 rounded-full border-2 ${
+          selected ? 'border-[var(--af-accent)] bg-[var(--af-accent)]' : 'border-[var(--af-text-3)] bg-transparent'
+        }`}
+      />
+    </button>
+  );
+}
+
+function ScrollName({ text, active }: { text: string; active: boolean }) {
+  const outerRef = useRef<HTMLSpanElement>(null);
+  const textRef = useRef<HTMLSpanElement>(null);
+  const [distance, setDistance] = useState(0);
+
+  useLayoutEffect(() => {
+    const outer = outerRef.current;
+    const sample = textRef.current;
+    if (!outer || !sample) return;
+    const measure = () => {
+      const available = outer.clientWidth;
+      if (available <= 0) return;
+      const width = textWidth(sample, text);
+      setDistance(width - available > 1 ? width + NAME_GAP : 0);
+    };
+    measure();
+    const frame = requestAnimationFrame(measure);
+    return () => cancelAnimationFrame(frame);
+  }, [text]);
+
+  const reduceMotion = typeof window !== 'undefined'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const scrolling = active && distance > 0 && !reduceMotion;
+  const duration = Math.max(1.5, distance / 52);
+
+  // One structure for both states, so the name never moves when scrolling
+  // starts: a block-level flex row (an inline box would sit on the text
+  // baseline and drop a few pixels) whose first copy stays put and only stops
+  // truncating, with a second copy after the gap while it scrolls.
+  return (
+    <span ref={outerRef} className="block h-5 min-w-0 flex-1 overflow-hidden">
+      <span
+        className={`flex h-5 items-center ${scrolling ? 'af-name-scroll w-max' : 'w-full'}`}
+        style={
+          scrolling
+            ? {
+                ['--af-shift' as string]: `${distance}px`,
+                animationDuration: `${duration}s`,
+                animationDelay: '40ms',
+              }
+            : undefined
+        }
+      >
+        <span
+          ref={textRef}
+          className={`whitespace-nowrap text-[13px] leading-5 text-[var(--af-text)] ${scrolling ? 'shrink-0' : 'min-w-0 truncate'}`}
+        >
+          {text}
+        </span>
+        {scrolling && (
+          <span aria-hidden className="shrink-0 whitespace-nowrap text-[13px] leading-5 text-[var(--af-text)]" style={{ paddingLeft: NAME_GAP }}>
+            {text}
+          </span>
+        )}
+      </span>
+    </span>
+  );
+}
+
+function SmoothGainSlider({
+  value,
+  label,
+  disabled,
+  onLive,
+  onCommit,
+}: {
+  value: number;
+  label: string;
+  disabled?: boolean;
+  onLive: (value: number) => void;
+  onCommit: (value: number) => void;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const shownRef = useRef(value);
+  const dragging = useRef(false);
+  const over = useRef(false);
+  const [shown, setShown] = useState(value);
+  const [tip, setTip] = useState(false);
+
+  useEffect(() => {
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) {
+      shownRef.current = value;
+      setShown(value);
+      return;
+    }
+    let frame = 0;
+    const tick = () => {
+      const delta = value - shownRef.current;
+      if (Math.abs(delta) < 0.003) {
+        shownRef.current = value;
+        setShown(value);
+        return;
+      }
+      shownRef.current += delta * 0.35;
+      setShown(shownRef.current);
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [value]);
+
+  const pct = ((shown - 0.5) / 2.5) * 100;
+
+  const valueFromX = (clientX: number) => {
+    const rect = trackRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return value;
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    return Math.round((0.5 + ratio * 2.5) * 10) / 10;
+  };
+
+  const nudge = (direction: number) => {
+    const next = Math.min(3, Math.max(0.5, Math.round((value + direction * 0.1) * 10) / 10));
+    onLive(next);
+    onCommit(next);
+  };
+
+  const showTip = (nextDragging: boolean) => setTip(over.current || nextDragging);
+
+  return (
+    <div
+      ref={trackRef}
+      role="slider"
+      tabIndex={disabled ? -1 : 0}
+      aria-label={label}
+      aria-valuemin={0.5}
+      aria-valuemax={3}
+      aria-valuenow={value}
+      aria-valuetext={`${value.toFixed(1)}×`}
+      onKeyDown={(event) => {
+        if (disabled) return;
+        if (event.key === 'ArrowRight' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          nudge(1);
+        } else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') {
+          event.preventDefault();
+          nudge(-1);
+        }
+      }}
+      onPointerEnter={() => {
+        over.current = true;
+        showTip(dragging.current);
+      }}
+      onPointerLeave={() => {
+        over.current = false;
+        showTip(dragging.current);
+      }}
+      onFocus={() => setTip(true)}
+      onBlur={() => { if (!dragging.current) setTip(false); }}
+      onPointerDown={(event) => {
+        if (disabled) return;
+        dragging.current = true;
+        setTip(true);
+        event.currentTarget.setPointerCapture(event.pointerId);
+        onLive(valueFromX(event.clientX));
+      }}
+      onPointerMove={(event) => {
+        if (!dragging.current) return;
+        onLive(valueFromX(event.clientX));
+      }}
+      onPointerUp={(event) => {
+        if (!dragging.current) return;
+        dragging.current = false;
+        const next = valueFromX(event.clientX);
+        onLive(next);
+        onCommit(next);
+        showTip(false);
+      }}
+      className={`relative flex h-5 items-center outline-none ${disabled ? 'cursor-default opacity-50' : 'cursor-pointer'}`}
+    >
+      <span className="pointer-events-none absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-[var(--af-border)]" />
+      <span className="pointer-events-none absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-[var(--af-accent)]" style={{ width: `${pct}%` }} />
+      <span
+        className="pointer-events-none absolute top-1/2 z-10 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full"
+        style={{ left: `${pct}%`, backgroundColor: '#ffffff', boxShadow: '0 0 0 1px rgba(0,0,0,0.28)' }}
+      >
+        {tip && (
+          <span className="absolute bottom-full left-1/2 z-20 mb-2.5 -translate-x-1/2 whitespace-nowrap rounded-md bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground">
+            {label} {value.toFixed(1)}×
+          </span>
+        )}
+      </span>
     </div>
   );
 }

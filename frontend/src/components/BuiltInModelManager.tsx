@@ -303,11 +303,11 @@ export function BuiltInModelManager({
               className={cn(
                 'p-4 rounded-lg border transition-colors',
                 modelIsDownloading
-                  ? 'bg-white border-gray-200'
+                  ? 'bg-af-panel border-af-border'
                   : 'bg-card',
                 selectedModel === model.name
-                  ? 'ring-2 ring-gray-800 border-gray-800'
-                  : 'border-gray-200 hover:border-gray-300',
+                  ? 'ring-2 ring-af-border border-af-border-strong'
+                  : 'border-af-border hover:border-af-border-strong',
                 isAvailable && !modelIsDownloading && 'cursor-pointer'
               )}
               onClick={() => {
@@ -320,33 +320,33 @@ export function BuiltInModelManager({
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="min-w-0 break-words text-base font-bold leading-snug text-gray-900">{model.display_name || model.name}</span>
+                    <span className="min-w-0 break-words text-base font-bold leading-snug text-af-text">{model.display_name || model.name}</span>
                     {isAvailable && (
                       <>
-                        <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-green-600">
-                          <span className="h-2 w-2 rounded-full bg-green-600"></span>
+                        <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-af-success">
+                          <span className="h-2 w-2 rounded-full bg-af-success"></span>
                           Ready
                         </span>
                         {selectedModel === model.name && (
-                          <span className="shrink-0 rounded bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                          <span className="shrink-0 rounded bg-af-accent/10 px-2 py-0.5 text-xs font-medium text-af-accent">
                             Selected
                           </span>
                         )}
                       </>
                     )}
                     {isCorrupted && (
-                      <span className="flex shrink-0 items-center gap-1 rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+                      <span className="flex shrink-0 items-center gap-1 rounded bg-af-danger/10 px-2 py-0.5 text-xs font-medium text-af-danger">
                         <BadgeAlert className="h-3 w-3" />
                         Corrupted
                       </span>
                     )}
                     {isIncomplete && (
-                      <span className="flex shrink-0 items-center gap-1 rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                      <span className="flex shrink-0 items-center gap-1 rounded bg-af-warning/10 px-2 py-0.5 text-xs font-medium text-af-text">
                         Incomplete
                       </span>
                     )}
                     {isError && (
-                      <span className="shrink-0 rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+                      <span className="shrink-0 rounded bg-af-danger/10 px-2 py-0.5 text-xs font-medium text-af-danger">
                         Error
                       </span>
                     )}
@@ -441,7 +441,7 @@ export function BuiltInModelManager({
                   {/* Available - Show small trash icon (only if not currently selected) */}
                   {isAvailable && !modelIsDownloading && selectedModel !== model.name && (
                     <button
-                      className="p-2 rounded hover:bg-gray-100 transition-colors text-gray-500 hover:text-red-600"
+                      className="p-2 rounded hover:bg-af-panel-2 transition-colors text-af-text-3 hover:text-af-danger"
                       onClick={(e) => {
                         e.stopPropagation();
                         deleteModel(model.name);
@@ -453,12 +453,12 @@ export function BuiltInModelManager({
                   )}
                 </div>
               </div>
-              <div className="text-sm text-gray-600">
+              <div className="text-sm text-af-text-2">
                 {model.description && (
                   <p className="mb-1">{model.description}</p>
                 )}
                 {(isError || isCorrupted || isIncomplete) && (
-                  <p className="mb-1 text-xs text-red-600">
+                  <p className="mb-1 text-xs text-af-danger">
                     {isError && typeof model.status === 'object' && 'Error' in model.status
                       ? (model.status as any).Error
                       : isCorrupted
@@ -468,7 +468,7 @@ export function BuiltInModelManager({
                       : 'An error occurred'}
                   </p>
                 )}
-                <div className="text-xs text-gray-500">
+                <div className="text-xs text-af-text-3">
                   <span>{formatSummaryModelSizeLabelFromMb(model.size_mb)} • {model.context_size} tokens</span>
                 </div>
                 </div>
@@ -476,19 +476,19 @@ export function BuiltInModelManager({
 
               {/* Download progress bar */}
               {modelIsDownloading && progress !== undefined && (
-                <div className="mt-3 pt-3 border-t border-gray-200">
+                <div className="mt-3 pt-3 border-t border-af-border">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium text-gray-900">Downloading...</span>
-                    <span className="text-sm font-semibold text-gray-900">
+                    <span className="text-sm font-medium text-af-text">Downloading...</span>
+                    <span className="text-sm font-semibold text-af-text">
                       {Math.round(progress)}%
                     </span>
                   </div>
-                  <div className="text-sm text-gray-600 mb-2">
+                  <div className="text-sm text-af-text-2 mb-2">
                     {progressInfo?.totalMb > 0 ? (
                       <>
                         {progressInfo.downloadedMb.toFixed(1)} MiB / {progressInfo.totalMb.toFixed(1)} MiB
                         {progressInfo.speedMbps > 0 && (
-                          <span className="ml-2 text-gray-500">
+                          <span className="ml-2 text-af-text-3">
                             ({progressInfo.speedMbps.toFixed(1)} MiB/s)
                           </span>
                         )}
@@ -497,9 +497,9 @@ export function BuiltInModelManager({
                       <span>{formatSummaryModelSizeLabelFromMb(model.size_mb)}</span>
                     )}
                   </div>
-                  <div className="w-full h-2.5 bg-gray-200 rounded-full overflow-hidden">
+                  <div className="w-full h-2.5 bg-af-hover rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-gradient-to-r from-gray-800 to-gray-900 rounded-full transition-all duration-300"
+                      className="h-full bg-af-panel-2 rounded-full transition-all duration-300"
                       style={{ width: `${progress}%` }}
                     />
                   </div>

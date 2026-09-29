@@ -45,6 +45,10 @@ Measures accuracy, not speed; not a direct benchmark of Meetily's old pipeline.*
 - Hardened model validation and preserved transcript text, timing, and source
   provenance during speaker-label updates.
 
+## New Contributors
+
+- @ampersandru made their first contribution in https://github.com/TylerBuza/Meetily-ActuallyFree/pull/34 — the foundation for Nemotron diarization and DirectML support.
+
 ## Thanks and attribution
 
 **Thank you to [@ampersandru](https://github.com/ampersandru) for

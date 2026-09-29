@@ -42,7 +42,7 @@ export function YourNameStep() {
     >
       <div className="mx-auto max-w-md space-y-4">
         <div className="flex items-center gap-4">
-          <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-blue-500/15 text-blue-400">
+          <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-af-accent/15 text-af-accent">
             <User size={20} />
           </div>
           <input
@@ -53,12 +53,12 @@ export function YourNameStep() {
               if (e.key === 'Enter') saveAndNext();
             }}
             placeholder="Your name"
-            className="h-12 min-w-0 flex-1 rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] px-4 text-base text-[var(--af-text)] placeholder:text-[var(--af-text-3)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            className="h-12 min-w-0 flex-1 rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] px-4 text-base text-[var(--af-text)] placeholder:text-[var(--af-text-3)] focus:border-af-accent/40 focus:outline-none focus:ring-2 focus:ring-af-accent/50"
             autoFocus
           />
         </div>
         <p className="text-center text-xs text-[var(--af-text-3)]">
-          Example: lines you speak show as <strong className="text-blue-400">{name.trim() || 'You'} (You)</strong>
+          Example: lines you speak show as <strong className="text-af-accent">{name.trim() || 'You'} (You)</strong>
         </p>
         <button
           type="button"

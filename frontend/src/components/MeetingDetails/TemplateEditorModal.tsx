@@ -2,8 +2,22 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { Plus, Trash2, X } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { IconButton } from '@/components/ui/icon-button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 type Format = 'paragraph' | 'list' | 'table' | 'string';
+
+const FORMATS: Array<{ value: Format; label: string }> = [
+  { value: 'list', label: 'List' },
+  { value: 'paragraph', label: 'Paragraph' },
+  { value: 'table', label: 'Table' },
+  { value: 'string', label: 'Single line' },
+];
 
 interface SectionDraft {
   title: string;
@@ -37,8 +51,6 @@ export function TemplateEditorModal({
   const [description, setDescription] = useState('');
   const [sections, setSections] = useState<SectionDraft[]>([emptySection()]);
   const [saving, setSaving] = useState(false);
-
-  if (!open) return null;
 
   const reset = () => {
     setName('');
@@ -96,135 +108,124 @@ export function TemplateEditorModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div
-        className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3">
-          <h2 className="text-lg font-semibold text-gray-800">Custom summary templates</h2>
-          <button onClick={onClose} className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100">✕</button>
+    <Dialog open={open} onOpenChange={(next) => !next && !saving && onClose()}>
+      <DialogContent className="max-w-2xl gap-5">
+        <DialogHeader>
+          <DialogTitle>Custom summary templates</DialogTitle>
+          <DialogDescription>Choose the sections a summary has and how the model writes each one.</DialogDescription>
+        </DialogHeader>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <label htmlFor="template-name" className="text-xs font-medium text-af-text-2">
+              Template name
+            </label>
+            <Input id="template-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Client discovery call" />
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="template-description" className="text-xs font-medium text-af-text-2">
+              Description
+            </label>
+            <Input
+              id="template-description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="What is this template for?"
+            />
+          </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-4">
-          {/* Create form */}
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600">Template name</label>
-                <input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Client Discovery Call"
-                  className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600">Description</label>
-                <input
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="What is this template for?"
-                  className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-gray-600">Sections</label>
-                <button
-                  onClick={() => setSections((p) => [...p, emptySection()])}
-                  className="rounded px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50"
-                >
-                  ＋ Add section
-                </button>
-              </div>
-
-              {sections.map((s, i) => (
-                <div key={i} className="rounded-lg border border-gray-200 p-3">
-                  <div className="mb-2 flex items-center gap-2">
-                    <input
-                      value={s.title}
-                      onChange={(e) => updateSection(i, { title: e.target.value })}
-                      placeholder="Section title (e.g. Action Items)"
-                      className="flex-1 rounded border border-gray-200 px-2 py-1 text-sm focus:border-blue-400 focus:outline-none"
-                    />
-                    <select
-                      value={s.format}
-                      onChange={(e) => updateSection(i, { format: e.target.value as Format })}
-                      className="rounded border border-gray-200 px-2 py-1 text-sm"
-                      title="How the model should format this section"
-                    >
-                      <option value="list">List</option>
-                      <option value="paragraph">Paragraph</option>
-                      <option value="table">Table</option>
-                      <option value="string">Single line</option>
-                    </select>
-                    {sections.length > 1 && (
-                      <button
-                        onClick={() => setSections((p) => p.filter((_, idx) => idx !== i))}
-                        className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50"
-                        title="Remove section"
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </div>
-                  <textarea
-                    value={s.instruction}
-                    onChange={(e) => updateSection(i, { instruction: e.target.value })}
-                    rows={2}
-                    placeholder="Instruction for the AI — e.g. 'List concrete action items with an owner'"
-                    className="w-full resize-none rounded border border-gray-200 px-2 py-1 text-sm focus:border-blue-400 focus:outline-none"
-                  />
-                </div>
-              ))}
-            </div>
-
-            <div className="flex justify-end gap-2 pt-1">
-              <button onClick={reset} className="rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100">
-                Clear
-              </button>
-              <button
-                onClick={save}
-                disabled={saving}
-                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:bg-gray-300"
-              >
-                {saving ? 'Saving…' : 'Save template'}
-              </button>
-            </div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-af-text-2">Sections</span>
+            <Button variant="ghost" size="xs" onClick={() => setSections((p) => [...p, emptySection()])}>
+              <Plus />
+              Add section
+            </Button>
           </div>
 
-          {/* Existing templates */}
-          <div className="mt-6 border-t border-gray-100 pt-4">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-              Your templates
-            </h3>
-            <div className="space-y-1">
-              {availableTemplates.map((t) => (
-                <div key={t.id} className="flex items-center justify-between rounded-lg px-2 py-1.5 hover:bg-gray-50">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm text-gray-800">{t.name}</div>
-                    <div className="truncate text-xs text-gray-400">{t.description}</div>
-                  </div>
-                  <button
-                    onClick={() => del(t.id, t.name)}
-                    className="ml-3 shrink-0 rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50"
-                    title="Delete (custom templates only)"
-                  >
-                    Delete
-                  </button>
-                </div>
-              ))}
+          {sections.map((s, i) => (
+            <div key={i} className="space-y-2 rounded-xl border border-af-border p-3">
+              <div className="flex items-center gap-2">
+                <Input
+                  value={s.title}
+                  onChange={(e) => updateSection(i, { title: e.target.value })}
+                  placeholder="Section title, e.g. Action items"
+                  aria-label="Section title"
+                  className="flex-1"
+                />
+                <Select value={s.format} onValueChange={(value) => updateSection(i, { format: value as Format })}>
+                  <SelectTrigger className="w-36 shrink-0" aria-label="Section format">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {FORMATS.map((format) => (
+                      <SelectItem key={format.value} value={format.value}>
+                        {format.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {sections.length > 1 && (
+                  <IconButton
+                    label="Remove section"
+                    icon={<X />}
+                    tooltip={false}
+                    className="shrink-0 text-af-text-3"
+                    onClick={() => setSections((p) => p.filter((_, idx) => idx !== i))}
+                  />
+                )}
+              </div>
+              <Textarea
+                value={s.instruction}
+                onChange={(e) => updateSection(i, { instruction: e.target.value })}
+                rows={2}
+                placeholder="What should the model write here? e.g. List each action item with its owner."
+                aria-label="Section instruction"
+                className="resize-none"
+              />
             </div>
-            <p className="mt-2 text-xs text-gray-400">
-              Built-in templates can&apos;t be deleted. Saving a template with the same name as a built-in overrides it.
+          ))}
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={reset} disabled={saving}>
+            Clear
+          </Button>
+          <Button onClick={save} loading={saving}>
+            Save template
+          </Button>
+        </DialogFooter>
+
+        {availableTemplates.length > 0 && (
+          <div className="border-t border-af-border pt-4">
+            <h3 className="mb-1.5 text-[13px] font-semibold text-af-text">Your templates</h3>
+            <ul className="-mx-2">
+              {availableTemplates.map((t) => (
+                <li key={t.id} className="group/row flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-af-hover/60">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm text-af-text">{t.name}</div>
+                    <div className="truncate text-xs text-af-text-3">{t.description}</div>
+                  </div>
+                  <IconButton
+                    label={`Delete ${t.name}`}
+                    icon={<Trash2 />}
+                    variant="danger-ghost"
+                    size="icon-xs"
+                    tooltip={false}
+                    className="shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover/row:opacity-100"
+                    onClick={() => del(t.id, t.name)}
+                  />
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs text-af-text-4">
+              Built-in templates can&apos;t be deleted. Saving a template with the same name as a built-in replaces it.
             </p>
           </div>
-        </div>
-      </div>
-    </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

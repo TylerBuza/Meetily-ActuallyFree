@@ -102,6 +102,10 @@ pub struct Setting {
     #[sqlx(rename = "summaryMaxTokens")]
     #[serde(rename = "summaryMaxTokens")]
     pub summary_max_tokens: Option<i64>,
+    /// Explicit path to the Claude Code CLI executable; None means auto-discover
+    #[sqlx(rename = "claudeCliPath")]
+    #[serde(rename = "claudeCliPath")]
+    pub claude_cli_path: Option<String>,
 }
 
 impl Setting {

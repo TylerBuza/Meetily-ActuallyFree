@@ -5,6 +5,7 @@ import * as TabsPrimitive from "@radix-ui/react-tabs"
 
 import { cn } from "@/lib/utils"
 
+/** Segmented tabs: a recessed track with a raised, animated active pill. */
 const Tabs = TabsPrimitive.Root
 
 const TabsList = React.forwardRef<
@@ -14,7 +15,7 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground",
+      "inline-flex h-9 items-center gap-0.5 rounded-lg border border-af-border bg-af-panel-2 p-[3px] text-af-text-3",
       className
     )}
     {...props}
@@ -29,7 +30,11 @@ const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow",
+      "inline-flex h-full items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 text-[13px] font-medium",
+      "transition-[background-color,color,box-shadow] duration-150 hover:text-af-text",
+      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60 disabled:pointer-events-none disabled:opacity-45",
+      "data-[state=active]:bg-af-raised data-[state=active]:text-af-text data-[state=active]:shadow-sm",
+      "[&_svg]:size-4 [&_svg]:shrink-0",
       className
     )}
     {...props}
@@ -44,7 +49,7 @@ const TabsContent = React.forwardRef<
   <TabsPrimitive.Content
     ref={ref}
     className={cn(
-      "mt-2 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+      "mt-2 focus-visible:outline-none data-[state=active]:animate-af-rise",
       className
     )}
     {...props}

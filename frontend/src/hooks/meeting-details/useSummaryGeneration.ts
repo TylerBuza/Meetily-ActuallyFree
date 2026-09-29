@@ -8,10 +8,35 @@ import Analytics from '@/lib/analytics';
 import { isOllamaNotInstalledError } from '@/lib/utils';
 import { BuiltInModelInfo } from '@/lib/builtin-ai';
 import {
+  CLAUDE_CODE_INSTALL_URL,
+  claudeCliBlockingReason,
+  getClaudeCliStatus,
+} from '@/lib/claude-cli';
+import {
   detectAndCacheSummaryLanguage,
   readMeetingSummaryLanguage,
   readCachedDetectedSummaryLanguage,
 } from '@/lib/summary-language-preferences';
+
+/**
+ * The Claude Code CLI provider depends on software outside this app, so it can
+ * be missing or signed out at any time. Checking up front turns that into an
+ * actionable message instead of a backend failure part-way through a summary.
+ *
+ * Returns null when summaries can run.
+ */
+async function claudeCliPreflight(): Promise<{ message: string; installed: boolean } | null> {
+  try {
+    const status = await getClaudeCliStatus();
+    const message = claudeCliBlockingReason(status);
+    return message ? { message, installed: status.installed } : null;
+  } catch (error) {
+    return {
+      message: error instanceof Error ? error.message : String(error),
+      installed: false,
+    };
+  }
+}
 
 async function resolveSummaryLanguage(
   meetingId: string,
@@ -60,6 +85,8 @@ interface UseSummaryGenerationProps {
   onMeetingUpdated?: () => Promise<void>;
   setAiSummary: (summary: Summary | null) => void;
   onOpenModelSettings?: () => void;
+  /** Tidies each line before it is sent (Labs clean transcript). The saved transcript is not changed. */
+  cleanText?: (text: string) => string;
 }
 
 export function useSummaryGeneration({
@@ -71,6 +98,7 @@ export function useSummaryGeneration({
   onMeetingUpdated,
   setAiSummary,
   onOpenModelSettings,
+  cleanText,
 }: UseSummaryGenerationProps) {
   const [summaryStatus, setSummaryStatus] = useState<SummaryStatus>('idle');
   const [summaryError, setSummaryError] = useState<string | null>(null);
@@ -82,6 +110,8 @@ export function useSummaryGeneration({
   const mountedRef = useRef(true);
   const summaryRequestGenerationRef = useRef(0);
   const setAiSummaryRef = useRef(setAiSummary);
+  const cleanTextRef = useRef(cleanText);
+  cleanTextRef.current = cleanText;
   const onMeetingUpdatedRef = useRef(onMeetingUpdated);
   const stopSummaryPollingRef = useRef(stopSummaryPolling);
   setAiSummaryRef.current = setAiSummary;
@@ -626,14 +656,16 @@ export function useSummaryGeneration({
       return `[${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}]`;
     };
 
+    const clean = cleanTextRef.current;
+    const textOf = (t: Transcript) => (clean ? clean(t.text) || t.text : t.text);
     return {
       transcriptText: allTranscripts
         .map(t => {
           const speaker = t.speaker ? `${t.speaker}: ` : '';
-          return `${formatTime(t.audio_start_time, t.timestamp)} ${speaker}${t.text}`;
+          return `${formatTime(t.audio_start_time, t.timestamp)} ${speaker}${textOf(t)}`;
         })
         .join('\n'),
-      transcriptTexts: allTranscripts.map(t => t.text),
+      transcriptTexts: allTranscripts.map(textOf),
     };
   }, []);
 
@@ -742,6 +774,30 @@ export function useSummaryGeneration({
             { duration: 5000 }
           );
         }
+        onOpenModelSettings?.();
+        return false;
+      }
+    }
+
+    // Check the Claude Code CLI is installed and signed in
+    if (modelConfig.provider === 'claude-cli') {
+      const problem = await claudeCliPreflight();
+      if (!isCurrentRequest()) return false;
+
+      if (problem) {
+        setSummaryStatus('error');
+        setSummaryError(problem.message);
+        toast.error('Claude Code CLI is not ready', {
+          description: problem.message,
+          duration: 7000,
+          action: problem.installed
+            ? undefined
+            : {
+                label: 'Install',
+                onClick: () =>
+                  invokeTauri('open_external_url', { url: CLAUDE_CODE_INSTALL_URL }),
+              },
+        });
         onOpenModelSettings?.();
         return false;
       }
@@ -881,6 +937,22 @@ export function useSummaryGeneration({
       setSummaryStatus('idle');
       toast.error('No transcripts available for summary regeneration');
       return;
+    }
+
+    if (modelConfig.provider === 'claude-cli') {
+      const problem = await claudeCliPreflight();
+      if (!isCurrentRequest()) return;
+
+      if (problem) {
+        setSummaryStatus('error');
+        setSummaryError(problem.message);
+        toast.error('Claude Code CLI is not ready', {
+          description: problem.message,
+          duration: 7000,
+        });
+        onOpenModelSettings?.();
+        return;
+      }
     }
 
     if (modelConfig.provider === 'ollama') {

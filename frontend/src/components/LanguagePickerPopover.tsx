@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LANGUAGE_OPTIONS } from "@/lib/summary-languages";
 import { useRecentLanguages } from "@/hooks/useRecentLanguages";
+import { Check, Search } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { floatingSurface } from "@/components/ui/popover";
 
 interface LanguagePickerPopoverProps {
   value: string | null;
@@ -78,49 +81,54 @@ export function LanguagePickerPopover({
   const hasNoResults =
     filteredAll.length === 0 && recentsResolved.length === 0 && !showAuto;
 
+  const row = (selected: boolean) =>
+    cn(
+      "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors duration-100 hover:bg-af-hover",
+      selected ? "font-medium text-af-text" : "text-af-text-2 hover:text-af-text",
+    );
+  const sectionLabel = "px-2.5 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-af-text-4";
+  const tick = <Check className="h-4 w-4 shrink-0 text-af-accent" aria-hidden="true" />;
+
   return (
     <div
       ref={containerRef}
-      className="w-72 rounded-lg bg-white border border-gray-200 shadow-lg overflow-hidden"
+      className={cn("w-72 overflow-hidden", floatingSurface)}
       role="dialog"
       aria-label="Pick summary language"
     >
-      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-gray-100">
-        <span className="text-gray-400 text-sm">🔍</span>
+      <div className="flex h-10 items-center gap-2 border-b border-af-border px-3">
+        <Search className="h-4 w-4 shrink-0 text-af-text-4" aria-hidden="true" />
         <input
           ref={inputRef}
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search language..."
-          className="flex-1 text-sm text-gray-900 bg-transparent border-none outline-none placeholder-gray-400"
+          placeholder="Search languages"
+          aria-label="Search languages"
+          className="h-full min-w-0 flex-1 border-none bg-transparent text-[13px] text-af-text outline-none placeholder:text-af-text-4"
         />
       </div>
 
-      <div className="max-h-80 overflow-y-auto py-1">
+      <div className="max-h-80 overflow-y-auto p-1">
         {showRecents && (
           <>
-            <div className="px-3 pt-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
-              Recently Used
-            </div>
+            <div className={sectionLabel}>Recently used</div>
             {recentsResolved.map((opt) => (
               <button
                 key={`recent-${opt.code}`}
                 type="button"
                 aria-pressed={value === opt.code}
                 onClick={() => onChange(opt.code)}
-                className={`flex w-full items-center justify-between px-3 py-1.5 text-sm hover:bg-gray-50 text-left ${
-                  value === opt.code ? "text-blue-600 font-medium" : "text-gray-800"
-                }`}
+                className={row(value === opt.code)}
               >
-                <span>
-                  {opt.label}{" "}
-                  <span className="text-xs text-gray-400">({opt.code})</span>
+                <span className="truncate">
+                  {opt.label}
+                  <span className="ml-1.5 text-[11px] font-normal text-af-text-4">{opt.code}</span>
                 </span>
-                {value === opt.code && <span className="text-blue-600" aria-hidden="true">✓</span>}
+                {value === opt.code && tick}
               </button>
             ))}
-            <div className="my-1 h-px bg-gray-100" />
+            <div className="mx-1 my-1 h-px bg-af-border" />
           </>
         )}
 
@@ -129,24 +137,18 @@ export function LanguagePickerPopover({
             type="button"
             aria-pressed={value === null}
             onClick={() => onChange(null)}
-            className={`flex w-full items-center justify-between px-3 py-1.5 text-sm hover:bg-gray-50 text-left ${
-              value === null ? "text-blue-600 font-medium" : "text-gray-800"
-            }`}
+            className={row(value === null)}
           >
-            <span className="flex flex-col">
+            <span className="flex min-w-0 flex-col">
               <span>Auto</span>
-              {autoSubtitle && (
-                <span className="text-xs font-normal text-gray-400">{autoSubtitle}</span>
-              )}
+              {autoSubtitle && <span className="text-[11px] font-normal text-af-text-3">{autoSubtitle}</span>}
             </span>
-            {value === null && <span className="text-blue-600" aria-hidden="true">✓</span>}
+            {value === null && tick}
           </button>
         )}
 
         {filteredAll.length > 0 && (
-          <div className="px-3 pt-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
-            {mode === "meeting" ? "Other Languages" : "All Languages"}
-          </div>
+          <div className={sectionLabel}>{mode === "meeting" ? "Other languages" : "All languages"}</div>
         )}
 
         {filteredAll.map((opt) => (
@@ -155,21 +157,17 @@ export function LanguagePickerPopover({
             type="button"
             aria-pressed={value === opt.code}
             onClick={() => onChange(opt.code)}
-            className={`flex w-full items-center justify-between px-3 py-1.5 text-sm hover:bg-gray-50 text-left ${
-              value === opt.code ? "text-blue-600 font-medium" : "text-gray-800"
-            }`}
+            className={row(value === opt.code)}
           >
-            <span>
-              {opt.label}{" "}
-              <span className="text-xs text-gray-400">({opt.code})</span>
+            <span className="truncate">
+              {opt.label}
+              <span className="ml-1.5 text-[11px] font-normal text-af-text-4">{opt.code}</span>
             </span>
-            {value === opt.code && <span className="text-blue-600" aria-hidden="true">✓</span>}
+            {value === opt.code && tick}
           </button>
         ))}
 
-        {hasNoResults && (
-          <div className="px-3 py-2 text-sm text-gray-400">No matches</div>
-        )}
+        {hasNoResults && <div className="px-2.5 py-2 text-[13px] text-af-text-4">No matches</div>}
       </div>
     </div>
   );

@@ -1,7 +1,8 @@
 'use client'
+import { Spinner } from '@/components/ui/spinner';
 
 import { useState, useEffect } from 'react'
-import { FileArchive, Loader2, Send, ShieldCheck } from 'lucide-react'
+import { FileArchive, Send, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
@@ -113,9 +114,9 @@ export default function CrashReportDialog({ report, onResolved }: CrashReportDia
         onPointerDownOutside={(event) => event.preventDefault()}
         className="max-h-[calc(100vh-2rem)] max-w-[520px] gap-0 overflow-y-auto border-[var(--af-border)] bg-[var(--af-panel)] p-0 shadow-2xl"
       >
-        <div className="border-b border-[var(--af-border)] bg-gradient-to-br from-red-500/10 via-transparent to-transparent px-6 py-5">
+        <div className="border-b border-[var(--af-border)] bg-af-panel-2 via-transparent to-transparent px-6 py-5">
           <DialogHeader className="text-left">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl border border-red-400/25 bg-red-500/10 text-red-300">
+            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl border border-af-danger/35 bg-af-danger/10 text-af-danger">
               <ShieldCheck className="h-5 w-5" />
             </div>
             <DialogTitle className="text-xl text-[var(--af-text)]">
@@ -155,15 +156,15 @@ export default function CrashReportDialog({ report, onResolved }: CrashReportDia
 
           <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-3">
             <Button variant="ghost" onClick={handleIgnore} disabled={busy}>
-              {pendingAction === 'ignore' && <Loader2 className="animate-spin" />}
+              {pendingAction === 'ignore' && <Spinner className="" />}
               Ignore
             </Button>
             <Button variant="outline" onClick={handleSave} disabled={busy}>
-              {pendingAction === 'save' ? <Loader2 className="animate-spin" /> : <FileArchive />}
+              {pendingAction === 'save' ? <Spinner className="" /> : <FileArchive />}
               Save ZIP
             </Button>
             <Button onClick={handleSend} disabled={busy}>
-              {pendingAction === 'send' ? <Loader2 className="animate-spin" /> : <Send />}
+              {pendingAction === 'send' ? <Spinner className="" /> : <Send />}
               Send Report
             </Button>
           </div>

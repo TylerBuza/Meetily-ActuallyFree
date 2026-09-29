@@ -419,7 +419,8 @@ exactly this confusion; it has been deleted along with `SettingTabs.tsx`,
 The label also has to survive the Rust side: `MeetingTranscript` must include
 `speaker`, and every place constructing it must set it.
 
-`InsightTabs` renders the complete stored Markdown as its authoritative summary.
+`components/meeting/MeetingDocument.tsx` renders the complete stored Markdown
+(`completeSummaryMarkdown` in `lib/summary-markdown.ts`) as its authoritative summary.
 English-keyword action/topic shortcuts are supplemental only; never make them the
 sole visible representation, because custom and non-English headings do not map
 reliably to those buckets. Preserve Markdown whitespace, nesting, and table syntax.
@@ -580,6 +581,23 @@ No dependency on any third party's hosting:
 | Parakeet v3 | This project's own GitHub release |
 | Qwen / Gemma | HuggingFace (`unsloth`, `bartowski`) |
 | Diarization | Bundled in the app (`resources/diarization/`) |
+
+### Claude Code CLI provider
+
+The `claude-cli` summary provider is the one provider that is neither an HTTP
+call nor a bundled model: it runs the user's own `claude` executable once per
+completion (`--print --output-format json`, prompt on stdin). `claude_cli/`
+owns discovery, the free `--version` / `auth status --json` probe, and the
+one-shot spawn; `llm_client::generate_summary` returns to it early, exactly as
+it does for `BuiltInAI`. The CLI is never bundled and no API key is stored —
+authentication belongs to the signed-in CLI, which is the point of the provider.
+
+Each run is stripped to a plain model call (`--tools ""`, `--strict-mcp-config`,
+`--setting-sources ""`, `--no-session-persistence`) inside an empty app-owned
+working directory. Do not relax this: with settings, hooks or MCP servers
+loaded, a summary can hit a permission prompt and hang, or absorb an unrelated
+project's `CLAUDE.md`. The prompt must stay on stdin — transcripts routinely
+exceed the Windows ~32k command-line limit.
 
 Parakeet v3 originally pointed at the upstream project's server; it was mirrored
 so this fork doesn't consume someone else's bandwidth.

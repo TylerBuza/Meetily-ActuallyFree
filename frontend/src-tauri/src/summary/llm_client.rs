@@ -130,6 +130,7 @@ pub enum LLMProvider {
     Ollama,
     OpenRouter,
     BuiltInAI,
+    ClaudeCli,
     CustomOpenAI,
 }
 
@@ -139,6 +140,7 @@ impl LLMProvider {
         match s.to_lowercase().as_str() {
             "openai" => Ok(Self::OpenAI),
             "claude" => Ok(Self::Claude),
+            "claude-cli" | "claude-code" => Ok(Self::ClaudeCli),
             "groq" => Ok(Self::Groq),
             "ollama" => Ok(Self::Ollama),
             "openrouter" => Ok(Self::OpenRouter),
@@ -165,6 +167,7 @@ impl LLMProvider {
 /// * `temperature` - Optional temperature (for CustomOpenAI provider)
 /// * `top_p` - Optional top_p (for CustomOpenAI provider)
 /// * `app_data_dir` - Optional app data directory (for BuiltInAI provider)
+/// * `claude_cli_path` - Optional explicit `claude` executable path (for ClaudeCli provider)
 /// * `cancellation_token` - Optional token to cancel the request
 ///
 /// # Returns
@@ -182,6 +185,7 @@ pub async fn generate_summary(
     temperature: Option<f32>,
     top_p: Option<f32>,
     app_data_dir: Option<&PathBuf>,
+    claude_cli_path: Option<&str>,
     cancellation_token: Option<&CancellationToken>,
 ) -> Result<String, String> {
     // Check if cancelled before starting
@@ -189,6 +193,18 @@ pub async fn generate_summary(
         if token.is_cancelled() {
             return Err("Summary generation was cancelled".to_string());
         }
+    }
+
+    // Handle ClaudeCli separately (shells out to the user's `claude` CLI, no HTTP API)
+    if provider == &LLMProvider::ClaudeCli {
+        return crate::claude_cli::generate(
+            claude_cli_path,
+            model_name,
+            system_prompt,
+            user_prompt,
+            cancellation_token,
+        )
+        .await;
     }
 
     // Handle BuiltInAI provider separately (uses local sidecar, no HTTP API)
@@ -256,6 +272,10 @@ pub async fn generate_summary(
         LLMProvider::BuiltInAI => {
             // This case is handled earlier with early returns
             unreachable!("BuiltInAI is handled before this match statement")
+        }
+        LLMProvider::ClaudeCli => {
+            // This case is handled earlier with early returns
+            unreachable!("ClaudeCli is handled before this match statement")
         }
     };
 
@@ -396,6 +416,7 @@ fn provider_name(provider: &LLMProvider) -> &str {
     match provider {
         LLMProvider::OpenAI => "OpenAI",
         LLMProvider::Claude => "Claude",
+        LLMProvider::ClaudeCli => "Claude Code CLI",
         LLMProvider::Groq => "Groq",
         LLMProvider::Ollama => "Ollama",
         LLMProvider::BuiltInAI => "Built-in AI",

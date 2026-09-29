@@ -74,6 +74,14 @@ struct AudioMixerRingBuffer {
     sample_rate: f64,
     timeline_origin: Option<f64>,
     output_samples: usize,
+    mic_clock: Option<SourceSampleClock>,
+    system_clock: Option<SourceSampleClock>,
+}
+
+#[derive(Clone, Copy)]
+struct SourceSampleClock {
+    next_sample: usize,
+    last_callback_end_seconds: f64,
 }
 
 impl AudioMixerRingBuffer {
@@ -113,6 +121,8 @@ impl AudioMixerRingBuffer {
             sample_rate: sample_rate as f64,
             timeline_origin: None,
             output_samples: 0,
+            mic_clock: None,
+            system_clock: None,
         }
     }
 
@@ -127,6 +137,9 @@ impl AudioMixerRingBuffer {
         mut samples: Vec<f32>,
         timestamp: f64,
     ) -> Option<f64> {
+        if samples.is_empty() || matches!(device_type, DeviceType::Mixed) {
+            return None;
+        }
         // Log buffer health periodically for diagnostics
         static mut SAMPLE_COUNTER: u64 = 0;
         unsafe {
@@ -144,7 +157,23 @@ impl AudioMixerRingBuffer {
         let duration = samples.len() as f64 / self.sample_rate;
         let start = (timestamp - duration).max(0.0);
         let origin = *self.timeline_origin.get_or_insert(start);
-        let mut chunk_start = ((start - origin).max(0.0) * self.sample_rate).round() as usize;
+        let wall_start = ((start - origin).max(0.0) * self.sample_rate).round() as usize;
+        let clock = match device_type {
+            DeviceType::Microphone => self.mic_clock,
+            DeviceType::System => self.system_clock,
+            DeviceType::Mixed => return None,
+        };
+        // Callback timestamps describe delivery, not individual sample positions.
+        // Repositioning each block inserts/drops samples at every jittering edge
+        // (issue #40). Anchor each source once, then count its actual samples.
+        // A callback-free gap over 100 ms reanchors to wall time; smaller timing
+        // fluctuations must not splice a continuous waveform. This is also the
+        // default mixer's two-window allowance before padding a missing source.
+        const CALLBACK_GAP_SECONDS: f64 = 0.100;
+        let mut chunk_start = match clock {
+            Some(clock) if start - clock.last_callback_end_seconds <= CALLBACK_GAP_SECONDS => clock.next_sample,
+            _ => wall_start,
+        };
         let current_len = match device_type {
             DeviceType::Microphone => self.mic_buffer.len(),
             DeviceType::System => self.system_buffer.len(),
@@ -158,13 +187,27 @@ impl AudioMixerRingBuffer {
             self.system_buffer.clear();
             self.timeline_origin = Some(start);
             self.output_samples = 0;
+            self.mic_clock = None;
+            self.system_clock = None;
             chunk_start = 0;
             discontinuity_start = Some(start);
         }
 
+        // Advance even when output already contains silence for a late block:
+        // trimming that already-emitted prefix must not skew the next block.
+        let next_clock = Some(SourceSampleClock {
+            next_sample: chunk_start.saturating_add(samples.len()),
+            last_callback_end_seconds: timestamp,
+        });
         let buffer = match device_type {
-            DeviceType::Microphone => &mut self.mic_buffer,
-            DeviceType::System => &mut self.system_buffer,
+            DeviceType::Microphone => {
+                self.mic_clock = next_clock;
+                &mut self.mic_buffer
+            }
+            DeviceType::System => {
+                self.system_clock = next_clock;
+                &mut self.system_buffer
+            }
             DeviceType::Mixed => return None,
         };
 
@@ -999,9 +1042,12 @@ impl AudioPipeline {
             info!("VAD ready for {label}: separate source segmentation (redemption: {redemption_time}ms, max: {max_duration_ms}ms, real_time: {is_realtime})");
             Ok(processor)
         };
-        // Headset/array microphones are usually quieter than digital loopback.
+        // Both sources can contain soft/compressed speech. The old 0.50/0.35
+        // loopback gate discarded entire audible turns in recorded-call replay;
+        // use the same speech-sensitive thresholds as the microphone. This is
+        // a speech-probability gate, not a substitute for volume adjustment.
         let mic_vad = make_vad("microphone", 0.20, 0.10)?;
-        let system_vad = make_vad("system", 0.50, 0.35)?;
+        let system_vad = make_vad("system", 0.20, 0.10)?;
 
         // Initialize professional audio mixing components (recording file only)
         let ring_buffer = AudioMixerRingBuffer::new(sample_rate, mic_enabled, system_enabled);
@@ -1641,6 +1687,74 @@ impl Default for AudioPipelineManager {
 mod ring_buffer_tests {
     use super::*;
     use crate::audio::devices::DeviceType as AudioDeviceType;
+
+    #[test]
+    fn callback_jitter_preserves_every_source_sample() {
+        // The reported devices deliver 10 ms (wired) and 8 ms (Bluetooth)
+        // blocks. A continuous waveform must survive their delivery jitter.
+        for block_size in [480, 384] {
+            let mut ring = AudioMixerRingBuffer::new(48_000, true, true);
+            let count = block_size * 250;
+            let microphone: Vec<f32> = (0..count).map(|i|
+                (i as f32 * std::f32::consts::TAU * 440.0 / 48_000.0).sin() * 0.4
+            ).collect();
+            let system: Vec<f32> = microphone.iter().map(|sample| -sample * 0.5).collect();
+            let mut recorded_mic = Vec::new();
+            let mut recorded_system = Vec::new();
+            for (index, (mic, sys)) in microphone.chunks(block_size).zip(system.chunks(block_size)).enumerate() {
+                let nominal_end = (index + 1) as f64 * block_size as f64 / 48_000.0;
+                let jitter = if index == 0 { 0.0 } else if index % 2 == 0 { -0.0003 } else { 0.0003 };
+                ring.add_samples(DeviceType::Microphone, mic.to_vec(), nominal_end + jitter);
+                ring.add_samples(DeviceType::System, sys.to_vec(), nominal_end - jitter);
+                while let Some((mic, sys)) = ring.extract_window() {
+                    recorded_mic.extend(mic);
+                    recorded_system.extend(sys);
+                }
+            }
+            while let Some((mic, sys)) = ring.extract_remaining() {
+                recorded_mic.extend(mic);
+                recorded_system.extend(sys);
+            }
+            assert!(recorded_mic == microphone, "microphone samples changed at {block_size}-sample callback boundaries");
+            assert!(recorded_system == system, "system samples changed at {block_size}-sample callback boundaries");
+        }
+    }
+
+    #[test]
+    fn a_real_source_gap_retains_silence_before_resuming_contiguously() {
+        let mut ring = AudioMixerRingBuffer::new(1000, true, true);
+        ring.add_samples(DeviceType::Microphone, vec![1.0; 50], 0.05);
+        ring.add_samples(DeviceType::System, vec![2.0; 50], 0.05);
+        let mut microphone = ring.extract_window().unwrap().0;
+        for end in [0.10, 0.15, 0.20, 0.25] {
+            ring.add_samples(DeviceType::System, vec![2.0; 50], end);
+            while let Some((mic, _)) = ring.extract_window() { microphone.extend(mic); }
+        }
+        // The microphone genuinely stopped for 200 ms while system continued.
+        ring.add_samples(DeviceType::Microphone, vec![3.0; 50], 0.30);
+        ring.add_samples(DeviceType::System, vec![2.0; 50], 0.30);
+        while let Some((mic, _)) = ring.extract_window() { microphone.extend(mic); }
+        ring.add_samples(DeviceType::Microphone, vec![4.0; 50], 0.351);
+        ring.add_samples(DeviceType::System, vec![2.0; 50], 0.349);
+        while let Some((mic, _)) = ring.extract_window() { microphone.extend(mic); }
+        assert_eq!(microphone, [vec![1.0; 50], vec![0.0; 200], vec![3.0; 50], vec![4.0; 50]].concat());
+    }
+
+    #[test]
+    fn continuous_device_clock_drift_does_not_splice_samples() {
+        let mut ring = AudioMixerRingBuffer::new(1000, true, false);
+        let mut recorded = Vec::new();
+        let source: Vec<f32> = (0..60_000).map(|i| (i as f32 * 0.123).sin()).collect();
+        for (index, block) in source.chunks(10).enumerate() {
+            // Slowly accumulate 120 ms of clock disagreement over a minute;
+            // this is not a callback-free gap and must not cause a hard splice.
+            let end = (index + 1) as f64 * 0.010 + index as f64 * 0.000020;
+            ring.add_samples(DeviceType::Microphone, block.to_vec(), end);
+            while let Some((mic, _)) = ring.extract_window() { recorded.extend(mic); }
+        }
+        while let Some((mic, _)) = ring.extract_remaining() { recorded.extend(mic); }
+        assert!(recorded == source, "sample continuity lost to accumulated delivery-clock drift");
+    }
 
     #[test]
     fn aligns_late_source_to_recording_clock() {

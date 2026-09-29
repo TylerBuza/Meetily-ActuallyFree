@@ -302,7 +302,12 @@ $signature = (Get-Content $updaterSignatureOutput -Raw).Trim()
 # Keep in-app updater notes aligned with this version's published release notes.
 # A future version without a notes file must not inherit an older release's claims.
 $notesPath = Join-Path $repo ("docs\RELEASE_V{0}.md" -f $appVersion.Replace('.', ''))
-$releaseNotes = if (Test-Path $notesPath) { Get-Content $notesPath -Raw } else { "Meetily $appVersion. See https://github.com/TylerBuza/Meetily-ActuallyFree/releases/tag/v$appVersion for release notes." }
+$releaseNotes = if (Test-Path $notesPath) {
+    # Get-Content attaches PowerShell provider metadata to the string. Windows
+    # PowerShell can serialize that as an object (including filesystem details),
+    # but the updater requires notes to be plain text.
+    [System.IO.File]::ReadAllText($notesPath)
+} else { "Meetily $appVersion. See https://github.com/TylerBuza/Meetily-ActuallyFree/releases/tag/v$appVersion for release notes." }
 $latest = [ordered]@{
   version = $appVersion
     notes = $releaseNotes

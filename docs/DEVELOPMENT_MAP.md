@@ -18,6 +18,11 @@ and a model's anonymous speaker channels are also different concepts.
 
 ## 2. Recording data flow
 
+Speech-start pre-roll, live system speech sensitivity, and real-call replay
+qualification are documented in [LIVE_SPEECH_RETENTION.md](LIVE_SPEECH_RETENTION.md).
+Sample continuity across jittered capture callbacks and issue #40 qualification
+are documented in [AUDIO_CALLBACK_CONTINUITY.md](AUDIO_CALLBACK_CONTINUITY.md).
+
 ```text
 recording_commands.rs: start command
   -> initialize selected live diarizer before capture (blocking work off Tokio)
@@ -104,6 +109,9 @@ source labels rather than guessing a speaker or switching engines.
 
 ## 3. Post-call processing and model selection
 
+Summary-generated title ownership, placeholder rejection and completion refresh
+are documented in [SUMMARY_GENERATED_TITLES.md](SUMMARY_GENERATED_TITLES.md).
+
 `diarization/mod.rs` owns persisted engine settings and offline command dispatch.
 Nemotron is Auto-detect only; manual counts belong to Pyannote. Rerunning speaker
 identification must preserve transcript text, row identity, and timestamps.
@@ -161,10 +169,33 @@ The universal Windows build script is
 `frontend/scripts/build-universal-windows.ps1`. It packages CPU/Vulkan/CUDA app
 variants; the runtime payload must match the one validated in tests. Validate with
 `node frontend/scripts/verify-windows-release.mjs`.
+The packager reads release notes with .NET `ReadAllText` so Windows PowerShell
+does not attach provider/filesystem metadata to updater `notes`. The payload
+verifier requires `notes` to be a string. This was caught during v0.2.18 draft
+preparation; the manifest/checksums were regenerated and reverified without
+changing the signed executable payloads.
 
 ## 6. Tests, qualification, and historical notes
 
+Live system-meter warnings are documented in
+[SYSTEM_AUDIO_LEVEL_ADVICE.md](SYSTEM_AUDIO_LEVEL_ADVICE.md).
+
+See [PR39_INTEGRATION.md](PR39_INTEGRATION.md) for capture-readiness, setup
+gating, quiet-speech and meeting-scoped speaker-edit recovery corrections.
+
 ### Home meeting library
+
+`components/Sidebar/index.tsx` renders the text-only **Meetily · Actually Free**
+wordmark, with the original blue/soft-blue colors on one line. It opens About;
+the adjacent collapse control remains separate. The 16px wordmark was visually
+checked in browser preview at the default 256px rail width (no clipping or
+overlap), and the production frontend build/type validation passed.
+The rebuilt v0.2.18 Windows package passed payload/signature verification and was
+installed locally; the installed CUDA executable matched its packaged hash.
+Installed-WebView inspection confirmed the single-line text, 16px size, no image,
+and no overlap with Collapse. Startup, Nemotron availability, database integrity,
+all six meetings/68 transcript rows, model hashes and preference values were
+verified after upgrade. The app was reopened normally; this is not a publication.
 
 `frontend/src/app/home/page.tsx` renders the date-sorted meeting library and is
 the Tauri startup route (`/home`). The recording-ready screen remains `/`; the
@@ -192,21 +223,30 @@ is not a published release.
 ### Speaker colors in transcripts
 
 `speakerUtils.ts` supplies the shared dot/text palette for the live and post-call
-virtualized transcript and the detected-speakers sidebar. The Tailwind scan must
-include `src/utils`, where the palette class names are declared, or named speakers
-can render without a dot or text color in production. Both transcript views
-assign palette slots by first-spoken meeting order. A rename changes the display
-label in place and retains its slot; `You` stays blue. The palette has eight
-remote slots, so meetings with more than eight remote speakers reuse colors.
-The focused `tests/lib/speaker-colors.test.mjs` checks slot continuity on rename;
-the Next production CSS output must also contain every dot palette class.
+virtualized transcript, the live speakers list, the person card and the identify
+dialog. The Tailwind scan must include `src/utils`, where the palette class names
+are declared, or named speakers can render without a dot or text color in
+production. A named person is drawn in their avatar's colour (`colorForName`),
+so they look the same in the transcript, the meeting header and their contact
+page; their transcript bubbles take a faint wash of it (`.af-speaker-bubble`).
+Unnamed voices ("Speaker 2") get palette slots by first-spoken meeting order, so
+they stay apart until identified; `You` uses the theme accent. The palette has
+eight slots, so meetings with more than eight unnamed voices reuse colors.
+The focused `tests/lib/speaker-colors.test.mjs` checks slot continuity and the
+contact colour; the Next production CSS output must also contain every dot
+palette class.
 
 Labs roadmap features 1, 3, 7, 8, and 12 are mapped in
 [LABS_MACWHISPER_FEATURES.md](LABS_MACWHISPER_FEATURES.md). Read it before
 changing meeting detection, recorded audio seeking, named voice enrollment,
-Whisper silence thresholds, or the clean transcript display. The Labs settings
-page stores frontend preferences; the Whisper and voice-profile switches also
-persist in native app data so they survive a WebView reload. Named profiles use
+Whisper silence thresholds, or the clean transcript display. Settings > Labs
+holds the switches (`LabsSettings.tsx`, `lib/labs-features.ts`); the Whisper,
+voice-profile and Parakeet GPU switches also persist in native app data so they
+survive a WebView reload. Each feature also appears where it is used: the
+automation switch in Meeting detection, the waveform, slower speeds and
+Clean/Verbatim switch in the meeting player, voices on each contact's page and
+in the speaker card, and per-app capture (not a Labs feature) in Settings >
+Recording and the record card's system audio panel. Named profiles use
 WeSpeaker embeddings in Pyannote live sessions and as a separate identity
 matcher for Nemotron live and both post-call paths. Nemotron remains the selected
 diarizer; its channel numbers never establish persistent identity.

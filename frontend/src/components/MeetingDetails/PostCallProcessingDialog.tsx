@@ -18,20 +18,16 @@ import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useDiarizationEngine } from '@/hooks/useDiarizationEngine';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { Loader2, Sparkles, Users } from 'lucide-react';
+
 import { toast } from 'sonner';
 import { useConfig } from '@/contexts/ConfigContext';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { fieldClass } from '@/components/ui/input';
+import { PostCallHandoffCard } from '@/components/PostCallHandoffCard';
 import type { RawModelInfo } from '@/hooks/useTranscriptionModels';
 import { isVisibleParakeetModel } from '@/lib/parakeet';
+import { announceChange } from '@/lib/workspace-api';
 
 type Stage = 'idle' | 'prompt' | 'enhancing' | 'diarizing' | 'refreshing' | 'error';
 type FailedStage = 'enhancing' | 'diarizing' | 'pre-diarization-refresh' | 'post-diarization-refresh';
@@ -199,7 +195,7 @@ export function PostCallProcessingDialog({
   onComplete: () => void;
 }) {
   const { selectedLanguage, transcriptModelConfig } = useConfig();
-  const [stage, setStage] = useState<Stage>('idle');
+  const [stage, setStage] = useState<Stage>(enabled ? 'prompt' : 'idle');
   const { engine, isNemotron, error: engineError } = useDiarizationEngine(stage !== 'idle');
   const [speakerCount, setSpeakerCount] = useState('2');
   const [autoDetectSpeakers, setAutoDetectSpeakers] = useState(false);
@@ -242,6 +238,8 @@ export function PostCallProcessingDialog({
     setStage('refreshing');
     setMessage('Refreshing the enhanced transcript...');
     await onRefetchTranscripts?.();
+    // The rerun links named speakers (and matched voices) to contacts.
+    announceChange('people');
   };
 
   const identifySpeakers = async (count: number | null) => {
@@ -363,136 +361,110 @@ export function PostCallProcessingDialog({
   const isWorking = stage === 'enhancing' || stage === 'diarizing' || stage === 'refreshing';
   const visibleProgress = Math.max(4, Math.min(100, progress));
 
-  // DialogContent already renders a compact X button. At the count prompt that
-  // X means "keep the live transcript": skip only retranscription, then still
-  // run speaker identification and unblock the fresh-summary stage.
-  const handleOpenChange = (open: boolean) => {
-    if (open || isWorking) return;
-    if (stage === 'prompt') {
-      void skipEnhancement();
-    } else if (stage === 'error') {
-      void continueWithLiveTranscript();
-    }
-  };
+  if (stage === 'idle') return null;
+
+  const choiceClass = (selected: boolean) =>
+    cn(
+      'h-9 rounded-lg border text-sm font-semibold transition-[background-color,border-color,color,transform] active:scale-[0.97]',
+      selected
+        ? 'border-af-accent bg-af-accent text-af-on-accent'
+        : 'border-af-border bg-af-panel-2 text-af-text-2 hover:border-af-border-strong hover:bg-af-hover hover:text-af-text',
+    );
 
   return (
-    <>
-      <Dialog open={stage === 'prompt' || stage === 'error'} onOpenChange={handleOpenChange}>
-        <DialogContent
-          aria-describedby="post-call-processing-description"
-          className="sm:max-w-md"
-          onEscapeKeyDown={(event) => event.preventDefault()}
-          onPointerDownOutside={(event) => event.preventDefault()}
-        >
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Users size={18} className="text-blue-400" />
-              {isNemotron ? 'Identify speakers with Nemotron' : 'How many people spoke?'}
-            </DialogTitle>
-            <DialogDescription id="post-call-processing-description">
-              {isNemotron
-              ? 'Nemotron automatically detects up to 8 speakers and refines the live labels using the completed recording.'
-                : 'Include yourself in the total. Entering the actual number gives more accurate speaker labels, or choose Auto-detect if you are not sure.'}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            {engineError && <p role="alert" className="text-sm text-red-400">{engineError}</p>}
-            {!engine && !engineError && <p role="status">Loading diarization settings…</p>}
-            {isNemotron && <p className="text-sm">Auto-detect</p>}
-            {engine && !isNemotron && <>
-            <div className="grid grid-cols-4 gap-2">
-              {[1, 2, 3, 4, 5, 6, 7, 8].map((count) => (
-                <Button
-                  key={count}
+    <PostCallHandoffCard
+      centered
+      busy={isWorking}
+      title={
+        isWorking
+          ? 'Improving the transcript'
+          : stage === 'error'
+            ? 'Could not finish that step'
+            : isNemotron
+              ? 'Identify speakers with Nemotron'
+              : 'How many people spoke?'
+      }
+      detail={
+        isWorking
+          ? message
+          : isNemotron
+            ? 'Automatically identify up to 8 speakers from the full recording.'
+            : 'Include yourself. A real count labels speakers more accurately.'
+      }
+    >
+      {isWorking ? (
+        <div className="h-1.5 overflow-hidden rounded-full bg-af-border">
+          <div
+            className="h-full rounded-full bg-af-accent transition-[width] duration-300"
+            style={{ width: `${visibleProgress}%` }}
+          />
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {engineError && <p role="alert" className="text-sm text-af-danger">{engineError}</p>}
+          {!engine && !engineError && (
+            <p role="status" className="text-sm text-af-text-3">Loading diarization settings…</p>
+          )}
+          {isNemotron && (
+            <Button className="w-full" onClick={() => { void start(); }}>
+              {stage === 'error' ? 'Retry auto-detect' : 'Auto-detect & continue'}
+            </Button>
+          )}
+          {engine && !isNemotron && (
+            <>
+              <div className="grid grid-cols-4 gap-2">
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((count) => (
+                  <button
+                    key={count}
+                    type="button"
+                    className={choiceClass(!autoDetectSpeakers && speakerCount === String(count))}
+                    onClick={() => {
+                      setSpeakerCount(String(count));
+                      setAutoDetectSpeakers(false);
+                      setError(null);
+                    }}
+                  >
+                    {count}
+                  </button>
+                ))}
+                <button
                   type="button"
-                  variant={!autoDetectSpeakers && speakerCount === String(count) ? 'default' : 'outline'}
+                  className={`col-span-4 ${choiceClass(autoDetectSpeakers)}`}
                   onClick={() => {
-                    setSpeakerCount(String(count));
-                    setAutoDetectSpeakers(false);
+                    setAutoDetectSpeakers(true);
                     setError(null);
                   }}
                 >
-                  {count}
-                </Button>
-              ))}
-              <Button
-                type="button"
-                className="col-span-4"
-                variant={autoDetectSpeakers ? 'default' : 'outline'}
-                onClick={() => {
-                  setAutoDetectSpeakers(true);
-                  setError(null);
+                  Auto-detect
+                </button>
+              </div>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={autoDetectSpeakers ? '' : speakerCount}
+                placeholder={autoDetectSpeakers ? 'Speakers will be detected automatically' : undefined}
+                onFocus={() => setAutoDetectSpeakers(false)}
+                onChange={(event) => {
+                  setSpeakerCount(event.target.value);
+                  setAutoDetectSpeakers(false);
                 }}
-              >
-                Auto-detect
-              </Button>
-            </div>
-            <input
-              type="number"
-              min={1}
-              max={20}
-              value={autoDetectSpeakers ? '' : speakerCount}
-              placeholder={autoDetectSpeakers ? 'Speakers will be detected automatically' : undefined}
-              onFocus={() => setAutoDetectSpeakers(false)}
-              onChange={(event) => {
-                setSpeakerCount(event.target.value);
-                setAutoDetectSpeakers(false);
-              }}
-              className="w-full rounded-md border border-[var(--af-border)] bg-[var(--af-panel-2)] px-3 py-2 text-sm text-[var(--af-text)] outline-none focus:ring-2 focus:ring-blue-500"
-              aria-label="Total number of speakers"
-            />
-            </>}
-            {error && <p className="text-sm text-red-400">{error}</p>}
-          </div>
-
-          <DialogFooter>
-            {stage === 'error' && (
-              <Button type="button" variant="outline" onClick={continueWithLiveTranscript}>
-                Use live transcript
-              </Button>
-            )}
-            <Button type="button" onClick={start} disabled={!engine}>
-              {stage === 'error' ? 'Retry' : 'Enhance meeting'}
+                className={cn(fieldClass, 'h-9')}
+                aria-label="Total number of speakers"
+              />
+            </>
+          )}
+          {error && <p className="text-sm text-af-danger">{error}</p>}
+          <div className={cn('flex items-center gap-2', isNemotron ? 'justify-center' : 'justify-end')}>
+            <Button variant="ghost" onClick={() => { void (stage === 'error' ? continueWithLiveTranscript() : skipEnhancement()); }}>
+              Keep live transcript
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {isWorking && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed bottom-4 right-4 z-40 w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] p-4 shadow-2xl"
-        >
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5 rounded-lg bg-blue-500/10 p-2 text-blue-400">
-              <Sparkles size={17} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-semibold text-[var(--af-text)]">Improving transcript</p>
-                <span className="shrink-0 text-xs tabular-nums text-[var(--af-text-3)]">
-                  {visibleProgress}%
-                </span>
-              </div>
-              <div className="mt-1 flex items-center gap-2 text-xs text-[var(--af-text-2)]">
-                <Loader2 size={13} className="shrink-0 animate-spin text-blue-400" />
-                <span className="truncate">{message}</span>
-              </div>
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--af-panel-2)]">
-                <div
-                  className="h-full rounded-full bg-blue-500 transition-[width] duration-300"
-                  style={{ width: `${visibleProgress}%` }}
-                />
-              </div>
-              <p className="mt-2 text-[11px] text-[var(--af-text-3)]">
-                You can keep reviewing the live transcript while this finishes.
-              </p>
-            </div>
+            {!isNemotron && <Button disabled={!engine} onClick={() => { void start(); }}>
+              {stage === 'error' ? 'Retry' : 'Continue'}
+            </Button>}
           </div>
         </div>
       )}
-    </>
+    </PostCallHandoffCard>
   );
 }

@@ -25,7 +25,7 @@ pub struct SaveTranscriptConfigRequest {
 pub struct SettingsRepository;
 
 // Transcript providers: localWhisper, deepgram, elevenLabs, groq, openai
-// Summary providers: openai, claude, ollama, groq, added openrouter
+// Summary providers: openai, claude, claude-cli, ollama, groq, added openrouter
 // NOTE: Handle data exclusion in the higher layer as this is database abstraction layer(using SELECT *)
 
 impl SettingsRepository {
@@ -101,6 +101,7 @@ impl SettingsRepository {
             "groq" => "groqApiKey",
             "openrouter" => "openRouterApiKey",
             "builtin-ai" => return Ok(()), // No API key needed
+            "claude-cli" => return Ok(()), // Auth is owned by the Claude Code CLI
             _ => {
                 return Err(sqlx::Error::Protocol(
                     format!("Invalid provider: {}", provider).into(),
@@ -139,6 +140,7 @@ impl SettingsRepository {
             "claude" => "anthropicApiKey",
             "openrouter" => "openRouterApiKey",
             "builtin-ai" => return Ok(None), // No API key needed
+            "claude-cli" => return Ok(None), // Auth is owned by the Claude Code CLI
             _ => {
                 return Err(sqlx::Error::Protocol(
                     format!("Invalid provider: {}", provider).into(),
@@ -305,6 +307,7 @@ impl SettingsRepository {
             "claude" => "anthropicApiKey",
             "openrouter" => "openRouterApiKey",
             "builtin-ai" => return Ok(()), // No API key needed
+            "claude-cli" => return Ok(()), // Auth is owned by the Claude Code CLI
             _ => {
                 return Err(sqlx::Error::Protocol(
                     format!("Invalid provider: {}", provider).into(),
@@ -317,6 +320,45 @@ impl SettingsRepository {
             api_key_column
         );
         sqlx::query(&query).execute(pool).await?;
+
+        Ok(())
+    }
+
+    // ===== CLAUDE CODE CLI METHODS =====
+
+    /// Read the user-configured Claude Code CLI executable path.
+    /// `None` (or a blank string) means the backend discovers the binary itself.
+    pub async fn get_claude_cli_path(
+        pool: &SqlitePool,
+    ) -> std::result::Result<Option<String>, sqlx::Error> {
+        let path: Option<Option<String>> =
+            sqlx::query_scalar("SELECT claudeCliPath FROM settings WHERE id = '1' LIMIT 1")
+                .fetch_optional(pool)
+                .await?;
+        Ok(path
+            .flatten()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()))
+    }
+
+    /// Persist an explicit Claude Code CLI path, or clear it to resume auto-discovery.
+    pub async fn save_claude_cli_path(
+        pool: &SqlitePool,
+        path: Option<&str>,
+    ) -> std::result::Result<(), sqlx::Error> {
+        let normalised = path.map(str::trim).filter(|value| !value.is_empty());
+
+        sqlx::query(
+            r#"
+            INSERT INTO settings (id, provider, model, whisperModel, claudeCliPath)
+            VALUES ('1', 'claude-cli', 'sonnet', 'large-v3', $1)
+            ON CONFLICT(id) DO UPDATE SET
+                claudeCliPath = excluded.claudeCliPath
+            "#,
+        )
+        .bind(normalised)
+        .execute(pool)
+        .await?;
 
         Ok(())
     }

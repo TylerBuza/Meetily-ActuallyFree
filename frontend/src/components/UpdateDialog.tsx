@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Download, AlertCircle, Loader2 } from 'lucide-react';
+import { Spinner } from '@/components/ui/spinner';
+import { Download, AlertCircle} from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -210,38 +211,38 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="overflow-hidden border-slate-700/80 bg-[#0b1220] p-0 text-slate-100 shadow-2xl shadow-black/50 sm:max-w-[520px]"
+        className="overflow-hidden border-af-border-strong/80 bg-[#0b1220] p-0 text-af-text-4 shadow-2xl shadow-black/50 sm:max-w-[520px]"
         onEscapeKeyDown={handleEscapeKeyDown}
         onInteractOutside={handleInteractOutside}
         showCloseButton={phase !== 'installing'}
       >
-        <div className="border-b border-slate-800 bg-gradient-to-br from-slate-900 via-[#0d1728] to-[#0a1c25] px-6 py-5">
+        <div className="border-b border-af-border-strong bg-af-panel-2 via-[#0d1728] to-[#0a1c25] px-6 py-5">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-3 text-lg text-slate-100">
+          <DialogTitle className="flex items-center gap-3 text-lg text-af-text-4">
             {isDownloading ? (
               <>
-                <span className="flex h-9 w-9 items-center justify-center rounded-full border border-cyan-400/25 bg-cyan-400/10">
-                  <Loader2 className="h-5 w-5 animate-spin text-cyan-300" />
+                <span className="flex h-9 w-9 items-center justify-center rounded-full border border-af-accent/40 bg-af-accent/10">
+                  <Spinner className="h-5 w-5 text-af-accent" />
                 </span>
                 {phase === 'installing' ? 'Installing Update' : 'Downloading Update'}
               </>
             ) : error ? (
               <>
-                <span className="flex h-9 w-9 items-center justify-center rounded-full border border-red-400/25 bg-red-400/10">
-                  <AlertCircle className="h-5 w-5 text-red-300" />
+                <span className="flex h-9 w-9 items-center justify-center rounded-full border border-af-danger/35 bg-af-danger/10">
+                  <AlertCircle className="h-5 w-5 text-af-danger" />
                 </span>
                 Update Error
               </>
             ) : (
               <>
-                <span className="flex h-9 w-9 items-center justify-center rounded-full border border-cyan-400/25 bg-cyan-400/10">
-                  <Download className="h-5 w-5 text-cyan-300" />
+                <span className="flex h-9 w-9 items-center justify-center rounded-full border border-af-accent/40 bg-af-accent/10">
+                  <Download className="h-5 w-5 text-af-accent" />
                 </span>
                 Update Available
               </>
             )}
           </DialogTitle>
-          <DialogDescription className="pl-12 text-slate-400">
+          <DialogDescription className="pl-12 text-af-text-4">
             {isDownloading
               ? phase === 'installing'
                 ? 'Download complete. Verifying and installing the update.'
@@ -258,26 +259,26 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
         <div className="space-y-5 px-6 py-5">
           {!isDownloading && !error && (
             <>
-              <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+              <div className="grid grid-cols-2 gap-3 rounded-xl border border-af-border-strong bg-af-elevated/40 p-4">
                 <div className="flex justify-between text-sm">
-                  <span className="text-slate-500">Installed</span>
-                  <span className="font-mono font-medium text-slate-300">v{updateInfo.currentVersion}</span>
+                  <span className="text-af-text-3">Installed</span>
+                  <span className="font-mono font-medium text-af-text-4">v{updateInfo.currentVersion}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-slate-500">Available</span>
-                  <span className="font-mono font-semibold text-cyan-300">v{updateInfo.version}</span>
+                  <span className="text-af-text-3">Available</span>
+                  <span className="font-mono font-semibold text-af-accent">v{updateInfo.version}</span>
                 </div>
                 {updateInfo.date && (
-                  <div className="col-span-2 flex justify-between border-t border-slate-800 pt-3 text-sm">
-                    <span className="text-slate-500">Released</span>
-                    <span className="font-medium text-slate-300">{formatDate(updateInfo.date)}</span>
+                  <div className="col-span-2 flex justify-between border-t border-af-border-strong pt-3 text-sm">
+                    <span className="text-af-text-3">Released</span>
+                    <span className="font-medium text-af-text-4">{formatDate(updateInfo.date)}</span>
                   </div>
                 )}
               </div>
 
               {updateInfo.body && (
-                <div className="max-h-40 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-                  <p className="whitespace-pre-wrap text-sm leading-6 text-slate-300">
+                <div className="max-h-40 overflow-y-auto rounded-xl border border-af-border-strong bg-af-elevated/40 p-4">
+                  <p className="whitespace-pre-wrap text-sm leading-6 text-af-text-4">
                     {updateInfo.body}
                   </p>
                 </div>
@@ -286,15 +287,15 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
           )}
 
           {isDownloading && progress && (
-            <div className="space-y-4 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+            <div className="space-y-4 rounded-xl border border-af-border-strong bg-af-elevated/40 p-4">
               <div className="relative">
-                <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-800">
+                <div className="h-2.5 w-full overflow-hidden rounded-full bg-af-elevated">
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-teal-400 to-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.35)] transition-all duration-300 ease-out"
+                    className="h-full rounded-full bg-af-panel-2 shadow-[0_0_18px_rgba(34,211,238,0.35)] transition-all duration-300 ease-out"
                     style={{ width: `${Math.min(progress.percentage, 100)}%` }}
                   />
                 </div>
-                <div className="mt-2 flex justify-between font-mono text-xs text-slate-400">
+                <div className="mt-2 flex justify-between font-mono text-xs text-af-text-4">
                   <span>{phase === 'installing' ? 'Installing' : `${Math.round(progress.percentage)}%`}</span>
                   {progress.total > 0 && (
                     <span>
@@ -303,33 +304,33 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
                   )}
                 </div>
               </div>
-              <p className="text-center text-sm text-slate-400">
+              <p className="text-center text-sm text-af-text-4">
                 Meetily will restart automatically when the update is installed.
               </p>
             </div>
           )}
 
           {error && (
-            <div className="rounded-xl border border-red-400/25 bg-red-400/10 p-4">
-              <p className="text-sm text-red-200">{error}</p>
+            <div className="rounded-xl border border-af-danger/35 bg-af-danger/10 p-4">
+              <p className="text-sm text-af-danger">{error}</p>
             </div>
           )}
         </div>
 
-        <DialogFooter className="border-t border-slate-800 bg-slate-950/30 px-6 py-4">
+        <DialogFooter className="border-t border-af-border-strong bg-af-elevated/30 px-6 py-4">
           {!isDownloading && !error && (
             <>
-              <Button variant="outline" className="border-slate-700 bg-transparent text-slate-300 hover:bg-slate-800 hover:text-white" onClick={() => handleOpenChange(false)}>
+              <Button variant="outline" className="border-af-border-strong bg-transparent text-af-text-4 hover:bg-af-elevated hover:text-white" onClick={() => handleOpenChange(false)}>
                 Later
               </Button>
-              <Button onClick={handleDownloadAndInstall} className="bg-teal-500 text-slate-950 hover:bg-teal-400">
+              <Button onClick={handleDownloadAndInstall} className="bg-af-success text-af-text hover:bg-af-success">
                 <Download className="h-4 w-4 mr-2" />
                 Download & Install
               </Button>
             </>
           )}
           {error && (
-            <Button variant="outline" className="border-slate-700 bg-transparent text-slate-300 hover:bg-slate-800 hover:text-white" onClick={() => handleOpenChange(false)}>
+            <Button variant="outline" className="border-af-border-strong bg-transparent text-af-text-4 hover:bg-af-elevated hover:text-white" onClick={() => handleOpenChange(false)}>
               Close
             </Button>
           )}

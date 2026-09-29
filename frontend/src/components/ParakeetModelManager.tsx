@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
+import { Check } from 'lucide-react';
 import {
   ParakeetModelInfo,
   ModelStatus,
@@ -149,7 +150,7 @@ export function ParakeetModelManager({
           // Clean up throttle data
           progressThrottleRef.current.delete(modelName);
 
-          toast.success(`${displayInfo?.icon || '✓'} ${displayName} ready!`, {
+          toast.success(`${displayName} ready`, {
             description: 'Model downloaded and ready to use',
             duration: 4000
           });
@@ -353,8 +354,8 @@ export function ParakeetModelManager({
     return (
       <div className={`space-y-3 ${className}`}>
         <div className="animate-pulse space-y-3">
-          <div className="h-20 bg-gray-100 rounded-lg"></div>
-          <div className="h-20 bg-gray-100 rounded-lg"></div>
+          <div className="h-20 bg-af-panel-2 rounded-lg"></div>
+          <div className="h-20 bg-af-panel-2 rounded-lg"></div>
         </div>
       </div>
     );
@@ -362,9 +363,9 @@ export function ParakeetModelManager({
 
   if (error) {
     return (
-      <div className={`bg-red-50 border border-red-200 rounded-lg p-4 ${className}`}>
-        <p className="text-sm text-red-800">Failed to load models</p>
-        <p className="text-xs text-red-600 mt-1">{error}</p>
+      <div className={`bg-af-danger/10 border border-af-danger/35 rounded-lg p-4 ${className}`}>
+        <p className="text-sm text-af-danger">Failed to load models</p>
+        <p className="text-xs text-af-danger mt-1">{error}</p>
       </div>
     );
   }
@@ -425,7 +426,7 @@ export function ParakeetModelManager({
         <motion.div
           initial={{ opacity: 0, y: -5 }}
           animate={{ opacity: 1, y: 0 }}
-          className="text-xs text-gray-500 text-center pt-2"
+          className="text-xs text-af-text-3 text-center pt-2"
         >
           Using {getModelDisplayName(selectedModel)} for transcription
         </motion.div>
@@ -459,7 +460,6 @@ function ModelCard({
   const [isHovered, setIsHovered] = useState(false);
   const displayInfo = getModelDisplayInfo(model.name);
   const displayName = displayInfo?.friendlyName || model.name;
-  const icon = displayInfo?.icon || '📦';
   const tagline = displayInfo?.tagline || model.description || '';
 
   const isAvailable = model.status === 'Available';
@@ -479,12 +479,12 @@ function ModelCard({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       className={`
-        relative rounded-xl border-2 transition-all cursor-pointer
+        relative rounded-lg border-2 transition-all cursor-pointer
         ${isSelected && isAvailable
-          ? 'border-blue-600 dark:border-blue-400 bg-blue-50/90 dark:bg-blue-950/40 ring-2 ring-blue-500/30 dark:ring-blue-400/30 shadow-md'
+          ? 'border-af-accent/40 bg-af-accent/10'
           : isAvailable
-            ? 'border-slate-200 dark:border-slate-700/80 bg-white dark:bg-[#151922] hover:border-blue-400/80 dark:hover:border-blue-500/70 hover:bg-slate-50 dark:hover:bg-[#1c2333]'
-            : 'border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-[#12161f] opacity-80'
+            ? 'border-[var(--af-border)] bg-[var(--af-panel-2)] hover:border-[var(--af-border-strong)]'
+            : 'border-[var(--af-border)] bg-[var(--af-panel-2)]'
         }
         ${isAvailable ? '' : 'cursor-default'}
       `}
@@ -494,7 +494,7 @@ function ModelCard({
     >
       {/* Recommended Badge */}
       {isRecommended && (
-        <div className="absolute -top-2 -right-2 bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full font-medium shadow-sm">
+        <div className="absolute -top-2 -right-2 bg-af-accent text-af-on-accent text-xs px-2 py-0.5 rounded-full font-medium">
           Recommended
         </div>
       )}
@@ -504,29 +504,28 @@ function ModelCard({
           <div className="flex-1">
             {/* Model Name */}
             <div className="flex items-center gap-2 mb-1">
-              <span className="text-2xl">{icon}</span>
-              <h3 className="font-semibold text-slate-900 dark:text-slate-100">{displayName}</h3>
+              <h3 className="font-semibold text-af-text">{displayName}</h3>
               {isSelected && isAvailable && (
                 <motion.span
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
-                  className="bg-blue-600 text-white px-2 py-0.5 rounded-full text-xs font-semibold flex items-center gap-1 shadow-sm"
+                  className="bg-af-accent text-af-on-accent px-2 py-0.5 rounded-full text-xs font-medium flex items-center gap-1"
                 >
-                  ✓
+                  <Check className="h-3 w-3" />
                 </motion.span>
               )}
             </div>
 
             {/* Tagline */}
-            <p className="text-sm text-slate-600 dark:text-slate-300 ml-9">{tagline}</p>
+            <p className="text-sm text-af-text-2 ml-9">{tagline}</p>
           </div>
 
           {/* Status/Action */}
           <div className="ml-4 flex items-center gap-2">
             {isAvailable && (
               <>
-                <div className="flex items-center gap-1.5 text-green-600">
-                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                <div className="flex items-center gap-1.5 text-af-success">
+                  <div className="w-2 h-2 bg-af-success rounded-full"></div>
                   <span className="text-xs font-medium">Ready</span>
                 </div>
                 <AnimatePresence>
@@ -540,7 +539,7 @@ function ModelCard({
                         e.stopPropagation();
                         onDelete();
                       }}
-                      className="text-gray-400 hover:text-red-600 transition-colors p-1"
+                      className="text-af-text-4 hover:text-af-danger transition-colors p-1"
                       title="Delete model to free up space"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -558,7 +557,7 @@ function ModelCard({
                   e.stopPropagation();
                   onDownload();
                 }}
-                className="bg-blue-600 text-white px-3 py-1.5 rounded-md text-sm font-medium hover:bg-blue-700 transition-colors"
+                className="bg-af-accent text-af-on-accent px-3 py-1.5 rounded-md text-sm font-medium hover:bg-af-accent-hover transition-colors"
               >
                 Download
               </button>
@@ -570,7 +569,7 @@ function ModelCard({
                   e.stopPropagation();
                   onDownload();
                 }}
-                className="bg-red-600 text-white px-3 py-1.5 rounded-md text-sm font-medium hover:bg-red-700 transition-colors"
+                className="bg-af-danger text-white px-3 py-1.5 rounded-md text-sm font-medium hover:bg-af-danger transition-colors"
               >
                 Retry
               </button>
@@ -583,7 +582,7 @@ function ModelCard({
                     e.stopPropagation();
                     onDelete();
                   }}
-                  className="bg-orange-600 text-white px-3 py-1.5 rounded-md text-sm font-medium hover:bg-orange-700 transition-colors"
+                  className="bg-af-warning text-white px-3 py-1.5 rounded-md text-sm font-medium hover:bg-af-warning transition-colors"
                 >
                   Delete
                 </button>
@@ -592,7 +591,7 @@ function ModelCard({
                     e.stopPropagation();
                     onDownload();
                   }}
-                  className="bg-blue-600 text-white px-3 py-1.5 rounded-md text-sm font-medium hover:bg-blue-700 transition-colors"
+                  className="bg-af-accent text-af-on-accent px-3 py-1.5 rounded-md text-sm font-medium hover:bg-af-accent-hover transition-colors"
                 >
                   Re-download
                 </button>
@@ -607,33 +606,33 @@ function ModelCard({
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            className="mt-3 pt-3 border-t border-gray-200"
+            className="mt-3 pt-3 border-t border-af-border"
           >
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-blue-600">Downloading...</span>
-                <span className="text-sm font-semibold text-blue-600">{Math.round(downloadProgress)}%</span>
+                <span className="text-sm font-medium text-af-accent">Downloading...</span>
+                <span className="text-sm font-semibold text-af-accent">{Math.round(downloadProgress)}%</span>
               </div>
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   onCancel();
                 }}
-                className="text-xs text-gray-600 hover:text-red-600 font-medium transition-colors px-2 py-1 rounded hover:bg-red-50"
+                className="text-xs text-af-text-2 hover:text-af-danger font-medium transition-colors px-2 py-1 rounded hover:bg-af-danger/10"
                 title="Cancel download"
               >
                 Cancel
               </button>
             </div>
-            <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div className="w-full h-2 bg-af-hover rounded-full overflow-hidden">
               <motion.div
-                className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full"
+                className="h-full bg-af-panel-2 rounded-full"
                 initial={{ width: 0 }}
                 animate={{ width: `${downloadProgress}%` }}
                 transition={{ duration: 0.3, ease: 'easeOut' }}
               />
             </div>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-af-text-3 mt-1">
               {model.size_mb ? (
                 <>
                   {formatFileSize(model.size_mb * downloadProgress / 100)} / {formatFileSize(model.size_mb)}

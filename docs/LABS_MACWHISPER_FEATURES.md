@@ -8,6 +8,31 @@ The current branch already has per-app capture, live/post-call speaker editing,
 VAD silence rejection, some Whisper repetition guards, a local-user voiceprint,
 recording-relative transcript turn times, and process-based meeting prompts.
 
+## Where each feature lives in the app
+
+All switches are in Settings > Labs, and each feature also shows where it is
+used:
+
+- Meeting automation: a switch in Settings > Meeting detection as well. A
+  notice says when a call starts a recording (with an option to keep it going
+  after the call) and when the call's end stops it. The stop runs the
+  recorder's normal stop and save from any page, without reloading.
+- Audio and transcript seeking: the meeting player shows the waveform instead
+  of a plain track and adds 0.5× and 0.75×. Seeking from a line's timestamp
+  and following playback work without Labs.
+- Named voice profiles: a Voice panel on each contact's page learns a voice
+  from all their recent meetings (up to twelve), updates it the same way so new
+  meetings count, or forgets it; the speaker card on a meeting page adds that
+  meeting's audio (Remember voice, or Update voice once one exists). A profile
+  keeps each meeting's share, so learning from a meeting again replaces its
+  share instead of counting it twice; profiles saved before shares were kept
+  count as one earlier share. Renaming, merging or deleting a contact updates,
+  combines or removes their voice.
+- Whisper silence guard and Parakeet GPU: tagged on the engine they change in
+  Settings > Transcription.
+- Clean transcript: a Clean/Verbatim switch in the meeting player. With Labs
+  off the transcript still hides simple fillers, as before.
+
 ## Feature 1: meeting automation
 
 `meeting_detection.rs` now includes packaged Teams microphone/camera leases and
@@ -51,9 +76,10 @@ is bounded to 24 hours. No word-level karaoke claim is made.
 The existing `voiceprint.rs` belongs to the microphone user only. New
 `voice_profiles.rs` stores opt-in WeSpeaker post-LDA embeddings for explicitly
 named people, keyed by the existing `people` and `person_speakers` identity.
-Enrollment uses the separate system track and up to eight non-overlapping,
-2–15 second turns bearing that person's saved speaker label. It requires at
-least two successful embeddings. The model runs on a blocking worker; capture
+Enrollment uses the separate system track and, from each meeting, up to twenty
+non-overlapping 2–15 second turns bearing that person's saved speaker label,
+spread across the meeting. A voice keeps a share per meeting (up to twelve) and
+is the mean of all their turns; it requires at least two successful embeddings. The model runs on a blocking worker; capture
 does no inference. Profiles are saved in local app data, can be listed and
 deleted in Labs, and matching is disabled by default.
 

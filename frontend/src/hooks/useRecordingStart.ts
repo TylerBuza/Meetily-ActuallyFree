@@ -6,6 +6,10 @@ import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { useConfig } from '@/contexts/ConfigContext';
 import { useRecordingState, RecordingStatus } from '@/contexts/RecordingStateContext';
 import { recordingService } from '@/services/recordingService';
+import { readPendingGroup } from '@/lib/groups';
+import { automaticTitle, beginLiveSession } from '@/lib/live-session';
+import { AUTO_START_KEY, START_RECORDING_EVENT } from '@/lib/recording-launch';
+import { beginAutomatedRecording, endAutomatedRecording, takeAutomatedStart } from '@/lib/meeting-automation';
 import Analytics from '@/lib/analytics';
 import { showRecordingNotification } from '@/lib/recordingNotification';
 import { toast } from 'sonner';
@@ -15,16 +19,46 @@ interface UseRecordingStartReturn {
   isAutoStarting: boolean;
 }
 
+type StartSource = 'home_page' | 'sidebar_auto' | 'sidebar_direct';
+
+/** A readable reason for a failed start, from the backend's error text. */
+export function describeStartError(error: unknown): { title: string; message: string } {
+  const text = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  if (text.includes('target application')) {
+    return {
+      title: 'None of your chosen apps is open',
+      message: 'Computer audio is set to record only chosen apps. Open one of them, or switch the record card back to all computer audio.',
+    };
+  }
+  if (text.includes('microphone') || text.includes('mic') || text.includes('input')) {
+    return {
+      title: 'Microphone not available',
+      message: 'Check that the microphone is connected, that Meetily may use it, and that no other app has taken it.',
+    };
+  }
+  if (text.includes('system audio') || text.includes('speaker') || text.includes('output')) {
+    return {
+      title: 'System audio not available',
+      message:
+        'On macOS, allow Meetily Audio Capture in Privacy & Security, play some audio, and try again. Elsewhere, check the selected playback device.',
+    };
+  }
+  if (text.includes('permission')) {
+    return {
+      title: 'Permission needed',
+      message: 'Allow microphone access (and Audio Capture on macOS) in your system settings, then restart Meetily.',
+    };
+  }
+  return { title: 'Could not start recording', message: 'Check your audio devices in the recording card and try again.' };
+}
+
 /**
- * Custom hook for managing recording start lifecycle.
- * Handles both manual start (button click) and auto-start (from sidebar navigation).
+ * Starts recordings, from the record button, from the sidebar or a group
+ * (auto-start after navigating here), and from the tray or a detected
+ * meeting (the `start-recording-from-sidebar` event).
  *
- * Features:
- * - Meeting title generation (format: Meeting DD_MM_YY_HH_MM_SS)
- * - Transcript clearing on start
- * - Analytics tracking
- * - Recording notification display
- * - Auto-start from sidebar via sessionStorage flag
+ * The meeting gets its automatic title here: the group's name and date when
+ * one is chosen, otherwise the day and time slot.
  */
 export function useRecordingStart(
   isRecording: boolean,
@@ -35,7 +69,7 @@ export function useRecordingStart(
   const runtimeErrorRef = useRef<string | null>(null);
 
   const { clearTranscripts, setMeetingTitle } = useTranscripts();
-  const { setIsMeetingActive } = useSidebar();
+  const { setIsMeetingActive, meetings } = useSidebar();
   const { selectedDevices, transcriptModelConfig } = useConfig();
   const { setStatus } = useRecordingState();
 
@@ -46,18 +80,6 @@ export function useRecordingStart(
     } catch {
       /* ignore */
     }
-  }, []);
-
-  // Generate meeting title with timestamp
-  const generateMeetingTitle = useCallback(() => {
-    const now = new Date();
-    const day = String(now.getDate()).padStart(2, '0');
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const year = String(now.getFullYear()).slice(-2);
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-    const seconds = String(now.getSeconds()).padStart(2, '0');
-    return `Meeting ${day}_${month}_${year}_${hours}_${minutes}_${seconds}`;
   }, []);
 
   // Prefer Parakeet for live (fast). Whisper is for post-call enhance/retranscribe.
@@ -93,7 +115,6 @@ export function useRecordingStart(
             ) ||
             models[0];
           if (ready?.name) {
-            console.log('Pre-loading Parakeet (live STT):', ready.name);
             await invoke('parakeet_load_model', { modelName: ready.name });
           }
         }
@@ -107,7 +128,6 @@ export function useRecordingStart(
       const alreadyLoaded = await invoke<boolean>('whisper_is_model_loaded');
       if (!alreadyLoaded) {
         const modelName = transcriptModelConfig?.model || 'large-v3';
-        console.log('Pre-loading Whisper:', modelName);
         await invoke('whisper_load_model', { modelName });
       }
       return true;
@@ -121,313 +141,144 @@ export function useRecordingStart(
   const checkIfModelDownloading = useCallback(async (): Promise<boolean> => {
     try {
       const models = await invoke<any[]>('parakeet_get_available_models');
-      const isDownloading = models.some(m =>
+      return models.some(m =>
         m.status && (
           typeof m.status === 'object'
             ? 'Downloading' in m.status
             : m.status === 'Downloading'
         )
       );
-      return isDownloading;
     } catch (error) {
       console.error('Failed to check model download status:', error);
       return false;
     }
   }, []);
 
-  // Handle manual recording start (from button click)
-  const handleRecordingStart = useCallback(async () => {
+  /** Says why recording can't start yet, and offers the model setup when that's the reason. */
+  const reportModelNotReady = useCallback(async (source: StartSource) => {
+    if (runtimeErrorRef.current) {
+      setStatus(RecordingStatus.ERROR, runtimeErrorRef.current);
+      return;
+    }
+    if (await checkIfModelDownloading()) {
+      toast.info('Model download in progress', {
+        description: 'Recording can start once the transcription model finishes downloading.',
+        duration: 5000,
+      });
+      Analytics.trackButtonClick('start_recording_blocked_downloading', source);
+    } else {
+      toast.error('Transcription model not ready', {
+        description: 'Download a transcription model (Parakeet is best for live) before recording.',
+        duration: 5000,
+      });
+      showModal?.('modelSelector', 'Transcription model setup required');
+      Analytics.trackButtonClick('start_recording_blocked_missing', source);
+    }
+    setStatus(RecordingStatus.IDLE);
+  }, [checkIfModelDownloading, setStatus, showModal]);
+
+  /** The one start sequence. Returns false when recording did not start. */
+  const startRecording = useCallback(async (source: StartSource): Promise<boolean> => {
+    // A detected call asked for this start (Labs meeting automation). A start
+    // from the record button is the user's own and is never stopped for them.
+    const automated = takeAutomatedStart();
+    const call = source === 'home_page' ? null : automated;
+    // Readying the model can take several seconds (it loads a large model
+    // into memory), so say so from the first step.
+    setStatus(RecordingStatus.STARTING, 'Preparing transcription model…');
+    const sttReady = await prefetchSttModel();
+    if (!sttReady) {
+      await reportModelNotReady(source);
+      return false;
+    }
+
     try {
-      console.log('handleRecordingStart called - prefetching STT model');
-
-      // Report progress from the very first step. Readying the model can take
-      // several seconds (it loads a multi-hundred-MB model into memory), and
-      // without a status here the button looks unresponsive for that whole
-      // period — the single longest part of starting a recording.
-      setStatus(RecordingStatus.STARTING, 'Preparing transcription model…');
-
-      // Prefetch STT (Parakeet by default for live). Unloads LLM first via Rust.
-      const sttReady = await prefetchSttModel();
-      if (!sttReady) {
-        if (runtimeErrorRef.current) {
-          setStatus(RecordingStatus.ERROR, runtimeErrorRef.current);
-          return;
-        }
-        const isDownloading = await checkIfModelDownloading();
-        if (isDownloading) {
-          toast.info('Model download in progress', {
-            description: 'Please wait for the transcription model to finish downloading before recording.',
-            duration: 5000,
-          });
-          Analytics.trackButtonClick('start_recording_blocked_downloading', 'home_page');
-        } else {
-          toast.error('Transcription model not ready', {
-            description: 'Please download a transcription model (Parakeet recommended for live) before recording.',
-            duration: 5000,
-          });
-          showModal?.('modelSelector', 'Transcription model setup required');
-          Analytics.trackButtonClick('start_recording_blocked_missing', 'home_page');
-        }
-        setStatus(RecordingStatus.IDLE);
-        return;
-      }
-
-      console.log('Parakeet ready - setting up meeting title and state');
-
-      const randomTitle = generateMeetingTitle();
-      setMeetingTitle(randomTitle);
-
-      // Model is ready; the remaining wait is audio device setup.
+      const startedAt = Date.now();
+      const group = readPendingGroup();
+      const title = automaticTitle(new Date(startedAt), group?.name, meetings.map((meeting) => meeting.title));
+      setMeetingTitle(title);
       setStatus(RecordingStatus.STARTING, 'Starting audio capture…');
 
-      // Start the actual backend recording
-      console.log('Starting backend recording with meeting:', randomTitle);
-      const recordingStartedAt = Date.now();
       await recordingService.startRecordingWithDevices(
         selectedDevices?.micDevice || null,
         selectedDevices?.systemDevice || null,
-        randomTitle
+        title
       );
-      console.log('Backend recording started successfully');
 
-      // Update state after successful backend start
-      // Note: RECORDING status will be set by RecordingStateContext event listener
-      console.log('Setting isRecordingState to true');
-      setIsRecording(true); // This will also update the sidebar via the useEffect
-      clearTranscripts(); // Clear previous transcripts when starting new recording
+      // RECORDING status itself arrives from Rust via RecordingStateContext.
+      beginLiveSession(title, startedAt);
+      setIsRecording(true);
+      clearTranscripts();
       setIsMeetingActive(true);
-      markRecordingStarted(recordingStartedAt);
-      Analytics.trackButtonClick('start_recording', 'home_page');
-
-      // Coach-mark above the minimize button on the recording bar (not a global toast).
-      window.dispatchEvent(new CustomEvent('show-compact-mode-tip'));
-
-      // Show recording notification if enabled
+      markRecordingStarted(startedAt);
+      Analytics.trackButtonClick('start_recording', source);
+      if (call) {
+        beginAutomatedRecording(call);
+        toast(`Recording your ${call.app} call`, {
+          description: 'Meeting automation started it, and stops and saves it when the call ends.',
+          duration: 10000,
+          action: { label: "Don't stop it", onClick: () => endAutomatedRecording() },
+        });
+      }
       await showRecordingNotification();
+      return true;
     } catch (error) {
       console.error('Failed to start recording:', error);
+      setIsRecording(false);
       const runtimeMessage = transcriptionRuntimeMessage(error);
       if (runtimeMessage) {
         setStatus(RecordingStatus.ERROR, runtimeMessage);
-        setIsRecording(false);
         toast.error('Speech recognition unavailable', { description: runtimeMessage });
-        return;
+        return false;
       }
       setStatus(RecordingStatus.ERROR, error instanceof Error ? error.message : 'Failed to start recording');
-      setIsRecording(false); // Reset state on error
-      Analytics.trackButtonClick('start_recording_error', 'home_page');
-      // Re-throw so RecordingControls can handle device-specific errors
-      throw error;
+      const { title, message } = describeStartError(error);
+      toast.error(title, { description: message, duration: 8000 });
+      Analytics.trackButtonClick('start_recording_error', source);
+      return false;
     }
-  }, [generateMeetingTitle, setMeetingTitle, setIsRecording, clearTranscripts, setIsMeetingActive, prefetchSttModel, checkIfModelDownloading, selectedDevices, showModal, setStatus]);
-
-  // Check for autoStartRecording flag and start recording automatically
-  useEffect(() => {
-    const checkAutoStartRecording = async () => {
-      if (typeof window !== 'undefined') {
-        const shouldAutoStart = sessionStorage.getItem('autoStartRecording');
-        if (shouldAutoStart === 'true' && !isRecording && !isAutoStarting) {
-          console.log('Auto-starting recording from navigation...');
-          setIsAutoStarting(true);
-          sessionStorage.removeItem('autoStartRecording'); // Clear the flag
-
-          const sttReady = await prefetchSttModel();
-          if (!sttReady) {
-            if (runtimeErrorRef.current) {
-              setStatus(RecordingStatus.ERROR, runtimeErrorRef.current);
-              setIsAutoStarting(false);
-              return;
-            }
-            const isDownloading = await checkIfModelDownloading();
-            if (isDownloading) {
-              toast.info('Model download in progress', {
-                description: 'Please wait for the transcription model to finish downloading before recording.',
-                duration: 5000,
-              });
-              Analytics.trackButtonClick('start_recording_blocked_downloading', 'sidebar_auto');
-            } else {
-              toast.error('Transcription model not ready', {
-                description: 'Please download a transcription model before recording.',
-                duration: 5000,
-              });
-              showModal?.('modelSelector', 'Transcription model setup required');
-              Analytics.trackButtonClick('start_recording_blocked_missing', 'sidebar_auto');
-            }
-            setStatus(RecordingStatus.IDLE);
-            setIsAutoStarting(false);
-            return;
-          }
-
-          // Start the actual backend recording
-          try {
-            // Generate meeting title
-            const generatedMeetingTitle = generateMeetingTitle();
-
-            // Set STARTING status before initiating backend recording
-            setStatus(RecordingStatus.STARTING, 'Initializing recording...');
-
-            console.log('Auto-starting backend recording with meeting:', generatedMeetingTitle);
-            const recordingStartedAt = Date.now();
-            const result = await recordingService.startRecordingWithDevices(
-              selectedDevices?.micDevice || null,
-              selectedDevices?.systemDevice || null,
-              generatedMeetingTitle
-            );
-            console.log('Auto-start backend recording result:', result);
-
-            // Update UI state after successful backend start
-            // Note: RECORDING status will be set by RecordingStateContext event listener
-            setMeetingTitle(generatedMeetingTitle);
-            setIsRecording(true);
-            clearTranscripts();
-            setIsMeetingActive(true);
-            markRecordingStarted(recordingStartedAt);
-            const labsProcess = sessionStorage.getItem('labsAutoStartPending');
-            if (labsProcess) sessionStorage.setItem('labsAutoRecordingProcess', labsProcess);
-            sessionStorage.removeItem('labsAutoStartPending');
-            Analytics.trackButtonClick('start_recording', 'sidebar_auto');
-
-            // Show recording notification if enabled
-            await showRecordingNotification();
-          } catch (error) {
-            console.error('Failed to auto-start recording:', error);
-            const runtimeMessage = transcriptionRuntimeMessage(error);
-            if (runtimeMessage) {
-              setStatus(RecordingStatus.ERROR, runtimeMessage);
-              toast.error('Speech recognition unavailable', { description: runtimeMessage });
-              return;
-            }
-            setStatus(RecordingStatus.ERROR, error instanceof Error ? error.message : 'Failed to auto-start recording');
-            alert('Failed to start recording. Check console for details.');
-            Analytics.trackButtonClick('start_recording_error', 'sidebar_auto');
-          } finally {
-            sessionStorage.removeItem('labsAutoStartPending');
-            setIsAutoStarting(false);
-          }
-        }
-      }
-    };
-
-    checkAutoStartRecording();
   }, [
-    isRecording,
-    isAutoStarting,
-    selectedDevices,
-    generateMeetingTitle,
+    prefetchSttModel,
+    reportModelNotReady,
+    meetings,
     setMeetingTitle,
+    setStatus,
+    selectedDevices,
     setIsRecording,
     clearTranscripts,
     setIsMeetingActive,
-    prefetchSttModel,
-    checkIfModelDownloading,
-    showModal,
-    setStatus,
+    markRecordingStarted,
   ]);
 
-  // Listen for direct recording trigger from sidebar when already on home page
-  useEffect(() => {
-    const handleDirectStart = async () => {
-      if (isRecording || isAutoStarting) {
-        console.log('Recording already in progress, ignoring direct start event');
-        return;
-      }
+  // Record button on this page.
+  const handleRecordingStart = useCallback(async () => {
+    await startRecording('home_page');
+  }, [startRecording]);
 
-      console.log('Direct start from sidebar - prefetching STT model');
+  // Sent here with the autoStartRecording flag (e.g. "Start" on a group).
+  useEffect(() => {
+    let shouldAutoStart = false;
+    try {
+      shouldAutoStart = sessionStorage.getItem(AUTO_START_KEY) === 'true';
+    } catch {
+      shouldAutoStart = false;
+    }
+    if (!shouldAutoStart || isRecording || isAutoStarting) return;
+    sessionStorage.removeItem(AUTO_START_KEY);
+    setIsAutoStarting(true);
+    void startRecording('sidebar_auto').finally(() => setIsAutoStarting(false));
+  }, [isRecording, isAutoStarting, startRecording]);
+
+  // Tray, detected meetings, and start buttons elsewhere on this page.
+  useEffect(() => {
+    const handleDirectStart = () => {
+      if (isRecording || isAutoStarting) return;
       setIsAutoStarting(true);
-
-      const sttReady = await prefetchSttModel();
-      if (!sttReady) {
-        if (runtimeErrorRef.current) {
-          setStatus(RecordingStatus.ERROR, runtimeErrorRef.current);
-          setIsAutoStarting(false);
-          return;
-        }
-        const isDownloading = await checkIfModelDownloading();
-        if (isDownloading) {
-          toast.info('Model download in progress', {
-            description: 'Please wait for the transcription model to finish downloading before recording.',
-            duration: 5000,
-          });
-          Analytics.trackButtonClick('start_recording_blocked_downloading', 'sidebar_direct');
-        } else {
-          toast.error('Transcription model not ready', {
-            description: 'Please download a transcription model before recording.',
-            duration: 5000,
-          });
-          showModal?.('modelSelector', 'Transcription model setup required');
-          Analytics.trackButtonClick('start_recording_blocked_missing', 'sidebar_direct');
-        }
-        setStatus(RecordingStatus.IDLE);
-        setIsAutoStarting(false);
-        return;
-      }
-
-      try {
-        // Generate meeting title
-        const generatedMeetingTitle = generateMeetingTitle();
-
-        // Set STARTING status before initiating backend recording
-        setStatus(RecordingStatus.STARTING, 'Initializing recording...');
-
-        console.log('Starting backend recording with meeting:', generatedMeetingTitle);
-        const recordingStartedAt = Date.now();
-        const result = await recordingService.startRecordingWithDevices(
-          selectedDevices?.micDevice || null,
-          selectedDevices?.systemDevice || null,
-          generatedMeetingTitle
-        );
-        console.log('Backend recording result:', result);
-
-        // Update UI state after successful backend start
-        // Note: RECORDING status will be set by RecordingStateContext event listener
-        setMeetingTitle(generatedMeetingTitle);
-        setIsRecording(true);
-        clearTranscripts();
-        setIsMeetingActive(true);
-        markRecordingStarted(recordingStartedAt);
-        const labsProcess = sessionStorage.getItem('labsAutoStartPending');
-        if (labsProcess) sessionStorage.setItem('labsAutoRecordingProcess', labsProcess);
-        sessionStorage.removeItem('labsAutoStartPending');
-        Analytics.trackButtonClick('start_recording', 'sidebar_direct');
-
-        // Show recording notification if enabled
-        await showRecordingNotification();
-      } catch (error) {
-        console.error('Failed to start recording from sidebar:', error);
-        const runtimeMessage = transcriptionRuntimeMessage(error);
-        if (runtimeMessage) {
-          setStatus(RecordingStatus.ERROR, runtimeMessage);
-          toast.error('Speech recognition unavailable', { description: runtimeMessage });
-          return;
-        }
-        setStatus(RecordingStatus.ERROR, error instanceof Error ? error.message : 'Failed to start recording from sidebar');
-        alert('Failed to start recording. Check console for details.');
-        Analytics.trackButtonClick('start_recording_error', 'sidebar_direct');
-      } finally {
-        sessionStorage.removeItem('labsAutoStartPending');
-        setIsAutoStarting(false);
-      }
+      void startRecording('sidebar_direct').finally(() => setIsAutoStarting(false));
     };
-
-    window.addEventListener('start-recording-from-sidebar', handleDirectStart);
-
-    return () => {
-      window.removeEventListener('start-recording-from-sidebar', handleDirectStart);
-    };
-  }, [
-    isRecording,
-    isAutoStarting,
-    selectedDevices,
-    generateMeetingTitle,
-    setMeetingTitle,
-    setIsRecording,
-    clearTranscripts,
-    setIsMeetingActive,
-    prefetchSttModel,
-    checkIfModelDownloading,
-    showModal,
-    setStatus,
-  ]);
+    window.addEventListener(START_RECORDING_EVENT, handleDirectStart);
+    return () => window.removeEventListener(START_RECORDING_EVENT, handleDirectStart);
+  }, [isRecording, isAutoStarting, startRecording]);
 
   return {
     handleRecordingStart,

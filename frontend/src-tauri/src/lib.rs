@@ -37,6 +37,7 @@ pub mod analytics;
 pub mod api;
 pub mod app_update;
 pub mod audio;
+pub mod claude_cli;
 pub mod config;
 pub mod console_utils;
 pub mod crash_report;
@@ -646,6 +647,7 @@ pub fn run() {
             diarization::voice_profiles::get_voice_profiles_enabled,
             diarization::voice_profiles::set_voice_profiles_enabled,
             diarization::voice_profiles::enroll_voice_profile,
+            diarization::voice_profiles::enroll_person_voice,
             diarization::voice_profiles::list_voice_profiles,
             diarization::voice_profiles::delete_voice_profile,
             save_transcript,
@@ -762,6 +764,11 @@ pub fn run() {
             console_utils::show_console,
             console_utils::hide_console,
             console_utils::toggle_console,
+            claude_cli::commands::claude_cli_get_status,
+            claude_cli::commands::claude_cli_list_models,
+            claude_cli::commands::claude_cli_get_path,
+            claude_cli::commands::claude_cli_save_path,
+            claude_cli::commands::claude_cli_test_connection,
             ollama::get_ollama_models,
             ollama::pull_ollama_model,
             ollama::delete_ollama_model,
@@ -773,7 +780,29 @@ pub fn run() {
             api::api_search_transcripts,
             database::repositories::person::api_global_search,
             database::repositories::person::api_get_person_profile,
+            database::repositories::person::api_list_people,
             database::repositories::person::api_update_person_notes,
+            database::repositories::person::api_create_person,
+            database::repositories::person::api_update_person,
+            database::repositories::person::api_merge_people,
+            database::repositories::person::api_delete_person,
+            database::repositories::group::api_list_groups,
+            database::repositories::group::api_create_group,
+            database::repositories::group::api_update_group,
+            database::repositories::group::api_delete_group,
+            database::repositories::group::api_get_group,
+            database::repositories::group::api_set_meeting_group,
+            database::repositories::group::api_set_meetings_group,
+            database::repositories::group::api_get_meeting_group,
+            database::repositories::action_item::api_list_action_items,
+            database::repositories::action_item::api_create_action_item,
+            database::repositories::action_item::api_update_action_item,
+            database::repositories::action_item::api_delete_action_item,
+            database::repositories::action_item::api_sync_ai_action_items,
+            database::repositories::action_item::api_list_unsynced_action_meetings,
+            database::repositories::meeting_notes::api_get_meeting_notes,
+            database::repositories::meeting_notes::api_save_meeting_notes,
+            api::api_get_meeting_audio,
             meeting_detection::get_meeting_detection_settings,
             meeting_detection::set_meeting_detection_settings,
             meeting_detection::start_meeting_detection,
@@ -785,6 +814,7 @@ pub fn run() {
             diarization::diarize_recording,
             diarization::diarize_meeting,
             diarization::rename_meeting_speaker,
+            diarization::reassign_transcript_speaker,
             diarization::get_diarization_engine,
             diarization::set_diarization_engine,
             diarization::diarization_get_status,
@@ -843,6 +873,7 @@ pub fn run() {
             summary::template_commands::api_is_custom_template,
             live_assistant::ask_live_assistant,
             live_assistant::ask_person,
+            live_assistant::api_ask_meeting,
             live_assistant::ollama_embed,
             // Built-in AI commands
             summary::summary_engine::commands::builtin_ai_list_models,

@@ -21,6 +21,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { MeetingMetadata, StoredTranscript } from '@/services/indexedDBService';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 interface TranscriptRecoveryProps {
   isOpen: boolean;
@@ -86,19 +88,16 @@ export function TranscriptRecovery({
       onClose();
     } catch (error) {
       console.error('Recovery failed:', error);
-      alert('Failed to recover meeting. Please try again.');
+      toast.error('Could not recover the meeting', { description: 'Please try again.' });
     } finally {
       setIsRecovering(false);
     }
   };
 
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   const handleDelete = async () => {
     if (!selectedMeetingId) return;
-
-    if (!confirm('Are you sure you want to delete this meeting? This cannot be undone.')) {
-      return;
-    }
-
     setIsDeleting(true);
     try {
       await onDelete(selectedMeetingId);
@@ -106,7 +105,7 @@ export function TranscriptRecovery({
       setPreviewTranscripts([]);
     } catch (error) {
       console.error('Delete failed:', error);
-      alert('Failed to delete meeting. Please try again.');
+      toast.error('Could not delete the recording', { description: 'Please try again.' });
     } finally {
       setIsDeleting(false);
     }
@@ -155,11 +154,11 @@ export function TranscriptRecovery({
                       </div>
                       {meeting.folderPath ? (
                         <span title="Audio available">
-                          <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
+                          <CheckCircle2 className="w-4 h-4 text-af-success flex-shrink-0" />
                         </span>
                       ) : (
                         <span title="No audio">
-                          <AlertCircle className="w-4 h-4 text-yellow-500 flex-shrink-0" />
+                          <AlertCircle className="w-4 h-4 text-af-warning flex-shrink-0" />
                         </span>
                       )}
                     </div>
@@ -187,12 +186,12 @@ export function TranscriptRecovery({
                         {selectedMeeting.transcriptCount} transcripts
                       </span>
                       {selectedMeeting.folderPath ? (
-                        <span className="flex items-center gap-1 text-green-600">
+                        <span className="flex items-center gap-1 text-af-success">
                           <CheckCircle2 className="w-4 h-4" />
                           Audio available
                         </span>
                       ) : (
-                        <span className="flex items-center gap-1 text-yellow-600">
+                        <span className="flex items-center gap-1 text-af-warning">
                           <AlertCircle className="w-4 h-4" />
                           No audio
                         </span>
@@ -273,40 +272,33 @@ export function TranscriptRecovery({
             Cancel
           </Button>
           <Button
-            variant="destructive"
-            onClick={handleDelete}
+            variant="danger-ghost"
+            onClick={() => setConfirmDelete(true)}
             disabled={!selectedMeetingId || isRecovering || isDeleting}
+            loading={isDeleting}
           >
-            {isDeleting ? (
-              <>
-                <XCircle className="w-4 h-4 mr-2 animate-spin" />
-                Deleting...
-              </>
-            ) : (
-              <>
-                <Trash2 className="w-4 h-4 mr-2" />
-                Delete
-              </>
-            )}
+            <Trash2 />
+            Delete
           </Button>
           <Button
             onClick={handleRecover}
             disabled={!selectedMeetingId || isRecovering || isDeleting}
+            loading={isRecovering}
           >
-            {isRecovering ? (
-              <>
-                <CheckCircle2 className="w-4 h-4 mr-2 animate-spin" />
-                Recovering...
-              </>
-            ) : (
-              <>
-                <CheckCircle2 className="w-4 h-4 mr-2" />
-                Recover
-              </>
-            )}
+            <CheckCircle2 />
+            Recover
           </Button>
         </DialogFooter>
       </DialogContent>
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        variant="danger"
+        title="Delete this unsaved recording?"
+        description="Its recovered transcript is removed for good. This cannot be undone."
+        confirmLabel="Delete"
+        onConfirm={handleDelete}
+      />
     </Dialog>
   );
 }

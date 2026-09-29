@@ -1,128 +1,257 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Switch } from './ui/switch';
-import { LabsPreferences, defaultLabsPreferences, loadLabsPreferences, saveLabsPreferences } from '@/lib/labs';
+/**
+ * Settings > Labs: experimental features, each off until it is turned on.
+ * Every feature says where it shows up once on, since most of them live in
+ * other screens (the meeting player, a contact's page, the record flow).
+ */
+import { useEffect, useState, type ReactNode } from 'react';
+import Link from 'next/link';
 import { invoke } from '@tauri-apps/api/core';
+import { AudioWaveform, Eraser, Fingerprint, Gauge, VolumeX, Workflow, X, type LucideIcon } from 'lucide-react';
+import { toast } from 'sonner';
+import { Switch } from '@/components/ui/switch';
+import { Avatar } from '@/components/ui/avatar';
+import { Spinner } from '@/components/ui/spinner';
+import { usePlatform } from '@/hooks/usePlatform';
+import { useLabs } from '@/hooks/useLabs';
+import { useVoiceProfiles } from '@/hooks/useVoiceProfiles';
+import { setLabsFeature, syncLabsFromBackend, type LabsFeature } from '@/lib/labs-features';
+import { describeVoiceError, describeVoiceSource, forgetVoice } from '@/lib/voice-profiles';
 
-const options: { key: keyof LabsPreferences; title: string; detail: string }[] = [
-  { key: 'meetingAutomation', title: 'Meeting automation', detail: 'Automatically start and stop a recording for an actively detected call. Enabling this also turns on Meeting Detection; process-only detections still prompt.' },
-  { key: 'transcriptScrubbing', title: 'Audio transcript scrubbing', detail: 'Seek to a transcript turn while reviewing a recorded meeting. Word-level timing is not available.' },
-  { key: 'voiceProfiles', title: 'Voice profiles', detail: 'Enroll a named speaker from clear saved system audio. WeSpeaker compares future Pyannote or Nemotron live turns and post-call diarization; short or uncertain turns stay unnamed.' },
-  { key: 'whisperSilenceGuard', title: 'Whisper silence guard', detail: 'Use stricter no-speech rejection for Whisper transcription. Quiet speech may be omitted.' },
-  { key: 'parakeetGpu', title: 'Parakeet GPU acceleration', detail: 'Run the Parakeet encoder through DirectML on Windows. Switching reloads the selected model; CPU remains the default.' },
-  { key: 'nearLiveCaptions', title: 'Near-live captions', detail: 'Experimental Parakeet previews update during speech. This may briefly show extra speakers or inaccurate words; final transcription and diarization replace the previews, and post-call transcription and diarization can improve the saved result. Some errors may remain, especially with overlapping remote voices. Takes effect next recording.' },
-  { key: 'cleanTranscript', title: 'Clean transcript view', detail: 'Hide simple English hesitations and immediate repeated words in the transcript display and new summaries. Saved text stays verbatim.' },
+interface Feature {
+  key: LabsFeature;
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  /** Where it shows up or applies once on. */
+  where: string;
+  windowsOnly?: boolean;
+}
+
+const GROUPS: Array<{ title: string; features: Feature[] }> = [
+  {
+    title: 'Meetings',
+    features: [
+      {
+        key: 'meetingAutomation',
+        icon: Workflow,
+        title: 'Meeting automation',
+        description:
+          'Start recording when meeting detection sees a call using your microphone or camera, and stop and save it when the call ends. Recordings you start yourself are never stopped.',
+        where: 'Turns on meeting detection. A notice says when a call starts or ends a recording.',
+      },
+    ],
+  },
+  {
+    title: 'Playback and transcript',
+    features: [
+      {
+        key: 'transcriptScrubbing',
+        icon: AudioWaveform,
+        title: 'Waveform scrubbing',
+        description:
+          "Show the recording's waveform in the meeting player, so you can see where people talk and jump straight there. Adds 0.5× and 0.75× speeds.",
+        where: "In the player under a meeting's transcript.",
+      },
+      {
+        key: 'cleanTranscript',
+        icon: Eraser,
+        title: 'Clean transcript',
+        description:
+          'Hide hesitations and stutters ("um", "we we") in the transcript, and write new summaries from the clean text. The saved transcript stays word for word.',
+        where: 'Switch between Clean and Verbatim in the meeting player.',
+      },
+    ],
+  },
+  {
+    title: 'Speech recognition',
+    features: [
+      {
+        key: 'whisperSilenceGuard',
+        icon: VolumeX,
+        title: 'Whisper silence guard',
+        description:
+          'Filter silence and background noise more strictly when Whisper transcribes, so quiet stretches do not turn into made-up lines. Very quiet speech may be skipped.',
+        where: 'Applies whenever Whisper transcribes.',
+      },
+      {
+        key: 'parakeetGpu',
+        icon: Gauge,
+        title: 'Parakeet on the GPU',
+        description:
+          "Run Parakeet's encoder on your graphics card through DirectML. Switching reloads the model; if the GPU cannot load it, Parakeet stays on the CPU.",
+        where: 'Applies to Parakeet transcription.',
+        windowsOnly: true,
+      },
+    ],
+  },
+  {
+    title: 'Voices',
+    features: [
+      {
+        key: 'voiceProfiles',
+        icon: Fingerprint,
+        title: 'Voice profiles',
+        description:
+          "Learn a contact's voice from the meetings they spoke in. When speakers are identified in later meetings, a matching voice gets their name.",
+        where: "Learn, update or forget a voice on a contact's page, or add one meeting's audio from its speaker card.",
+      },
+    ],
+  },
 ];
 
-export function LabsSettings() {
-  const [preferences, setPreferences] = useState<LabsPreferences>(defaultLabsPreferences);
-  const [profiles, setProfiles] = useState<{ person_id: string; name: string; samples: number }[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    setPreferences(loadLabsPreferences());
-    invoke<boolean>('get_whisper_strict_silence').then((enabled) => {
-      setPreferences((current) => {
-        const next = { ...current, whisperSilenceGuard: enabled };
-        saveLabsPreferences(next);
-        return next;
-      });
-    }).catch(console.error);
-    invoke<boolean>('get_voice_profiles_enabled').then((enabled) => {
-      setPreferences((current) => {
-        const next = { ...current, voiceProfiles: enabled };
-        saveLabsPreferences(next);
-        return next;
-      });
-    }).catch(console.error);
-    invoke<boolean>('get_parakeet_gpu_enabled').then((enabled) => {
-      setPreferences((current) => {
-        const next = { ...current, parakeetGpu: enabled };
-        saveLabsPreferences(next);
-        return next;
-      });
-    }).catch(console.error);
-    invoke<boolean>('get_near_live_captions_enabled').then((enabled) => {
-      setPreferences((current) => {
-        const next = { ...current, nearLiveCaptions: enabled };
-        saveLabsPreferences(next);
-        return next;
-      });
-    }).catch(console.error);
-    invoke<{ person_id: string; name: string; samples: number }[]>('list_voice_profiles').then(setProfiles).catch(console.error);
-  }, []);
-  const update = async (key: keyof LabsPreferences, value: boolean) => {
-    setError(null);
-    if (key === 'meetingAutomation' && value) {
-      try {
-        const detection = await invoke<Record<string, unknown>>('get_meeting_detection_settings');
-        if (!detection.enabled) {
-          await invoke('set_meeting_detection_settings', { settings: { ...detection, enabled: true } });
-        }
-      } catch (error) {
-        console.error('Could not enable meeting detection:', error);
-        return;
-      }
-    }
-    if (key === 'whisperSilenceGuard') {
-      try {
-        await invoke('set_whisper_strict_silence', { enabled: value });
-      } catch (error) {
-        console.error('Could not save Whisper silence guard:', error);
-        return;
-      }
-    }
-    if (key === 'voiceProfiles') {
-      try {
-        await invoke('set_voice_profiles_enabled', { value });
-      } catch (error) {
-        console.error('Could not save voice profile setting:', error);
-        return;
-      }
-    }
-    if (key === 'parakeetGpu') {
-      try {
-        await invoke('set_parakeet_gpu_enabled', { value });
-      } catch (failure) {
-        setError(`Parakeet GPU setting failed: ${String(failure)}`);
-        return;
-      }
-    }
-    if (key === 'nearLiveCaptions') {
-      try {
-        await invoke('set_near_live_captions_enabled', { value });
-      } catch (failure) {
-        setError(`Near-live captions setting failed: ${String(failure)}`);
-        return;
-      }
-    }
-    const next = { ...preferences, [key]: value };
-    setPreferences(next);
-    saveLabsPreferences(next);
-  };
+function FeatureRow({
+  feature,
+  checked,
+  busy,
+  onChange,
+  children,
+}: {
+  feature: Feature;
+  checked: boolean;
+  busy: boolean;
+  onChange: (value: boolean) => void;
+  children?: ReactNode;
+}) {
+  const Icon = feature.icon;
   return (
-    <section className="space-y-4">
-      <div>
-        <h2 className="text-xl font-semibold">Labs</h2>
-        <p className="text-sm text-[var(--af-text-2)]">Experimental controls for meeting and transcript workflows.</p>
-      </div>
-      {error && <p role="alert" className="text-sm text-red-500">{error}</p>}
-      {options.map((option) => (
-        <div key={option.key} className="flex items-start justify-between gap-5 rounded-lg border border-[var(--af-border)] bg-[var(--af-panel)] p-4">
-          <div>
-            <h3 className="font-medium">{option.title}</h3>
-            <p className="mt-1 text-sm text-[var(--af-text-2)]">{option.detail}</p>
-          </div>
-          <Switch aria-label={option.title} checked={preferences[option.key]} onCheckedChange={(value) => void update(option.key, value)} />
+    <div className="px-5 py-4">
+      <div className="flex items-start gap-4">
+        <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-af-accent/[0.12] text-af-accent">
+          <Icon className="h-[18px] w-[18px]" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h4 className="text-sm font-semibold text-af-text">{feature.title}</h4>
+          <p className="mt-0.5 text-[13px] leading-relaxed text-af-text-3">{feature.description}</p>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-af-text-4">{feature.where}</p>
         </div>
-      ))}
-      {profiles.length > 0 && <div className="rounded-lg border border-[var(--af-border)] p-4">
-        <h3 className="font-medium">Enrolled voices</h3>
-        {profiles.map((profile) => <div key={profile.person_id} className="mt-2 flex items-center justify-between gap-3 text-sm">
-          <span>{profile.name} · {profile.samples} turns</span>
-          <button type="button" className="text-red-500 hover:underline" onClick={() => void invoke('delete_voice_profile', { personId: profile.person_id }).then(() => setProfiles((current) => current.filter((item) => item.person_id !== profile.person_id)))}>Delete</button>
-        </div>)}
-      </div>}
-    </section>
+        <span className="mt-1 flex shrink-0 items-center gap-2">
+          {busy && <Spinner size={14} className="text-af-text-3" />}
+          <Switch checked={checked} disabled={busy} onCheckedChange={onChange} aria-label={feature.title} />
+        </span>
+      </div>
+      {children && <div className="mt-3 sm:pl-[52px]">{children}</div>}
+    </div>
+  );
+}
+
+/** The learned voices, each linked to its contact. */
+function LearnedVoices() {
+  const profiles = useVoiceProfiles();
+  const [modelsReady, setModelsReady] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    invoke<{ pyannote_available?: boolean }>('diarization_get_status')
+      .then((status) => setModelsReady(!!status.pyannote_available))
+      .catch(() => setModelsReady(null));
+  }, []);
+
+  return (
+    <div className="space-y-2">
+      {modelsReady === false && (
+        <p className="rounded-lg border border-af-warning/30 bg-af-warning/[0.08] px-3 py-2 text-xs text-af-text-2">
+          Voice profiles need the speaker models.{' '}
+          <Link href="/settings?section=transcription" className="font-medium text-af-accent hover:underline">
+            Download them in Transcription
+          </Link>
+          .
+        </p>
+      )}
+      {profiles === null ? (
+        <div className="af-skeleton h-10 rounded-lg" />
+      ) : profiles.length === 0 ? (
+        <p className="text-xs leading-relaxed text-af-text-3">
+          No voices yet. Open a contact from{' '}
+          <Link href="/contacts" className="font-medium text-af-accent hover:underline">
+            Contacts
+          </Link>{' '}
+          and choose Learn voice.
+        </p>
+      ) : (
+        <ul className="divide-y divide-af-border overflow-hidden rounded-xl border border-af-border bg-af-panel">
+          {profiles.map((profile) => (
+            <li key={profile.person_id} className="flex items-center gap-3 px-3 py-2">
+              <Avatar name={profile.name} size="sm" />
+              <Link
+                href={`/person?id=${encodeURIComponent(profile.person_id)}`}
+                className="min-w-0 flex-1 truncate text-[13px] font-medium text-af-text hover:text-af-accent"
+              >
+                {profile.name}
+              </Link>
+              <span className="shrink-0 text-[11px] tabular-nums text-af-text-4">
+                {describeVoiceSource(profile)}
+              </span>
+              <button
+                type="button"
+                aria-label={`Forget ${profile.name}'s voice`}
+                onClick={() =>
+                  forgetVoice(profile.person_id)
+                    .then(() => toast.success(`Forgot ${profile.name}'s voice`))
+                    .catch((error) => toast.error('Could not forget the voice', { description: describeVoiceError(error) }))
+                }
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-af-text-4 transition-colors hover:bg-af-danger/10 hover:text-af-danger"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+export function LabsSettings() {
+  const platform = usePlatform();
+  const { labs } = useLabs();
+  const [busy, setBusy] = useState<LabsFeature | null>(null);
+
+  // Three switches live in Rust; show what it actually has.
+  useEffect(() => {
+    void syncLabsFromBackend().catch(() => undefined);
+  }, []);
+
+  const change = async (feature: Feature, value: boolean) => {
+    setBusy(feature.key);
+    try {
+      await setLabsFeature(feature.key, value);
+      if (feature.key === 'meetingAutomation' && value) {
+        toast.success('Meeting automation is on', { description: 'Meeting detection is on too, so calls can start recordings.' });
+      }
+    } catch (error) {
+      toast.error(`Could not ${value ? 'turn on' : 'turn off'} ${feature.title.toLowerCase()}`, {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {GROUPS.map((group) => {
+        const features = group.features.filter((feature) => !feature.windowsOnly || platform === 'windows');
+        if (features.length === 0) return null;
+        return (
+          <section key={group.title}>
+            <h3 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-af-text-4">{group.title}</h3>
+            <div className="divide-y divide-af-border overflow-hidden rounded-2xl border border-af-border bg-af-panel-2/40">
+              {features.map((feature) => (
+                <FeatureRow
+                  key={feature.key}
+                  feature={feature}
+                  checked={labs[feature.key]}
+                  busy={busy === feature.key}
+                  onChange={(value) => void change(feature, value)}
+                >
+                  {feature.key === 'voiceProfiles' && labs.voiceProfiles ? <LearnedVoices /> : null}
+                </FeatureRow>
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </div>
   );
 }

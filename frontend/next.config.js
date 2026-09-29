@@ -11,6 +11,13 @@ const nextConfig = {
   },
   basePath: '',
   assetPrefix: '/',
+  // Dev server only: keep every compiled page in memory. By default pages idle
+  // for a minute are dropped and recompiled on the next visit, which made
+  // switching pages in the dev app slow.
+  onDemandEntries: {
+    maxInactiveAge: 60 * 60 * 1000,
+    pagesBufferLength: 20,
+  },
   // Only use static HTML export for production builds ('next build').
   // In development ('next dev'), disabling export allows rewrites so Tauri's default
   // request for /index.html is seamlessly served as / (app/page.tsx).
@@ -31,10 +38,8 @@ const nextConfig = {
 
   // Add webpack configuration for Tauri
   webpack: (config, { isServer }) => {
-    config.output = config.output || {};
-    config.output.chunkLoadTimeout = 300000; // 5 minutes to prevent ChunkLoadError timeout during cold dev server startup
-
     if (!isServer) {
+      // 5 minutes, so a cold dev server does not fail with ChunkLoadError.
       config.output = config.output || {};
       config.output.chunkLoadTimeout = 300000;
 

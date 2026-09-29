@@ -6,7 +6,6 @@ import { SelectedDevices } from '@/components/DeviceSelection';
 import { configService, ModelConfig } from '@/services/configService';
 import { invoke } from '@tauri-apps/api/core';
 import Analytics from '@/lib/analytics';
-import { BetaFeatures, BetaFeatureKey, loadBetaFeatures, saveBetaFeatures } from '@/types/betaFeatures';
 
 export interface OllamaModel {
   name: string;
@@ -62,12 +61,8 @@ interface ConfigContextType {
   // UI preferences
   showConfidenceIndicator: boolean;
   toggleConfidenceIndicator: (checked: boolean) => void;
-  showSpeakersPanel: boolean;
-  toggleShowSpeakersPanel: (checked: boolean) => void;
 
   // Beta features
-  betaFeatures: BetaFeatures;
-  toggleBetaFeature: (featureKey: BetaFeatureKey, enabled: boolean) => void;
 
   // Ollama models
   models: OllamaModel[];
@@ -163,14 +158,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     return true;
   });
 
-  const [showSpeakersPanel, setShowSpeakersPanel] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('showSpeakersPanel');
-      return saved !== null ? saved === 'true' : false;
-    }
-    return false;
-  });
-
   // Summary configs
   const [isAutoSummary, setisAutoSummary] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
@@ -179,11 +166,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       return saved !== null ? saved === 'true' : true
     }
     return true;
-  });
-
-  // Beta features state (localStorage)
-  const [betaFeatures, setBetaFeatures] = useState<BetaFeatures>(() => {
-    return loadBetaFeatures();
   });
 
   // Preference settings state (lazy loaded)
@@ -384,6 +366,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const modelOptions: Record<ModelConfig['provider'], string[]> = {
     ollama: models.map(model => model.name),
     claude: ['claude-3-5-sonnet-latest'],
+    'claude-cli': ['sonnet', 'opus', 'haiku', 'default'],
     groq: ['llama-3.3-70b-versatile'],
     openrouter: [],
     openai: ['gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo'],
@@ -401,36 +384,12 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     window.dispatchEvent(new CustomEvent('confidenceIndicatorChanged', { detail: checked }));
   }, []);
 
-  const toggleShowSpeakersPanel = useCallback((checked: boolean) => {
-    setShowSpeakersPanel(checked);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('showSpeakersPanel', checked.toString());
-    }
-    window.dispatchEvent(new CustomEvent('speakersPanelPreferenceChanged', { detail: checked }));
-  }, []);
-
   const toggleIsAutoSummary = useCallback((checked: boolean) => {
     setisAutoSummary(checked);
     if (typeof window !== 'undefined') {
       localStorage.setItem('isAutoSummary', checked.toString());
     }
   }, [])
-
-  // Toggle beta feature with localStorage persistence and analytics
-  const toggleBetaFeature = useCallback((featureKey: BetaFeatureKey, enabled: boolean) => {
-    setBetaFeatures(prev => {
-      const updated = { ...prev, [featureKey]: enabled };
-      saveBetaFeatures(updated);
-
-      // Track analytics with specific feature
-      Analytics.track('beta_feature_toggled', {
-        feature: featureKey,
-        enabled: enabled.toString(),
-      }).catch(err => console.error('Failed to track beta feature toggle:', err));
-
-      return updated;
-    });
-  }, []);
 
   // Update individual provider API key
   const updateProviderApiKey = useCallback((provider: string, apiKey: string | null) => {
@@ -534,10 +493,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     setSelectedLanguage: handleSetSelectedLanguage,
     showConfidenceIndicator,
     toggleConfidenceIndicator,
-    showSpeakersPanel,
-    toggleShowSpeakersPanel,
-    betaFeatures,
-    toggleBetaFeature,
     models,
     modelOptions,
     error,
@@ -559,10 +514,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     handleSetSelectedLanguage,
     showConfidenceIndicator,
     toggleConfidenceIndicator,
-    showSpeakersPanel,
-    toggleShowSpeakersPanel,
-    betaFeatures,
-    toggleBetaFeature,
     models,
     modelOptions,
     error,

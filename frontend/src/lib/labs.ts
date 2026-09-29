@@ -19,6 +19,7 @@ export const defaultLabsPreferences: LabsPreferences = {
 };
 
 const key = 'meetily-labs-v1';
+export const LABS_CHANGED_EVENT = 'meetily-labs-changed';
 
 export function loadLabsPreferences(): LabsPreferences {
   if (typeof window === 'undefined') return defaultLabsPreferences;
@@ -36,7 +37,7 @@ export function loadLabsPreferences(): LabsPreferences {
 
 export function saveLabsPreferences(value: LabsPreferences): void {
   localStorage.setItem(key, JSON.stringify(value));
-  window.dispatchEvent(new Event('meetily-labs-changed'));
+  window.dispatchEvent(new Event(LABS_CHANGED_EVENT));
 }
 
 // Only display text is changed. Persisted transcription and turn timestamps stay verbatim.

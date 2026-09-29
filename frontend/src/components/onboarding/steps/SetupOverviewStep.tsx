@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { AlertTriangle, Cpu, Info, RefreshCw, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   formatWhisperBackend,
   getWhisperBackend,
@@ -125,7 +126,7 @@ export function SetupOverviewStep() {
     >
       <div className="flex flex-col items-center space-y-10">
         {/* Steps Card */}
-        <div className="w-full max-w-md bg-white rounded-lg border border-gray-200 p-4">
+        <div className="w-full max-w-md bg-af-panel rounded-lg border border-af-border p-4">
           <div className="space-y-4">
             {steps.map((step) => {
               return (
@@ -134,14 +135,14 @@ export function SetupOverviewStep() {
                   className="flex items-start gap-4 p-1"
                 >
                   <div className="flex-1 ml-1">
-                    <h3 className="font-medium text-gray-900 flex items-center gap-2">
+                    <h3 className="font-medium text-af-text flex items-center gap-2">
                         Step {step.number} :  {step.title}
 
                         {step.type === 'summarization' && (
                             <TooltipProvider>
                             <Tooltip>
                                 <TooltipTrigger asChild>
-                                <button className="text-gray-400 hover:text-gray-600">
+                                <button className="text-af-text-4 hover:text-af-text-2">
                                     <Info className="w-4 h-4" />
                                 </button>
                                 </TooltipTrigger>
@@ -160,17 +161,17 @@ export function SetupOverviewStep() {
           </div>
         </div>
 
-        <div className="w-full max-w-md rounded-lg border border-gray-200 bg-white p-4">
+        <div className="w-full max-w-md rounded-lg border border-af-border bg-af-panel p-4">
           <div className="flex items-start gap-3">
-            <div className="rounded-full bg-blue-50 p-2 text-blue-600">
+            <div className="rounded-full bg-af-accent/10 p-2 text-af-accent">
               {whisperBackend === 'CPU' ? <Cpu className="h-4 w-4" /> : <Zap className="h-4 w-4" />}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-gray-900">Transcription acceleration</p>
-              <p className="mt-1 text-sm font-semibold text-blue-700">
+              <p className="text-sm font-medium text-af-text">Transcription acceleration</p>
+              <p className="mt-1 text-sm font-semibold text-af-accent">
                 {accelerationLabel}
               </p>
-              <p className="mt-1 text-xs leading-5 text-gray-600">
+              <p className="mt-1 text-xs leading-5 text-af-text-2">
                 {accelerationDescription} Live Parakeet uses the CPU by default; DirectML acceleration is optional in Labs.
               </p>
             </div>
@@ -180,10 +181,10 @@ export function SetupOverviewStep() {
         {showCudaNotice && (
           <div
             role="status"
-            className="w-full max-w-md rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950"
+            className="w-full max-w-md rounded-lg border border-af-warning/35 bg-af-warning/10 p-4 text-af-text"
           >
             <div className="flex items-start gap-3">
-              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-af-warning" />
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold">
                   {cudaStatus?.reconfigurationRequired
@@ -192,7 +193,7 @@ export function SetupOverviewStep() {
                       ? 'CUDA support could not be verified'
                       : 'Your NVIDIA GPU needs a current driver'}
                 </p>
-                <p className="mt-1 text-xs leading-5 text-amber-900">
+                <p className="mt-1 text-xs leading-5 text-af-text">
                   {cudaStatus?.reconfigurationRequired
                     ? `This installation is still using ${formatWhisperBackend(whisperBackend ?? 'CPU')}. Rerun the latest Meetily setup and it will select NVIDIA CUDA automatically.`
                     : cudaProbeFailed
@@ -207,7 +208,7 @@ export function SetupOverviewStep() {
                     size="sm"
                     variant="outline"
                     onClick={cudaStatus?.reconfigurationRequired ? openLatestSetup : openNvidiaDrivers}
-                    className="border-amber-400 bg-white text-amber-950 hover:bg-amber-100"
+                    className="border-af-warning/35 bg-af-panel text-af-text hover:bg-af-warning/10"
                   >
                     {cudaStatus?.reconfigurationRequired ? 'Download CUDA setup' : 'Get NVIDIA driver'}
                   </Button>
@@ -217,7 +218,7 @@ export function SetupOverviewStep() {
                     variant="ghost"
                     disabled={checkingAcceleration}
                     onClick={() => void checkAcceleration()}
-                    className="text-amber-950 hover:bg-amber-100"
+                    className="text-af-text hover:bg-af-warning/10"
                   >
                     <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${checkingAcceleration ? 'animate-spin' : ''}`} />
                     Recheck
@@ -228,28 +229,28 @@ export function SetupOverviewStep() {
           </div>
         )}
 
-        <div className="w-full max-w-md space-y-3 rounded-lg border border-gray-200 bg-white p-4 text-gray-900">
-          <h3 className="font-medium">Optional upgrades</h3>
-          <label className="flex items-start gap-3 text-sm">
-            <input type="checkbox" checked={installWhisper} onChange={e => setInstallWhisper(e.target.checked)} className="mt-1" />
-            <span>Whisper for retranscription <span className="rounded bg-blue-50 px-1.5 py-0.5 text-xs font-medium text-blue-700">Recommended</span> <span className="text-gray-500">{jobs.whisper.status === 'ready' ? '· Installed; enable it' : '· ~547 MB'}</span>
-              <span className="block text-xs text-gray-500">Large v3 Turbo Q5 for post-call enhancement and retranscribing recordings. Parakeet remains the live transcription engine.</span>
+        <div className="w-full max-w-md space-y-3 rounded-lg border border-af-border bg-af-panel p-4 text-af-text">
+          <h3 className="text-sm font-medium">Optional upgrades</h3>
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <Checkbox checked={installWhisper} onCheckedChange={checked => setInstallWhisper(checked === true)} className="mt-0.5" />
+            <span>Whisper for retranscription <span className="rounded-full bg-af-accent/10 px-1.5 py-0.5 text-[11px] font-medium text-af-accent">Recommended</span> <span className="text-af-text-3">{jobs.whisper.status === 'ready' ? '· Installed; enable it' : '· ~547 MB'}</span>
+              <span className="mt-0.5 block text-xs leading-5 text-af-text-2">Large v3 Turbo Q5 for post-call enhancement and retranscribing recordings. Parakeet remains the live transcription engine.</span>
             </span>
           </label>
-          <label className="flex items-start gap-3 text-sm">
-            <input type="checkbox" checked={installNemotron} onChange={e => setInstallNemotron(e.target.checked)} className="mt-1" />
-            <span>Nemotron for speaker identification <span className="rounded bg-blue-50 px-1.5 py-0.5 text-xs font-medium text-blue-700">Recommended</span> <span className="text-gray-500">{jobs.nemotron.status === 'ready' ? '· Installed; enable it' : '· ~382 MB'}</span>
-              <span className="block text-xs text-gray-500">Auto-detect speakers after recording. Windows supports DirectML GPU acceleration with CPU fallback.</span>
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <Checkbox checked={installNemotron} onCheckedChange={checked => setInstallNemotron(checked === true)} className="mt-0.5" />
+            <span>Nemotron for speaker identification <span className="rounded-full bg-af-accent/10 px-1.5 py-0.5 text-[11px] font-medium text-af-accent">Recommended</span> <span className="text-af-text-3">{jobs.nemotron.status === 'ready' ? '· Installed; enable it' : '· ~382 MB'}</span>
+              <span className="mt-0.5 block text-xs leading-5 text-af-text-2">Auto-detect speakers after recording. Windows supports DirectML GPU acceleration with CPU fallback.</span>
             </span>
           </label>
-          <p className="text-xs text-gray-500">Selected models download in the background and enable automatically when ready. You can finish setup immediately and track progress or retry in Settings.</p>
+          <p className="text-xs leading-5 text-af-text-3">Selected models download in the background and enable automatically when ready. You can finish setup immediately and track progress or retry in Settings.</p>
         </div>
 
         {/* CTA Section */}
         <div className="w-full max-w-xs space-y-4">
           <Button
             onClick={handleContinue}
-            className="w-full h-11 bg-gray-900 hover:bg-gray-800 text-white"
+            className="w-full h-11 bg-af-elevated hover:bg-af-elevated text-white"
           >
             Let's Go
           </Button>
@@ -257,7 +258,7 @@ export function SetupOverviewStep() {
             <button
               type="button"
               onClick={openIssues}
-              className="text-xs text-gray-600 hover:underline"
+              className="text-xs text-af-text-2 hover:underline"
             >
               View project on GitHub
             </button>
