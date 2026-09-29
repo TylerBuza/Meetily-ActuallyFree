@@ -44,6 +44,8 @@ export function MeetingImages({ meetingId, live = false, currentTime = 0, onSeek
   children: ReactNode;
 }) {
   const [images, setImages] = useState<MeetingImage[]>([]);
+  const [isMac, setIsMac] = useState(false);
+  useEffect(() => setIsMac(/Macintosh|Mac OS X/.test(navigator.userAgent)), []);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<MeetingImage | null>(null);
   const refresh = useCallback(async () => {
@@ -106,7 +108,7 @@ export function MeetingImages({ meetingId, live = false, currentTime = 0, onSeek
             <Camera className="h-3.5 w-3.5" /> Capture screenshot
           </Button>
         </div>
-        <p className="mt-1 text-[11px] text-af-text-4">Paste an image in the notes, or capture a window. It is saved at the current recording or playback time.</p>
+        <p className="mt-1 text-[11px] text-af-text-4">Paste an image in the notes, or capture a window. It is saved at the current recording or playback time.{isMac ? ' In the macOS picker, hover over a window and choose Share This Window.' : ''}</p>
         {images.length > 0 ? (
           <div className="mt-3 flex gap-2 overflow-x-auto pb-2">
             {images.map((image) => (

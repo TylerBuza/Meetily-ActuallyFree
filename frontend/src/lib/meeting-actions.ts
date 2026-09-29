@@ -44,11 +44,11 @@ export async function moveMeetingsToGroup(
   }
 }
 
-export async function deleteMeetings(meetingIds: string[]): Promise<number> {
+export async function deleteMeetings(meetingIds: string[], deleteLocalFiles = false): Promise<number> {
   let deleted = 0;
   for (const meetingId of meetingIds) {
     try {
-      await invoke('api_delete_meeting', { meetingId });
+      await invoke('api_delete_meeting', { meetingId, deleteLocalFiles });
       Analytics.trackMeetingDeleted(meetingId);
       deleted += 1;
     } catch (error) {
@@ -59,7 +59,9 @@ export async function deleteMeetings(meetingIds: string[]): Promise<number> {
     announceChange('meetings', { meetingIds });
     announceChange('groups');
     announceChange('actions');
-    toast.success(deleted === 1 ? 'Meeting deleted' : `${deleted} meetings deleted`);
+    toast.success(deleteLocalFiles
+      ? (deleted === 1 ? 'Meeting and local files deleted' : `${deleted} meetings and local files deleted`)
+      : (deleted === 1 ? 'Meeting removed from Meetily; files kept' : `${deleted} meetings removed from Meetily; files kept`));
   }
   if (deleted < meetingIds.length) {
     const failed = meetingIds.length - deleted;

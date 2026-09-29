@@ -28,7 +28,21 @@ queued ASR, diarization lookup, and event/render time. Shared Parakeet model
 access can also delay a final chunk behind an in-flight preview. The 0.5 s
 snapshot interval is not an end-to-end latency guarantee. A faster cap may
 increase word cuts and transcription errors. Preview text may revise as more
-audio arrives and is shown with an Updating marker.
+audio arrives and is shown with an Updating marker. The live view updates
+near-live text in place instead of replaying the typewriter effect over an
+established paragraph. After a final event, it retains the provisional line
+until the corresponding saved turn reaches `TranscriptContext`. A bounded
+1.5 s expiry removes previews when transcription yields no saved turn. This
+display handoff does not change saved text, timing, or speaker provenance;
+unfinished preview words may still be revised by ASR.
+The live renderer also remembers the longest visible prefix for each speaker
+turn's start time, which remains stable when its first native segment ID changes.
+Out-of-order final chunks can temporarily produce a shorter projection of the
+same turn; this display cache keeps the older words visible while the missing
+chunks settle, and accepts a longer or corrected projection. It resets when
+near-live mode or recording stops. A speaker relabel that changes the first
+turn ID can still create a new row, and genuine ASR edits can still replace
+unfinished words.
 
 The Labs setting warns that provisional captions may show extra speakers or
 inaccurate words. Final live ASR and diarization replace provisional text and

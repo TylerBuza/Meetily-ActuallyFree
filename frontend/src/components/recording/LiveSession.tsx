@@ -28,7 +28,7 @@ import { automaticTitle, onLiveSessionChange, readLiveTitle, writeLiveTitle, typ
 import { formatClock } from '@/lib/dates';
 import type { LiveLine } from '@/lib/live-context';
 import { useLabs } from '@/hooks/useLabs';
-import { isDuplicatedMicCaption } from '@/lib/nearLiveCaptions';
+import { isDuplicatedMicCaption, previewHasFinalTurn } from '@/lib/nearLiveCaptions';
 
 const PANEL_KEY = 'af-live-panel-open';
 const PANEL_WIDTH = 340;
@@ -68,6 +68,7 @@ export function LiveSession({
   const { labs } = useLabs();
   const [previews, setPreviews] = useState<Partial<Record<PreviewCaption['source'], PreviewCaption>>>({});
   const finalizedUntil = useRef({ microphone: -Infinity, system: -Infinity });
+  const previewExpiry = useRef<Partial<Record<PreviewCaption['source'], ReturnType<typeof setTimeout>>>>({});
 
   useEffect(() => {
     if (!isRecording || !labs.nearLiveCaptions || isPaused) { setPreviews({}); return; }
@@ -77,26 +78,52 @@ export function LiveSession({
     const attach = async () => {
       const captionStop = await listen<PreviewCaption>('near-live-caption', ({ payload }) => {
         if (disposed || payload.end_time <= finalizedUntil.current[payload.source]) return;
+        if (previewExpiry.current[payload.source]) clearTimeout(previewExpiry.current[payload.source]);
         setPreviews((current) => ({ ...current, [payload.source]: payload }));
       });
       stops.push(captionStop);
       const finalStop = await listen<PreviewFinalized>('near-live-finalized', ({ payload }) => {
         if (disposed) return;
         finalizedUntil.current[payload.source] = Math.max(finalizedUntil.current[payload.source], payload.end_time);
-        setPreviews((current) => {
-          const preview = current[payload.source];
-          if (!preview || preview.start_time >= payload.end_time) return current;
-          const next = { ...current };
-          delete next[payload.source];
-          return next;
-        });
+        // Native emits the final line first, but React may not have committed
+        // TranscriptContext's update yet. Keep the preview until that line
+        // arrives so a whole live bubble never vanishes between the two events.
+        if (previewExpiry.current[payload.source]) clearTimeout(previewExpiry.current[payload.source]);
+        previewExpiry.current[payload.source] = setTimeout(() => {
+          setPreviews((current) => {
+            const preview = current[payload.source];
+            if (!preview || preview.end_time > payload.end_time + 0.05) return current;
+            const next = { ...current };
+            delete next[payload.source];
+            return next;
+          });
+        }, 1500);
       });
       stops.push(finalStop);
       if (disposed) stops.forEach((stop) => stop());
     };
     void attach().catch(console.error);
-    return () => { disposed = true; stops.forEach((stop) => stop()); };
+    return () => {
+      disposed = true;
+      stops.forEach((stop) => stop());
+      Object.values(previewExpiry.current).forEach((timer) => { if (timer) clearTimeout(timer); });
+      previewExpiry.current = {};
+    };
   }, [isRecording, isPaused, labs.nearLiveCaptions]);
+
+  useEffect(() => {
+    setPreviews((current) => {
+      let next: typeof current | null = null;
+      for (const source of ['microphone', 'system'] as const) {
+        const preview = current[source];
+        if (!preview || finalizedUntil.current[source] < preview.end_time - 0.05) continue;
+        if (!previewHasFinalTurn({ ...preview, source }, transcripts)) continue;
+        next ??= { ...current };
+        delete next[source];
+      }
+      return next ?? current;
+    });
+  }, [transcripts]);
 
   const [live, setLive] = useState<LiveTitle | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
@@ -303,7 +330,7 @@ export function LiveSession({
             isPaused={isPaused}
             isProcessing={isProcessingStop}
             isStopping={isStopping}
-            enableStreaming={isRecording && !isPaused}
+            enableStreaming={isRecording && !isPaused && !labs.nearLiveCaptions}
             showConfidence
             onRenameSpeaker={(speaker, segmentId) => setIdentity({ speaker, transcriptId: segmentId || null })}
             onMergeSpeaker={(speaker) => setIdentity({ speaker, transcriptId: null })}

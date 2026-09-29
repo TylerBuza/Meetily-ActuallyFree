@@ -1,5 +1,41 @@
 import type { TranscriptSegmentData } from '../types';
-import { speakerKey } from '../utils/speakerUtils';
+import { isUserSpeaker, speakerKey } from '../utils/speakerUtils';
+
+/** A final turn must cover this preview on the same capture source. */
+export function previewHasFinalTurn(
+  preview: { end_time: number; source: 'microphone' | 'system' },
+  turns: Array<{ audio_start_time?: number; audio_end_time?: number; speaker?: string }>,
+): boolean {
+  return turns.some((turn) =>
+    isUserSpeaker(turn.speaker) === (preview.source === 'microphone')
+    && (turn.audio_start_time ?? Infinity) <= preview.end_time
+    && (turn.audio_end_time ?? -Infinity) >= preview.end_time - 0.25);
+}
+
+export function liveTurnIdentity(turn: { id: string; timestamp?: number; speaker?: string }): string {
+  if (turn.timestamp === undefined || !Number.isFinite(turn.timestamp) || !turn.speaker) return turn.id;
+  // A final chunk can change the first native segment ID while this speaker's
+  // displayed turn still starts at the same recording time.
+  return `${speakerKey(turn.speaker)}:${Math.floor(turn.timestamp)}`;
+}
+
+/** Keep an already displayed prefix while out-of-order final chunks settle. */
+export function retainLiveText<T extends { id: string; text: string; timestamp?: number; speaker?: string }>(
+  turns: T[],
+  shownText: Map<string, string>,
+): T[] {
+  return turns.map((turn) => {
+    const key = liveTurnIdentity(turn);
+    const previous = shownText.get(key);
+    const incoming = turn.text.trim();
+    // Native final chunks can arrive out of order. A transient projection may
+    // only contain the first chunk again; do not collapse an existing bubble.
+    const text = previous && previous.startsWith(incoming) && previous.length > incoming.length
+      ? previous : turn.text;
+    shownText.set(key, text);
+    return text === turn.text ? turn : { ...turn, text };
+  });
+}
 
 // A live display projection. The transcript context and saved turns retain
 // their original source, text, and recording-relative timestamps.

@@ -436,9 +436,7 @@ export default function PageContent({
         onCopySummary={copyOperations.handleCopySummary}
         hasSummary={!!meetingData.aiSummary}
         onOpenFolder={meetingOperations.handleOpenMeetingFolder}
-        onDelete={async () => {
-          await deleteMeetings([meeting.id]);
-        }}
+        onDelete={async (deleteLocalFiles) => (await deleteMeetings([meeting.id], deleteLocalFiles)) === 1}
         onTranscriptChanged={() => refreshAfterSpeakerChange()}
       />
 

@@ -37,7 +37,7 @@ import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Combobox } from '@/components/ui/combobox';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { DeleteMeetingsDialog } from '@/components/meetings/DeleteMeetingsDialog';
 import { EmptyState, PageHeader } from '@/components/ui/surface';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -498,17 +498,15 @@ export default function MeetingsPage() {
 
       <ExportMeetingsDialog open={exportIds !== null} onOpenChange={(next) => !next && setExportIds(null)} meetings={exportList(exportIds ?? [])} />
 
-      <ConfirmDialog
+      <DeleteMeetingsDialog
         open={pendingDelete !== null}
         onOpenChange={(next) => !next && setPendingDelete(null)}
-        variant="danger"
-        title={pendingDelete && pendingDelete.length > 1 ? `Delete ${pendingDelete.length} meetings?` : 'Delete this meeting?'}
-        description="The transcript, summary, notes, and action items are removed. Audio files stay in your recordings folder."
-        confirmLabel="Delete"
-        onConfirm={async () => {
-          if (!pendingDelete) return;
-          const deleted = await deleteMeetings(pendingDelete);
+        count={pendingDelete?.length ?? 0}
+        onDelete={async (deleteLocalFiles) => {
+          if (!pendingDelete) return false;
+          const deleted = await deleteMeetings(pendingDelete, deleteLocalFiles);
           if (deleted > 0) setSelected(new Set());
+          return deleted > 0;
         }}
       />
     </div>

@@ -1023,9 +1023,10 @@ pub async fn api_delete_api_key<R: Runtime>(
 
 #[tauri::command]
 pub async fn api_delete_meeting<R: Runtime>(
-    _app: AppHandle<R>,
+    app: AppHandle<R>,
     state: tauri::State<'_, AppState>,
     meeting_id: String,
+    delete_local_files: Option<bool>,
     auth_token: Option<String>,
 ) -> Result<serde_json::Value, String> {
     log_info!(
@@ -1035,6 +1036,33 @@ pub async fn api_delete_meeting<R: Runtime>(
     );
 
     let pool = state.db_manager.pool();
+
+    if delete_local_files.unwrap_or(false) {
+        // The folder comes from this meeting's database row, never a WebView
+        // path. The existing native guard rejects paths outside known recording
+        // roots and refuses to remove a root itself.
+        let folder: Option<Option<String>> = sqlx::query_scalar(
+            "SELECT folder_path FROM meetings WHERE id = ?",
+        )
+        .bind(&meeting_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+        if let Some(Some(folder)) = folder {
+            let other_meetings: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM meetings WHERE folder_path = ? AND id != ?",
+            )
+            .bind(&folder)
+            .bind(&meeting_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+            if other_meetings > 0 {
+                return Err("Recording folder is shared by another meeting; files were kept".into());
+            }
+            crate::audio::recording_preferences::discard_recording_folder(app, folder).await?;
+        }
+    }
 
     match MeetingsRepository::delete_meeting(pool, &meeting_id).await {
         Ok(true) => {

@@ -32,7 +32,7 @@ import { TranscriptSegmentData } from '@/types';
 import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import { cleanTranscriptText } from '@/lib/labs';
-import { mergeInterleavedSpeakerTurns } from '@/lib/nearLiveCaptions';
+import { liveTurnIdentity, mergeInterleavedSpeakerTurns, retainLiveText } from '@/lib/nearLiveCaptions';
 import { displaySpeaker, isUserSpeaker, speakerColor, speakerColorIndexMap, speakerColorValue, speakerDot, speakerKey } from '@/utils/speakerUtils';
 
 /**
@@ -281,8 +281,16 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
   colorIndices: givenColorIndices,
 }) => {
   const userName = useUserName();
-  const turns = useMemo(() => mergeTurns(nearLiveCaptions && isRecording
-    ? mergeInterleavedSpeakerTurns(segments) : segments), [segments, nearLiveCaptions, isRecording]);
+  const shownLiveText = useRef(new Map<string, string>());
+  const turns = useMemo(() => {
+    const live = nearLiveCaptions && isRecording;
+    const merged = mergeTurns(live ? mergeInterleavedSpeakerTurns(segments) : segments);
+    if (!live) {
+      shownLiveText.current.clear();
+      return merged;
+    }
+    return retainLiveText(merged, shownLiveText.current);
+  }, [segments, nearLiveCaptions, isRecording]);
   const [selectedImage, setSelectedImage] = useState<MeetingImage | null>(null);
   const imagesByTurn = useMemo(() => {
     const grouped = new Map<string, MeetingImage[]>();
@@ -324,7 +332,9 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     // rename, or diarization after the call) merges two turns, the turns
     // after it move up a slot; keyed by position they kept the old slot's
     // height and overlapped the bubble above.
-    getItemKey: (index) => turns[index]?.id ?? index,
+    getItemKey: (index) => turns[index]
+      ? (nearLiveCaptions && isRecording ? liveTurnIdentity(turns[index]) : turns[index].id)
+      : index,
     overscan: 10,
     onChange: () => startTransition(() => rerender()),
   });
@@ -492,7 +502,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                 const turn = turns[item.index];
                 return (
                   <div
-                    key={turn.id}
+                    key={nearLiveCaptions && isRecording ? liveTurnIdentity(turn) : turn.id}
                     data-index={item.index}
                     ref={virtualizer.measureElement}
                     style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${item.start}px)` }}
@@ -508,7 +518,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
           <>
             <div className="space-y-1">
               {turns.map((turn, index) => (
-                <motion.div key={turn.id} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.15 }}>
+                <motion.div key={nearLiveCaptions && isRecording ? liveTurnIdentity(turn) : turn.id} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.15 }}>
                   {row(turn, index)}
                 </motion.div>
               ))}

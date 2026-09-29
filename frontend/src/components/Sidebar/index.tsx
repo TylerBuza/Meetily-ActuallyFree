@@ -57,7 +57,7 @@ import { VisuallyHidden } from '@/components/ui/visually-hidden';
 import { About } from '@/components/About';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Kbd } from '@/components/ui/surface';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { DeleteMeetingsDialog } from '@/components/meetings/DeleteMeetingsDialog';
 import { Combobox } from '@/components/ui/combobox';
 import { ExportMeetingsDialog } from '@/components/meetings/ExportMeetingsDialog';
 import {
@@ -256,14 +256,15 @@ const Sidebar: React.FC = () => {
     openMeeting(meeting);
   };
 
-  const confirmDelete = async () => {
-    if (!pendingDelete) return;
+  const confirmDelete = async (deleteLocalFiles: boolean) => {
+    if (!pendingDelete) return false;
     const ids = pendingDelete;
-    const deleted = await deleteMeetings(ids);
+    const deleted = await deleteMeetings(ids, deleteLocalFiles);
     if (deleted > 0) {
       setSelectedIds(new Set());
       if (activeMeetingId && ids.includes(activeMeetingId)) router.push('/');
     }
+    return deleted > 0;
   };
 
   const recordForGroup = (group: { id: string; name: string }) => {
@@ -688,14 +689,11 @@ const Sidebar: React.FC = () => {
           .map((meeting) => ({ ...meeting, groupName: groupById(meeting.group_id)?.name ?? null }))}
       />
 
-      <ConfirmDialog
+      <DeleteMeetingsDialog
         open={pendingDelete !== null}
         onOpenChange={(open) => !open && setPendingDelete(null)}
-        variant="danger"
-        title={pendingDelete && pendingDelete.length > 1 ? `Delete ${pendingDelete.length} meetings?` : 'Delete this meeting?'}
-        description="The transcript, summary, notes, and action items are removed. Audio files stay in your recordings folder."
-        confirmLabel="Delete"
-        onConfirm={confirmDelete}
+        count={pendingDelete?.length ?? 0}
+        onDelete={confirmDelete}
       />
     </div>
   );

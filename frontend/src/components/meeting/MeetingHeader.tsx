@@ -36,7 +36,7 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { EditableTitle } from '@/components/ui/editable-title';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { DeleteMeetingsDialog } from '@/components/meetings/DeleteMeetingsDialog';
 import { GroupPicker } from '@/components/groups/GroupBits';
 import { RetranscribeDialog } from '@/components/MeetingDetails/RetranscribeDialog';
 import { useConfig } from '@/contexts/ConfigContext';
@@ -65,7 +65,7 @@ export interface MeetingHeaderProps {
   onCopySummary: () => void;
   hasSummary: boolean;
   onOpenFolder: () => void;
-  onDelete: () => Promise<void>;
+  onDelete: (deleteLocalFiles: boolean) => Promise<boolean>;
   /** After speakers are re-identified or the transcript is enhanced. */
   onTranscriptChanged: () => Promise<void> | void;
 }
@@ -243,16 +243,14 @@ export function MeetingHeader({
         </div>
       </div>
 
-      <ConfirmDialog
+      <DeleteMeetingsDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
-        variant="danger"
-        title="Delete this meeting?"
-        description="The transcript, summary, notes, and action items are removed. Audio files stay in your recordings folder."
-        confirmLabel="Delete"
-        onConfirm={async () => {
-          await onDelete();
-          router.push('/');
+        count={1}
+        onDelete={async (deleteLocalFiles) => {
+          const deleted = await onDelete(deleteLocalFiles);
+          if (deleted) router.push('/');
+          return deleted;
         }}
       />
 
