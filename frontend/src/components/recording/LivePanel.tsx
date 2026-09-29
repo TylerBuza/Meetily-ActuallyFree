@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Hint } from '@/components/ui/tooltip';
 import { NotesEditor, type NotesContent } from '@/components/editor/NotesEditor';
+import { MeetingImages } from '@/components/meeting/MeetingImages';
 import { ChatThread } from '@/components/chat/ChatThread';
 import { useUserName } from '@/hooks/useUserName';
 import { displaySpeaker, isUserSpeaker, speakerDot, speakerKey } from '@/utils/speakerUtils';
@@ -127,7 +128,7 @@ function NotesTab() {
 
   return (
     <div className="h-full overflow-y-auto px-5 py-4 pl-11">
-      <NotesEditor
+      <MeetingImages live><NotesEditor
         initialBlocks={initial?.json ?? null}
         initialMarkdown={initial?.json ? null : initial?.markdown ?? null}
         placeholder="Type notes as the call goes. They are saved to this meeting when you stop."
@@ -136,7 +137,7 @@ function NotesTab() {
           if (timer.current !== null) window.clearTimeout(timer.current);
           timer.current = window.setTimeout(flush, NOTES_SAVE_DELAY);
         }}
-      />
+      /></MeetingImages>
     </div>
   );
 }

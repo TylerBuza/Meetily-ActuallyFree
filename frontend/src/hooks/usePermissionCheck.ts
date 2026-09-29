@@ -9,8 +9,8 @@ export interface PermissionStatus {
   error: string | null;
 }
 
-// Audible samples are the only reliable proof that the tap works. Keep this
-// session-scoped so a permission revoked between app launches is not trusted.
+// A true value records an audible tap probe in this session. Silence does not
+// establish denial: a working tap can receive no samples during the probe.
 export const MACOS_SYSTEM_AUDIO_VERIFIED_KEY = 'macos_system_audio_verified';
 
 // The last result in this window, so a page that mounts again (the recorder)
@@ -42,10 +42,10 @@ export function usePermissionCheck() {
       // Output availability is separate from macOS Audio Capture authorization;
       // requestPermissions runs the native tap probe when the user asks.
       const outputDevices = devices.filter(d => d.device_type === 'Output');
-      const systemAudioVerified =
-        platform !== 'macos' ||
-        window.sessionStorage.getItem(MACOS_SYSTEM_AUDIO_VERIFIED_KEY) === 'true';
-      const hasSystemAudio = outputDevices.length > 0 && systemAudioVerified;
+      // On macOS, device presence is only readiness, not proof of permission.
+      // The recorder reports an actual start failure; a silent probe must not
+      // display the definitive "can't record" banner on an otherwise working PC.
+      const hasSystemAudio = outputDevices.length > 0;
 
       console.log('Permission check:', {
         hasMicrophone,
@@ -87,28 +87,15 @@ export function usePermissionCheck() {
         let systemAudioDetected: boolean | null = null;
         if (platform === 'macos') {
           systemAudioDetected = await invoke<boolean>('trigger_system_audio_permission_command');
-          window.sessionStorage.setItem(
-            MACOS_SYSTEM_AUDIO_VERIFIED_KEY,
-            String(systemAudioDetected),
-          );
+          if (systemAudioDetected) window.sessionStorage.setItem(MACOS_SYSTEM_AUDIO_VERIFIED_KEY, 'true');
         }
 
         await new Promise(resolve => setTimeout(resolve, 1000));
-        const availability = await checkPermissions();
-        if (systemAudioDetected !== null) {
-          setStatus(prev => ({
-            ...prev,
-            hasSystemAudio: availability.hasSystemAudio && systemAudioDetected,
-          }));
-        }
+        await checkPermissions();
       } catch (error) {
         console.error('Failed to request permissions:', error);
-        if (platform === 'macos') {
-          window.sessionStorage.setItem(MACOS_SYSTEM_AUDIO_VERIFIED_KEY, 'false');
-        }
         setStatus(prev => ({
           ...prev,
-          hasSystemAudio: false,
           error: error instanceof Error ? error.message : 'Failed to request permissions',
         }));
       } finally {

@@ -405,11 +405,6 @@ export function PostCallProcessingDialog({
           {!engine && !engineError && (
             <p role="status" className="text-sm text-af-text-3">Loading diarization settings…</p>
           )}
-          {isNemotron && (
-            <Button className="w-full" onClick={() => { void start(); }}>
-              {stage === 'error' ? 'Retry auto-detect' : 'Auto-detect & continue'}
-            </Button>
-          )}
           {engine && !isNemotron && (
             <>
               <div className="grid grid-cols-4 gap-2">
@@ -455,13 +450,13 @@ export function PostCallProcessingDialog({
             </>
           )}
           {error && <p className="text-sm text-af-danger">{error}</p>}
-          <div className={cn('flex items-center gap-2', isNemotron ? 'justify-center' : 'justify-end')}>
+          <div className="flex items-center justify-end gap-2">
             <Button variant="ghost" onClick={() => { void (stage === 'error' ? continueWithLiveTranscript() : skipEnhancement()); }}>
               Keep live transcript
             </Button>
-            {!isNemotron && <Button disabled={!engine} onClick={() => { void start(); }}>
+            <Button disabled={!engine} onClick={() => { void start(); }}>
               {stage === 'error' ? 'Retry' : 'Continue'}
-            </Button>}
+            </Button>
           </div>
         </div>
       )}

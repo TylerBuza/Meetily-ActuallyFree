@@ -57,6 +57,7 @@ pub mod groq;
 pub mod openrouter;
 pub mod live_assistant;
 pub mod meeting_detection;
+pub mod meeting_images;
 pub mod minibar;
 pub mod parakeet_engine;
 pub mod paths;
@@ -641,6 +642,9 @@ pub fn run() {
             get_transcription_status,
             read_audio_file,
             get_meeting_playback_audio,
+            meeting_images::save_meeting_image,
+            meeting_images::list_meeting_images,
+            meeting_images::delete_meeting_image,
             audio::waveform::get_waveform_peaks,
             whisper_engine::labs::get_whisper_strict_silence,
             whisper_engine::labs::set_whisper_strict_silence,

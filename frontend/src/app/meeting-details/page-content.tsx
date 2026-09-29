@@ -36,6 +36,7 @@ import { useUserName } from '@/hooks/useUserName';
 import { announceChange, getMeetingGroup, setMeetingGroup } from '@/lib/workspace-api';
 import { deleteMeetings, renameMeeting } from '@/lib/meeting-actions';
 import { displayTitle } from '@/lib/meeting-titles';
+import { MEETING_IMAGES_CHANGED, type MeetingImage } from '@/lib/meeting-images';
 import { cn } from '@/lib/utils';
 import { displaySpeaker, speakerColorIndexMap, speakerKey } from '@/utils/speakerUtils';
 
@@ -111,6 +112,19 @@ export default function PageContent({
   const templates = useTemplates();
   const meetingOperations = useMeetingOperations({ meeting });
   const audio = useMeetingAudio(meeting.id);
+  const [meetingImages, setMeetingImages] = useState<MeetingImage[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    setMeetingImages([]);
+    const refresh = () => {
+      void invoke<MeetingImage[]>('list_meeting_images', { meetingId: meeting.id, live: false })
+        .then((images) => { if (!cancelled) setMeetingImages(images); })
+        .catch((error) => console.error('Could not load meeting images', error));
+    };
+    refresh();
+    window.addEventListener(MEETING_IMAGES_CHANGED, refresh);
+    return () => { cancelled = true; window.removeEventListener(MEETING_IMAGES_CHANGED, refresh); };
+  }, [meeting.id]);
   // Labs: waveform and slower speeds in the player, Clean/Verbatim transcript.
   const { labs, ready: labsReady } = useLabs();
   const waveform = useWaveform(audio.path, labs.transcriptScrubbing);
@@ -436,6 +450,7 @@ export default function PageContent({
           <div className="min-h-0 flex-1">
             <VirtualizedTranscriptView
               segments={transcriptSegments}
+              meetingImages={meetingImages}
               disableAutoScroll
               hasMore={hasMore}
               isLoadingMore={isLoadingMore}
@@ -497,6 +512,7 @@ export default function PageContent({
             hasTranscript={hasTranscript}
             transcript={transcriptSegments}
             onSeek={(seconds) => audio.seek(seconds, true)}
+            currentTime={audio.currentTime}
             modelConfig={modelConfig}
             setModelConfig={setModelConfig}
             onSaveModelConfig={handleSaveModelConfig}

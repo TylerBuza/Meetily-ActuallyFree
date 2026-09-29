@@ -546,7 +546,7 @@ async fn delete_meeting_with_transaction(
     meeting_id: &str,
 ) -> Result<bool, SqlxError> {
     // Check if meeting exists
-    let meeting_exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM meetings WHERE id = ?")
+    let meeting_exists: Option<(Option<String>,)> = sqlx::query_as("SELECT folder_path FROM meetings WHERE id = ?")
         .bind(meeting_id)
         .fetch_optional(&mut *transaction)
         .await?;
@@ -554,6 +554,13 @@ async fn delete_meeting_with_transaction(
     if meeting_exists.is_none() {
         error!("Meeting {} not found for deletion", meeting_id);
         return Ok(false);
+    }
+
+    if let Some((Some(folder),)) = &meeting_exists {
+        sqlx::query("DELETE FROM meeting_images WHERE folder_path = ?")
+            .bind(folder)
+            .execute(&mut *transaction)
+            .await?;
     }
 
     // Delete from related tables in proper order

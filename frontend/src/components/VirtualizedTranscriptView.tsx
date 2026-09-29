@@ -17,10 +17,14 @@
  *   3. `hooks/usePaginatedTranscripts.ts`               (paginated)
  */
 
-import { memo, startTransition, useEffect, useMemo, useReducer, useRef } from 'react';
+import { memo, startTransition, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { motion } from 'framer-motion';
-import { GitMerge, Mic } from 'lucide-react';
+import { Camera, GitMerge, Mic } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import type { MeetingImage } from '@/lib/meeting-images';
 import { useAutoScroll } from '@/hooks/useAutoScroll';
 import { useTranscriptStreaming } from '@/hooks/useTranscriptStreaming';
 import { useUserName } from '@/hooks/useUserName';
@@ -40,6 +44,8 @@ export type TranscriptTextMode = 'tidy' | 'clean' | 'verbatim';
 
 export interface VirtualizedTranscriptViewProps {
   segments: TranscriptSegmentData[];
+  /** Saved images shown at their recording time on the post-call transcript. */
+  meetingImages?: MeetingImage[];
   isRecording?: boolean;
   nearLiveCaptions?: boolean;
   isPaused?: boolean;
@@ -249,6 +255,7 @@ const TurnRow = memo(function TurnRow({
 
 export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps> = ({
   segments,
+  meetingImages = [],
   isRecording = false,
   nearLiveCaptions = false,
   isPaused = false,
@@ -276,6 +283,29 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
   const userName = useUserName();
   const turns = useMemo(() => mergeTurns(nearLiveCaptions && isRecording
     ? mergeInterleavedSpeakerTurns(segments) : segments), [segments, nearLiveCaptions, isRecording]);
+  const [selectedImage, setSelectedImage] = useState<MeetingImage | null>(null);
+  const imagesByTurn = useMemo(() => {
+    const grouped = new Map<string, MeetingImage[]>();
+    if (turns.length === 0) return grouped;
+    for (const image of meetingImages) {
+      if (!Number.isFinite(image.audioTime)) continue;
+      // Pages load from the beginning. Wait for later transcript pages before
+      // attaching an image beyond the last loaded turn.
+      const last = turns[turns.length - 1];
+      if (hasMore && image.audioTime > (last.endTime ?? last.timestamp) + 2.5) continue;
+      let lo = 0;
+      let hi = turns.length - 1;
+      let index = 0;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (turns[mid].timestamp <= image.audioTime) { index = mid; lo = mid + 1; }
+        else hi = mid - 1;
+      }
+      const key = turns[index].id;
+      grouped.set(key, [...(grouped.get(key) ?? []), image]);
+    }
+    return grouped;
+  }, [turns, meetingImages, hasMore]);
   // One colour per speaker in first-spoken order, so a renamed speaker keeps theirs.
   const ownColorIndices = useMemo(
     () => speakerColorIndexMap(turns.map((turn) => turn.speaker ?? '').filter(Boolean)),
@@ -377,7 +407,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     return () => element.removeEventListener('scroll', onScroll);
   }, [onLoadMore, hasMore, isLoadingMore, isRecording]);
 
-  const row = (turn: Turn, index: number) => (
+  const row = (turn: Turn, index: number) => (<>
     <TurnRow
       turn={turn}
       text={getDisplayText(turn)}
@@ -392,7 +422,19 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
       onMergeSpeaker={onMergeSpeaker}
       onSeek={onSeek}
     />
-  );
+    {imagesByTurn.get(turn.id)?.length ? (
+      <div className="mb-4 ml-4 flex flex-wrap gap-2" aria-label="Images captured at this point in the meeting">
+        {imagesByTurn.get(turn.id)?.map((image) => (
+          <button key={image.id} type="button" onClick={() => setSelectedImage(image)}
+            className="overflow-hidden rounded-lg border border-af-border bg-af-panel-2 text-left transition-colors hover:border-af-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60"
+            aria-label={`Open meeting image at ${clock(image.audioTime)}`}>
+            <img src={convertFileSrc(image.path)} alt={`Meeting image at ${clock(image.audioTime)}`} className="h-16 w-24 object-cover" />
+            <span className="flex items-center gap-1 px-1.5 py-1 text-[11px] tabular-nums text-af-text-3"><Camera className="h-3 w-3" /> {clock(image.audioTime)}</span>
+          </button>
+        ))}
+      </div>
+    ) : null}
+  </>);
 
   const footer = (
     <>
@@ -475,6 +517,13 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
           </>
         )}
       </div>
+      <Dialog open={selectedImage !== null} onOpenChange={(open) => !open && setSelectedImage(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader><DialogTitle>Meeting image · {selectedImage ? clock(selectedImage.audioTime) : ''}</DialogTitle></DialogHeader>
+          {selectedImage && <img src={convertFileSrc(selectedImage.path)} alt={`Meeting image at ${clock(selectedImage.audioTime)}`} className="max-h-[70vh] w-full object-contain" />}
+          {selectedImage && onSeek && <div className="flex justify-end"><Button variant="secondary" onClick={() => { onSeek(selectedImage.audioTime); setSelectedImage(null); }}>Play from here</Button></div>}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

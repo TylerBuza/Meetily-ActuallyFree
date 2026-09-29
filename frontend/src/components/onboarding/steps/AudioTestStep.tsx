@@ -100,7 +100,7 @@ export function AudioTestStep() {
             try {
               const detected = await invoke<boolean>('trigger_system_audio_permission_command');
               if (!active.current || run !== meterRun.current) return;
-              window.sessionStorage.setItem(MACOS_SYSTEM_AUDIO_VERIFIED_KEY, String(detected));
+              if (detected) window.sessionStorage.setItem(MACOS_SYSTEM_AUDIO_VERIFIED_KEY, 'true');
               setSysHeard(detected);
               setSysRms(detected ? 0.2 : 0);
               if (!detected) {
@@ -110,7 +110,6 @@ export function AudioTestStep() {
               }
             } catch (systemError) {
               if (!active.current || run !== meterRun.current) return;
-              window.sessionStorage.setItem(MACOS_SYSTEM_AUDIO_VERIFIED_KEY, 'false');
               const message =
                 typeof systemError === 'string'
                   ? systemError

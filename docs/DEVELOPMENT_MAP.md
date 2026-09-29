@@ -117,6 +117,37 @@ source labels rather than guessing a speaker or switching engines.
 
 ## 3. Post-call processing and model selection
 
+Explicit meeting images use `meeting_images.rs` and the `meeting_images` table.
+The image file lives in the recording's `images/` directory; the row is keyed
+by folder path so live capture can be saved before the meeting row exists.
+`MeetingImages.tsx` handles paste and one-frame display capture in the Notes
+panel. It reads the native active recording duration (seconds excluding pauses)
+for live images and the player position for images added post-call. Capture is
+user initiated and does not block the audio callback. A 1920-pixel JPEG limit
+and an 8 MB native payload limit bound storage per image. Screen capture requires
+platform support and separate screen permission; paste remains available if the
+WebView does not support `getDisplayMedia`. Images are timestamp indexed but not
+OCR indexed. No image is included in AI summary input.
+The post-call meeting page loads these rows with `list_meeting_images` and
+`VirtualizedTranscriptView.tsx` attaches each thumbnail below the transcript
+turn preceding its recording-relative time. Images beyond a partially loaded
+transcript wait for later pages. The Notes panel and transcript share an image
+change event so additions and deletions appear without reopening the meeting.
+On Windows, `convertFileSrc` uses `http://asset.localhost`; the Tauri image CSP
+must allow that origin or saved JPGs appear as broken thumbnails. Existing saved
+images need no migration. This display does not infer slide content or embed
+images in exports.
+
+The macOS computer-audio warning now uses output-device readiness, not a silent
+five-second tap probe as evidence of denial. A true probe remains a session
+verification; false is inconclusive. Actual recorder start errors still report
+capture failure. The post-call Nemotron prompt uses a single footer Continue
+action to start automatic detection; Pyannote count selection is unchanged.
+The Windows CUDA local-test build passed Next production type/build checks, a
+native compile, and the focused PNG/JPEG header test. Its unsigned NSIS archive
+passed `7z t`; real screen-picker, clipboard, recording-clock, and macOS capture
+behavior remain device tests. This local installer is not a published release.
+
 Summary-generated title ownership, placeholder rejection and completion refresh
 are documented in [SUMMARY_GENERATED_TITLES.md](SUMMARY_GENERATED_TITLES.md).
 
