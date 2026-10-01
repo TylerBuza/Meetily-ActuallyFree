@@ -166,6 +166,13 @@ jobs:
           done
           pnpm exec tauri build --target "$TARGET" --bundles dmg
 
+      - name: Test capture shutdown and source continuity
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --release -p meetily --lib --target "$TARGET" audio::capture_worker:: -- --test-threads=1
+          cargo test --release -p meetily --lib --target "$TARGET" audio::pipeline::ring_buffer_tests:: -- --test-threads=1
+
       - name: Verify Apple Silicon bundle
         id: artifact
         shell: bash

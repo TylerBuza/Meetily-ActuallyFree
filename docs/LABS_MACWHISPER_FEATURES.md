@@ -80,6 +80,14 @@ The UI therefore seeks/highlights turns, never invents word offsets. Waveform
 extraction is on demand and may take time for a long recording; its peak history
 is bounded to 24 hours. No word-level karaoke claim is made.
 
+Windows issue #43: `audio/waveform.rs::extract_peaks` launches FFmpeg with
+`CREATE_NO_WINDOW`, matching the other audio decoding paths. Waveform requests
+from the meeting player can spawn this process; a title update itself does not.
+The launch flag preserves the piped PCM output and existing worker ownership.
+Verification uses the native waveform unit test and Windows compilation; the
+unit test checks peak binning, not visible console behavior. Installed-GUI
+verification still requires opening an uncached waveform on Windows.
+
 ## Feature 7: named voice profiles
 
 The existing `voiceprint.rs` belongs to the microphone user only. New

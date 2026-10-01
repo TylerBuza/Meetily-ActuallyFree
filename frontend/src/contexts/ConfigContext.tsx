@@ -5,6 +5,7 @@ import { TranscriptModelProps } from '@/components/TranscriptSettings';
 import { SelectedDevices } from '@/components/DeviceSelection';
 import { configService, ModelConfig } from '@/services/configService';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import Analytics from '@/lib/analytics';
 
 export interface OllamaModel {
@@ -193,10 +194,13 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
 
   // Load transcript configuration on mount
   useEffect(() => {
+    let disposed = false;
+    let revision = 0;
     const loadTranscriptConfig = async () => {
+      const request = ++revision;
       try {
         const config = await configService.getTranscriptConfig();
-        if (config) {
+        if (config && !disposed && request === revision) {
           console.log('[ConfigContext] Loaded saved transcript config:', config);
           setTranscriptModelConfig({
             provider: config.provider || 'parakeet',
@@ -209,6 +213,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       }
     };
     loadTranscriptConfig();
+    const stop = listen('transcript-config-changed', loadTranscriptConfig);
+    return () => { disposed = true; void stop.then(unlisten => unlisten()).catch(console.error); };
   }, []);
 
   // Sync language preference to Rust on mount (fixes startup desync bug)

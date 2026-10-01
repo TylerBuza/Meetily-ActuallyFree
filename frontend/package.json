@@ -1,6 +1,6 @@
 {
     "name": "meetily",
-    "version": "0.2.18",
+    "version": "0.2.20",
     "private": true,
     "main": "electron/main.js",
     "scripts": {
@@ -31,6 +31,7 @@
         "@blocknote/core": "0.36.0",
         "@blocknote/react": "0.36.0",
         "@blocknote/shadcn": "0.36.0",
+        "@fontsource-variable/inter": "5.3.0",
         "@heroicons/react": "^2.2.0",
         "@hookform/resolvers": "^5.1.1",
         "@radix-ui/react-accordion": "^1.2.12",

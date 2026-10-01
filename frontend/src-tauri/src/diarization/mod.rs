@@ -165,6 +165,11 @@ pub async fn operation_guard() -> tokio::sync::MutexGuard<'static, ()> {
         .await
 }
 
+pub fn try_operation_guard() -> Result<tokio::sync::MutexGuard<'static, ()>, String> {
+    OPERATION_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+        .try_lock().map_err(|_| "Wait for speaker identification to finish before uninstalling".into())
+}
+
 /// Record where the bundled diarization models live (called during setup).
 pub fn set_bundled_dir(dir: PathBuf) {
     let _ = BUNDLED_DIR.set(dir);
@@ -690,6 +695,7 @@ pub async fn download_diarization_models<R: tauri::Runtime>(
     engine: Option<String>,
 ) -> Result<(), String> {
     let target = engine.unwrap_or_else(get_active_engine);
+    let _optional_guard = if target == "nemotron" { Some(crate::optional_models::operation("nemotron")?) } else { None };
     if !matches!(target.as_str(), "pyannote" | "nemotron") { return Err("Unknown diarization engine".into()); }
     static DOWNLOAD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _download_guard = DOWNLOAD_LOCK.try_lock().map_err(|_| "A diarization download is already running".to_string())?;

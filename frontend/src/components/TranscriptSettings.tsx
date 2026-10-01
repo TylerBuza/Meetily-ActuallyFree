@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Spinner } from '@/components/ui/spinner';
 import { invoke } from '@tauri-apps/api/core';
 import { OPTIONAL_MODEL_PREFERENCES_CHANGED } from '@/lib/optional-model-activation';
+import { useOptionalModelDownloads } from '@/contexts/OptionalModelDownloadsContext';
 import { BookOpen, Check, CheckCircle2, ChevronDown, Clock3, Languages, Radio, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { Textarea } from './ui/textarea';
@@ -48,6 +49,9 @@ const DEFAULT_POST_CALL_CONFIG: PostCallTranscriptConfig = {
 };
 
 export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelConfig, onModelSelect }: TranscriptSettingsProps) {
+    const { jobs } = useOptionalModelDownloads();
+    const whisperJob = jobs.whisper;
+    const isWhisperDownloading = whisperJob.status === 'downloading' || whisperJob.status === 'activating';
     const [uiProvider, setUiProvider] = useState<TranscriptModelProps['provider']>(transcriptModelConfig.provider);
     const [whisperManagerOpen, setWhisperManagerOpen] = useState(false);
     const [installedModels, setInstalledModels] = useState<InstalledModel[]>([]);
@@ -126,6 +130,12 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
     useEffect(() => {
         setUiProvider(transcriptModelConfig.provider);
     }, [transcriptModelConfig.provider]);
+
+    // Setup downloads can finish while this Settings page remains mounted.
+    // Refresh installed choices as well as the preference-change subscription.
+    useEffect(() => {
+        if (whisperJob.status === 'ready' || whisperJob.status === 'idle' || whisperJob.status === 'activation-error') void refreshInstalledModels();
+    }, [whisperJob.status, refreshInstalledModels]);
 
     useEffect(() => {
         const requestedSection = sessionStorage.getItem('meetily-settings-transcription-section');
@@ -516,7 +526,17 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                             </span>
                         ) : null}
                     </div>
-                    {postCallWhisperModel ? (
+                    {isWhisperDownloading ? (
+                        <div className="space-y-2 border-t border-af-border pt-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2 text-sm font-medium">
+                                <span>{whisperJob.status === 'activating' ? 'Enabling model…' : 'Downloading Whisper…'}</span>
+                                <span className="tabular-nums">{Math.round(whisperJob.progress)}%</span>
+                            </div>
+                            <div role="progressbar" aria-label="Whisper download progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={whisperJob.progress} className="h-1.5 overflow-hidden rounded-full bg-af-hover">
+                                <div className="h-full rounded-full bg-af-accent transition-[width] duration-150" style={{ width: `${whisperJob.progress}%` }} />
+                            </div>
+                        </div>
+                    ) : postCallWhisperModel ? (
                         <p className="text-xs text-[var(--af-text-3)]">
                             Uses Whisper: {postCallWhisperModel.name}. Change the specific model under Manage Whisper models below.
                         </p>

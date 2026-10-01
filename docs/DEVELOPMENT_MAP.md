@@ -22,6 +22,53 @@ Speech-start pre-roll, live system speech sensitivity, and real-call replay
 qualification are documented in [LIVE_SPEECH_RETENTION.md](LIVE_SPEECH_RETENTION.md).
 Sample continuity across jittered capture callbacks and issue #40 qualification
 are documented in [AUDIO_CALLBACK_CONTINUITY.md](AUDIO_CALLBACK_CONTINUITY.md).
+That note also covers the Windows/shared-mixer and macOS follow-ups for #42:
+Windows CPAL mic/system blocks and macOS CPAL mic blocks use bounded workers, with
+capture timestamps, queued mute state, and stop/drain ordering owned by
+`audio/stream.rs`, `audio/pipeline.rs`, and `audio/recording_manager.rs`.
+CPAL capture age is converted to block-end recording seconds before processing.
+The shared mixer uses its full 400 ms missing-source allowance and drains input
+before enforcing further waiting; it no longer pops queued samples off the front.
+Per-instance local logs count inserted silence and discarded late samples.
+Timeline resets save both pending source tails before replacing the mixer origin.
+Windows Stop gates new callbacks and bounds native cleanup to three seconds per
+stream; new capture is blocked while timed-out cleanup still owns a native stream.
+Twenty-two pipeline regressions passed on Windows, including ten-minute dual
+source skew/stall replays, bounded missing-source output, and queued mute state.
+The ignored `audio::pipeline::hardware_qualification` test opens explicitly named
+Windows endpoints and exercises the production mic worker, dual VAD, mixer, and
+native Stop without saving audio. See the continuity note for its opt-in command,
+results, and limitations (especially silent microphones and omitted ASR).
+The corrected 11-minute G733 capture-only soak passed with 35 ms native Stop and
+all nonzero system samples preserved. The microphone supplied silence; speech
+retention remains unqualified. The native suite passed 370 tests (ten opt-in tests
+ignored normally), including 22 pipeline and eight worker regressions.
+Published previews predate these corrections; see the linked continuity note
+for verification and limits.
+The #42 follow-up uses `audio/capture_worker.rs` for explicit close/drain and a
+bounded wait independent of retained native callbacks. Its five std-only
+regressions passed on synthetic inputs; physical Mac Stop, missing microphone
+audio, and live-text gaps remain unqualified (see the linked continuity note).
+`AudioMixerRingBuffer` also recovers a source clock left behind emitted silence
+or a full-window callback loss, but only once fresh capture timestamps reach the
+un-emitted timeline. Old queued frames still cannot overwrite saved silence.
+All 17 native pipeline regressions passed on Windows. Mac candidate builds run
+worker and source-continuity regressions before upload.
+The separate macOS system tap in `audio/capture/core_audio.rs` now survives
+ring-buffer pressure and closes its async wake registration race; neither path
+has a physical macOS reproduction/qualification yet.
+`frontend/src/app/layout.tsx` now loads packaged Inter font files from
+`@fontsource-variable/inter` rather than fetching Google CSS during a Next
+production build. `globals.css` owns `--font-sans`, and `frontend/pnpm-lock.yaml`
+pins the bundled font package; this removes a network-dependent build step.
+
+Meeting details layout lives in `frontend/src/app/meeting-details/page-content.tsx`:
+the transcript/notes separator stores its width locally and supports pointer and
+keyboard resizing. Pane stacking now responds to the actual content width (which
+the sidebar can reduce), not just viewport width; this retains the minimum
+transcript and notes widths from issue #25. The existing wrapped toolbars and
+Export access remain in `components/meeting/MeetingHeader.tsx` and
+`MeetingDocument.tsx`. Narrow-content browser checks are still required.
 
 ```text
 recording_commands.rs: start command
@@ -185,6 +232,10 @@ saves the **post-call** default; it must not replace the live Parakeet selection
 `frontend/src/contexts/OptionalModelDownloadsContext.tsx` owns optional jobs above
 onboarding and Settings so normal navigation does not cancel them. This is not an
 OS background service. An app exit and a WebView reload are different lifetimes.
+The top-right `DownloadProgressToastProvider` consumes these same jobs alongside
+Parakeet/summary transfers, including verification and activation progress; it
+does not start downloads or duplicate optional completion notifications. See
+`tests/download-progress/background.test.tsx` for the panel/provider integration.
 
 For Nemotron, `download_diarization_models` in `diarization/mod.rs` performs the
 verified download **and persists engine activation in native code**. On success
@@ -199,8 +250,10 @@ different transports; neither is itself the persisted source of truth.
 Read [NEMOTRON_NATIVE_ACTIVATION.md](NEMOTRON_NATIVE_ACTIVATION.md) for the regression
 and installed-app test. Read [V0219_BACKGROUND_SETUP.md](V0219_BACKGROUND_SETUP.md)
 and [V0220_OPTIONAL_ACTIVATION.md](V0220_OPTIONAL_ACTIVATION.md) as historical notes;
-later fixes supersede earlier behavior. Whisper still has a frontend completion/
-activation path: do not infer that Nemotron's native-lifetime fix covers it too.
+later fixes supersede earlier behavior. The post-v0.2.18 follow-up moves optional
+Whisper activation into `whisper_download_model(enablePostCall=true)` and adds
+native `uninstall_optional_model` ownership in `optional_models.rs`; see the
+updated native-activation note for locking, settings events, tests, and limits.
 
 ## 5. Acceleration and packaging are separate from ASR selection
 
@@ -231,6 +284,25 @@ preparation; the manifest/checksums were regenerated and reverified without
 changing the signed executable payloads.
 
 ## 6. Tests, qualification, and historical notes
+
+macOS publication supports an explicitly labeled CI-qualified preview via
+`publish-macos.yml` (`preview=true`). It records no physical-test attestation,
+publishes a separate non-Latest prerelease, and retains artifact/hash/source
+provenance and public launch checks. Stable publication still requires the
+physical checklist. Documentation/publishing-only commits may follow a candidate;
+application, dependency, and build-workflow changes require a new candidate.
+See `.github/workflows/MACOS_RELEASE.md` for dispatch and remaining limitations.
+The `v0.2.19-macos` preview packages the #42 callback change; build
+`36790029640` and published-asset smoke test `36790877680` passed. It remains
+unqualified for physical microphone capture and the reporter's device. The
+Windows Latest release remains v0.2.18.
+The `v0.2.20-macos` follow-up packages explicit worker shutdown and short-gap
+source recovery for #42. Apple Silicon build `36876715270` passed all 22 worker
+and pipeline regressions plus bundle/launch checks; public smoke test
+`36878960910` passed. See [RELEASE_V0220_MACOS.md](RELEASE_V0220_MACOS.md) for
+provenance. Physical recording and live-transcription confirmation remain open.
+The Windows VirusTotal submission normalizes CRLF checksum manifests before
+filename matching and Linux checksum verification.
 
 Live system-meter warnings are documented in
 [SYSTEM_AUDIO_LEVEL_ADVICE.md](SYSTEM_AUDIO_LEVEL_ADVICE.md).
@@ -320,12 +392,15 @@ WeSpeaker embeddings in Pyannote live sessions and as a separate identity
 matcher for Nemotron live and both post-call paths. Nemotron remains the selected
 diarizer; its channel numbers never establish persistent identity.
 
-From `frontend/`, run mock-heavy groups separately:
+From `frontend/`, run all frontend test files in separate Bun processes. The
+portable runner discovers `tests/**/*.test.{js,mjs,ts,tsx}` and fails if any file
+fails. CI uses the same command, including optional-download, diarization, Labs,
+and audio-level lifecycle tests. Isolation is required: summary-language tests
+define a read-only `window`, while meeting-automation tests install their own
+window; combining them in one Bun process caused repeated CI failures.
 
 ```text
-pnpm dlx bun@1.3.10 test tests/optional-downloads/background.test.tsx
-pnpm dlx bun@1.3.10 test tests/diarization/engine-selection.test.tsx
-pnpm dlx bun@1.3.10 test tests/hooks
+pnpm dlx bun@1.3.10 scripts/test-isolated.mjs
 pnpm run build
 ```
 

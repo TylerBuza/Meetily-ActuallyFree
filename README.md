@@ -4,27 +4,39 @@
   <img src="frontend/src-tauri/icon-source.png" alt="Meetily - Actually Free logo" width="240" />
 </p>
 
-**Record a meeting. Follow the conversation. Turn it into useful notes.**
+**Know who said what—during this meeting and, optionally, the next.**
 
 A free, local-first meeting recorder and workspace, built on
 [Meetily](https://github.com/Zackriya-Solutions/meetily). This fork unlocks the app's
-features without an account, license key, trial, or paid app tier—and adds live
-speaker editing, per-app capture, a redesigned interface, and more.
+features without an account, license key, trial, or paid app tier. It puts
+speaker-aware transcripts at the center of recording, notes, and follow-up.
+
+**What sets this fork apart**
+
+- **Speaker diarization:** see *when* different people spoke. Your microphone
+  stays labeled **You**; on-device speaker models distinguish remote voices.
+  Rename or merge speakers live or afterward, with optional Nemotron-3 for
+  live labeling and post-call refinement.
+- **Remember voices across meetings (beta):** opt in to local voice profiles,
+  explicitly teach the app a named contact's voice from a recorded meeting,
+  and get suggested names in later meetings. Matching needs clean audio and
+  can be wrong—it is not proof of someone's identity.
+- **More control, still local-first:** capture selected apps, revisit
+  speaker-colored transcripts alongside audio, and keep notes, action items,
+  and summaries in one workspace. No account or paid tier required.
 
 [Download Windows](https://github.com/TylerBuza/Meetily-ActuallyFree/releases/latest)
-· [macOS Apple Silicon preview](https://github.com/TylerBuza/Meetily-ActuallyFree/releases/tag/v0.2.5-macos)
-· [What's new in v0.2.18](docs/RELEASE_V0218.md)
+· [macOS Apple Silicon preview](https://github.com/TylerBuza/Meetily-ActuallyFree/releases/tag/v0.2.20-macos)
+· [Release notes](https://github.com/TylerBuza/Meetily-ActuallyFree/releases)
 · [Report an issue](https://github.com/TylerBuza/Meetily-ActuallyFree/issues)
 
-## A redesigned Meetily
+## Interface
 
-**v0.2.18 brings a major UI overhaul:** a rebuilt recording experience, meeting
-workspace, navigation, shared components, and three themes—Midnight, Vanilla,
-and Charcoal. The existing React/Next.js interface has been extensively reworked,
-with supporting workspace and native/backend changes.
+Follow a live conversation, organize your meetings, and work with transcripts,
+notes, and summaries in one workspace. Choose from three themes: **Midnight**,
+**Vanilla**, and **Charcoal**.
 
-The screenshots and feature overview below show **current main / the upcoming
-v0.2.18 release**. Screenshots use demo meetings and simulated recording.
+Screenshots use demo meetings and simulated recording.
 
 ### Transcript, notes, action items, and summary in one workspace
 
@@ -51,7 +63,11 @@ v0.2.18 release**. Screenshots use demo meetings and simulated recording.
 
 ## What you can do
 
-### Record and transcribe locally
+Local transcription, live speaker editing, organized meeting notes, flexible AI
+providers, and optional Labs features—all without a paid app tier.
+
+<details>
+<summary><strong>Record and transcribe locally</strong></summary>
 
 - Capture microphone and computer audio with separate mute, volume, and level
   controls. Keep using the workspace during a call, or shrink to the floating
@@ -60,11 +76,17 @@ v0.2.18 release**. Screenshots use demo meetings and simulated recording.
   **Whisper** for optional post-call enhancement independently of the live model.
 - Retain microphone and system tracks alongside mixed playback audio, so
   overlapping sources can be processed separately.
+- Refine the transcript after a call while continuing to use the meeting page;
+  progress stays in a compact, nonblocking card.
+- Watch the system-audio level and **Low audio** advisory, and adjust gain yourself.
 - Choose specific applications instead of all computer audio: Windows supports
   a multi-app whitelist; macOS currently supports one selected application.
 - Use Whisper vocabulary hints for recurring names, acronyms, and meeting terms.
 
-### Follow and identify speakers
+</details>
+
+<details>
+<summary><strong>Follow and identify speakers</strong></summary>
 
 - Keep microphone speech identified as **You**, with remote speakers labeled
   separately. Rename and merge speakers during a call and edit labels afterward.
@@ -74,7 +96,10 @@ v0.2.18 release**. Screenshots use demo meetings and simulated recording.
 - Associate named speakers with contacts and see consistent person colors across
   transcripts and meeting pages.
 
-### Work with your meetings
+</details>
+
+<details>
+<summary><strong>Work with your meetings</strong></summary>
 
 - Read a speaker-colored, chat-style transcript and jump to audio from a line's
   timestamp. Keep notes, action items, and the AI summary beside the conversation.
@@ -83,8 +108,12 @@ v0.2.18 release**. Screenshots use demo meetings and simulated recording.
 - Search meetings, transcripts, summaries, groups, people, and action items from
   the **Ctrl+K command bar**.
 - Export one or multiple meetings to **PDF, Word, Markdown, text, or JSON**.
+- Generate useful meeting titles from summaries, with manual names taking priority.
 
-### Choose how AI runs
+</details>
+
+<details>
+<summary><strong>Choose how AI runs</strong></summary>
 
 - Use local summary models or connect a supported provider with your own API key.
 - Use the **Claude Code CLI** summary provider with your installed `claude`
@@ -94,7 +123,10 @@ v0.2.18 release**. Screenshots use demo meetings and simulated recording.
 - Download optional models in the background during setup. Nemotron enables
   after a successful download; optional Whisper is configured for post-call use.
 
-### Explore optional Labs features
+</details>
+
+<details>
+<summary><strong>Explore optional Labs features</strong></summary>
 
 Settings → **Labs** contains opt-in, experimental capabilities:
 
@@ -106,34 +138,20 @@ Settings → **Labs** contains opt-in, experimental capabilities:
   text for new summaries.
 - **Whisper silence guard:** stricter silence/noise handling for Whisper.
 - **Parakeet GPU:** run the encoder through DirectML on Windows.
-- **Voice profiles:** learn a contact's voice from their recorded meetings and
-  use voice matching in later meetings. Matching is experimental.
+- **Voice profiles (beta):** explicitly remember a named contact's voice from
+  recorded system audio for suggested names in later meetings. Opt-in matching
+  is experimental and depends on clean speech; review names before trusting them.
 
-## Also improved in v0.2.18
-
-- Preserve continuous audio across jittered capture callbacks, addressing the
-  recording buzz/clicks reported in [#40](https://github.com/TylerBuza/Meetily-ActuallyFree/issues/40).
-  The correction applies to new recordings; existing damaged audio is not repaired.
-- Retain the beginning of detected utterances and improve live system-audio
-  speech sensitivity.
-- Restore AI-generated titles for automatically named meetings while respecting
-  manual titles.
-- Keep the meeting interactive during post-call processing, with progress in a
-  compact bottom card and a centered **Auto-detect & continue** speaker prompt.
-- Show a **Low audio** advisory for quiet system input; gain stays under your
-  control.
-- Improve capture-start errors, setup checks, and recovery of live speaker edits.
-
-See the [full release notes](docs/RELEASE_V0218.md) and [changelog](CHANGELOG.md).
+</details>
 
 ## Download and setup
 
-**Release availability:** the latest published Windows release is **v0.2.17**.
-**v0.2.18 is prepared as a draft**, with its new interface shown above. The
-separate Apple Silicon download remains **v0.2.5-macos** and does not contain all
-the features on current main.
+Windows and macOS downloads are released separately. Check each
+[release's notes](https://github.com/TylerBuza/Meetily-ActuallyFree/releases) for
+the features and platform qualifications included in that build.
 
-### Windows
+<details>
+<summary><strong>Windows setup</strong></summary>
 
 1. Download `Meetily-ActuallyFree-*-universal-setup.exe` from the
    [latest published release](https://github.com/TylerBuza/Meetily-ActuallyFree/releases/latest).
@@ -147,17 +165,22 @@ Windows 10/11 x64 is supported. Windows installers are not Authenticode-signed,
 so SmartScreen may show **Unknown publisher**. Release downloads include SHA-256
 checksums; the Windows updater payload has a separate cryptographic signature.
 
-### macOS Apple Silicon preview
+</details>
 
-1. Download `Meetily-Actually-Free_0.2.5_aarch64.dmg` from the
-   [macOS release](https://github.com/TylerBuza/Meetily-ActuallyFree/releases/tag/v0.2.5-macos).
+<details>
+<summary><strong>macOS Apple Silicon preview setup</strong></summary>
+
+1. Download the Apple Silicon `.dmg` from the
+[macOS release](https://github.com/TylerBuza/Meetily-ActuallyFree/releases/tag/v0.2.20-macos).
 2. Open the DMG and drag **Meetily - Actually Free** into Applications.
 3. Grant microphone and Audio Capture permissions when prompted.
 
 Requires an **M1 or newer Mac running macOS 14.2 Sonoma or later**. The DMG is
-not notarized; first launch may require Control-click → **Open**. This separate
+not notarized; first launch may require **Privacy & Security → Open Anyway**. This separate
 preview passed automated packaging/launch checks, with physical macOS capture
 qualification still pending. See the [macOS release runbook](.github/workflows/MACOS_RELEASE.md).
+
+</details>
 
 ## Your data and model choices
 
@@ -166,6 +189,9 @@ Local inference can run without sending meeting content to a cloud model;
 choosing a cloud provider or Claude CLI changes where that provider processes
 the content. Model downloads and optional update checks require network access.
 Analytics transmission is disabled, and Windows update checks are opt-in.
+
+<details>
+<summary><strong>Storage locations and saved audio files</strong></summary>
 
 | Data | Location |
 | --- | --- |
@@ -178,18 +204,19 @@ Change the recordings folder in **Settings → Recording → Save Location**.
 The meeting database, models, and preferences are distinct from the audio folder;
 copying recordings alone does not move the entire workspace.
 
+</details>
+
 ## Build and contribute
+
+Start with the [development map](docs/DEVELOPMENT_MAP.md),
+[architecture notes](ARCHITECTURE.md), and [contributor conventions](AGENTS.md).
+
+<details>
+<summary><strong>Build commands</strong></summary>
 
 The desktop app uses **React/Next.js** in a **Tauri 2** WebView. **Rust** owns
 capture, transcription, diarization, local storage, and AI orchestration. No
 separate application server is required.
-
-Start with the [development map](docs/DEVELOPMENT_MAP.md),
-[architecture notes](ARCHITECTURE.md), and [contributor conventions](AGENTS.md).
-The map links subsystem ownership, targeted tests, and qualification notes.
-
-<details>
-<summary><strong>Build commands</strong></summary>
 
 Windows prerequisites: Rust, Node.js/pnpm, Visual Studio 2022 Build Tools with
 C++, CMake, and LLVM/libclang. GPU builds also need the corresponding SDK/toolkit.
@@ -224,32 +251,10 @@ pnpm install
 
 </details>
 
-## Thank you to the contributors
+## Credits and license
 
-This update is a community effort. In particular:
-
-- **[@jayjoe101](https://github.com/jayjoe101)** — the extensive UI/workspace
-  overhaul and integration in [#39](https://github.com/TylerBuza/Meetily-ActuallyFree/pull/39).
-- **[@ampersandru](https://github.com/ampersandru)** — live speaker editing
-  ([#36](https://github.com/TylerBuza/Meetily-ActuallyFree/pull/36)), per-app capture
-  ([#37](https://github.com/TylerBuza/Meetily-ActuallyFree/pull/37)), combined features
-  and Labs ([#38](https://github.com/TylerBuza/Meetily-ActuallyFree/pull/38)), and the
-  original Nemotron contribution ([#34](https://github.com/TylerBuza/Meetily-ActuallyFree/pull/34)).
-- **[@cedstrom](https://github.com/cedstrom)**, with original commits attributed
-  to **[@chris-edstrom](https://github.com/chris-edstrom)** — Claude Code CLI
-  summaries in [#28](https://github.com/TylerBuza/Meetily-ActuallyFree/pull/28).
-- **[@fernandog](https://github.com/fernandog)** — the detailed recording-artifact
-  investigation in [#40](https://github.com/TylerBuza/Meetily-ActuallyFree/issues/40).
-
-PRs bundled into another PR retain their original authors' credit. Read the
-[expanded acknowledgments](docs/RELEASE_V0218.md#a-huge-thank-you-to-our-contributors)
-for their individual contributions. Thank you to everyone testing builds,
-reporting bugs, and contributing improvements.
-
-Maintained by [Tyler Buza](https://buza.dev), based on the original
+Maintained by **[Tyler Buza (@TylerBuza)](https://github.com/TylerBuza)**, based on the original
 [Meetily](https://github.com/Zackriya-Solutions/meetily) project by Zackriya Solutions.
-Credit also belongs to the open-source model and runtime projects used by the app,
-including Enes Altun's MIT-licensed `parakeet-rs` Sortformer implementation.
 
 MIT licensed. See [LICENSE.md](LICENSE.md). Original copyright notices and license
 terms are retained.

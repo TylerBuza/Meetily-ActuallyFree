@@ -7,6 +7,7 @@ let calls: string[];
 let argumentsByCommand: Array<[string, any]>;
 let activationFails = false;
 let whisperStatus: unknown = 'Missing';
+let nemotronAvailable = false;
 let pending: Map<string, { resolve: () => void; reject: (error: Error) => void }>;
 mock.module('@tauri-apps/api/event', () => ({ listen: async (name: string, cb: any) => {
   listeners.set(name, cb);
@@ -16,13 +17,22 @@ mock.module('@tauri-apps/api/core', () => ({ invoke: async (command: string, arg
   calls.push(command);
   argumentsByCommand.push([command, args]);
   if (command === 'whisper_get_available_models') return [{ name: 'large-v3-turbo-q5_0', status: whisperStatus }];
-  if (command === 'diarization_get_status') return { nemotron_available: false };
+  if (command === 'diarization_get_status') return { nemotron_available: nemotronAvailable, active_engine: 'pyannote' };
+  if (command === 'uninstall_optional_model') {
+    await new Promise<void>((resolve, reject) => pending.set(command, { resolve, reject }));
+    if (args.model === 'whisper') whisperStatus = 'Missing'; else nemotronAvailable = false;
+    return;
+  }
   if (command === 'api_get_post_call_transcript_config') return { provider: 'live', model: '' };
   if (command === 'set_diarization_engine' || command === 'api_save_post_call_transcript_config') {
     if (activationFails) throw new Error('Could not save preferences');
     return;
   }
   if (command === 'whisper_download_model' || command === 'download_diarization_models') {
+    if (command === 'whisper_download_model' && whisperStatus === 'Available') {
+      if (activationFails) throw 'Model downloaded, but could not enable it: Could not save preferences';
+      return;
+    }
     return new Promise<void>((resolve, reject) => pending.set(command, { resolve, reject }));
   }
   throw new Error(`Unexpected command ${command}`);
@@ -35,7 +45,10 @@ function View({ page }: { page: string }) { current = useOptionalModelDownloads(
 function App({ page }: { page: string }) {
   return <OptionalModelDownloadsProvider><View key={page} page={page} /></OptionalModelDownloadsProvider>;
 }
-beforeEach(() => { calls = []; argumentsByCommand = []; pending = new Map(); activationFails = false; whisperStatus = 'Missing'; });
+beforeEach(() => {
+  calls = []; argumentsByCommand = []; pending = new Map(); activationFails = false; whisperStatus = 'Missing'; nemotronAvailable = false;
+  Object.defineProperty(globalThis, 'window', { configurable: true, writable: true, value: new EventTarget() });
+});
 afterEach(async () => { await act(async () => root?.unmount()); listeners.clear(); });
 
 test('optional downloads do not gate navigation and survive leaving onboarding', async () => {
@@ -60,7 +73,8 @@ test('optional downloads do not gate navigation and survive leaving onboarding',
   await act(async () => pending.get('whisper_download_model')!.resolve());
   expect(current.jobs.whisper.status).toBe('ready');
   expect(current.jobs.whisper.enabled).toBe(true);
-  expect(argumentsByCommand).toContainEqual(['api_save_post_call_transcript_config', { provider: 'whisper', model: 'large-v3-turbo-q5_0' }]);
+  expect(argumentsByCommand).toContainEqual(['whisper_download_model', { modelName: 'large-v3-turbo-q5_0', enablePostCall: true }]);
+  expect(calls).not.toContain('api_save_post_call_transcript_config');
 });
 
 test('a failed optional download can be retried without restarting setup', async () => {
@@ -82,19 +96,22 @@ test('activation errors stay retryable without reporting the model enabled', asy
   await act(async () => current.startDownload('whisper'));
   expect(current.jobs.whisper.status).toBe('activation-error');
   expect(current.jobs.whisper.enabled).not.toBe(true);
-  expect(calls).not.toContain('whisper_download_model');
+  expect(argumentsByCommand).toContainEqual(['whisper_download_model', { modelName: 'large-v3-turbo-q5_0', enablePostCall: true }]);
   activationFails = false;
   await act(async () => current.startDownload('whisper'));
   expect(current.jobs.whisper.enabled).toBe(true);
 });
 
-test('an existing native Whisper download is activated only after its completion event', async () => {
+test('an existing native Whisper download hands activation ownership to the native request', async () => {
   whisperStatus = { Downloading: 20 };
   await act(async () => { root = create(<App page="setup" />); });
   await act(async () => current.startDownload('whisper'));
-  expect(calls).not.toContain('whisper_download_model');
+  expect(argumentsByCommand).toContainEqual(['whisper_download_model', { modelName: 'large-v3-turbo-q5_0', enablePostCall: true }]);
   expect(calls).not.toContain('api_save_post_call_transcript_config');
+  whisperStatus = 'Available';
   await act(async () => listeners.get('model-download-complete')!({ payload: { modelName: 'large-v3-turbo-q5_0' } }));
+  expect(current.jobs.whisper.enabled).not.toBe(true);
+  await act(async () => pending.get('whisper_download_model')!.resolve());
   expect(current.jobs.whisper.enabled).toBe(true);
 });
 
@@ -115,4 +132,28 @@ test('native activation failure offers activation retry', async () => {
   await act(async () => pending.get('download_diarization_models')!.reject('Model downloaded, but could not enable it: disk error' as any));
   expect(current.jobs.nemotron.status).toBe('activation-error');
   expect(current.jobs.nemotron.enabled).not.toBe(true);
+});
+
+test('uninstall disables and clears the model and blocks duplicate operations until native completion', async () => {
+  whisperStatus = 'Available';
+  await act(async () => { root = create(<App page="settings" />); });
+  await act(async () => { current.uninstallModel('whisper'); current.uninstallModel('whisper'); current.startDownload('whisper'); });
+  expect(current.jobs.whisper.status).toBe('uninstalling');
+  expect(calls.filter(c => c === 'uninstall_optional_model')).toHaveLength(1);
+  expect(calls).not.toContain('whisper_download_model');
+  await act(async () => pending.get('uninstall_optional_model')!.resolve());
+  expect(current.jobs.whisper).toMatchObject({ status: 'idle', enabled: false, progress: 0 });
+  expect(argumentsByCommand).toContainEqual(['uninstall_optional_model', { model: 'whisper' }]);
+});
+
+test('failed removal re-reads the disabled selection and keeps the installed model retryable', async () => {
+  nemotronAvailable = true;
+  await act(async () => { root = create(<App page="settings" />); });
+  await act(async () => current.uninstallModel('nemotron'));
+  await act(async () => pending.get('uninstall_optional_model')!.reject(new Error('File is in use')));
+  expect(current.jobs.nemotron).toMatchObject({ status: 'ready', enabled: false });
+  expect(current.jobs.nemotron.error).toContain('File is in use');
+  await act(async () => current.uninstallModel('nemotron'));
+  await act(async () => pending.get('uninstall_optional_model')!.resolve());
+  expect(current.jobs.nemotron.status).toBe('idle');
 });

@@ -146,25 +146,27 @@ export default function PageContent({
     };
   }, [meeting.id]);
 
-  // Layout: side by side on wide windows, stacked on narrow ones.
   useEffect(() => {
-    const query = window.matchMedia('(max-width: 900px)');
-    const apply = () => setStacked(query.matches);
-    apply();
-    query.addEventListener('change', apply);
-    return () => query.removeEventListener('change', apply);
-  }, []);
-
-  useEffect(() => {
-    const frame = frameRef.current?.clientWidth ?? window.innerWidth;
+    const element = frameRef.current;
+    if (!element) return;
+    const frame = element.clientWidth;
     const stored = Number(localStorage.getItem(NOTES_WIDTH_KEY));
     setDocumentWidth(clampDocumentWidth(Number.isFinite(stored) && stored > 0 ? stored : Math.round(frame * 0.48), frame));
-    const onResize = () => {
-      const width = frameRef.current?.clientWidth;
+    const onResize = (width: number) => {
+      // The sidebar can shrink this pane without changing the viewport width.
+      // Do not force two minimum-width columns into a narrower content area.
+      setStacked(window.innerWidth <= 900 || width < TRANSCRIPT_MIN + DOCUMENT_MIN + 6);
       if (width) setDocumentWidth((current) => clampDocumentWidth(current, width));
     };
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    const observer = new ResizeObserver((entries) => onResize(entries[0].contentRect.width));
+    observer.observe(element);
+    const onWindowResize = () => onResize(element.clientWidth);
+    window.addEventListener('resize', onWindowResize);
+    onResize(frame);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', onWindowResize);
+    };
   }, []);
 
   const startSplitDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -179,6 +181,7 @@ export default function PageContent({
     const stop = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
       setDraggingSplit(false);
       setDocumentWidth((current) => {
         localStorage.setItem(NOTES_WIDTH_KEY, String(current));
@@ -187,6 +190,7 @@ export default function PageContent({
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
   };
 
   // ---- Summary state ---------------------------------------------------------
@@ -493,8 +497,22 @@ export default function PageContent({
             role="separator"
             aria-orientation="vertical"
             aria-label="Resize transcript and notes"
+            aria-valuemin={TRANSCRIPT_MIN}
+            aria-valuemax={Math.max(TRANSCRIPT_MIN, (frameRef.current?.clientWidth ?? 0) - 6 - DOCUMENT_MIN)}
+            aria-valuenow={Math.max(TRANSCRIPT_MIN, (frameRef.current?.clientWidth ?? 0) - 6 - documentWidth)}
+            tabIndex={0}
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+              event.preventDefault();
+              const frame = frameRef.current?.clientWidth ?? 0;
+              setDocumentWidth((current) => {
+                const next = clampDocumentWidth(current + (event.key === 'ArrowLeft' ? 24 : -24), frame);
+                localStorage.setItem(NOTES_WIDTH_KEY, String(next));
+                return next;
+              });
+            }}
             onPointerDown={startSplitDrag}
-            className="group relative z-10 w-1.5 shrink-0 cursor-col-resize"
+            className="group relative z-10 w-1.5 shrink-0 cursor-col-resize focus-visible:outline focus-visible:outline-2 focus-visible:outline-af-accent"
           >
             <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-af-border transition-colors group-hover:bg-af-accent group-active:bg-af-accent" />
           </div>

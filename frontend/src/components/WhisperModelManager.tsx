@@ -157,7 +157,7 @@ export function ModelManager({
       );
 
       // Download complete
-      unlistenComplete = await listen<{ modelName: string }>(
+      unlistenComplete = await listen<{ modelName: string; postCallManaged?: boolean }>(
         'model-download-complete',
         (event) => {
           const { modelName } = event.payload;
@@ -181,6 +181,10 @@ export function ModelManager({
           // Clean up throttle data
           progressThrottleRef.current.delete(modelName);
 
+          // Optional setup owns its native post-call activation and notification.
+          // A model manager in another view must not also change the live model.
+          if (event.payload.postCallManaged) return;
+
           toast.success(`${displayName} ready`, {
             description: 'Model downloaded and ready to use',
             duration: 4000
@@ -197,7 +201,7 @@ export function ModelManager({
       );
 
       // Download error
-      unlistenError = await listen<{ modelName: string; error: string }>(
+      unlistenError = await listen<{ modelName: string; error: string; postCallManaged?: boolean }>(
         'model-download-error',
         (event) => {
           const { modelName, error } = event.payload;
@@ -206,7 +210,7 @@ export function ModelManager({
           setModels(prevModels =>
             prevModels.map(model =>
               model.name === modelName
-                ? { ...model, status: { Error: error } as ModelStatus }
+                ? { ...model, status: (error.startsWith('Model downloaded, but could not enable it:') ? 'Available' : { Error: error }) as ModelStatus }
                 : model
             )
           );
@@ -219,6 +223,8 @@ export function ModelManager({
 
           // Clean up throttle data
           progressThrottleRef.current.delete(modelName);
+
+          if (event.payload.postCallManaged) return;
 
           toast.error(`Failed to download ${displayName}`, {
             description: error,
@@ -255,6 +261,18 @@ export function ModelManager({
       return false;
     }
   };
+
+  useEffect(() => {
+    let disposed = false;
+    const stop = listen<string>('optional-model-removed', async ({ payload }) => {
+      if (payload !== 'whisper') return;
+      try {
+        const models = await WhisperAPI.getAvailableModels();
+        if (!disposed) setModels(models);
+      } catch (error) { console.error('Could not refresh models after uninstall:', error); }
+    });
+    return () => { disposed = true; void stop.then(unlisten => unlisten()).catch(console.error); };
+  }, []);
 
   const cancelDownload = async (modelName: string) => {
     const displayName = getDisplayName(modelName);

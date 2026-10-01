@@ -27,6 +27,25 @@ eight seconds it offers retry, but still accepts a late authoritative native
 response. Failure never implies onboarding completion. An attempt cleanup ignores
 responses from replaced attempts.
 
+The main shell now mounts `RecordingNotice` after setup and crash-report handling.
+It reminds users to disclose recording and obtain legally required consent on
+each launch. “I understand” dismisses it for that shell lifetime; route changes
+do not reopen it. Only the unchecked-by-default permanent acknowledgement option
+writes `permanentlyAcknowledged` to the native `recording-notice.json` store.
+The save completes before dismissal; failure offers retry or session-only
+dismissal. An unreadable preference shows the notice. Tray/notification starts
+and meeting automation wait for acknowledgement; the minibar does not mount it.
+This is an informational acknowledgement, not participant consent or a native
+recording authorization mechanism. A full WebView reload starts a new shell
+session and shows the notice again unless permanently acknowledged.
+`tests/recording-notice/notice.test.tsx` covers session dismissal, relaunch,
+permanent acknowledgement, and preference read/save failures with a mocked store.
+Qualification: all 26 isolated frontend test files and the production Next build
+passed locally. Browser preview confirmed the notice over the main screen,
+session dismissal across navigation, and its return on a full reload. Permanent
+storage behavior is covered by store mocks; no new desktop installer was installed
+or published for this change.
+
 `lib/live-speaker-edits.ts` journals display edits in localStorage under the
 IndexedDB meeting ID. Rename/merge aliases are flattened, and individual-turn
 overrides use native sequence IDs because frontend row IDs change on reload.

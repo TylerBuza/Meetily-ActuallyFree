@@ -2,7 +2,29 @@
 
 ## Unreleased
 
-Prepared for **v0.2.18**; see [release notes and complete contributor
+## v0.2.20 — Windows recording reliability and setup improvements
+
+See [release notes](docs/RELEASE_V0220.md) for the complete update and test limits.
+
+- Correct shared-mixer premature silence padding and queued-sample loss (#42).
+- Move Windows microphone DSP onto the bounded capture worker; preserve driver
+  capture timestamps, queued mute state, and explicit Stop/drain ownership.
+- Hide FFmpeg's Windows console during waveform extraction (#43).
+- Stack meeting panes by available content width and support keyboard resizing (#25).
+- Bundle Inter locally so production builds do not fetch Google fonts.
+- Show a recording disclosure and consent notice after setup on each launch,
+  with an optional permanent acknowledgement to stop showing it.
+- Show optional Whisper and Nemotron downloads in the top-right background
+  stack and their Transcription settings cards, including activation progress.
+- Keep speaker-model Active badges inside their cards on smaller windows.
+- Complete optional Whisper activation natively, preserving the live model even
+  when another model manager is open or the WebView reloads.
+- Add Uninstall to optional-model Settings, removing the selected model's files
+  and resetting only preferences that use it.
+
+## v0.2.18
+
+Released **v0.2.18**; see [release notes and complete contributor
 credits](docs/RELEASE_V0218.md). The workspace redesign is from **@jayjoe101's
 PR #39**, including **@ampersandru's PRs #36–#38** and **@cedstrom's PR #28**
 (original commit attribution: **@chris-edstrom**). Thanks to **@fernandog** for

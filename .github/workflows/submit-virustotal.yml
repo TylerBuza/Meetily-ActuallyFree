@@ -58,7 +58,8 @@ jobs:
             test -f "release/$file"
             (
               cd release
-              checksum=$(awk -v file="$file" '$2 == file { print }' SHA256SUMS.txt)
+              # Windows manifests use CRLF; normalize before Linux filename matching.
+              checksum=$(tr -d '\r' < SHA256SUMS.txt | awk -v file="$file" '$2 == file { print }')
               test "$(wc -l <<< "$checksum")" -eq 1
               printf '%s\n' "$checksum" | sha256sum --check --strict
             )

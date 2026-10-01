@@ -23,12 +23,20 @@ fn append_peak(samples: &[u8], sample_index: &mut usize, peaks: &mut Vec<f32>) -
 
 fn extract_peaks(file: &Path) -> Result<Vec<f32>, String> {
     let ffmpeg = super::ffmpeg::find_ffmpeg_path().ok_or("FFmpeg is unavailable")?;
-    let mut child = Command::new(ffmpeg)
+    let mut command = Command::new(ffmpeg);
+    command
         .arg("-v").arg("error")
         .arg("-i").arg(file)
         .args(["-vn", "-ac", "1", "-ar", "8000", "-f", "f32le", "-"])
-        .stdout(Stdio::piped()).stderr(Stdio::null()).stdin(Stdio::null())
-        .spawn().map_err(|error| error.to_string())?;
+        .stdout(Stdio::piped()).stderr(Stdio::null()).stdin(Stdio::null());
+    // A GUI parent otherwise gives FFmpeg its own briefly visible Windows console.
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
     let stdout = child.stdout.take().ok_or("FFmpeg has no audio output")?;
     let mut reader = BufReader::new(stdout);
     let mut buffer = [0u8; 32_768];

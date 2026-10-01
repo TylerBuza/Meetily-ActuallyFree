@@ -6,15 +6,17 @@ import { toast } from 'sonner';
 import { X, Check, ArrowBigDownDash } from 'lucide-react';
 import { getDownloadTotalMb } from '@/lib/onboarding-summary-model';
 import { useOnboarding } from '@/contexts/OnboardingContext';
+import { useOptionalModelDownloads } from '@/contexts/OptionalModelDownloadsContext';
 
 interface DownloadProgress {
   modelName: string;
   displayName: string;
   progress: number;
-  downloadedMb: number;
-  totalMb: number;
-  speedMbps: number;
-  status: 'downloading' | 'completed' | 'error' | 'cancelled';
+  downloadedMb?: number;
+  totalMb?: number;
+  speedMbps?: number;
+  status: 'downloading' | 'activating' | 'completed' | 'error' | 'cancelled';
+  detail?: string;
   unitLabel?: string;
   error?: string;
 }
@@ -60,11 +62,12 @@ function DownloadToastContent({
   const hasError = download.status === 'error';
   const isCancelled = download.status === 'cancelled';
   const unitLabel = download.unitLabel ?? 'MB';
+  const detail = download.status === 'activating' ? 'Enabling model…' : download.detail ?? 'Downloading…';
 
   return (
     <div
       tabIndex={collapsible ? 0 : undefined}
-      aria-label={collapsible ? `${download.displayName}: ${Math.round(download.progress)}%` : undefined}
+      aria-label={collapsible ? `${download.displayName}: ${detail} ${Math.round(download.progress)}%` : undefined}
       className={collapsible
         ? 'group pointer-events-auto ml-auto flex max-h-14 w-14 items-center gap-3 overflow-hidden rounded-lg border border-af-border bg-af-panel p-3 shadow-lg transition-[width,max-height] duration-200 hover:max-h-24 hover:w-full focus:max-h-24 focus:w-full focus:outline-none'
         : 'relative flex w-full max-w-sm items-center gap-3 rounded-lg border border-af-border bg-af-panel p-3 shadow-lg'
@@ -104,7 +107,15 @@ function DownloadToastContent({
         ) : (
           <>
             {/* Progress bar */}
-            <div className="w-full h-1.5 bg-af-hover rounded-full overflow-hidden mb-1.5">
+            <div
+              role="progressbar"
+              aria-label={download.displayName}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={download.progress}
+              aria-valuetext={`${detail} ${Math.round(download.progress)}%`}
+              className="w-full h-1.5 bg-af-hover rounded-full overflow-hidden mb-1.5"
+            >
               <div
                 className="h-full bg-af-elevated rounded-full transition-all duration-300"
                 style={{ width: `${download.progress}%` }}
@@ -114,10 +125,12 @@ function DownloadToastContent({
             {/* Progress text */}
             <div className="flex items-center justify-between text-xs text-af-text-3">
               <span>
-                {download.downloadedMb.toFixed(1)} / {download.totalMb.toFixed(1)} {unitLabel}
+                {download.status === 'downloading' && download.downloadedMb !== undefined && download.totalMb !== undefined
+                  ? `${download.downloadedMb.toFixed(1)} / ${download.totalMb.toFixed(1)} ${unitLabel}`
+                  : detail}
               </span>
               <span className="flex items-center gap-1">
-                {download.speedMbps > 0 && (
+                {download.speedMbps !== undefined && download.speedMbps > 0 && (
                   <span>{download.speedMbps.toFixed(1)} {unitLabel}/s</span>
                 )}
                 <span className="text-af-text font-medium">
@@ -176,7 +189,8 @@ export function useDownloadProgressToast() {
         case 'completed': return 3000;      // 3 seconds
         case 'cancelled': return 5000;      // 5 seconds
         case 'error': return 10000;         // 10 seconds
-        case 'downloading': return Infinity; // Manual dismiss only
+          case 'downloading': return Infinity; // Manual dismiss only
+          case 'activating': return Infinity;
       }
     };
 
@@ -198,7 +212,7 @@ export function useDownloadProgressToast() {
     downloads.forEach((download) => {
       // Active transfers use the dedicated stacked top-right status below.
       // Sonner is reserved for terminal completion/error notifications.
-      if (download.status === 'downloading') return;
+      if (download.status === 'downloading' || download.status === 'activating') return;
 
       showDownloadToast(download);
     });
@@ -339,10 +353,26 @@ export function useDownloadProgressToast() {
 // Component to initialize download toast listeners at app level
 export function DownloadProgressToastProvider() {
   const { downloads } = useDownloadProgressToast();
+  const { jobs } = useOptionalModelDownloads();
   const { currentStep } = useOnboarding();
-  const activeDownloads = Array.from(downloads.values()).filter(
-    (download) => download.status === 'downloading',
-  );
+  // Reuse the app-level jobs instead of another set of native listeners. This
+  // restores existing progress when the panel mounts and survives route changes;
+  // optional activation and terminal notifications stay owned by the context.
+  const optionalDownloads: DownloadProgress[] = (['whisper', 'nemotron'] as const).flatMap((model) => {
+    const job = jobs[model];
+    if (job.status !== 'downloading' && job.status !== 'activating') return [];
+    return [{
+      modelName: `optional-${model}`,
+      displayName: model === 'whisper' ? 'Whisper · Post-call transcription' : 'Nemotron · Speaker identification',
+      progress: job.progress,
+      status: job.status,
+      detail: job.detail,
+    }];
+  });
+  const activeDownloads = [
+    ...Array.from(downloads.values()).filter((download) => download.status === 'downloading'),
+    ...optionalDownloads,
+  ];
 
   // The download step owns its progress UI. Show this background status only
   // after the user continues to the rest of onboarding.

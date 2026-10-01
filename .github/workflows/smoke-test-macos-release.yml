@@ -20,6 +20,11 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      - name: Checkout provenance checks
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
       - name: Verify Apple Silicon runner
         shell: bash
         run: |
@@ -44,7 +49,7 @@ jobs:
           RELEASE_JSON=$(gh api \
             "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")
           test "$(jq -r .draft <<< "$RELEASE_JSON")" = "false"
-          test "$(jq -r .prerelease <<< "$RELEASE_JSON")" = "false"
+          PREVIEW=$(jq -r .prerelease <<< "$RELEASE_JSON")
           test "$(jq -r .immutable <<< "$RELEASE_JSON")" = "true"
           test "$(jq -r '.assets | length' <<< "$RELEASE_JSON")" = "3"
           for name in "$DMG_NAME" "$SUM_NAME" "$META_NAME"; do
@@ -76,9 +81,13 @@ jobs:
           test "$(jq -r .version "$META_NAME")" = "$VERSION"
           test "$(jq -r .commit "$META_NAME")" = "$TAG_TARGET"
           test "$(jq -r .dmg_sha256 "$META_NAME")" = "$DMG_SHA256"
-          test "$(jq -r .physical_test_dmg_sha256 "$META_NAME")" = "$DMG_SHA256"
-          PHYSICAL_TEST_OS=$(jq -r .physical_test_os "$META_NAME")
-          [[ "$PHYSICAL_TEST_OS" =~ ^14\.2(\.[0-9]+)?$ ]]
+          if [[ "$PREVIEW" == "true" ]]; then
+            jq -e '.release_channel == "preview" and .physical_test_attested == false and .physical_test_os == null and .physical_test_dmg_sha256 == null and .physical_test_attested_by == null' "$META_NAME"
+          else
+            test "$(jq -r .physical_test_dmg_sha256 "$META_NAME")" = "$DMG_SHA256"
+            PHYSICAL_TEST_OS=$(jq -r .physical_test_os "$META_NAME")
+            [[ "$PHYSICAL_TEST_OS" =~ ^14\.2(\.[0-9]+)?$ ]]
+          fi
           CANDIDATE_RUN_ID=$(jq -r .run_id "$META_NAME")
           CANDIDATE_RUN_ATTEMPT=$(jq -r .run_attempt "$META_NAME")
           CANDIDATE_JSON=$(gh api \
@@ -105,11 +114,20 @@ jobs:
             "repos/$GITHUB_REPOSITORY/actions/runs/$PUBLISH_RUN_ID")
           test "$(jq -r .path <<< "$PUBLISH_JSON")" = ".github/workflows/publish-macos.yml"
           test "$(jq -r .head_branch <<< "$PUBLISH_JSON")" = "main"
-          test "$(jq -r .head_sha <<< "$PUBLISH_JSON")" = "$TAG_TARGET"
+          PUBLISH_COMMIT=$(jq -r '.publish_commit // .commit' "$META_NAME")
+          test "$(jq -r .head_sha <<< "$PUBLISH_JSON")" = "$PUBLISH_COMMIT"
+          git -C "$GITHUB_WORKSPACE" merge-base --is-ancestor "$TAG_TARGET" "$PUBLISH_COMMIT"
+          CHANGED=$(git -C "$GITHUB_WORKSPACE" diff --name-only "$TAG_TARGET" "$PUBLISH_COMMIT" -- \
+            . ':!docs/**' ':!README.md' \
+            ':!.github/workflows/MACOS_RELEASE.md' \
+            ':!.github/workflows/publish-macos.yml' \
+            ':!.github/workflows/smoke-test-macos-release.yml' \
+            ':!.github/workflows/submit-virustotal.yml')
+          test -z "$CHANGED"
           test "$(jq -r .event <<< "$PUBLISH_JSON")" = "workflow_dispatch"
           test "$(jq -r .conclusion <<< "$PUBLISH_JSON")" = "success"
           test "$(jq -r .actor.login <<< "$PUBLISH_JSON")" = \
-            "$(jq -r .physical_test_attested_by "$META_NAME")"
+            "$(jq -r '.published_by // .physical_test_attested_by' "$META_NAME")"
           EXPECTED_PUBLISH_WORKFLOW_ID=$(gh api \
             "repos/$GITHUB_REPOSITORY/actions/workflows/publish-macos.yml" \
             --jq .id)

@@ -18,6 +18,7 @@ import {
 } from "lucide-react"
 import { Button } from "./ui/button"
 import { OPTIONAL_MODEL_PREFERENCES_CHANGED } from '@/lib/optional-model-activation';
+import { useOptionalModelDownloads } from '@/contexts/OptionalModelDownloadsContext';
 
 interface DownloadProgress {
   file: string;
@@ -55,7 +56,11 @@ function formatMB(bytes: number): string {
  */
 export function DiarizationSettings() {
   const [status, setStatus] = useState<DiarizationEngineStatus | null>(null);
-  const [isDownloading, setIsDownloading] = useState(false);
+  const [isPyannoteDownloading, setIsDownloading] = useState(false);
+  const { jobs, startDownload } = useOptionalModelDownloads();
+  const nemotronJob = jobs.nemotron;
+  const isNemotronDownloading = nemotronJob.status === 'downloading' || nemotronJob.status === 'activating';
+  const isDownloading = isPyannoteDownloading || isNemotronDownloading || nemotronJob.status === 'uninstalling';
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const [isSwitching, setIsSwitching] = useState(false);
   const unlistenRef = useRef<UnlistenFn | null>(null);
@@ -69,6 +74,10 @@ export function DiarizationSettings() {
         console.error('Failed to get diarization status:', e);
       });
   }, []);
+
+  useEffect(() => {
+    if (nemotronJob.status === 'ready' || nemotronJob.status === 'idle' || nemotronJob.status === 'activation-error') refreshStatus();
+  }, [nemotronJob.status, refreshStatus]);
 
   useEffect(() => {
     refreshStatus();
@@ -130,9 +139,15 @@ export function DiarizationSettings() {
 
   const handleDownload = useCallback(async (targetEngine?: string) => {
     if (isDownloading) return;
+    const eng = targetEngine || status?.active_engine || 'pyannote';
+    // Settings and onboarding share the same app-owned Nemotron job. Leaving
+    // this page must not discard progress or create a second transfer owner.
+    if (eng === 'nemotron') {
+      startDownload('nemotron');
+      return;
+    }
     setIsDownloading(true);
     setProgress(null);
-    const eng = targetEngine || status?.active_engine || 'pyannote';
     let downloaded = false;
 
     try {
@@ -163,7 +178,7 @@ export function DiarizationSettings() {
       setIsDownloading(false);
       setProgress(null);
     }
-  }, [isDownloading, status, refreshStatus]);
+  }, [isDownloading, status, refreshStatus, startDownload]);
 
   const handleOpenFolder = async () => {
     try {
@@ -188,8 +203,8 @@ export function DiarizationSettings() {
   return (
     <div className="rounded-2xl border border-af-border bg-af-panel-2/40 p-5 text-af-text">
       {/* Title & Top Status Badge */}
-      <div className="flex items-start justify-between gap-4 mb-4">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
+        <div className="min-w-0 flex-1 basis-64">
           <h3 className="text-[15px] font-semibold text-af-text mb-2 flex items-center gap-2">
             <Users className="w-5 h-5 text-af-accent" />
             Speaker Identification
@@ -217,29 +232,29 @@ export function DiarizationSettings() {
         <label className="text-[11px] font-semibold text-af-text-3 mb-2.5 block uppercase tracking-wider">
           Diarization Engine
         </label>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
           {/* Pyannote card */}
           <button
             type="button"
             onClick={() => handleSelectEngine('pyannote')}
             disabled={isSwitching || isDownloading}
-            className={`group p-4 rounded-xl text-left cursor-pointer relative disabled:cursor-default ${
+            className={`group flex min-w-0 flex-col items-stretch p-4 rounded-xl text-left cursor-pointer relative disabled:cursor-default ${
               isPyannote
                 ? 'af-select-card-active-blue'
                 : 'af-select-card'
             }`}
           >
-            <div className="flex items-center justify-between mb-2.5">
-              <div className="flex items-center gap-2.5">
-                <span className={`p-2 rounded-lg transition-colors ${
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+              <div className="flex min-w-0 flex-1 basis-44 items-center gap-2.5">
+                <span className={`shrink-0 p-2 rounded-lg transition-colors ${
                   isPyannote
                     ? 'bg-af-accent text-af-on-accent'
                     : 'bg-af-active text-af-text-2 group-hover:text-af-text'
                 }`}>
                   <Users className="w-4 h-4" />
                 </span>
-                <div>
-                  <div className="flex items-center gap-2">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="font-semibold text-af-text">
                       Pyannote
                     </span>
@@ -254,7 +269,7 @@ export function DiarizationSettings() {
                   </span>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap">
                 {isPyannote ? (
                   <span className="inline-flex items-center gap-1 rounded-full border border-af-accent/40 bg-af-accent/10 px-2.5 py-1 text-[11px] font-medium text-af-accent">
                     <Check className="w-3.5 h-3.5" /> Active
@@ -269,7 +284,7 @@ export function DiarizationSettings() {
             <p className="text-xs text-af-text-2 leading-relaxed mt-1">
               Bundled segmentation-3.0 with WeSpeaker ResNet34 embeddings & agglomerative clustering.
             </p>
-            <div className="mt-3.5 pt-2.5 border-t border-af-border flex items-center justify-between text-[11px]">
+            <div className="mt-3.5 pt-2.5 border-t border-af-border flex flex-wrap items-center justify-between gap-2 text-[11px]">
               <span className="px-2 py-0.5 rounded bg-af-panel text-af-text-3 border border-af-border font-medium">
                 Bundled with app
               </span>
@@ -284,27 +299,27 @@ export function DiarizationSettings() {
             type="button"
             onClick={() => handleSelectEngine('nemotron')}
             disabled={isSwitching || isDownloading}
-            className={`group p-4 rounded-xl text-left cursor-pointer relative disabled:cursor-default ${
+            className={`group flex min-w-0 flex-col items-stretch p-4 rounded-xl text-left cursor-pointer relative disabled:cursor-default ${
               isNemotron
                 ? 'af-select-card-active-purple'
                 : 'af-select-card'
             }`}
           >
-            <div className="flex items-center justify-between mb-2.5">
-              <div className="flex items-center gap-2.5">
-                <span className={`p-2 rounded-lg transition-colors ${
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+              <div className="flex min-w-0 flex-1 basis-44 items-center gap-2.5">
+                <span className={`shrink-0 p-2 rounded-lg transition-colors ${
                   isNemotron
                     ? 'bg-af-accent text-af-on-accent'
                     : 'bg-af-active text-af-text-2 group-hover:text-af-text'
                 }`}>
                   <Cpu className="w-4 h-4" />
                 </span>
-                <div>
-                  <div className="flex items-center gap-2">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="font-semibold text-af-text">
                       NVIDIA Nemotron-3
                     </span>
-                    {status?.nemotron_available && (
+                    {status?.nemotron_available && !isNemotronDownloading && (
                       <span className="rounded-full bg-af-success/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-af-success">
                         Ready
                       </span>
@@ -315,7 +330,7 @@ export function DiarizationSettings() {
                   </span>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap">
                 {isNemotron ? (
                   <span className="inline-flex items-center gap-1 rounded-full border border-af-accent/40 bg-af-accent/10 px-2.5 py-1 text-[11px] font-medium text-af-accent">
                     <Check className="w-3.5 h-3.5" /> Active
@@ -330,7 +345,7 @@ export function DiarizationSettings() {
             <p className="text-xs text-af-text-2 leading-relaxed mt-1">
                 Post-call speaker detection with overlapping speech support. Windows uses DirectML GPU acceleration when available, with CPU fallback.
             </p>
-            <div className="mt-3.5 pt-2.5 border-t border-af-border flex items-center justify-between text-[11px]">
+            <div className="mt-3.5 pt-2.5 border-t border-af-border flex flex-wrap items-center justify-between gap-2 text-[11px]">
               <span className="px-2 py-0.5 rounded bg-af-panel text-af-text-3 border border-af-border font-medium">
                 Sortformer v3
               </span>
@@ -338,6 +353,24 @@ export function DiarizationSettings() {
                 Overlap detection
               </span>
             </div>
+            {isNemotronDownloading && (
+              <div className="mt-4 border-t border-af-border pt-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-medium text-af-text">
+                  <span>{nemotronJob.status === 'activating' ? 'Enabling model…' : nemotronJob.detail ?? 'Downloading…'}</span>
+                  <span className="tabular-nums">{Math.round(nemotronJob.progress)}%</span>
+                </div>
+                {nemotronJob.file && <p className="mt-1 break-all text-[11px] text-af-text-3">{nemotronJob.file}</p>}
+                {nemotronJob.totalBytes !== undefined && nemotronJob.totalBytes > 0 && nemotronJob.downloadedBytes !== undefined && (
+                  <p className="mt-1 text-[11px] text-af-text-3">
+                    Current file: {(nemotronJob.downloadedBytes / 1024 / 1024).toFixed(1)} / {(nemotronJob.totalBytes / 1024 / 1024).toFixed(1)} MiB
+                  </p>
+                )}
+                <div role="progressbar" aria-label="Nemotron download progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={nemotronJob.progress} className="mt-2 h-1.5 overflow-hidden rounded-full bg-af-hover">
+                  <div className="h-full rounded-full bg-af-accent transition-[width] duration-150" style={{ width: `${nemotronJob.progress}%` }} />
+                </div>
+              </div>
+            )}
+            {nemotronJob.error && <p className="mt-3 break-words text-xs text-af-danger">{nemotronJob.error}</p>}
           </button>
         </div>
       </div>
@@ -384,7 +417,7 @@ export function DiarizationSettings() {
                 The Nemotron-3 Diarization model (~{formatMB(downloadBytes)}) runs fully on-device.
                 Download once to install the SHA-256 verified model and its license.
               </p>
-              <Button size="sm" onClick={() => handleDownload('nemotron')} className="bg-af-accent text-af-on-accent hover:bg-af-accent-hover">
+              <Button size="sm" onClick={() => handleDownload('nemotron')} className="h-auto min-h-9 whitespace-normal bg-af-accent text-af-on-accent hover:bg-af-accent-hover">
                 <Download size={16} className="mr-1.5" />
                 Download Nemotron-3 models (~{formatMB(downloadBytes)})
               </Button>
@@ -436,7 +469,7 @@ export function DiarizationSettings() {
       )}
 
       {/* Live Download Progress */}
-      {isDownloading && (
+      {isPyannoteDownloading && (
         <div className="mt-4 rounded-xl border border-af-accent/40 bg-af-accent/10 p-4">
           <div className="flex items-center gap-2 text-sm font-medium text-af-accent">
             <Spinner className="w-4 h-4" />

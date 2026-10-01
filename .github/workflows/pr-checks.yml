@@ -31,7 +31,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - run: pnpm dlx bun@1.3.10 test tests/lib
-      - run: pnpm dlx bun@1.3.10 test tests/hooks
+      - name: Run frontend tests in isolated processes
+        run: pnpm dlx bun@1.3.10 scripts/test-isolated.mjs
       - run: pnpm run build
       - run: pnpm exec tsc --noEmit

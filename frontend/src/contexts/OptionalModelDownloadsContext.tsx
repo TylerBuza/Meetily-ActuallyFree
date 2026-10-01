@@ -4,22 +4,31 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
-import { activateOptionalModel, OPTIONAL_MODEL_PREFERENCES_CHANGED } from '@/lib/optional-model-activation';
+import { OPTIONAL_MODEL_PREFERENCES_CHANGED } from '@/lib/optional-model-activation';
 
 export const OPTIONAL_WHISPER_MODEL = 'large-v3-turbo-q5_0';
 export type OptionalModel = 'whisper' | 'nemotron';
-export type OptionalDownload = { status: 'idle' | 'downloading' | 'activating' | 'ready' | 'error' | 'activation-error'; progress: number; error?: string; enabled?: boolean };
+export type OptionalDownload = {
+  status: 'idle' | 'downloading' | 'activating' | 'ready' | 'error' | 'activation-error' | 'uninstalling';
+  progress: number;
+  detail?: string;
+  /** Native diarization byte counts describe the current file, not the whole job. */
+  file?: string;
+  downloadedBytes?: number;
+  totalBytes?: number;
+  error?: string;
+  enabled?: boolean;
+};
 type Jobs = Record<OptionalModel, OptionalDownload>;
 const initialJobs: Jobs = {
   whisper: { status: 'idle', progress: 0 }, nemotron: { status: 'idle', progress: 0 },
 };
-const Context = createContext<{ jobs: Jobs; startDownload: (model: OptionalModel) => void } | null>(null);
+const Context = createContext<{ jobs: Jobs; startDownload: (model: OptionalModel) => void; uninstallModel: (model: OptionalModel) => void } | null>(null);
 
 /** App-level owner: leaving onboarding or navigating never cancels these jobs. */
 export function OptionalModelDownloadsProvider({ children }: { children: React.ReactNode }) {
   const [jobs, setJobs] = useState<Jobs>(initialJobs);
   const active = useRef(new Set<OptionalModel>());
-  const whisperCompletion = useRef<{ resolve: () => void; reject: (error: Error) => void } | null>(null);
   const listenersReady = useRef<Promise<void>>(Promise.resolve());
   const mounted = useRef(true);
   const update = useCallback((model: OptionalModel, job: OptionalDownload) => {
@@ -37,25 +46,49 @@ export function OptionalModelDownloadsProvider({ children }: { children: React.R
     listenersReady.current = Promise.all([
       register<string>('diarization-engine-changed', engine => {
         if (engine === 'nemotron') update('nemotron', { status: 'ready', progress: 100, enabled: true });
+        else setJobs(previous => ({ ...previous, nemotron: { ...previous.nemotron, enabled: false } }));
+      }),
+      register<void>('post-call-transcript-config-changed', () => {
+        window.dispatchEvent(new Event(OPTIONAL_MODEL_PREFERENCES_CHANGED));
+      }),
+      register<OptionalModel>('optional-model-removed', model => {
+        if (model !== 'whisper' && model !== 'nemotron') return;
+        update(model, { status: 'idle', progress: 0, enabled: false });
+        window.dispatchEvent(new Event(OPTIONAL_MODEL_PREFERENCES_CHANGED));
       }),
       register<{ modelName: string; progress: number }>('model-download-progress', p => {
         if (p.modelName === OPTIONAL_WHISPER_MODEL) update('whisper', { status: 'downloading', progress: p.progress });
       }),
+      register<{ modelName: string }>('model-download-activating', p => {
+        if (p.modelName === OPTIONAL_WHISPER_MODEL) update('whisper', { status: 'activating', progress: 100 });
+      }),
       register<{ modelName: string }>('model-download-complete', p => {
         if (p.modelName === OPTIONAL_WHISPER_MODEL) {
-          update('whisper', { status: 'ready', progress: 100 });
-          whisperCompletion.current?.resolve();
+          // Transfer completion precedes saving the post-call preference. Keep
+          // app-owned jobs visible until that activation has actually settled.
+          setJobs(previous => ({ ...previous, whisper: { ...previous.whisper, status: active.current.has('whisper') ? 'activating' : 'ready', progress: 100 } }));
         }
       }),
       register<{ modelName: string; error: string }>('model-download-error', p => {
         if (p.modelName === OPTIONAL_WHISPER_MODEL) {
-          update('whisper', { status: 'error', progress: 0, error: p.error });
-          whisperCompletion.current?.reject(new Error(p.error));
+          const downloaded = p.error.startsWith('Model downloaded, but could not enable it:');
+          update('whisper', { status: downloaded ? 'activation-error' : 'error', progress: downloaded ? 100 : 0, error: p.error });
         }
       }),
-      register<{ file: string; percent: number; status: string; message?: string }>('diarization-download-progress', p => {
+      register<{ file: string; percent: number; status: string; downloaded?: number; total?: number; message?: string }>('diarization-download-progress', p => {
         if (p.file === 'nemotron3_diar_v3.onnx' || p.file === 'Nemotron-LICENSE.txt' || p.message?.startsWith('Nemotron-3')) {
-          update('nemotron', { status: p.status === 'done' && p.file === '' ? 'ready' : 'downloading', progress: p.percent });
+          // Native activation follows the final transfer event; the engine
+          // change event (or command result) is authoritative for completion.
+          const activating = p.status === 'done' && p.file === '';
+          update('nemotron', {
+            status: p.status === 'error' ? 'error' : activating ? 'activating' : 'downloading',
+            progress: p.percent,
+            detail: p.status === 'verifying' ? 'Verifying download…' : undefined,
+            file: p.file,
+            downloadedBytes: p.downloaded,
+            totalBytes: p.total,
+            error: p.status === 'error' ? p.message ?? 'Download failed' : undefined,
+          });
         }
       }),
     ]).then(() => undefined);
@@ -103,35 +136,57 @@ export function OptionalModelDownloadsProvider({ children }: { children: React.R
     void (async () => {
       await listenersReady.current;
       if (model === 'whisper') {
-        // Subscribe before querying state, so completion of an existing native
-        // download cannot be missed between the status query and waiting.
-        const completed = new Promise<void>((resolve, reject) => { whisperCompletion.current = { resolve, reject }; });
-        void completed.catch(() => {});
-        const models = await invoke<Array<{ name: string; status: unknown }>>('whisper_get_available_models');
-        const existing = models.find(m => m.name === OPTIONAL_WHISPER_MODEL);
-        if (existing?.status && typeof existing.status === 'object' && 'Downloading' in existing.status) await completed;
-        else if (existing?.status !== 'Available') await invoke('whisper_download_model', { modelName: OPTIONAL_WHISPER_MODEL });
+        // Native code validates an installed model or downloads it, then persists
+        // the post-call default before success, even if this WebView reloads.
+        // It also owns waiting for an already-running manual Whisper download.
+        await invoke('whisper_download_model', { modelName: OPTIONAL_WHISPER_MODEL, enablePostCall: true });
       } else {
         await invoke('download_diarization_models', { engine: 'nemotron' });
       }
       downloaded = true;
       update(model, { status: 'activating', progress: 100 });
-      // Nemotron's native download task also saves its selection, even if this
-      // WebView reloads while the download is running.
-      if (model === 'whisper') await activateOptionalModel(model, OPTIONAL_WHISPER_MODEL);
+      // Both native download tasks own the required preference save.
       update(model, { status: 'ready', progress: 100, enabled: true });
       toast.success(`${model === 'whisper' ? 'Whisper' : 'Nemotron'} is enabled`, { description: model === 'whisper' ? 'Whisper is now the default for post-call enhancement and retranscription.' : 'Nemotron will label speakers live on your next recording and refine them afterward.' });
     })().catch(error => {
-      downloaded ||= String(error).startsWith('Model downloaded, but could not enable it:');
-      update(model, { status: downloaded ? 'activation-error' : 'error', progress: downloaded ? 100 : 0, error: String(error) });
+      const message = error instanceof Error ? error.message : String(error);
+      downloaded ||= message.startsWith('Model downloaded, but could not enable it:');
+      update(model, { status: downloaded ? 'activation-error' : 'error', progress: downloaded ? 100 : 0, error: message });
       toast.error(downloaded ? 'Model downloaded, but could not enable it' : `${model === 'whisper' ? 'Whisper' : 'Nemotron'} download failed`, { description: 'You can keep using Meetily and retry from Settings.' });
     }).finally(() => {
       active.current.delete(model);
-      if (model === 'whisper') whisperCompletion.current = null;
     });
   }, [update]);
 
-  return <Context.Provider value={{ jobs, startDownload }}>{children}</Context.Provider>;
+  const uninstallModel = useCallback((model: OptionalModel) => {
+    if (active.current.has(model)) return;
+    active.current.add(model);
+    update(model, { status: 'uninstalling', progress: 0, enabled: false });
+    void invoke('uninstall_optional_model', { model }).then(() => {
+      update(model, { status: 'idle', progress: 0, enabled: false });
+      window.dispatchEvent(new Event(OPTIONAL_MODEL_PREFERENCES_CHANGED));
+      toast.success(`${model === 'whisper' ? 'Whisper' : 'Nemotron'} uninstalled`);
+    }).catch(async error => {
+      // Removal may have disabled the selection before a filesystem error.
+      // Re-read native state rather than showing the previous Enabled badge.
+      try {
+        const [models, config, diarization] = await Promise.all([
+          invoke<Array<{ name: string; status: unknown }>>('whisper_get_available_models'),
+          invoke<{ provider: string; model: string }>('api_get_post_call_transcript_config'),
+          invoke<{ nemotron_available: boolean; active_engine: string }>('diarization_get_status'),
+        ]);
+        const installed = model === 'whisper' ? models.some(m => m.name === OPTIONAL_WHISPER_MODEL && m.status === 'Available') : diarization.nemotron_available;
+        const enabled = model === 'whisper' ? config.provider === 'whisper' && config.model === OPTIONAL_WHISPER_MODEL : diarization.active_engine === 'nemotron';
+        update(model, { status: installed ? 'ready' : 'idle', progress: installed ? 100 : 0, enabled, error: String(error) });
+      } catch {
+        update(model, { status: 'error', progress: 0, error: String(error) });
+      }
+      window.dispatchEvent(new Event(OPTIONAL_MODEL_PREFERENCES_CHANGED));
+      toast.error('Could not uninstall model', { description: String(error) });
+    }).finally(() => active.current.delete(model));
+  }, [update]);
+
+  return <Context.Provider value={{ jobs, startDownload, uninstallModel }}>{children}</Context.Provider>;
 }
 
 export function useOptionalModelDownloads() {

@@ -2,8 +2,8 @@
 
 import './globals.css'
 import './icon-motion.css'
+import '@fontsource-variable/inter/wght.css'
 import dynamic from 'next/dynamic'
-import { Inter } from 'next/font/google'
 import { SidebarProvider } from '@/components/Sidebar/SidebarProvider'
 import AnalyticsProvider from '@/components/AnalyticsProvider'
 import { Toaster, toast } from 'sonner'
@@ -38,6 +38,7 @@ import { CHROME_BOOT_SCRIPT } from '@/lib/window-chrome'
 import { RecordingPill } from '@/components/recording/RecordingPill'
 import { VoiceProfileNotifications } from '@/components/VoiceProfileNotifications'
 import { GroupEditorHost } from '@/components/groups/GroupEditor'
+import { RecordingNotice } from '@/components/RecordingNotice'
 
 // Development only: in a plain browser (no Tauri bridge) serve sample data so
 // screens can be reviewed at http://localhost:3118. Stripped from production.
@@ -115,13 +116,6 @@ const inlineChunkErrorHandler = `
 })();
 `;
 
-const inter = Inter({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-sans',
-  display: 'swap',
-})
-
 // Module-level component — stable reference across RootLayout re-renders.
 // Defined here (not inside RootLayout) so React never sees a new function type
 // on re-render, which would cause unmount/remount and break initialization logic.
@@ -154,7 +148,6 @@ export default function RootLayout({
   const router = useRouter()
   // Tray, notification and meeting-detection starts work from any page.
   const startRecordingAnywhere = useRef<() => void>(() => undefined)
-  startRecordingAnywhere.current = () => launchRecording((href) => router.push(href))
   const isMinibar = (pathname ?? '').startsWith('/minibar')
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [onboardingCompleted, setOnboardingCompleted] = useState(false)
@@ -163,6 +156,12 @@ export default function RootLayout({
   const [startupError, setStartupError] = useState<string | null>(null)
   const [startupAttempt, setStartupAttempt] = useState(0)
   const [pendingCrashReport, setPendingCrashReport] = useState<PendingCrashReport | null>(null)
+  const [recordingNoticeAcknowledged, setRecordingNoticeAcknowledged] = useState(false)
+  const acknowledgeRecordingNotice = useCallback(() => setRecordingNoticeAcknowledged(true), [])
+  startRecordingAnywhere.current = () => {
+    if (!recordingNoticeAcknowledged) return
+    launchRecording((href) => router.push(href))
+  }
 
   // Import audio state
   const [showDropOverlay, setShowDropOverlay] = useState(false)
@@ -306,7 +305,7 @@ export default function RootLayout({
   // camera starts a recording instead, and that recording stops when the call
   // ends. The compact bar's window never starts or stops recordings.
   useEffect(() => {
-    if (!startupResolved || startupError || pendingCrashReport || isMinibar) return
+    if (!startupResolved || startupError || pendingCrashReport || isMinibar || !recordingNoticeAcknowledged) return
     const unlisten = listen<{ app: string; process: string; notify: boolean; active_media: boolean }>(
       'meeting-detected',
       (event) => {
@@ -387,7 +386,7 @@ export default function RootLayout({
       unlistenStart.then((fn) => fn());
       unlistenEnd.then((fn) => fn());
     };
-  }, [showOnboarding, startupResolved, startupError, pendingCrashReport, isMinibar, router]);
+  }, [showOnboarding, startupResolved, startupError, pendingCrashReport, isMinibar, router, recordingNoticeAcknowledged]);
 
   // Handle file drop for audio import
   const handleFileDrop = useCallback((paths: string[]) => {
@@ -484,7 +483,7 @@ export default function RootLayout({
   // client so the full app chrome never mounts there and then unmounts.
   if (isMinibar) {
     return (
-      <html lang="en" data-theme="midnight" className={`dark minibar-window ${inter.variable} ${inter.className}`} suppressHydrationWarning>
+      <html lang="en" data-theme="midnight" className="dark minibar-window" suppressHydrationWarning>
         <head>
           <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
           <script dangerouslySetInnerHTML={{ __html: inlineChunkErrorHandler }} />
@@ -497,7 +496,7 @@ export default function RootLayout({
   }
 
   return (
-    <html lang="en" data-theme="midnight" className={`dark ${inter.variable} ${inter.className}`} suppressHydrationWarning>
+    <html lang="en" data-theme="midnight" className="dark" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
         <script dangerouslySetInnerHTML={{ __html: CHROME_BOOT_SCRIPT }} />
@@ -547,6 +546,7 @@ export default function RootLayout({
                                     <VoiceProfileNotifications />
                                     <RecordingPill />
                                     <GroupEditorHost />
+                                    <RecordingNotice onAcknowledged={acknowledgeRecordingNotice} />
                                   </div>
                                 )}
                                 {/* Import audio overlay and dialog */}

@@ -7,18 +7,23 @@ on:
         description: "Successful Build - macOS Apple Silicon run ID"
         required: true
         type: string
+      preview:
+        description: "Publish a CI-qualified preview without claiming physical-device testing"
+        required: true
+        type: boolean
+        default: false
       physical-test-attested:
         description: "I completed the physical Apple Silicon checklist on macOS 14.2"
-        required: true
+        required: false
         type: boolean
         default: false
       physical-test-os:
         description: "Exact physical test OS version (must be 14.2 or 14.2.x)"
-        required: true
+        required: false
         type: string
       physical-test-dmg-sha256:
         description: "SHA-256 of the exact DMG tested on physical hardware"
-        required: true
+        required: false
         type: string
 concurrency:
   group: macos-apple-silicon-release
@@ -36,19 +41,36 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout release notes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
       - name: Require release signoffs
         env:
+          PREVIEW: ${{ inputs.preview }}
           PHYSICAL_TEST_ATTESTED: ${{ inputs.physical-test-attested }}
           PHYSICAL_TEST_OS: ${{ inputs.physical-test-os }}
           PHYSICAL_TEST_DMG_SHA256: ${{ inputs.physical-test-dmg-sha256 }}
         shell: bash
         run: |
           set -euo pipefail
-          test "$PHYSICAL_TEST_ATTESTED" = "true"
-          [[ "$PHYSICAL_TEST_OS" =~ ^14\.2(\.[0-9]+)?$ ]]
-          [[ "$PHYSICAL_TEST_DMG_SHA256" =~ ^[0-9A-Fa-f]{64}$ ]]
+          if [[ "$PREVIEW" == "true" ]]; then
+            test "$PHYSICAL_TEST_ATTESTED" != "true"
+            test -z "$PHYSICAL_TEST_OS"
+            test -z "$PHYSICAL_TEST_DMG_SHA256"
+            echo "Publishing an explicitly untested hardware preview after candidate CI checks."
+          else
+            test "$PHYSICAL_TEST_ATTESTED" = "true"
+            [[ "$PHYSICAL_TEST_OS" =~ ^14\.2(\.[0-9]+)?$ ]]
+            [[ "$PHYSICAL_TEST_DMG_SHA256" =~ ^[0-9A-Fa-f]{64}$ ]]
+          fi
 
       - name: Require immutable releases
+        # Stable releases keep the administrative preflight. Preview publication
+        # uses normal contents permissions and still verifies immutable=true on
+        # the published asset set. The maintainer checks the setting at dispatch.
+        if: ${{ !inputs.preview }}
         env:
           GH_TOKEN: ${{ secrets.MACOS_RELEASE_ADMIN_TOKEN }}
         shell: bash
@@ -74,7 +96,20 @@ jobs:
             "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID")
           test "$(jq -r .path <<< "$RUN_JSON")" = ".github/workflows/build-macos.yml"
           test "$(jq -r .head_branch <<< "$RUN_JSON")" = "main"
-          test "$(jq -r .head_sha <<< "$RUN_JSON")" = "$GITHUB_SHA"
+          CANDIDATE_COMMIT=$(jq -r .head_sha <<< "$RUN_JSON")
+          git merge-base --is-ancestor "$CANDIDATE_COMMIT" "$GITHUB_SHA"
+          # Only documentation/publishing follow-ups may reuse a candidate.
+          # Application, dependency, or build-workflow changes require a rebuild.
+          CHANGED=$(git diff --name-only "$CANDIDATE_COMMIT" "$GITHUB_SHA" -- \
+            . ':!docs/**' ':!README.md' \
+            ':!.github/workflows/MACOS_RELEASE.md' \
+            ':!.github/workflows/publish-macos.yml' \
+            ':!.github/workflows/smoke-test-macos-release.yml' \
+            ':!.github/workflows/submit-virustotal.yml')
+          if [[ -n "$CHANGED" ]]; then
+            printf 'Candidate needs rebuilding; changed build inputs:\n%s\n' "$CHANGED"
+            exit 1
+          fi
           test "$(jq -r .event <<< "$RUN_JSON")" = "workflow_dispatch"
           test "$(jq -r .status <<< "$RUN_JSON")" = "completed"
           test "$(jq -r .conclusion <<< "$RUN_JSON")" = "success"
@@ -127,6 +162,7 @@ jobs:
           CANDIDATE_ARTIFACT_DIGEST: ${{ steps.candidate.outputs.artifact_digest }}
           PHYSICAL_TEST_OS: ${{ inputs.physical-test-os }}
           PHYSICAL_TEST_DMG_SHA256: ${{ inputs.physical-test-dmg-sha256 }}
+          PREVIEW: ${{ inputs.preview }}
         shell: bash
         run: |
           set -euo pipefail
@@ -157,22 +193,31 @@ jobs:
           DMG_SHA256=$(sha256sum "$DMG_PATH" | awk '{print $1}')
           test "$(awk '{print $1}' "$SUM_PATH")" = "$DMG_SHA256"
           test "$BUILD_DMG_SHA256" = "$DMG_SHA256"
-          test "$(tr '[:upper:]' '[:lower:]' <<< "$PHYSICAL_TEST_DMG_SHA256")" = \
-            "$DMG_SHA256"
+          if [[ "$PREVIEW" != "true" ]]; then
+            test "$(tr '[:upper:]' '[:lower:]' <<< "$PHYSICAL_TEST_DMG_SHA256")" = \
+              "$DMG_SHA256"
+          fi
 
           RELEASE_META_PATH="$RUNNER_TEMP/macos-release-metadata.json"
           jq \
+            --argjson preview "$PREVIEW" \
             --arg physical_test_os "$PHYSICAL_TEST_OS" \
             --arg physical_test_dmg_sha256 "$DMG_SHA256" \
             --arg physical_test_attested_by "$GITHUB_ACTOR" \
             --arg publish_run_id "$GITHUB_RUN_ID" \
+            --arg publish_commit "$GITHUB_SHA" \
+            --arg published_by "$GITHUB_ACTOR" \
             --arg candidate_artifact_id "$CANDIDATE_ARTIFACT_ID" \
             --arg candidate_artifact_digest "$CANDIDATE_ARTIFACT_DIGEST" \
             '. + {
-              physical_test_os: $physical_test_os,
-              physical_test_dmg_sha256: $physical_test_dmg_sha256,
-              physical_test_attested_by: $physical_test_attested_by,
+              release_channel: (if $preview then "preview" else "stable" end),
+              physical_test_attested: ($preview | not),
+              physical_test_os: (if $preview then null else $physical_test_os end),
+              physical_test_dmg_sha256: (if $preview then null else $physical_test_dmg_sha256 end),
+              physical_test_attested_by: (if $preview then null else $physical_test_attested_by end),
               publish_run_id: $publish_run_id,
+              publish_commit: $publish_commit,
+              published_by: $published_by,
               candidate_artifact_id: $candidate_artifact_id,
               candidate_artifact_digest: $candidate_artifact_digest
             }' \
@@ -205,6 +250,7 @@ jobs:
         env:
           VERSION: ${{ steps.artifact.outputs.version }}
           NOTARIZED: ${{ steps.artifact.outputs.notarized }}
+          PREVIEW: ${{ inputs.preview }}
         shell: bash
         run: |
           {
@@ -239,19 +285,27 @@ jobs:
             echo
             echo "Windows downloads remain available from the repository's **Latest** release."
           } > release-notes-macos.md
+          if [[ "$PREVIEW" == "true" ]]; then
+            NOTES="docs/RELEASE_V${VERSION//./}_MACOS.md"
+            if [[ -f "$NOTES" ]]; then
+              cp "$NOTES" release-notes-macos.md
+            else
+              printf '\n**Preview:** CI build and launch checks passed; physical-device capture testing has not been performed.\n' >> release-notes-macos.md
+            fi
+          fi
 
       - name: Reserve tag at exact candidate commit
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.artifact.outputs.tag }}
           TARGET_COMMIT: ${{ steps.candidate.outputs.commit }}
-        shell: bash
+          shell: bash
         run: |
           set -euo pipefail
           LIVE_MAIN=$(gh api \
             "repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
             --jq .object.sha)
-          test "$LIVE_MAIN" = "$TARGET_COMMIT"
+          test "$LIVE_MAIN" = "$GITHUB_SHA"
           gh api --method POST \
             "repos/$GITHUB_REPOSITORY/git/refs" \
             -f "ref=refs/tags/$RELEASE_TAG" \
@@ -270,6 +324,7 @@ jobs:
           SUM_PATH: ${{ steps.artifact.outputs.sum }}
           META_PATH: ${{ steps.artifact.outputs.metadata }}
           TARGET_COMMIT: ${{ steps.candidate.outputs.commit }}
+          PREVIEW: ${{ inputs.preview }}
         shell: bash
         run: |
           set -euo pipefail
@@ -280,7 +335,7 @@ jobs:
             -f "name=Meetily - Actually Free v${VERSION} for macOS" \
             -f "body=$(cat release-notes-macos.md)" \
             -F draft=true \
-            -F prerelease=false \
+            -F "prerelease=$PREVIEW" \
             -f make_latest=false)
           RELEASE_ID=$(jq -r .id <<< "$RELEASE_JSON")
           UPLOAD_URL=$(jq -r .upload_url <<< "$RELEASE_JSON" | sed 's/{.*}//')
@@ -312,7 +367,7 @@ jobs:
           RELEASE_JSON=$(gh api \
             "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")
           test "$(jq -r .draft <<< "$RELEASE_JSON")" = "false"
-          test "$(jq -r .prerelease <<< "$RELEASE_JSON")" = "false"
+          test "$(jq -r .prerelease <<< "$RELEASE_JSON")" = "$PREVIEW"
           test "$(jq -r .immutable <<< "$RELEASE_JSON")" = "true"
           test "$(jq -r '.assets | length' <<< "$RELEASE_JSON")" = "3"
 

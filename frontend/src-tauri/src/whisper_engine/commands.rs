@@ -771,7 +771,17 @@ pub async fn whisper_get_models_directory() -> Result<String, String> {
 pub async fn whisper_download_model(
     app_handle: tauri::AppHandle,
     model_name: String,
+    enable_post_call: Option<bool>,
 ) -> Result<(), String> {
+    if enable_post_call.unwrap_or(false) && model_name != crate::optional_models::WHISPER_MODEL {
+        return Err("Native optional activation is only supported for the recommended Whisper model".into());
+    }
+    let _activation_guard = if enable_post_call.unwrap_or(false) {
+        Some(crate::optional_models::whisper_activation().await?)
+    } else { None };
+    let _optional_guard = if model_name == crate::optional_models::WHISPER_MODEL && !enable_post_call.unwrap_or(false) {
+        Some(crate::optional_models::operation("whisper")?)
+    } else { None };
     let engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
         guard.as_ref().cloned()
@@ -797,17 +807,36 @@ pub async fn whisper_download_model(
             }
         });
 
-        let result = engine
-            .download_model(&model_name, Some(progress_callback))
-            .await;
+        // An activation retry must not re-download a valid installed model.
+        let installed = if enable_post_call.unwrap_or(false) {
+            engine.discover_models().await.map_err(|e| e.to_string())?.iter().any(|model|
+                model.name == model_name && matches!(model.status, crate::whisper_engine::ModelStatus::Available))
+        } else { false };
+        let result = if installed { Ok(()) } else {
+            engine.download_model(&model_name, Some(progress_callback)).await
+        };
 
         match result {
             Ok(()) => {
+                if enable_post_call.unwrap_or(false) {
+                    let _ = app_handle.emit("model-download-activating", serde_json::json!({ "modelName": model_name }));
+                    let state = app_handle.state::<crate::state::AppState>();
+                    let activation = crate::database::repositories::setting::SettingsRepository::save_post_call_transcript_config(
+                        state.db_manager.pool(), "whisper", &model_name,
+                    ).await;
+                    if let Err(error) = activation {
+                        let message = format!("Model downloaded, but could not enable it: {error}");
+                        let _ = app_handle.emit("model-download-error", serde_json::json!({ "modelName": model_name, "error": message, "postCallManaged": true }));
+                        return Err(message);
+                    }
+                    let _ = app_handle.emit("post-call-transcript-config-changed", ());
+                }
                 // Emit completion event
                 if let Err(e) = app_handle.emit(
                     "model-download-complete",
                     serde_json::json!({
-                        "modelName": model_name
+                        "modelName": model_name,
+                        "postCallManaged": enable_post_call.unwrap_or(false)
                     }),
                 ) {
                     log::error!("Failed to emit download complete event: {}", e);
@@ -820,7 +849,8 @@ pub async fn whisper_download_model(
                     "model-download-error",
                     serde_json::json!({
                         "modelName": model_name,
-                        "error": e.to_string()
+                        "error": e.to_string(),
+                        "postCallManaged": enable_post_call.unwrap_or(false)
                     }),
                 ) {
                     log::error!("Failed to emit download error event: {}", emit_e);

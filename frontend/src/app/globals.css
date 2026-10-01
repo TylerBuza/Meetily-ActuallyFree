@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Ship the UI font with the app: production builds must not depend on Google Fonts. */
+:root { --font-sans: 'Inter Variable'; }
+
 /* ============================================================
    Themes
    Every theme defines the same RGB channel tokens. Components read

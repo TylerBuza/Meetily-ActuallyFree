@@ -6,8 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Spinner } from '@/components/ui/spinner';
 
-export function OptionalModelDownloads({ activeOnly = false }: { activeOnly?: boolean }) {
-  const { jobs, startDownload } = useOptionalModelDownloads();
+export function OptionalModelDownloads({ activeOnly = false, allowUninstall = false }: { activeOnly?: boolean; allowUninstall?: boolean }) {
+  const { jobs, startDownload, uninstallModel } = useOptionalModelDownloads();
   const models: OptionalModel[] = ['whisper', 'nemotron'];
   const visible = models.filter(model => !activeOnly || jobs[model].status !== 'idle');
   if (!visible.length) return null;
@@ -29,11 +29,15 @@ export function OptionalModelDownloads({ activeOnly = false }: { activeOnly?: bo
         const label = model === 'whisper' ? 'Whisper Large v3 Turbo Q5 · ~547 MB' : 'Nemotron-3 diarization · ~382 MB';
         return (
           <div key={model} className="space-y-2 rounded-xl border border-af-border bg-af-panel-2 px-4 py-3">
-            <div className="flex min-h-8 items-center justify-between gap-3">
+            <div className="flex min-h-8 flex-wrap items-center justify-between gap-3">
               <span className="min-w-0 text-sm">{label}</span>
               {job.status === 'ready' && job.enabled ? (
                 <span className="inline-flex shrink-0 items-center gap-1.5 text-sm font-medium text-af-success">
                   <CheckCircle2 className="h-4 w-4" /> Enabled
+                </span>
+              ) : job.status === 'uninstalling' ? (
+                <span role="status" className="inline-flex shrink-0 items-center gap-1.5 text-sm text-af-text-2">
+                  <Spinner className="h-3.5 w-3.5" /> Uninstalling…
                 </span>
               ) : job.status === 'activating' ? (
                 <span role="status" className="inline-flex shrink-0 items-center gap-1.5 text-sm text-af-text-2">
@@ -44,6 +48,11 @@ export function OptionalModelDownloads({ activeOnly = false }: { activeOnly?: bo
               ) : (
                 <Button size="sm" variant="outline" className="shrink-0" onClick={() => startDownload(model)}>
                   {job.status === 'activation-error' ? 'Retry activation' : job.status === 'ready' ? 'Enable' : job.status === 'error' ? 'Retry' : 'Download & enable'}
+                </Button>
+              )}
+              {allowUninstall && (job.status === 'ready' || job.status === 'activation-error') && (
+                <Button size="sm" variant="outline" title={model === 'nemotron' ? 'Remove Nemotron and use bundled Pyannote instead' : 'Remove this Whisper model and reset any selections using it'} aria-label={`Uninstall ${model === 'whisper' ? 'Whisper' : 'Nemotron'}`} onClick={() => uninstallModel(model)}>
+                  Uninstall
                 </Button>
               )}
             </div>

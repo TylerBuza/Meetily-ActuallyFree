@@ -162,7 +162,7 @@ function SettingsInner() {
               <>
                 <TranscriptSettings transcriptModelConfig={transcriptModelConfig} setTranscriptModelConfig={setTranscriptModelConfig} />
                 <DiarizationSettings />
-                <OptionalModelDownloads />
+                <OptionalModelDownloads allowUninstall />
               </>
             )}
             {active === 'summaries' && <SummaryModelSettings />}

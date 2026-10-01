@@ -263,13 +263,11 @@ impl RecordingManager {
             monitor.stop_monitoring().await;
         }
 
-        // Stop recording state first
-        self.state.stop_recording();
-
-        // Stop audio streams
+        // Drain the microphone worker while the pipeline still accepts chunks.
         if let Err(e) = self.stream_manager.stop_streams() {
             error!("Error stopping audio streams: {}", e);
         }
+        self.state.stop_recording();
 
         // Stop audio pipeline
         if let Err(e) = self.pipeline_manager.stop().await {
@@ -292,14 +290,12 @@ impl RecordingManager {
             monitor.stop_monitoring().await;
         }
 
-        // Stop recording state first - this clears device references
-        self.state.stop_recording();
-
-        // Stop audio streams immediately
+        // Drain accepted microphone blocks before disabling pipeline input.
         if let Err(e) = self.stream_manager.stop_streams() {
             error!("Error stopping audio streams: {}", e);
             errors.push(format!("Failed to stop audio streams: {}", e));
         }
+        self.state.stop_recording();
 
         // CRITICAL: Force pipeline to flush ALL accumulated audio before stopping
         debug!("💨 Forcing pipeline to flush accumulated audio immediately");
@@ -354,13 +350,11 @@ impl RecordingManager {
         let recording_duration = self.state.get_active_recording_duration();
         info!("Recording duration before stop: {:?}s", recording_duration);
 
-        // Stop recording state first
-        self.state.stop_recording();
-
-        // Stop audio streams
+        // Drain the microphone worker before disabling pipeline input.
         if let Err(e) = self.stream_manager.stop_streams() {
             error!("Error stopping audio streams: {}", e);
         }
+        self.state.stop_recording();
 
         // Stop audio pipeline
         if let Err(e) = self.pipeline_manager.stop().await {
