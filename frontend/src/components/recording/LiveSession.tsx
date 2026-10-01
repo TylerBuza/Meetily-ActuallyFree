@@ -36,7 +36,7 @@ const PANEL_WIDTH = 340;
 /** Narrower than this and the panel opens over the transcript instead of beside it. */
 const MIN_TRANSCRIPT_WIDTH = 480;
 /** Room under the last line for the floating record card. */
-const RECORD_CARD_CLEARANCE = 90;
+const RECORD_CARD_CLEARANCE = 128;
 const isGeneric = (name: string) => /^speaker \d+$/i.test(name.trim());
 type PreviewCaption = { source: 'microphone' | 'system'; start_time: number; end_time: number; text: string };
 type PreviewFinalized = { source: PreviewCaption['source']; end_time: number };
@@ -329,13 +329,13 @@ export function LiveSession({
             onRenameSpeaker={(speaker, segmentId) => setIdentity({ speaker, transcriptId: segmentId || null })}
             onMergeSpeaker={(speaker) => setIdentity({ speaker, transcriptId: null })}
             highlightSegmentId={highlight}
-            bottomInset={RECORD_CARD_CLEARANCE + (labs.nearLiveCaptions ? 76 : 0)}
+            bottomInset={RECORD_CARD_CLEARANCE + (labs.nearLiveCaptions ? 60 : 0)}
           />
           {isRecording && labs.nearLiveCaptions && (
             <div
               aria-label="Live Captions"
-              className="absolute inset-x-4 z-30 flex items-center gap-2.5 rounded-lg border border-af-border/80 bg-af-panel/95 px-3.5 py-2 shadow-sm backdrop-blur-sm"
-              style={{ bottom: 126 }}
+              className="absolute inset-x-4 mx-auto max-w-[42rem] z-30 flex items-center gap-2.5 rounded-lg border border-af-border/80 bg-af-panel/95 px-3.5 py-2 shadow-sm backdrop-blur-sm"
+              style={{ bottom: 144 }}
             >
               <div className="flex shrink-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-af-text-3">
                 <span className="h-1.5 w-1.5 rounded-full bg-af-accent animate-pulse" />

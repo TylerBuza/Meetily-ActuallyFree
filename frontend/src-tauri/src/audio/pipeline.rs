@@ -242,13 +242,10 @@ impl AudioMixerRingBuffer {
         };
         let buffered_end = self.output_samples + current_len;
         let mut discontinuity_start = None;
-        // Discontinuity reset should only happen on genuine long gaps (e.g. sleep/wake or > 5s gap),
-        // not on normal speech pauses (which can easily be 0.5s - 2s).
-        let discontinuity_threshold = ((5.0 * self.sample_rate).round() as usize).max(self.max_buffer_size);
-        if chunk_start.saturating_sub(buffered_end) > discontinuity_threshold {
+        if chunk_start.saturating_sub(buffered_end) > self.max_buffer_size {
             // The pipeline must persist the old tail before changing origins.
             debug_assert!(self.mic_buffer.is_empty() && self.system_buffer.is_empty());
-            warn!("Audio timeline discontinuity detected (>5s gap); resetting source alignment");
+            warn!("Audio timeline discontinuity detected; resetting source alignment");
             self.mic_buffer.clear();
             self.system_buffer.clear();
             self.timeline_origin = Some(start);
@@ -257,6 +254,18 @@ impl AudioMixerRingBuffer {
             self.system_clock = None;
             chunk_start = 0;
             discontinuity_start = Some(start);
+        }
+
+        // Advance even when output already contains silence for a late block:
+        // trimming that already-emitted prefix must not skew the next block.
+        let next_clock = Some(SourceSampleClock {
+            next_sample: chunk_start + samples.len(),
+            last_callback_end_seconds: timestamp,
+        });
+        match device_type {
+            DeviceType::Microphone => self.mic_clock = next_clock,
+            DeviceType::System => self.system_clock = next_clock,
+            DeviceType::Mixed => return None,
         }
 
         let buffer = match device_type {
@@ -275,25 +284,9 @@ impl AudioMixerRingBuffer {
             if overlap >= samples.len() {
                 return discontinuity_start;
             }
-            // For continuous streams, only drain significant overlap (> 5ms jitter tolerance)
-            let jitter_tolerance = (self.sample_rate * 0.005).round() as usize;
-            if overlap > jitter_tolerance {
-                samples.drain(..overlap);
-            }
+            samples.drain(..overlap);
         }
         buffer.extend(samples);
-
-        // Update clock to match the new buffered end position
-        let new_buffered_end = self.output_samples + buffer.len();
-        let next_clock = Some(SourceSampleClock {
-            next_sample: new_buffered_end,
-            last_callback_end_seconds: timestamp,
-        });
-        match device_type {
-            DeviceType::Microphone => self.mic_clock = next_clock,
-            DeviceType::System => self.system_clock = next_clock,
-            DeviceType::Mixed => return None,
-        }
 
         // Drain via extract_window before imposing any further waiting. Popping
         // a source's oldest samples here both loses audio and moves its remaining
@@ -373,19 +366,6 @@ impl AudioMixerRingBuffer {
         };
 
         self.output_samples += self.window_size_samples;
-
-        // Keep source clocks synchronized with advanced timeline
-        if let Some(clock) = &mut self.mic_clock {
-            if clock.next_sample < self.output_samples {
-                clock.next_sample = self.output_samples;
-            }
-        }
-        if let Some(clock) = &mut self.system_clock {
-            if clock.next_sample < self.output_samples {
-                clock.next_sample = self.output_samples;
-            }
-        }
-
         Some((mic_window, sys_window))
     }
 
