@@ -35,6 +35,29 @@ foreach ($required in @((Join-Path $env:ORT_LIB_LOCATION 'onnxruntime.dll'), (Jo
   if (-not (Test-Path -LiteralPath $required)) { throw "Build dependency is missing: $required" }
 }
 
+$runtimeDeps = Join-Path $tauri 'runtime-deps'
+New-Item -ItemType Directory -Force -Path $runtimeDeps | Out-Null
+foreach ($dll in @('onnxruntime.dll', 'onnxruntime_providers_shared.dll', 'DirectML.dll')) {
+  $src = Join-Path $env:ORT_LIB_LOCATION $dll
+  if (Test-Path -LiteralPath $src) {
+    Copy-Item -LiteralPath $src -Destination (Join-Path $runtimeDeps $dll) -Force
+  }
+}
+if ($Cuda) {
+  $cudaBinX64 = Join-Path $env:CUDA_PATH 'bin\x64'
+  foreach ($dll in @('cudart64_13.dll', 'cublas64_13.dll', 'cublasLt64_13.dll')) {
+    $src = Join-Path $cudaBinX64 $dll
+    if (-not (Test-Path -LiteralPath $src)) {
+      $src = Join-Path (Join-Path $env:CUDA_PATH 'bin') $dll
+    }
+    if (Test-Path -LiteralPath $src) {
+      Copy-Item -LiteralPath $src -Destination (Join-Path $runtimeDeps $dll) -Force
+    } else {
+      Write-Warning "Could not find CUDA DLL: $dll"
+    }
+  }
+}
+
 Push-Location $frontend
 try {
   # Keep the Labs install identity so the CUDA upgrade sees existing profiles,
@@ -44,6 +67,13 @@ try {
   & node 'node_modules\@tauri-apps\cli\tauri.js' build --bundles nsis --config $config -- --no-default-features --features $features
   if ($LASTEXITCODE -ne 0) { throw 'Tauri local-test bundle failed' }
 } finally { Pop-Location }
+
+$targetRelease = Join-Path $repo 'target\release'
+if (Test-Path -LiteralPath $targetRelease) {
+  Get-ChildItem -Path $runtimeDeps -Filter '*.dll' | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $targetRelease $_.Name) -Force
+  }
+}
 
 $installer = Join-Path $repo "target\release\bundle\nsis\Meetily Labs Local Test_${appVersion}_x64-setup.exe"
 if (-not (Test-Path -LiteralPath $installer)) { throw "Installer was not produced: $installer" }
