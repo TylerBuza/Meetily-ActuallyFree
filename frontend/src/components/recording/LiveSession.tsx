@@ -29,13 +29,14 @@ import { formatClock } from '@/lib/dates';
 import type { LiveLine } from '@/lib/live-context';
 import { useLabs } from '@/hooks/useLabs';
 import { isDuplicatedMicCaption, previewHasFinalTurn } from '@/lib/nearLiveCaptions';
+import { speakerKey } from '@/utils/speakerUtils';
 
 const PANEL_KEY = 'af-live-panel-open';
 const PANEL_WIDTH = 340;
 /** Narrower than this and the panel opens over the transcript instead of beside it. */
 const MIN_TRANSCRIPT_WIDTH = 480;
 /** Room under the last line for the floating record card. */
-const RECORD_CARD_CLEARANCE = 150;
+const RECORD_CARD_CLEARANCE = 90;
 const isGeneric = (name: string) => /^speaker \d+$/i.test(name.trim());
 type PreviewCaption = { source: 'microphone' | 'system'; start_time: number; end_time: number; text: string };
 type PreviewFinalized = { source: PreviewCaption['source']; end_time: number };
@@ -51,6 +52,7 @@ export function LiveSession({
 }) {
   const {
     transcripts,
+    colorIndices,
     detectedSpeakers,
     renameSpeaker,
     reassignSegment,
@@ -323,18 +325,35 @@ export function LiveSession({
             isStopping={isStopping}
             enableStreaming={isRecording && !isPaused && !labs.nearLiveCaptions}
             showConfidence
+            colorIndices={colorIndices}
             onRenameSpeaker={(speaker, segmentId) => setIdentity({ speaker, transcriptId: segmentId || null })}
             onMergeSpeaker={(speaker) => setIdentity({ speaker, transcriptId: null })}
             highlightSegmentId={highlight}
-            bottomInset={RECORD_CARD_CLEARANCE + (labs.nearLiveCaptions ? 160 : 0)}
+            bottomInset={RECORD_CARD_CLEARANCE + (labs.nearLiveCaptions ? 76 : 0)}
           />
           {isRecording && labs.nearLiveCaptions && (
-            <div aria-label="Live Captions" className="absolute inset-x-4 rounded-xl border border-af-border bg-af-panel px-4 py-3 shadow-sm" style={{ bottom: 144 }}>
-              <p className="mb-1 text-[11px] font-semibold text-af-text-3">Live Captions</p>
-              <div className="h-16 overflow-y-auto text-sm text-af-text" aria-live="off">
-                {isPaused ? <span className="text-af-text-4">Paused</span> : activePreviews.length === 0
-                  ? <span className="text-af-text-4">Listening…</span>
-                  : activePreviews.map((preview) => <p key={preview.source}>{preview.source === 'microphone' && <span className="mr-2 font-medium text-af-accent">You</span>}{preview.text} …</p>)}
+            <div
+              aria-label="Live Captions"
+              className="absolute inset-x-4 z-30 flex items-center gap-2.5 rounded-lg border border-af-border/80 bg-af-panel/95 px-3.5 py-2 shadow-sm backdrop-blur-sm"
+              style={{ bottom: 126 }}
+            >
+              <div className="flex shrink-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-af-text-3">
+                <span className="h-1.5 w-1.5 rounded-full bg-af-accent animate-pulse" />
+                <span>Live</span>
+              </div>
+              <div className="min-w-0 flex-1 truncate text-xs text-af-text" aria-live="off">
+                {isPaused ? (
+                  <span className="text-af-text-4 italic">Paused</span>
+                ) : activePreviews.length === 0 ? (
+                  <span className="text-af-text-4">Listening…</span>
+                ) : (
+                  activePreviews.map((preview) => (
+                    <span key={preview.source} className="mr-2">
+                      {preview.source === 'microphone' && <span className="mr-1 font-semibold text-af-accent">You:</span>}
+                      <span>{preview.text} …</span>
+                    </span>
+                  ))
+                )}
               </div>
             </div>
           )}
@@ -392,7 +411,7 @@ export function LiveSession({
           else renameSpeaker(from, target);
         }}
         onMerge={(source, target) => mergeSpeakers(source, target)}
-        colorIndexOf={(label) => detectedSpeakers.find((speaker) => speaker.name === label)?.colorIndex}
+        colorIndexOf={(label) => colorIndices.get(speakerKey(label))}
       />
 
     </div>

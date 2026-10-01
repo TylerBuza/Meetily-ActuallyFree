@@ -94,6 +94,7 @@ export interface MeetingMetadata {
   created_at: string;
   updated_at: string;
   folder_path?: string;
+  speakers?: string[];
 }
 
 export interface PaginatedTranscriptsResponse {

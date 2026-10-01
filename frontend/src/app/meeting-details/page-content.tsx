@@ -313,14 +313,26 @@ export default function PageContent({
       const label = segment.speaker?.trim();
       if (label) counts.set(label, (counts.get(label) ?? 0) + 1);
     }
+    // Also include all distinct meeting speakers from metadata even before scrolling through paginated transcripts
+    if (meetingData.speakers) {
+      for (const spk of meetingData.speakers) {
+        const label = spk.trim();
+        if (label && !counts.has(label)) {
+          counts.set(label, 0);
+        }
+      }
+    }
     return [...counts.entries()].map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count);
-  }, [transcriptSegments]);
+  }, [transcriptSegments, meetingData.speakers]);
 
   // One colour per speaker, in the order they first spoke, shared by the
   // transcript, the person card and the identify dialog.
   const colorIndices = useMemo(
-    () => speakerColorIndexMap(transcriptSegments.map((segment) => segment.speaker ?? '').filter(Boolean)),
-    [transcriptSegments],
+    () => speakerColorIndexMap([
+      ...(meetingData.speakers ?? []),
+      ...transcriptSegments.map((segment) => segment.speaker ?? ''),
+    ].filter(Boolean), String(meeting?.id || 'meeting-details')),
+    [transcriptSegments, meetingData.speakers, meeting?.id],
   );
   const colorIndexOf = useCallback((label: string) => colorIndices.get(speakerKey(label)), [colorIndices]);
 

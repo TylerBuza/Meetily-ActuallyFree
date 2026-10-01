@@ -54,7 +54,7 @@ import {
 import { createGroupFromPicker, GroupChip, GroupDot, groupOptions } from '@/components/groups/GroupBits';
 import { openGroupEditor } from '@/components/groups/GroupEditor';
 import { ExportMeetingsDialog } from '@/components/meetings/ExportMeetingsDialog';
-import { dateSection, formatDuration, parseDate } from '@/lib/dates';
+import { dateSection, formatDuration, parseDate, useCurrentDayKey } from '@/lib/dates';
 import { displayTitle } from '@/lib/meeting-titles';
 import { deleteMeetings, moveMeetingsToGroup, renameMeeting } from '@/lib/meeting-actions';
 import { onWorkspaceChange } from '@/lib/workspace-api';
@@ -90,6 +90,7 @@ function summaryExcerpt(raw: string): string | null {
 
 export default function MeetingsPage() {
   const router = useRouter();
+  const todayKey = useCurrentDayKey();
   const { meetings, setCurrentMeeting, currentMeeting } = useSidebar();
   const { groups, groupById, people } = useWorkspace();
   const { openImportDialog } = useImportDialog();
@@ -196,7 +197,7 @@ export default function MeetingsPage() {
       map.set(title, [...(map.get(title) ?? []), meeting]);
     }
     return [...map.entries()].map(([title, items]) => ({ title, meetings: items }));
-  }, [filtered, sort]);
+  }, [filtered, sort, todayKey]);
 
   const orderedIds = useMemo(() => filtered.map((meeting) => meeting.id), [filtered]);
   const toggleExpanded = useCallback((ids: string[]) => {

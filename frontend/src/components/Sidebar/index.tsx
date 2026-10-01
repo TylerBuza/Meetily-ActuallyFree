@@ -44,7 +44,7 @@ import { useImportDialog } from '@/contexts/ImportDialogContext';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { useRecordingClock } from '@/components/recording/RecordingPill';
 import { cn } from '@/lib/utils';
-import { dateSection, formatClock, formatDuration, formatShortDate, formatTime, parseDate } from '@/lib/dates';
+import { dateSection, formatClock, formatDuration, formatShortDate, formatTime, parseDate, useCurrentDayKey } from '@/lib/dates';
 import { displayTitle } from '@/lib/meeting-titles';
 import { writePendingGroup } from '@/lib/groups';
 import { deleteMeetings, moveMeetingsToGroup, renameMeeting } from '@/lib/meeting-actions';
@@ -146,6 +146,7 @@ function useStoredGroupBy(): [GroupBy, (next: GroupBy) => void] {
 const Sidebar: React.FC = () => {
   const router = useRouter();
   const pathname = usePathname();
+  const todayKey = useCurrentDayKey();
   const { currentMeeting, setCurrentMeeting, isCollapsed, sidebarWidth, setSidebarWidth, toggleRail, previewSidebar, meetings } =
     useSidebar();
   const { isRecording, isPaused } = useRecordingState();
@@ -195,7 +196,7 @@ const Sidebar: React.FC = () => {
       byDate.set(title, section);
     }
     return [...byDate.values()];
-  }, [meetings, groupBy, groupById]);
+  }, [meetings, groupBy, groupById, todayKey]);
 
   const orderedIds = useMemo(() => sections.flatMap((section) => section.meetings.map((meeting) => meeting.id)), [sections]);
 

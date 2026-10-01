@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { Summary, Transcript } from '@/types';
 
 interface UseMeetingDataProps {
-  meeting: { id: string; transcripts: Transcript[] };
+  meeting: { id: string; transcripts: Transcript[]; speakers?: string[] };
   summaryData: Summary | null;
 }
 
@@ -22,5 +22,5 @@ export function useMeetingData({ meeting, summaryData }: UseMeetingDataProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meeting.id]);
 
-  return { transcripts: meeting.transcripts, aiSummary, setAiSummary };
+  return { transcripts: meeting.transcripts, speakers: meeting.speakers, aiSummary, setAiSummary };
 }

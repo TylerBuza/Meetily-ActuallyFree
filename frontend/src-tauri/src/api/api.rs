@@ -183,6 +183,8 @@ pub struct MeetingMetadata {
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub folder_path: Option<String>,
+    #[serde(default)]
+    pub speakers: Vec<String>,
 }
 
 /// Paginated transcripts response with total count
@@ -1140,13 +1142,22 @@ pub async fn api_get_meeting_metadata<R: Runtime>(
                     .await
                     .map_err(|e| format!("Failed to repair meeting start time: {}", e))?;
             }
-            log_info!("Successfully retrieved meeting metadata {}", meeting_id);
+            let speakers: Vec<String> = sqlx::query_scalar(
+                "SELECT DISTINCT speaker FROM transcripts WHERE meeting_id = ? AND speaker IS NOT NULL AND TRIM(speaker) != '' ORDER BY id ASC"
+            )
+            .bind(&meeting_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+
+            log_info!("Successfully retrieved meeting metadata {} with {} speakers", meeting_id, speakers.len());
             Ok(MeetingMetadata {
                 id: meeting.id,
                 title: meeting.title,
                 created_at: created_at.to_rfc3339(),
                 updated_at: meeting.updated_at.0.to_rfc3339(),
                 folder_path: meeting.folder_path,
+                speakers,
             })
         }
         Ok(None) => {

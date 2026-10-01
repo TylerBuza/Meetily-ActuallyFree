@@ -21,7 +21,7 @@ import { memo, startTransition, useEffect, useMemo, useReducer, useRef, useState
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { motion } from 'framer-motion';
-import { Camera, GitMerge, Mic } from 'lucide-react';
+import { Camera, ChevronDown, GitMerge, Mic } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import type { MeetingImage } from '@/lib/meeting-images';
@@ -351,7 +351,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     onChange: () => startTransition(() => rerender()),
   });
 
-  useAutoScroll({
+  const { autoScroll, scrollToBottom } = useAutoScroll({
     scrollRef,
     segments: turns,
     isRecording,
@@ -476,7 +476,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
         </div>
       )}
       {!isStopping && isRecording && !isProcessing && turns.length > 0 && (
-        <div className="mb-2 mt-4 flex min-h-[1.25rem] items-center gap-2 text-af-text-3">
+        <div className="mb-2 mt-2 flex min-h-[1.25rem] items-center gap-2 text-af-text-3">
           {isPaused ? (
             <span className="text-xs text-af-warning">Paused</span>
           ) : (
@@ -491,12 +491,13 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
   );
 
   return (
-    <div
-      ref={scrollRef}
-      className="flex h-full flex-col overflow-y-auto px-4 py-3"
-      style={bottomInset ? { scrollPaddingBottom: bottomInset } : undefined}
-    >
-      <div className={isRecording ? 'pb-4 pt-2' : ''} style={bottomInset ? { paddingBottom: bottomInset } : undefined}>
+    <div className="relative h-full w-full min-h-0 min-w-0">
+      <div
+        ref={scrollRef}
+        className="flex h-full flex-col overflow-y-auto px-4 py-3"
+        style={bottomInset ? { scrollPaddingBottom: bottomInset } : undefined}
+      >
+        <div className={isRecording ? 'pt-1' : ''} style={bottomInset ? { paddingBottom: bottomInset } : undefined}>
         {turns.length === 0 ? (
           isRecording ? (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-16 flex flex-col items-center text-center">
@@ -540,7 +541,23 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
             {footer}
           </>
         )}
+        </div>
       </div>
+
+      {!autoScroll && turns.length > 0 && (
+        <button
+          type="button"
+          onClick={scrollToBottom}
+          className="group absolute right-6 z-20 flex items-center gap-1.5 rounded-full border border-af-border bg-af-panel/95 px-3 py-1.5 text-xs font-medium text-af-text shadow-lg backdrop-blur-md transition-all hover:bg-af-hover hover:border-af-accent/40 hover:text-af-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent animate-in fade-in-0 slide-in-from-bottom-2"
+          style={{ bottom: (bottomInset || 0) + 12 }}
+          aria-label="Scroll down to resume live transcript"
+        >
+          {isRecording && <span className="h-1.5 w-1.5 rounded-full bg-af-record animate-pulse" />}
+          <span className="text-[11px] font-medium">{isRecording ? 'Resume Live' : 'Jump to latest'}</span>
+          <ChevronDown className="h-3.5 w-3.5 text-af-text-3 transition-transform group-hover:translate-y-0.5 group-hover:text-af-accent" />
+        </button>
+      )}
+
       <Dialog open={selectedImage !== null} onOpenChange={(open) => !open && setSelectedImage(null)}>
         <DialogContent className="max-w-4xl">
           <DialogHeader><DialogTitle>Meeting image · {selectedImage ? clock(selectedImage.audioTime) : ''}</DialogTitle></DialogHeader>

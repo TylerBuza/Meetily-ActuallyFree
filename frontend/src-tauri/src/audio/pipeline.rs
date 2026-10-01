@@ -181,8 +181,12 @@ impl AudioMixerRingBuffer {
         };
         let buffered_end = self.output_samples + current_len;
         let mut discontinuity_start = None;
-        if chunk_start.saturating_sub(buffered_end) > self.max_buffer_size {
-            warn!("Audio timeline discontinuity detected; resetting source alignment");
+
+        // Discontinuity reset should only happen on genuine long gaps (e.g. sleep/wake or > 5s gap),
+        // not on normal speech pauses (which can easily be 0.5s - 2s).
+        let discontinuity_threshold = ((5.0 * self.sample_rate).round() as usize).max(self.max_buffer_size);
+        if chunk_start.saturating_sub(buffered_end) > discontinuity_threshold {
+            warn!("Audio timeline discontinuity detected (>5s gap); resetting source alignment");
             self.mic_buffer.clear();
             self.system_buffer.clear();
             self.timeline_origin = Some(start);
@@ -193,21 +197,9 @@ impl AudioMixerRingBuffer {
             discontinuity_start = Some(start);
         }
 
-        // Advance even when output already contains silence for a late block:
-        // trimming that already-emitted prefix must not skew the next block.
-        let next_clock = Some(SourceSampleClock {
-            next_sample: chunk_start.saturating_add(samples.len()),
-            last_callback_end_seconds: timestamp,
-        });
         let buffer = match device_type {
-            DeviceType::Microphone => {
-                self.mic_clock = next_clock;
-                &mut self.mic_buffer
-            }
-            DeviceType::System => {
-                self.system_clock = next_clock;
-                &mut self.system_buffer
-            }
+            DeviceType::Microphone => &mut self.mic_buffer,
+            DeviceType::System => &mut self.system_buffer,
             DeviceType::Mixed => return None,
         };
 
@@ -219,27 +211,27 @@ impl AudioMixerRingBuffer {
             if overlap >= samples.len() {
                 return discontinuity_start;
             }
-            samples.drain(..overlap);
+            // For continuous streams, only drain significant overlap (> 5ms jitter tolerance)
+            let jitter_tolerance = (self.sample_rate * 0.005).round() as usize;
+            if overlap > jitter_tolerance {
+                samples.drain(..overlap);
+            }
         }
         buffer.extend(samples);
 
-        // CRITICAL FIX: Add warnings before dropping samples
-        // This helps diagnose timing issues in production
-        if self.mic_buffer.len() > self.max_buffer_size {
-            warn!(
-                "⚠️ Microphone buffer overflow: {} > {} samples, dropping oldest {} samples",
-                self.mic_buffer.len(),
-                self.max_buffer_size,
-                self.mic_buffer.len() - self.max_buffer_size
-            );
-        }
-        if self.system_buffer.len() > self.max_buffer_size {
-            error!("🔴 SYSTEM AUDIO BUFFER OVERFLOW: {} > {} samples, dropping {} samples - THIS CAUSES DISTORTION!",
-                  self.system_buffer.len(), self.max_buffer_size,
-                  self.system_buffer.len() - self.max_buffer_size);
+        // Update clock to match the new buffered end position
+        let new_buffered_end = self.output_samples + buffer.len();
+        let next_clock = Some(SourceSampleClock {
+            next_sample: new_buffered_end,
+            last_callback_end_seconds: timestamp,
+        });
+        match device_type {
+            DeviceType::Microphone => self.mic_clock = next_clock,
+            DeviceType::System => self.system_clock = next_clock,
+            DeviceType::Mixed => return None,
         }
 
-        // Safety: prevent buffer overflow (keep only last 200ms)
+        // Safety: prevent runaway buffer overflow while keeping output_samples aligned
         while self.mic_buffer.len() > self.max_buffer_size {
             self.mic_buffer.pop_front();
         }
@@ -309,6 +301,19 @@ impl AudioMixerRingBuffer {
         };
 
         self.output_samples += self.window_size_samples;
+
+        // Keep source clocks synchronized with advanced timeline
+        if let Some(clock) = &mut self.mic_clock {
+            if clock.next_sample < self.output_samples {
+                clock.next_sample = self.output_samples;
+            }
+        }
+        if let Some(clock) = &mut self.system_clock {
+            if clock.next_sample < self.output_samples {
+                clock.next_sample = self.output_samples;
+            }
+        }
+
         Some((mic_window, sys_window))
     }
 
@@ -333,6 +338,18 @@ impl AudioMixerRingBuffer {
         mic.resize(len, 0.0);
         system.resize(len, 0.0);
         self.output_samples += len;
+
+        if let Some(clock) = &mut self.mic_clock {
+            if clock.next_sample < self.output_samples {
+                clock.next_sample = self.output_samples;
+            }
+        }
+        if let Some(clock) = &mut self.system_clock {
+            if clock.next_sample < self.output_samples {
+                clock.next_sample = self.output_samples;
+            }
+        }
+
         Some((mic, system))
     }
 }
@@ -1835,6 +1852,41 @@ mod ring_buffer_tests {
 
         assert_eq!(mic, vec![1.0; 2_400]);
         assert_eq!(system, vec![2.0; 2_400]);
+    }
+
+    #[test]
+    fn pauses_and_resumptions_do_not_drop_samples_or_shred_audio() {
+        let mut ring = AudioMixerRingBuffer::new(48_000, true, true);
+        // Both start at 0.05
+        ring.add_samples(DeviceType::Microphone, vec![1.0; 2_400], 0.05);
+        ring.add_samples(DeviceType::System, vec![2.0; 2_400], 0.05);
+        let _ = ring.extract_window().unwrap();
+
+        // Microphone continues streaming (remote speaker paused on system audio)
+        for i in 2..=5 {
+            let t = i as f64 * 0.05;
+            ring.add_samples(DeviceType::Microphone, vec![1.0; 2_400], t);
+            while let Some(_) = ring.extract_window() {}
+        }
+
+        // Now system audio resumes with speech at 0.28 (2400 samples)
+        ring.add_samples(DeviceType::System, vec![3.0; 2_400], 0.28);
+        // And follows up with another block at 0.33
+        ring.add_samples(DeviceType::System, vec![4.0; 2_400], 0.33);
+
+        let mut collected_system = Vec::new();
+        while let Some((_, sys)) = ring.extract_window() {
+            collected_system.extend(sys);
+        }
+        while let Some((_, sys)) = ring.extract_remaining() {
+            collected_system.extend(sys);
+        }
+
+        // All 2400 samples of 3.0 and 2400 samples of 4.0 must be preserved!
+        let count_threes = collected_system.iter().filter(|&&s| (s - 3.0).abs() < 1e-4).count();
+        let count_fours = collected_system.iter().filter(|&&s| (s - 4.0).abs() < 1e-4).count();
+        assert_eq!(count_threes, 2_400, "Resumed speech samples must not be dropped by ring buffer");
+        assert_eq!(count_fours, 2_400, "Subsequent speech samples must not be dropped by ring buffer");
     }
 
     #[test]

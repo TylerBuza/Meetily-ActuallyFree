@@ -311,9 +311,7 @@ pub fn auto_save_named_voices<R: tauri::Runtime>(app: tauri::AppHandle<R>, pool:
                 if load().map_err(|error| error.to_string())?.iter().any(|profile| profile.person_id == person_id) { continue; }
                 let _ = app.emit("voice-profile-auto-save-result", serde_json::json!({"name": label, "personId": person_id, "status": "learning"}));
                 let enrollment: Result<String, String> = async {
-                    // First enrollment needs a few dispersed samples, not a full
-                    // twenty-window rebuild while other recording work runs.
-                    let (_, name, share) = meeting_share_limit(&pool, &meeting_id, &label, 4).await.map_err(String::from)?;
+                    let (_, name, share) = meeting_share_limit(&pool, &meeting_id, &label, LEARN_TURNS).await.map_err(String::from)?;
                     store_shares(&person_id, &name, vec![share], false, true).map_err(String::from)?;
                     Ok(name)
                 }.await;
