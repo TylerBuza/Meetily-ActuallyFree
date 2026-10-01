@@ -212,6 +212,12 @@ impl AudioMixerRingBuffer {
         Some((start, chunk_start))
     }
 
+    fn discontinuity_threshold_samples(&self) -> usize {
+        // Discontinuity should only trigger on genuine multi-second stream stalls/dropouts (>= 3s),
+        // NOT on normal 400ms pauses between speech turns.
+        ((3.0 * self.sample_rate).round() as usize).max(self.max_buffer_size)
+    }
+
     fn needs_timeline_reset(&self, source: &DeviceType, count: usize, timestamp: f64) -> bool {
         let Some((_, chunk_start)) = self.incoming_position(source, count, timestamp) else { return false; };
         let pending = match source {
@@ -219,7 +225,7 @@ impl AudioMixerRingBuffer {
             DeviceType::System => self.system_buffer.len(),
             DeviceType::Mixed => return false,
         };
-        chunk_start.saturating_sub(self.output_samples + pending) > self.max_buffer_size
+        chunk_start.saturating_sub(self.output_samples + pending) > self.discontinuity_threshold_samples()
     }
 
     fn add_samples(
@@ -242,7 +248,7 @@ impl AudioMixerRingBuffer {
         };
         let buffered_end = self.output_samples + current_len;
         let mut discontinuity_start = None;
-        if chunk_start.saturating_sub(buffered_end) > self.max_buffer_size {
+        if chunk_start.saturating_sub(buffered_end) > self.discontinuity_threshold_samples() {
             // The pipeline must persist the old tail before changing origins.
             debug_assert!(self.mic_buffer.is_empty() && self.system_buffer.is_empty());
             warn!("Audio timeline discontinuity detected; resetting source alignment");
@@ -1411,9 +1417,11 @@ impl AudioPipeline {
                     }
                     if self.ring_buffer.needs_timeline_reset(&chunk.device_type, chunk.data.len(), chunk.timestamp) {
                         // A driver/system stall can leave a sub-window tail on
-                        // either source. Save it and finalize VAD before resetting
+                        // either source. Save it to speech/recording before resetting
                         // both clocks; clearing first silently loses real samples.
-                        self.flush_remaining_audio()?;
+                        // NOTE: Do NOT call flush_remaining_audio() here, as that terminates
+                        // live Nemotron diarization and flushes VAD mid-session!
+                        self.drain_ring_buffer_tail()?;
                     }
                     let discontinuity_start = self.ring_buffer.add_samples(
                         chunk.device_type.clone(),
@@ -1535,12 +1543,7 @@ impl AudioPipeline {
         Ok(())
     }
 
-    fn flush_remaining_audio(&mut self) -> Result<()> {
-        info!(
-            "Flushing remaining audio from pipeline (processed {} chunks)",
-            self.processed_chunks
-        );
-
+    fn drain_ring_buffer_tail(&mut self) -> Result<()> {
         while let Some((mic_window, sys_window)) = self.ring_buffer.extract_remaining() {
             let mic_for_stt = self.echo_guard.as_mut()
                 .map(|guard| guard.filter_window(&mic_window, &sys_window))
@@ -1586,6 +1589,16 @@ impl AudioPipeline {
                 }
             }
         }
+        Ok(())
+    }
+
+    fn flush_remaining_audio(&mut self) -> Result<()> {
+        info!(
+            "Flushing remaining audio from pipeline (processed {} chunks)",
+            self.processed_chunks
+        );
+
+        self.drain_ring_buffer_tail()?;
 
         crate::diarization::live_nemotron::finish();
         let mic_final = self.mic_vad.flush();

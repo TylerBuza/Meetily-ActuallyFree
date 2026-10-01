@@ -81,7 +81,7 @@ impl LiveDuplicateFilter {
     fn accept(&mut self, update: TranscriptUpdate, microphone: bool, envelope: Vec<f32>) -> Vec<TranscriptUpdate> {
         if microphone {
             if self.duplicate(&update, &envelope) { return Vec::new(); }
-            if self.pending_mic.len() >= 16 {
+            if self.pending_mic.len() >= 4 {
                 let oldest = self.pending_mic.pop_front().unwrap().0;
                 self.pending_mic.push_back((update, envelope, std::time::Instant::now()));
                 return vec![oldest];
@@ -111,7 +111,7 @@ impl LiveDuplicateFilter {
     fn flush_due(&mut self, force: bool) -> Vec<TranscriptUpdate> {
         let mut ready = Vec::new();
         while self.pending_mic.front().is_some_and(|(_, _, since)|
-            force || since.elapsed() >= std::time::Duration::from_secs(3)) {
+            force || since.elapsed() >= std::time::Duration::from_millis(800)) {
             let (mic, mic_envelope, _) = self.pending_mic.pop_front().unwrap();
             if !self.duplicate(&mic, &mic_envelope) { ready.push(mic); }
         }
@@ -233,7 +233,7 @@ pub fn start_transcription_task<R: Runtime>(
                             }
                         };
                         let Some(chunk) = preview else { continue; };
-                        if queued.load(Ordering::SeqCst) > completed.load(Ordering::SeqCst) { continue; }
+                        if queued.load(Ordering::SeqCst) > completed.load(Ordering::SeqCst) + 1 { continue; }
                         let source = match chunk.device_type {
                             crate::audio::recording_state::DeviceType::Microphone => "microphone",
                             crate::audio::recording_state::DeviceType::System => "system",
@@ -244,8 +244,7 @@ pub fn start_transcription_task<R: Runtime>(
                         let began = std::time::Instant::now();
                         match engine.transcribe_audio(chunk.data).await {
                             Ok(text) if !text.trim().is_empty()
-                                && !finished.load(Ordering::SeqCst)
-                                && queued.load(Ordering::SeqCst) == completed.load(Ordering::SeqCst) => {
+                                && !finished.load(Ordering::SeqCst) => {
                                 info!("Near-live {source} preview {:.2}-{:.2}s decoded in {}ms", start, end, began.elapsed().as_millis());
                                 let _ = app.emit("near-live-caption", serde_json::json!({
                                     "source": source, "start_time": start,
@@ -470,7 +469,11 @@ pub fn start_transcription_task<R: Runtime>(
                                         };
 
                                         let updates = match &mut duplicate_filter {
-                                            Some(filter) => filter.accept(update, capture_source == "microphone", duplicate_envelope.unwrap_or_default()),
+                                            Some(filter) => {
+                                                let mut u = filter.accept(update, capture_source == "microphone", duplicate_envelope.unwrap_or_default());
+                                                u.extend(filter.flush_due(false));
+                                                u
+                                            }
                                             None => vec![update],
                                         };
                                         for update in updates {
