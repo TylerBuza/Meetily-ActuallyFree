@@ -91,9 +91,9 @@ function namedSpeakerColor(speaker: string): Exclude<GroupColor, 'slate'> | null
 export function speakerColorValue(speaker?: string | null, colorIndex?: number): string {
   if (!speaker) return 'var(--af-text-4)';
   if (isUserSpeaker(speaker)) return 'var(--af-accent)';
-  if (colorIndex !== undefined) return SLOT_COLOR_VALUES[colorIndex % SLOT_COLOR_VALUES.length];
   const named = namedSpeakerColor(speaker);
   if (named) return `var(--af-c-${named})`;
+  if (colorIndex !== undefined) return SLOT_COLOR_VALUES[colorIndex % SLOT_COLOR_VALUES.length];
   const slot = /^guest\b/i.test(speaker) ? 0 : speakerPaletteIndex(speaker);
   return SLOT_COLOR_VALUES[slot % SLOT_COLOR_VALUES.length];
 }
@@ -181,9 +181,9 @@ export function speakerColorIndexMap(labels: Iterable<string>, seed?: string): M
 export function speakerDot(speaker?: string | null, colorIndex?: number): string {
   if (!speaker) return 'bg-af-text-4';
   if (isUserSpeaker(speaker)) return 'bg-af-accent';
-  if (colorIndex !== undefined) return speakerDotPalette[colorIndex % speakerDotPalette.length];
   const named = namedSpeakerColor(speaker);
   if (named) return DOT_CLASS[named];
+  if (colorIndex !== undefined) return speakerDotPalette[colorIndex % speakerDotPalette.length];
   if (/^guest\b/i.test(speaker)) return speakerDotPalette[0];
   return speakerDotPalette[speakerPaletteIndex(speaker)];
 }
@@ -192,9 +192,9 @@ export function speakerDot(speaker?: string | null, colorIndex?: number): string
 export function speakerColor(speaker?: string | null, colorIndex?: number): string {
   if (!speaker) return 'text-af-text-3';
   if (isUserSpeaker(speaker)) return 'text-af-accent';
-  if (colorIndex !== undefined) return speakerTextPalette[colorIndex % speakerTextPalette.length];
   const named = namedSpeakerColor(speaker);
   if (named) return TEXT_CLASS[named];
+  if (colorIndex !== undefined) return speakerTextPalette[colorIndex % speakerTextPalette.length];
   if (/^guest\b/i.test(speaker)) return speakerTextPalette[0];
   return speakerTextPalette[speakerPaletteIndex(speaker)];
 }
