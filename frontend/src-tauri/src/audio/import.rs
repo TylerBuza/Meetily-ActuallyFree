@@ -376,6 +376,22 @@ async fn run_import<R: Runtime>(
 
     info!("Copied audio to: {}", dest_path.display());
 
+    // If source is a video file (mp4, webm, mov, mkv), preserve it as video.<ext>
+    let ext_lower = source
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+    if ["mp4", "webm", "mov", "mkv"].contains(&ext_lower.as_str()) {
+        let video_dest = meeting_folder.join(format!("video.{}", ext_lower));
+        if video_dest != dest_path {
+            let src_v = source.clone();
+            let dest_v = video_dest.clone();
+            let _ = tokio::task::spawn_blocking(move || std::fs::copy(&src_v, &dest_v)).await;
+            info!("Preserved video track as: {}", video_dest.display());
+        }
+    }
+
     // Check for cancellation
     if IMPORT_CANCELLED.load(Ordering::SeqCst) {
         // Cleanup: remove the meeting folder
@@ -1054,6 +1070,7 @@ pub async fn is_import_in_progress_command() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::common::create_transcript_segments;
 
     fn test_recording_start() -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2026-08-30T12:00:00Z")

@@ -12,7 +12,16 @@ import {
   HardDrive,
   ChevronDown,
   ChevronUp,
+  Video,
+  ExternalLink,
 } from 'lucide-react';
+import { listen } from '@tauri-apps/api/event';
+import { cn } from '@/lib/utils';
+import {
+  fetchYoutubeInfo,
+  transcribeYoutubeUrl,
+  type YoutubeVideoInfo,
+} from '@/lib/workspace-api';
 import {
   Dialog,
   DialogContent,
@@ -78,11 +87,31 @@ export function ImportAudioDialog({
   const [selectedLang, setSelectedLang] = useState(selectedLanguage || 'auto');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [titleModifiedByUser, setTitleModifiedByUser] = useState(false);
+  const [tab, setTab] = useState<'file' | 'youtube'>('file');
+  const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [youtubeInfo, setYoutubeInfo] = useState<YoutubeVideoInfo | null>(null);
+  const [isFetchingInfo, setIsFetchingInfo] = useState(false);
+  const [isProcessingYoutube, setIsProcessingYoutube] = useState(false);
+  const [youtubeProgress, setYoutubeProgress] = useState<{ stage: string; percent: number; message: string } | null>(null);
+  const [youtubeError, setYoutubeError] = useState<string | null>(null);
 
   // Always start as false — represents "dialog has not yet been opened".
   // Do NOT initialize from the `open` prop: if the component mounts with open=true
   // (e.g. drag-drop path), we still need the initialization effect to run.
   const prevOpenRef = useRef(false);
+
+  // Listen for youtube download and extraction progress
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void listen<{ stage: string; percent: number; message: string }>('youtube-progress', (event) => {
+      setYoutubeProgress(event.payload);
+    }).then((un) => {
+      unlisten = un;
+    });
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
 
   // Use centralized model fetching hook
   const {
@@ -139,6 +168,13 @@ export function ImportAudioDialog({
       setTitleModifiedByUser(false);
       setSelectedLang(selectedLanguage || 'auto');
       setShowAdvanced(false);
+      setTab('file');
+      setYoutubeUrl('');
+      setYoutubeInfo(null);
+      setIsFetchingInfo(false);
+      setIsProcessingYoutube(false);
+      setYoutubeProgress(null);
+      setYoutubeError(null);
 
       // Validate preselected file if provided
       if (preselectedFile) {
@@ -153,6 +189,42 @@ export function ImportAudioDialog({
       fetchModels();
     }
   }, [open, preselectedFile, selectedLanguage, transcriptModelConfig, reset, resetSelection, validateFile, fetchModels]);
+
+  const handleFetchYoutubeInfo = async () => {
+    if (!youtubeUrl.trim()) return;
+    setIsFetchingInfo(true);
+    setYoutubeError(null);
+    try {
+      const info = await fetchYoutubeInfo(youtubeUrl.trim());
+      setYoutubeInfo(info);
+      if (!title || !titleModifiedByUser) {
+        setTitle(info.title);
+      }
+      toast.success('Video details loaded');
+    } catch (err: any) {
+      const msg = typeof err === 'string' ? err : (err?.message || String(err) || 'Failed to get video info');
+      setYoutubeError(msg);
+      toast.error('Failed to get video info', { description: msg });
+    } finally {
+      setIsFetchingInfo(false);
+    }
+  };
+
+  const handleStartYoutubeImport = async () => {
+    if (!youtubeUrl.trim()) return;
+    setIsProcessingYoutube(true);
+    setYoutubeError(null);
+    setYoutubeProgress({ stage: 'Starting download...', percent: 5, message: 'Connecting to YouTube...' });
+    try {
+      const result = await transcribeYoutubeUrl(youtubeUrl.trim(), selectedModel?.name || null);
+      handleImportComplete(result);
+    } catch (err: any) {
+      setIsProcessingYoutube(false);
+      const msg = typeof err === 'string' ? err : (err?.message || String(err) || 'Failed to download and transcribe YouTube video');
+      setYoutubeError(msg);
+      toast.error('YouTube import failed', { description: msg });
+    }
+  };
 
   // Update title when fileInfo changes
   useEffect(() => {
@@ -196,30 +268,37 @@ export function ImportAudioDialog({
     );
   };
 
+  const isAnyProcessing = isProcessing || isProcessingYoutube;
+  const hasAnyError = Boolean(error || youtubeError);
+
   const handleCancel = async () => {
     if (isProcessing) {
       await cancelImport();
       toast.info('Import cancelled');
+    }
+    if (isProcessingYoutube) {
+      setIsProcessingYoutube(false);
+      toast.info('YouTube process cancelled');
     }
     onOpenChange(false);
   };
 
   // Prevent closing during processing
   const handleOpenChange = (newOpen: boolean) => {
-    if (!newOpen && isProcessing) {
+    if (!newOpen && isAnyProcessing) {
       return;
     }
     onOpenChange(newOpen);
   };
 
   const handleEscapeKeyDown = (event: KeyboardEvent) => {
-    if (isProcessing) {
+    if (isAnyProcessing) {
       event.preventDefault();
     }
   };
 
   const handleInteractOutside = (event: Event) => {
-    if (isProcessing) {
+    if (isAnyProcessing) {
       event.preventDefault();
     }
   };
@@ -227,18 +306,18 @@ export function ImportAudioDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="sm:max-w-[500px]"
+        className="sm:max-w-[520px]"
         onEscapeKeyDown={handleEscapeKeyDown}
         onInteractOutside={handleInteractOutside}
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            {isProcessing ? (
+            {isAnyProcessing ? (
               <>
                 <Spinner className="h-5 w-5 text-af-accent" />
-                Importing Audio...
+                {isProcessingYoutube ? 'Transcribing YouTube Video...' : 'Importing Audio...'}
               </>
-            ) : error ? (
+            ) : hasAnyError ? (
               <>
                 <AlertCircle className="h-5 w-5 text-af-danger" />
                 Import Failed
@@ -250,23 +329,59 @@ export function ImportAudioDialog({
               </>
             ) : (
               <>
-                <Upload className="h-5 w-5 text-af-accent" />
-                Import Audio File
+                {tab === 'youtube' ? <Video className="h-5 w-5 text-af-accent" /> : <Upload className="h-5 w-5 text-af-accent" />}
+                {tab === 'youtube' ? 'YouTube URL Transcription' : 'Import Audio File'}
               </>
             )}
           </DialogTitle>
           <DialogDescription>
-            {isProcessing
+            {isProcessingYoutube
+              ? youtubeProgress?.message || 'Downloading and transcribing YouTube video...'
+              : isProcessing
               ? progress?.message || 'Processing audio...'
-              : error
-              ? 'An error occurred during import'
+              : hasAnyError
+              ? error || youtubeError
+              : tab === 'youtube'
+              ? 'Download and transcribe any YouTube video with synchronized playback'
               : 'Import an audio file to create a new meeting with transcripts'}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-4">
+        {/* Tab switcher */}
+        {!isAnyProcessing && !hasAnyError && (
+          <div className="flex border-b border-af-border -mt-1 mb-2">
+            <button
+              type="button"
+              onClick={() => setTab('file')}
+              className={cn(
+                'flex items-center gap-2 px-4 py-2 text-xs sm:text-sm font-medium border-b-2 -mb-px transition-colors',
+                tab === 'file'
+                  ? 'border-af-accent text-af-accent font-semibold'
+                  : 'border-transparent text-af-text-3 hover:text-af-text'
+              )}
+            >
+              <Upload className="h-4 w-4" />
+              Audio / Video File
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('youtube')}
+              className={cn(
+                'flex items-center gap-2 px-4 py-2 text-xs sm:text-sm font-medium border-b-2 -mb-px transition-colors',
+                tab === 'youtube'
+                  ? 'border-af-accent text-af-accent font-semibold'
+                  : 'border-transparent text-af-text-3 hover:text-af-text'
+              )}
+            >
+              <Video className="h-4 w-4" />
+              YouTube Video
+            </button>
+          </div>
+        )}
+
+        <div className="space-y-4 py-2">
           {/* File selection / info */}
-          {!isProcessing && !error && (
+          {!isAnyProcessing && !hasAnyError && tab === 'file' && (
             <>
               {fileInfo ? (
                 <div className="bg-af-panel-2 rounded-lg p-4 space-y-3">
@@ -409,9 +524,137 @@ export function ImportAudioDialog({
             </>
           )}
 
-          {/* Progress display */}
+          {/* YouTube ingestion tab */}
+          {!isAnyProcessing && !hasAnyError && tab === 'youtube' && (
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wider text-af-text-3">YouTube URL</label>
+                <div className="flex gap-2">
+                  <Input
+                    value={youtubeUrl}
+                    onChange={(e) => setYoutubeUrl(e.target.value)}
+                    placeholder="https://www.youtube.com/watch?v=... or https://youtu.be/..."
+                    className="flex-1 text-sm font-mono"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void handleFetchYoutubeInfo();
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleFetchYoutubeInfo}
+                    disabled={isFetchingInfo || !youtubeUrl.trim()}
+                    className="shrink-0"
+                  >
+                    {isFetchingInfo ? <Spinner className="h-4 w-4" /> : 'Fetch Info'}
+                  </Button>
+                </div>
+              </div>
+
+              {/* YouTube video preview card */}
+              {youtubeInfo && (
+                <div className="bg-af-panel-2 rounded-xl p-3.5 space-y-3 border border-af-border">
+                  <div className="flex gap-3">
+                    {(youtubeInfo.thumbnail_url || youtubeInfo.thumbnailUrl) ? (
+                      <div className="relative h-20 w-32 shrink-0 overflow-hidden rounded-lg bg-black">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={(youtubeInfo.thumbnail_url || youtubeInfo.thumbnailUrl)!}
+                          alt={youtubeInfo.title}
+                          className="h-full w-full object-cover"
+                        />
+                        <span className="absolute bottom-1 right-1 rounded bg-black/80 px-1 py-0.5 text-[10px] font-mono text-white">
+                          {formatDuration(youtubeInfo.duration_seconds ?? youtubeInfo.durationSeconds ?? 0)}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex h-20 w-32 shrink-0 items-center justify-center rounded-lg bg-af-panel border border-af-border">
+                        <Video className="h-8 w-8 text-af-accent" />
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm text-af-text line-clamp-2">{youtubeInfo.title}</p>
+                      <p className="text-xs text-af-text-3 mt-1 truncate">{youtubeInfo.channel}</p>
+                      <div className="flex items-center gap-1.5 mt-2 text-xs text-af-accent">
+                        <Video className="h-3.5 w-3.5" />
+                        <span>Saves video to meeting folder with synchronized player</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Title input */}
+                  <div className="space-y-1 pt-2 border-t border-af-border/60">
+                    <label className="text-xs font-medium text-af-text-2">Meeting Title</label>
+                    <Input
+                      value={title}
+                      onChange={(e) => {
+                        setTitle(e.target.value);
+                        setTitleModifiedByUser(true);
+                      }}
+                      placeholder="Meeting title"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Model selector for YouTube */}
+              {availableModels.length > 0 && (
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex items-center gap-2">
+                    <Cpu className="h-4 w-4 text-af-text-3" />
+                    <span className="text-xs font-semibold text-af-text-2 uppercase tracking-wider">Transcription Model</span>
+                  </div>
+                  <Select
+                    value={selectedModelKey}
+                    onValueChange={setSelectedModelKey}
+                    disabled={loadingModels}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder={loadingModels ? 'Loading models...' : 'Select model'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableModels.map((model) => (
+                        <SelectItem
+                          key={`${model.provider}:${model.name}`}
+                          value={`${model.provider}:${model.name}`}
+                        >
+                          {model.displayName} ({Math.round(model.size_mb)} MB)
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* YouTube Progress display */}
+          {isProcessingYoutube && (
+            <div className="space-y-2 py-2">
+              <div className="relative">
+                <div className="w-full bg-af-hover rounded-full h-3">
+                  <div
+                    className="bg-af-accent h-3 rounded-full transition-all duration-300 ease-out"
+                    style={{ width: `${Math.max(5, Math.min(youtubeProgress?.percent ?? 5, 100))}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-xs text-af-text-2 mt-1">
+                  <span>{youtubeProgress?.stage || 'Downloading...'}</span>
+                  <span>{Math.round(youtubeProgress?.percent ?? 5)}%</span>
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground text-center">
+                {youtubeProgress?.message || 'Downloading video and preparing audio stream...'}
+              </p>
+            </div>
+          )}
+
+          {/* File Progress display */}
           {isProcessing && progress && (
-            <div className="space-y-2">
+            <div className="space-y-2 py-2">
               <div className="relative">
                 <div className="w-full bg-af-hover rounded-full h-3">
                   <div
@@ -429,41 +672,58 @@ export function ImportAudioDialog({
           )}
 
           {/* Error display */}
-          {error && (
+          {hasAnyError && (
             <div className="bg-af-danger/10 border border-af-danger/35 rounded-lg p-3">
-              <p className="text-sm text-af-danger">{error}</p>
+              <p className="text-sm text-af-danger">{error || youtubeError}</p>
             </div>
           )}
         </div>
 
         <DialogFooter>
-          {!isProcessing && !error && (
+          {!isAnyProcessing && !hasAnyError && (
             <>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
-              <Button
-                onClick={handleStartImport}
-                className="bg-af-accent hover:bg-af-accent-hover"
-                disabled={!fileInfo}
-              >
-                <Upload className="h-4 w-4 mr-2" />
-                Import
-              </Button>
+              {tab === 'file' ? (
+                <Button
+                  onClick={handleStartImport}
+                  className="bg-af-accent hover:bg-af-accent-hover"
+                  disabled={!fileInfo}
+                >
+                  <Upload className="h-4 w-4 mr-2" />
+                  Import
+                </Button>
+              ) : (
+                <Button
+                  onClick={handleStartYoutubeImport}
+                  className="bg-af-accent hover:bg-af-accent-hover"
+                  disabled={!youtubeUrl.trim()}
+                >
+                  <Video className="h-4 w-4 mr-2" />
+                  Download & Transcribe
+                </Button>
+              )}
             </>
           )}
-          {isProcessing && (
+          {isAnyProcessing && (
             <Button variant="outline" onClick={handleCancel}>
               <X className="h-4 w-4 mr-2" />
               Cancel
             </Button>
           )}
-          {error && (
+          {hasAnyError && (
             <>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 Close
               </Button>
-              <Button onClick={reset} variant="outline">
+              <Button
+                onClick={() => {
+                  reset();
+                  setYoutubeError(null);
+                }}
+                variant="outline"
+              >
                 Try Again
               </Button>
             </>

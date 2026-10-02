@@ -67,10 +67,7 @@ impl DatabaseManager {
                         return Err(MigrateError::VersionMismatch(version).into());
                     }
                     if version == PEOPLE_MIGRATION_VERSION {
-                        if let Err(e) = Self::repair_people_migration_checksum(pool).await {
-                            log::warn!("People migration repair fallback ({}), attempting generic repair...", e);
-                            Self::repair_migration_checksum(pool, version).await?;
-                        }
+                        Self::repair_people_migration_checksum(pool).await?;
                     } else {
                         log::warn!("Repairing modified migration checksum for version {}", version);
                         Self::repair_migration_checksum(pool, version).await?;

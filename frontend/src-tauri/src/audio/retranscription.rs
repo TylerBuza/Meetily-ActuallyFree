@@ -1159,6 +1159,7 @@ pub async fn is_retranscription_in_progress_command() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::common::create_transcript_segments;
 
     #[test]
     fn retranscription_repairs_duration_and_preserves_metadata() {

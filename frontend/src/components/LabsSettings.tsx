@@ -8,9 +8,10 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { invoke } from '@tauri-apps/api/core';
-import { AudioWaveform, Eraser, Fingerprint, Gauge, MousePointerClick, VolumeX, Workflow, X, type LucideIcon } from 'lucide-react';
+import { AudioWaveform, Eraser, Fingerprint, FolderCog, FolderOpen, Gauge, MousePointerClick, Plus, Trash2, VolumeX, Workflow, X, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Switch } from '@/components/ui/switch';
+import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/avatar';
 import { Spinner } from '@/components/ui/spinner';
 import { usePlatform } from '@/hooks/usePlatform';
@@ -18,6 +19,14 @@ import { useLabs } from '@/hooks/useLabs';
 import { useVoiceProfiles } from '@/hooks/useVoiceProfiles';
 import { setLabsFeature, syncLabsFromBackend, type LabsFeature } from '@/lib/labs-features';
 import { describeVoiceError, describeVoiceSource, forgetVoice } from '@/lib/voice-profiles';
+import {
+  getWatchFolders,
+  setWatchFolders,
+  addWatchFolder,
+  removeWatchFolder,
+  pickWatchFolder,
+  type WatchFolderConfig,
+} from '@/lib/workspace-api';
 
 interface Feature {
   key: LabsFeature;
@@ -230,6 +239,128 @@ function LearnedVoices() {
   );
 }
 
+function WatchFoldersCard() {
+  const [config, setConfig] = useState<WatchFolderConfig>({ enabled: false, folders: [] });
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void getWatchFolders()
+      .then((cfg) => setConfig(cfg))
+      .catch((e) => console.error('Failed to load watch folders config:', e))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleToggle = async (checked: boolean) => {
+    setBusy(true);
+    try {
+      const updated = await setWatchFolders(checked, config.folders);
+      setConfig(updated);
+      toast.success(checked ? 'Watch folders monitoring enabled' : 'Watch folders disabled');
+    } catch (e: any) {
+      toast.error('Failed to update watch folders', { description: e?.message || String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleAdd = async () => {
+    try {
+      const selected = await pickWatchFolder();
+      if (!selected) return;
+      const updated = await addWatchFolder(selected);
+      setConfig(updated);
+      toast.success(`Watching folder: ${selected}`);
+    } catch (e: any) {
+      toast.error('Failed to add watch folder', { description: e?.message || String(e) });
+    }
+  };
+
+  const handleRemove = async (folder: string) => {
+    try {
+      const updated = await removeWatchFolder(folder);
+      setConfig(updated);
+      toast.success('Removed watch folder');
+    } catch (e: any) {
+      toast.error('Failed to remove watch folder', { description: e?.message || String(e) });
+    }
+  };
+
+  return (
+    <div className="px-5 py-4">
+      <div className="flex items-start gap-4">
+        <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-af-accent/[0.12] text-af-accent">
+          <FolderCog className="h-[18px] w-[18px]" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h4 className="text-sm font-semibold text-af-text">Watch folders</h4>
+          <p className="mt-0.5 text-[13px] leading-relaxed text-af-text-3">
+            Automatically monitor folders on your computer for new audio and video files. When files are copied or downloaded into these folders, Meetily automatically imports and transcribes them in the background.
+          </p>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-af-text-4">
+            Checked in the background every 5 seconds.
+          </p>
+        </div>
+        <span className="mt-1 flex shrink-0 items-center gap-2">
+          {busy && <Spinner size={14} className="text-af-text-3" />}
+          <Switch
+            checked={config.enabled}
+            disabled={busy || loading}
+            onCheckedChange={handleToggle}
+            aria-label="Watch folders"
+          />
+        </span>
+      </div>
+
+      {config.enabled && (
+        <div className="mt-4 sm:pl-[52px] space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-af-text-3">Monitored Folders</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleAdd}
+              className="h-7 text-xs gap-1.5"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add Folder
+            </Button>
+          </div>
+
+          {config.folders.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-af-border p-4 text-center">
+              <FolderOpen className="mx-auto h-6 w-6 text-af-text-4 mb-1" />
+              <p className="text-xs text-af-text-3">No folders added yet. Click &quot;Add Folder&quot; to choose a directory to monitor.</p>
+            </div>
+          ) : (
+            <ul className="divide-y divide-af-border overflow-hidden rounded-xl border border-af-border bg-af-panel">
+              {config.folders.map((folder) => (
+                <li key={folder} className="flex items-center justify-between gap-3 px-3 py-2">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <FolderOpen className="h-4 w-4 shrink-0 text-af-accent" />
+                    <span className="truncate text-xs font-mono text-af-text" title={folder}>
+                      {folder}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={`Stop watching ${folder}`}
+                    onClick={() => handleRemove(folder)}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-af-text-4 transition-colors hover:bg-af-danger/10 hover:text-af-danger"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function LabsSettings() {
   const platform = usePlatform();
   const { labs } = useLabs();
@@ -258,6 +389,13 @@ export function LabsSettings() {
 
   return (
     <div className="space-y-6">
+      <section>
+        <h3 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-af-text-4">Automated Ingestion</h3>
+        <div className="overflow-hidden rounded-2xl border border-af-border bg-af-panel-2/40">
+          <WatchFoldersCard />
+        </div>
+      </section>
+
       {GROUPS.map((group) => {
         const features = group.features.filter((feature) => !feature.windowsOnly || platform === 'windows');
         if (features.length === 0) return null;

@@ -86,6 +86,10 @@ export interface VirtualizedTranscriptViewProps {
   textMode?: TranscriptTextMode;
   /** Colour slot per speaker key (speakerColorIndexMap). Worked out from the lines when not given. */
   colorIndices?: Map<string, number>;
+  /** Translated text mapped by transcript segment ID */
+  translations?: Record<string, string>;
+  /** How translations should be rendered relative to original text */
+  translationMode?: 'original' | 'translated' | 'bilingual';
 }
 
 const VIRTUALIZATION_THRESHOLD = 10;
@@ -174,6 +178,8 @@ const TurnRow = memo(function TurnRow({
   onRenameSpeaker,
   onMergeSpeaker,
   onSeek,
+  translations,
+  translationMode = 'original',
 }: {
   turn: Turn;
   text: string;
@@ -191,6 +197,8 @@ const TurnRow = memo(function TurnRow({
   onRenameSpeaker?: VirtualizedTranscriptViewProps['onRenameSpeaker'];
   onMergeSpeaker?: VirtualizedTranscriptViewProps['onMergeSpeaker'];
   onSeek?: VirtualizedTranscriptViewProps['onSeek'];
+  translations?: Record<string, string>;
+  translationMode?: 'original' | 'translated' | 'bilingual';
 }) {
   const { labs } = useLabs();
   const speaker = turn.speaker;
@@ -200,6 +208,15 @@ const TurnRow = memo(function TurnRow({
   const clickable = !!speaker && !turn.provisional && (!!onSpeakerClick || !!onRenameSpeaker);
   const currentMs = active && activeTime != null ? activeTime * 1000 : null;
   const showWords = Boolean(labs.wordTimestamps && turn.words && turn.words.length > 0 && !isStreaming);
+
+  const translationText = useMemo(() => {
+    if (!translations || translationMode === 'original') return null;
+    const parts = turn.memberIds
+      .map((id) => translations[id])
+      .filter(Boolean);
+    if (parts.length > 0) return parts.join(' ');
+    return translations[turn.id] || null;
+  }, [translations, translationMode, turn.memberIds, turn.id]);
 
   const activeWordIndex = useMemo(() => {
     if (currentMs == null || !turn.words || turn.words.length === 0) return -1;
@@ -286,7 +303,11 @@ const TurnRow = memo(function TurnRow({
           )}
           style={isYou ? undefined : ({ '--chip': speakerColorValue(speaker, colorIndex) } as React.CSSProperties)}
         >
-          {showWords ? (
+          {translationMode === 'translated' && translationText ? (
+            <p className="text-sm leading-relaxed text-af-text whitespace-pre-wrap select-text">
+              {translationText}
+            </p>
+          ) : showWords ? (
             <p className="text-sm leading-relaxed text-af-text whitespace-pre-wrap select-text">
               {turn.words!.map((w, idx) => {
                 const isWordActive = idx === activeWordIndex;
@@ -316,6 +337,13 @@ const TurnRow = memo(function TurnRow({
           ) : (
             <p className={cn('text-sm leading-relaxed text-af-text', isStreaming && 'opacity-80')}>{shown}</p>
           )}
+
+          {translationMode === 'bilingual' && translationText && (
+            <div className="mt-2 pt-2 border-t border-af-border/40 text-xs sm:text-[13px] leading-relaxed text-af-text-2 italic select-text">
+              {translationText}
+            </div>
+          )}
+
           {turn.provisional && <span className="mt-1 block text-[10px] text-af-text-4">Updating…</span>}
         </div>
       </div>
@@ -349,6 +377,8 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
   bottomInset = 0,
   textMode = 'tidy',
   colorIndices: givenColorIndices,
+  translations,
+  translationMode = 'original',
 }) => {
   const userName = useUserName();
   const [leftAligned] = useTranscriptLeftAligned();
@@ -506,6 +536,8 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
       onRenameSpeaker={onRenameSpeaker}
       onMergeSpeaker={onMergeSpeaker}
       onSeek={onSeek}
+      translations={translations}
+      translationMode={translationMode}
     />
     {imagesByTurn.get(turn.id)?.length ? (
       <div className="mb-4 ml-4 flex flex-wrap gap-2" aria-label="Images captured at this point in the meeting">

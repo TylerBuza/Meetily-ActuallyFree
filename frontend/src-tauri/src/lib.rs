@@ -538,6 +538,9 @@ pub fn run() {
             // Free Whisper/Parakeet VRAM a couple minutes after last STT use.
             audio::common::start_stt_idle_unloader();
 
+            // Watch folders: initialize background watcher
+            audio::watch_folders::init_watch_folder_worker(_app.handle().clone());
+
             // Hydrate mic gain (and other recording prefs) into runtime atomics.
             let app_for_prefs = _app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -970,6 +973,18 @@ pub fn run() {
             audio::import::start_import_audio_command,
             audio::import::cancel_import_command,
             audio::import::is_import_in_progress_command,
+            // YouTube download and transcription
+            audio::youtube::fetch_youtube_info_command,
+            audio::youtube::transcribe_youtube_url_command,
+            // Watch folders
+            audio::watch_folders::api_get_watch_folders,
+            audio::watch_folders::api_set_watch_folders,
+            audio::watch_folders::api_add_watch_folder,
+            audio::watch_folders::api_remove_watch_folder,
+            audio::watch_folders::api_pick_watch_folder,
+            // Transcript translation
+            summary::transcript_translation::api_get_meeting_translations,
+            summary::transcript_translation::api_translate_meeting_transcript,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

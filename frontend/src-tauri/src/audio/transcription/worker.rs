@@ -140,6 +140,7 @@ mod playback_tests {
             sequence_id: 0, chunk_start_time: start, is_partial: false,
             confidence: 0.9, audio_start_time: start, audio_end_time: end,
             duration: end - start,
+            words: None,
         }
     }
 

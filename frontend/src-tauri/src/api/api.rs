@@ -474,6 +474,8 @@ pub async fn api_get_meetings<R: Runtime>(
 pub struct MeetingAudio {
     /// Mixed playback track (`audio.mp4`, or the imported file).
     pub path: Option<String>,
+    /// Video track if the meeting has an associated video recording or download (`video.mp4`).
+    pub video_path: Option<String>,
     pub mic_path: Option<String>,
     pub system_path: Option<String>,
 }
@@ -493,6 +495,7 @@ pub async fn api_get_meeting_audio<R: Runtime>(
 
     let none = MeetingAudio {
         path: None,
+        video_path: None,
         mic_path: None,
         system_path: None,
     };
@@ -512,6 +515,10 @@ pub async fn api_get_meeting_audio<R: Runtime>(
         let path = dir.join(name);
         path.is_file().then(|| path.to_string_lossy().to_string())
     };
+    let video_path = existing("video.mp4")
+        .or_else(|| existing("video.webm"))
+        .or_else(|| existing("video.mov"))
+        .or_else(|| existing("video.mkv"));
     let playback = existing("audio.mp4").or_else(|| {
         std::fs::read_dir(&dir).ok().and_then(|entries| {
             entries.filter_map(Result::ok).map(|entry| entry.path()).find(|path| {
@@ -525,13 +532,14 @@ pub async fn api_get_meeting_audio<R: Runtime>(
             })
         })
         .map(|path| path.to_string_lossy().to_string())
-    });
+    }).or_else(|| video_path.clone());
     let audio = MeetingAudio {
         path: playback,
+        video_path,
         mic_path: existing("mic.mp4"),
         system_path: existing("system.mp4"),
     };
-    if audio.path.is_some() || audio.mic_path.is_some() || audio.system_path.is_some() {
+    if audio.path.is_some() || audio.video_path.is_some() || audio.mic_path.is_some() || audio.system_path.is_some() {
         app.asset_protocol_scope()
             .allow_directory(&dir, false)
             .map_err(|e| format!("Failed to allow playback of the recording: {}", e))?;

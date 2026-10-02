@@ -374,7 +374,7 @@ pub mod windows_loopback {
     struct RecoveryPolicy { failures: u32, idle_restarts: u32 }
     impl RecoveryPolicy {
         fn idle_timeout(&self) -> std::time::Duration {
-            std::time::Duration::from_secs(300)
+            std::time::Duration::from_secs((5u64 << self.idle_restarts.min(3)).min(30))
         }
         fn next(&mut self, failed: bool, healthy: bool, idle: bool) -> Option<std::time::Duration> {
             if healthy { self.failures = 0; self.idle_restarts = 0; }

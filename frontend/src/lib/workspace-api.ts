@@ -239,11 +239,78 @@ export const saveMeetingNotes = (meetingId: string, markdown: string | null, jso
 
 export interface MeetingAudio {
   path: string | null;
+  videoPath?: string | null;
   micPath: string | null;
   systemPath: string | null;
 }
 
 export const getMeetingAudio = (meetingId: string) => invoke<MeetingAudio>('api_get_meeting_audio', { meetingId });
+
+// ---- YouTube URL Ingestion ------------------------------------------------------
+
+export interface YouTubeVideoInfo {
+  url?: string;
+  title: string;
+  channel?: string;
+  durationSeconds?: number;
+  duration_seconds?: number;
+  thumbnailUrl?: string;
+  thumbnail_url?: string;
+  thumbnail?: string | null;
+  description?: string | null;
+  webpageUrl?: string;
+  webpage_url?: string;
+}
+
+export type YoutubeVideoInfo = YouTubeVideoInfo;
+
+export const fetchYouTubeInfo = (url: string) =>
+  invoke<YouTubeVideoInfo>('fetch_youtube_info_command', { url });
+export const fetchYoutubeInfo = fetchYouTubeInfo;
+
+export const transcribeYouTubeUrl = (url: string, preferredModel?: string | null) =>
+  invoke<{ meeting_id: string; title: string; segments_count: number; duration_seconds: number }>(
+    'transcribe_youtube_url_command',
+    { url, preferredModel },
+  );
+export const transcribeYoutubeUrl = transcribeYouTubeUrl;
+
+// ---- Transcript Translation ----------------------------------------------------
+
+export interface MeetingTranslation {
+  meetingId: string;
+  targetLanguage: string;
+  translatedAt: string;
+  segments: Record<string, string>;
+}
+
+export const getMeetingTranslations = (meetingId: string) =>
+  invoke<MeetingTranslation[]>('api_get_meeting_translations', { meetingId });
+
+export const translateMeetingTranscript = (meetingId: string, targetLanguage: string) =>
+  invoke<MeetingTranslation>('api_translate_meeting_transcript', { meetingId, targetLanguage });
+
+// ---- Watch Folders -------------------------------------------------------------
+
+export interface WatchFolderConfig {
+  enabled: boolean;
+  folders: string[];
+}
+
+export const getWatchFolders = () =>
+  invoke<WatchFolderConfig>('api_get_watch_folders');
+
+export const setWatchFolders = (enabled: boolean, folders: string[]) =>
+  invoke<WatchFolderConfig>('api_set_watch_folders', { enabled, folders });
+
+export const addWatchFolder = (folder: string) =>
+  invoke<WatchFolderConfig>('api_add_watch_folder', { folder });
+
+export const removeWatchFolder = (folder: string) =>
+  invoke<WatchFolderConfig>('api_remove_watch_folder', { folder });
+
+export const pickWatchFolder = () =>
+  invoke<string | null>('api_pick_watch_folder');
 
 export interface AskTurn {
   question: string;
