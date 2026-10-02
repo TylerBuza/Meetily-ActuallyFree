@@ -52,6 +52,24 @@ This PR introduces end-to-end speaker diarization support using NVIDIA Parakeet 
 - **Process Cleanup**: Updated `dev-gpu.bat` and `build-gpu.bat` to terminate orphaned `msedgewebview2.exe` background processes that previously locked the `EBWebView` cache directory.
 - **Window Activation & Focus**: Added explicit window focus flags in `tauri.conf.json`, startup focus triggers in `lib.rs`, and a client-side pointer-events recovery watchdog in `app/layout.tsx`.
 
+#### 7. YouTube URL Transcription & Synchronized Video Playback
+- **Automated Ingestion via yt-dlp**: Seamlessly fetches, verifies, and executes `yt-dlp` to download high-quality MP4 video and audio.
+- **Unified Pipeline**: Automatically kicks off offline transcription (Parakeet / Whisper), speaker diarization, word-level alignment, and LLM summary generation.
+- **Synchronized Video Player**: Embedded video player in Meeting Details with collapsible preview. Video playback is tightly bound to word-level timestamps: words highlight in real-time karaoke mode as video plays, and clicking any word seeks the video player directly.
+- **Import Dialog Preview**: Dedicated "YouTube Video" tab in the Import Audio modal featuring URL validation, live video metadata preview (title, channel, duration, thumbnail), model selection, and real-time download/transcription progress bar.
+
+#### 8. Full Transcript Translation (LLM-Powered)
+- **Multi-Language Post-Translation**: Translates meeting transcripts into target languages (Spanish, French, German, Italian, Portuguese, Japanese, Korean, Chinese, Russian, and more) via local sidecar LLMs or configured API providers.
+- **Bilingual & Side-by-Side Viewing Modes**: View transcripts in Original, Translated, or Bilingual format (showing both source language and translation below each speaker segment).
+- **Persistent Storage**: Saved in `<meeting_folder>/translations/<lang>.json` with fast cache retrieval.
+- **Click-to-Seek Intact**: Even in translated or bilingual mode, original word-level timestamps and click-to-seek audio/video sync remain fully operational.
+
+#### 9. Watch Folders (Automated Background Ingestion)
+- **Automated Directory Monitoring**: Background directory watcher monitors user-designated folders every 5 seconds.
+- **Write Stability Verification**: Multi-tick size and timestamp stability checks ensure files have completed writing or copying before triggering import.
+- **Automated Pipeline**: Dropped audio/video files automatically enter transcription, speaker diarization, and summary generation.
+- **Labs Management UI**: Monitored folders list with master toggle and directory picker dialog under Settings -> Labs.
+
 ---
 
 ## Related Issue
@@ -80,6 +98,11 @@ Addresses speaker diarization integration, speaker identification workflows, Win
 - [x] Verified dev server pre-warming and eliminated blank/frozen UI state on launch.
 - [x] Verified SQLite database migration and self-healing with existing user databases.
 - [x] Verified GPU execution provider correctly active at runtime without fallback warning banner.
+- [x] Verified YouTube video download, metadata extraction, and transcription pipeline via yt-dlp.
+- [x] Verified Meeting Details video player sync: active word highlighting follows video playback, and clicking words seeks the video player.
+- [x] Verified LLM transcript translation in Original, Translated, and Bilingual display modes with persistent disk cache.
+- [x] Verified background Watch Folders detection, write stability verification, and automated transcription trigger.
+- [x] Verified complete backend and frontend test suites pass (393 Rust unit tests + 30 isolated frontend suites).
 
 ---
 
