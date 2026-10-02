@@ -11,7 +11,224 @@ pub struct RecordableApp {
     pub icon: Option<String>,
 }
 
+#[cfg(target_os = "macos")]
+unsafe fn ns_string_to_string(ns_str: *mut objc::runtime::Object) -> Option<String> {
+    if ns_str.is_null() {
+        return None;
+    }
+    let utf8: *const std::os::raw::c_char = objc::msg_send![ns_str, UTF8String];
+    if utf8.is_null() {
+        None
+    } else {
+        Some(std::ffi::CStr::from_ptr(utf8).to_string_lossy().trim().to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn get_macos_running_apps() -> Vec<RecordableApp> {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+
+    let mut apps = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    unsafe {
+        let workspace_class = class!(NSWorkspace);
+        let workspace: *mut Object = msg_send![workspace_class, sharedWorkspace];
+        if workspace.is_null() {
+            return apps;
+        }
+
+        let running_apps: *mut Object = msg_send![workspace, runningApplications];
+        if running_apps.is_null() {
+            return apps;
+        }
+
+        let count: usize = msg_send![running_apps, count];
+        for i in 0..count {
+            let app: *mut Object = msg_send![running_apps, objectAtIndex: i];
+            if app.is_null() {
+                continue;
+            }
+
+            // 0 = NSApplicationActivationPolicyRegular (standard GUI apps with Dock presence/windows)
+            let policy: isize = msg_send![app, activationPolicy];
+            if policy != 0 {
+                continue;
+            }
+
+            let pid: i32 = msg_send![app, processIdentifier];
+            if pid <= 0 {
+                continue;
+            }
+            let pid_u32 = pid as u32;
+
+            let name_ns: *mut Object = msg_send![app, localizedName];
+            let name = ns_string_to_string(name_ns).unwrap_or_default();
+
+            let exe_url: *mut Object = msg_send![app, executableURL];
+            let exe_path = if !exe_url.is_null() {
+                let path_ns: *mut Object = msg_send![exe_url, path];
+                ns_string_to_string(path_ns).unwrap_or_default()
+            } else {
+                String::new()
+            };
+
+            let bundle_url: *mut Object = msg_send![app, bundleURL];
+            let bundle_path = if !bundle_url.is_null() {
+                let path_ns: *mut Object = msg_send![bundle_url, path];
+                ns_string_to_string(path_ns).unwrap_or_default()
+            } else {
+                String::new()
+            };
+
+            let exe_name = if !exe_path.is_empty() {
+                std::path::Path::new(&exe_path)
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or(&exe_path)
+                    .to_string()
+            } else if !bundle_path.is_empty() {
+                std::path::Path::new(&bundle_path)
+                    .file_stem()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or(&bundle_path)
+                    .to_string()
+            } else if !name.is_empty() {
+                name.clone()
+            } else {
+                continue;
+            };
+
+            let display_name = if !name.is_empty() {
+                name.clone()
+            } else {
+                get_friendly_name(&exe_name)
+            };
+
+            let lower_name = display_name.to_lowercase();
+            let lower_exe = exe_name.to_lowercase();
+
+            if lower_name.contains("meetily") || lower_exe.contains("meetily") {
+                continue;
+            }
+            if lower_exe == "finder" || lower_exe == "dock" {
+                continue;
+            }
+            if is_system_process(&lower_exe) || is_system_process(&lower_name) {
+                continue;
+            }
+
+            if seen.insert(lower_exe.clone()) {
+                apps.push(RecordableApp {
+                    id: exe_name.clone(),
+                    name: display_name,
+                    executable: exe_name,
+                    pid: Some(pid_u32),
+                    has_audio: false,
+                    icon: None,
+                });
+            }
+        }
+    }
+
+    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    apps
+}
+
+#[cfg(target_os = "macos")]
+fn find_macos_app_pid(target_app: &str) -> Option<u32> {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+
+    let target_clean = std::path::Path::new(target_app)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or(target_app)
+        .to_lowercase();
+    let target_no_app = target_clean.strip_suffix(".app").unwrap_or(&target_clean);
+    let target_no_exe = target_no_app.strip_suffix(".exe").unwrap_or(target_no_app);
+
+    unsafe {
+        let workspace_class = class!(NSWorkspace);
+        let workspace: *mut Object = msg_send![workspace_class, sharedWorkspace];
+        if workspace.is_null() {
+            return None;
+        }
+
+        let running_apps: *mut Object = msg_send![workspace, runningApplications];
+        if running_apps.is_null() {
+            return None;
+        }
+
+        let count: usize = msg_send![running_apps, count];
+        for i in 0..count {
+            let app: *mut Object = msg_send![running_apps, objectAtIndex: i];
+            if app.is_null() {
+                continue;
+            }
+
+            let pid: i32 = msg_send![app, processIdentifier];
+            if pid <= 0 {
+                continue;
+            }
+
+            let name_ns: *mut Object = msg_send![app, localizedName];
+            let name = ns_string_to_string(name_ns).unwrap_or_default().to_lowercase();
+
+            let exe_url: *mut Object = msg_send![app, executableURL];
+            let exe_path = if !exe_url.is_null() {
+                let path_ns: *mut Object = msg_send![exe_url, path];
+                ns_string_to_string(path_ns).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            let exe_name = std::path::Path::new(&exe_path)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or(&exe_path)
+                .to_lowercase();
+
+            let bundle_url: *mut Object = msg_send![app, bundleURL];
+            let bundle_path = if !bundle_url.is_null() {
+                let path_ns: *mut Object = msg_send![bundle_url, path];
+                ns_string_to_string(path_ns).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            let bundle_name = std::path::Path::new(&bundle_path)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or(&bundle_path)
+                .to_lowercase();
+            let bundle_stem = bundle_name.strip_suffix(".app").unwrap_or(&bundle_name);
+
+            if name == target_clean
+                || name == target_no_exe
+                || exe_name == target_clean
+                || exe_name == target_no_exe
+                || bundle_name == target_clean
+                || bundle_stem == target_no_exe
+                || target_app.eq_ignore_ascii_case(&exe_path)
+                || target_app.eq_ignore_ascii_case(&bundle_path)
+            {
+                return Some(pid as u32);
+            }
+        }
+    }
+
+    None
+}
+
 pub fn get_recordable_apps_list() -> Result<Vec<RecordableApp>> {
+    #[cfg(target_os = "macos")]
+    {
+        let mac_apps = get_macos_running_apps();
+        if !mac_apps.is_empty() {
+            return Ok(mac_apps);
+        }
+    }
+
     let mut apps = Vec::new();
 
     // Use sysinfo to get running processes
@@ -30,6 +247,21 @@ pub fn get_recordable_apps_list() -> Result<Vec<RecordableApp>> {
         let pid_u32 = pid.as_u32();
         let exe_name = process.name().to_string_lossy().to_string();
         let exe_lower = exe_name.to_lowercase();
+
+        #[cfg(target_os = "macos")]
+        {
+            // On macOS sysinfo fallback, only include user applications from Applications directory
+            if let Some(exe_path) = process.exe() {
+                let path_str = exe_path.to_string_lossy();
+                let is_in_apps = path_str.contains("/Applications/") || path_str.contains("/Applications");
+                let is_helper = path_str.contains("/Frameworks/") || path_str.contains("/Helpers/") || path_str.contains("/XPCServices/");
+                if !is_in_apps || is_helper {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+        }
 
         if is_system_process(&exe_lower) {
             continue;
@@ -85,10 +317,35 @@ fn is_system_process(name: &str) -> bool {
         "notificationcenter", "talagent", "tccd", "cfprefsd",
     ];
 
-    sys_names.iter().any(|&s| lower == s || lower.strip_suffix(".exe").unwrap_or(&lower) == s)
+    if sys_names.iter().any(|&s| lower == s || lower.strip_suffix(".exe").unwrap_or(&lower) == s) {
+        return true;
+    }
+
+    // macOS background daemons, XPC services, and helper subprocesses
+    if lower.starts_with("com.apple.")
+        || lower.ends_with("agent")
+        || lower.ends_with("daemon")
+        || lower.ends_with("service")
+        || lower.contains("helper")
+        || lower.contains("cef")
+        || lower.contains("crashpad")
+        || lower.contains("renderer")
+        || lower.contains("gpu")
+        || lower.contains("plugin")
+        || lower == "accountsd"
+        || lower == "accountsubscriber"
+        || lower == "accessibilityuiserver"
+        || lower == "accessibilityvisualsagent"
+        || lower == "adid"
+        || lower == "agy"
+    {
+        return true;
+    }
+
+    false
 }
 
-fn get_friendly_name(exe_name: &str) -> String {
+pub fn get_friendly_name(exe_name: &str) -> String {
     let lower = exe_name.to_lowercase();
     let base = lower.strip_suffix(".exe").unwrap_or(&lower);
 
@@ -122,12 +379,20 @@ fn get_friendly_name(exe_name: &str) -> String {
 }
 
 pub fn find_pid_for_app(target_app: &str) -> Option<u32> {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(pid) = find_macos_app_pid(target_app) {
+            return Some(pid);
+        }
+    }
+
     let target_clean = std::path::Path::new(target_app)
         .file_name()
         .and_then(|f| f.to_str())
         .unwrap_or(target_app)
         .to_lowercase();
-    let target_base = target_clean.strip_suffix(".exe").unwrap_or(&target_clean);
+    let target_no_app = target_clean.strip_suffix(".app").unwrap_or(&target_clean);
+    let target_base = target_no_app.strip_suffix(".exe").unwrap_or(target_no_app);
 
     let mut sys = sysinfo::System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
