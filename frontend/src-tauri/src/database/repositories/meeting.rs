@@ -89,14 +89,18 @@ impl MeetingsRepository {
             // Convert Transcript to MeetingTranscript
             let meeting_transcripts = transcripts
                 .into_iter()
-                .map(|t| MeetingTranscript {
-                    id: t.id,
-                    text: t.transcript,
-                    timestamp: t.timestamp,
-                    audio_start_time: t.audio_start_time,
-                    audio_end_time: t.audio_end_time,
-                    duration: t.duration,
-                    speaker: t.speaker,
+                .map(|t| {
+                    let words = t.words.as_deref().and_then(|w| serde_json::from_str::<serde_json::Value>(w).ok());
+                    MeetingTranscript {
+                        id: t.id,
+                        text: t.transcript,
+                        timestamp: t.timestamp,
+                        audio_start_time: t.audio_start_time,
+                        audio_end_time: t.audio_end_time,
+                        duration: t.duration,
+                        speaker: t.speaker,
+                        words,
+                    }
                 })
                 .collect::<Vec<_>>();
 
@@ -546,7 +550,7 @@ async fn delete_meeting_with_transaction(
     meeting_id: &str,
 ) -> Result<bool, SqlxError> {
     // Check if meeting exists
-    let meeting_exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM meetings WHERE id = ?")
+    let meeting_exists: Option<(Option<String>,)> = sqlx::query_as("SELECT folder_path FROM meetings WHERE id = ?")
         .bind(meeting_id)
         .fetch_optional(&mut *transaction)
         .await?;
@@ -554,6 +558,13 @@ async fn delete_meeting_with_transaction(
     if meeting_exists.is_none() {
         error!("Meeting {} not found for deletion", meeting_id);
         return Ok(false);
+    }
+
+    if let Some((Some(folder),)) = &meeting_exists {
+        sqlx::query("DELETE FROM meeting_images WHERE folder_path = ?")
+            .bind(folder)
+            .execute(&mut *transaction)
+            .await?;
     }
 
     // Delete from related tables in proper order

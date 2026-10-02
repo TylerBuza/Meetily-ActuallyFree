@@ -56,13 +56,48 @@ impl DatabaseManager {
     }
 
     async fn run_migrations(pool: &SqlitePool) -> Result<()> {
-        match MIGRATOR.run(pool).await {
-            Ok(()) => Ok(()),
-            Err(MigrateError::VersionMismatch(PEOPLE_MIGRATION_VERSION)) => {
-                Self::repair_people_migration_checksum(pool).await?;
-                MIGRATOR.run(pool).await.map_err(Into::into)
+        let mut attempts = 0;
+        loop {
+            match MIGRATOR.run(pool).await {
+                Ok(()) => return Ok(()),
+                Err(MigrateError::VersionMismatch(version)) => {
+                    attempts += 1;
+                    if attempts > 10 {
+                        log::error!("Exceeded migration repair attempts for version {}", version);
+                        return Err(MigrateError::VersionMismatch(version).into());
+                    }
+                    if version == PEOPLE_MIGRATION_VERSION {
+                        Self::repair_people_migration_checksum(pool).await?;
+                    } else {
+                        log::warn!("Repairing modified migration checksum for version {}", version);
+                        Self::repair_migration_checksum(pool, version).await?;
+                    }
+                }
+                Err(error) => return Err(error.into()),
             }
-            Err(error) => Err(error.into()),
+        }
+    }
+
+    async fn repair_migration_checksum(pool: &SqlitePool, version: i64) -> Result<()> {
+        let current_migration = MIGRATOR
+            .iter()
+            .find(|migration| migration.version == version)
+            .ok_or_else(|| MigrateError::VersionNotPresent(version))?;
+        let mut transaction = pool.begin().await?;
+        let result = sqlx::query(
+            "UPDATE _sqlx_migrations SET checksum = ? WHERE version = ? AND success = 1",
+        )
+        .bind(current_migration.checksum.as_ref())
+        .bind(version)
+        .execute(&mut *transaction)
+        .await?;
+
+        if result.rows_affected() > 0 {
+            transaction.commit().await?;
+            log::warn!("Repaired migration {} checksum in _sqlx_migrations", version);
+            Ok(())
+        } else {
+            Err(MigrateError::VersionMismatch(version).into())
         }
     }
 

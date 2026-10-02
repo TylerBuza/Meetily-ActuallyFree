@@ -212,6 +212,12 @@ impl AudioMixerRingBuffer {
         Some((start, chunk_start))
     }
 
+    fn discontinuity_threshold_samples(&self) -> usize {
+        // Discontinuity should only trigger on genuine multi-second stream stalls/dropouts (>= 3s),
+        // NOT on normal 400ms pauses between speech turns.
+        ((3.0 * self.sample_rate).round() as usize).max(self.max_buffer_size)
+    }
+
     fn needs_timeline_reset(&self, source: &DeviceType, count: usize, timestamp: f64) -> bool {
         let Some((_, chunk_start)) = self.incoming_position(source, count, timestamp) else { return false; };
         let pending = match source {
@@ -219,7 +225,7 @@ impl AudioMixerRingBuffer {
             DeviceType::System => self.system_buffer.len(),
             DeviceType::Mixed => return false,
         };
-        chunk_start.saturating_sub(self.output_samples + pending) > self.max_buffer_size
+        chunk_start.saturating_sub(self.output_samples + pending) > self.discontinuity_threshold_samples()
     }
 
     fn add_samples(
@@ -242,7 +248,7 @@ impl AudioMixerRingBuffer {
         };
         let buffered_end = self.output_samples + current_len;
         let mut discontinuity_start = None;
-        if chunk_start.saturating_sub(buffered_end) > self.max_buffer_size {
+        if chunk_start.saturating_sub(buffered_end) > self.discontinuity_threshold_samples() {
             // The pipeline must persist the old tail before changing origins.
             debug_assert!(self.mic_buffer.is_empty() && self.system_buffer.is_empty());
             warn!("Audio timeline discontinuity detected; resetting source alignment");
@@ -259,18 +265,18 @@ impl AudioMixerRingBuffer {
         // Advance even when output already contains silence for a late block:
         // trimming that already-emitted prefix must not skew the next block.
         let next_clock = Some(SourceSampleClock {
-            next_sample: chunk_start.saturating_add(samples.len()),
+            next_sample: chunk_start + samples.len(),
             last_callback_end_seconds: timestamp,
         });
+        match device_type {
+            DeviceType::Microphone => self.mic_clock = next_clock,
+            DeviceType::System => self.system_clock = next_clock,
+            DeviceType::Mixed => return None,
+        }
+
         let buffer = match device_type {
-            DeviceType::Microphone => {
-                self.mic_clock = next_clock;
-                &mut self.mic_buffer
-            }
-            DeviceType::System => {
-                self.system_clock = next_clock;
-                &mut self.system_buffer
-            }
+            DeviceType::Microphone => &mut self.mic_buffer,
+            DeviceType::System => &mut self.system_buffer,
             DeviceType::Mixed => return None,
         };
 
@@ -390,6 +396,18 @@ impl AudioMixerRingBuffer {
         mic.resize(len, 0.0);
         system.resize(len, 0.0);
         self.output_samples += len;
+
+        if let Some(clock) = &mut self.mic_clock {
+            if clock.next_sample < self.output_samples {
+                clock.next_sample = self.output_samples;
+            }
+        }
+        if let Some(clock) = &mut self.system_clock {
+            if clock.next_sample < self.output_samples {
+                clock.next_sample = self.output_samples;
+            }
+        }
+
         Some((mic, system))
     }
 }
@@ -1029,7 +1047,7 @@ impl AudioCapture {
 }
 
 /// VAD-driven audio processing pipeline
-/// Uses Voice Activity Detection to segment speech in real-time and send only speech to Whisper
+/// Uses Voice Activity Detection to segment speech and send source audio to live ASR.
 pub struct AudioPipeline {
     receiver: mpsc::UnboundedReceiver<AudioChunk>,
     transcription_sender: mpsc::UnboundedSender<AudioChunk>,
@@ -1039,6 +1057,11 @@ pub struct AudioPipeline {
     /// so simultaneous talk never soft-limits one source into the other for STT.
     mic_vad: ContinuousVadProcessor,
     system_vad: ContinuousVadProcessor,
+    near_live_mode: bool,
+    echo_guard: Option<super::echo_guard::EchoGuard>,
+    preview_senders: Option<super::near_live::PreviewSenders>,
+    last_mic_preview_sample: u64,
+    last_system_preview_sample: u64,
     sample_rate: u32,
     chunk_id_counter: u64,
     // Performance optimization: reduce logging frequency
@@ -1093,11 +1116,13 @@ impl AudioPipeline {
         let system_enabled = system_device_name != "No System Audio";
         let _ = (mic_device_kind, system_device_kind);
 
-        // Fast real-time streaming uses 350ms redemption and 3.5s max utterance capping.
-        // Standard mode uses 800ms redemption and 6.0s max utterance capping.
+        // The Labs cap emits during continuous speech. Snapshot that mode here
+        // so a Settings change cannot change the segmentation of an active call.
         let is_realtime = crate::audio::recording_preferences::is_real_time_transcription();
-        let redemption_time = if is_realtime { 350 } else { 800 };
-        let max_duration_ms = if is_realtime { 3500 } else { 6000 };
+        let near_live_mode = crate::audio::near_live::enabled();
+        let echo_guard = (mic_enabled && system_enabled && super::echo_guard::enabled())
+            .then(|| super::echo_guard::EchoGuard::new(sample_rate));
+        let (redemption_time, max_duration_ms) = crate::audio::near_live::vad_timing(near_live_mode, is_realtime);
 
         // One VAD per capture source so simultaneous talk is segmented independently.
         let make_vad = |label: &str, positive_threshold, negative_threshold| -> Result<ContinuousVadProcessor> {
@@ -1128,6 +1153,11 @@ impl AudioPipeline {
             state,
             mic_vad,
             system_vad,
+            near_live_mode,
+            echo_guard,
+            preview_senders: None,
+            last_mic_preview_sample: 0,
+            last_system_preview_sample: 0,
             sample_rate,
             chunk_id_counter: 0,
             // Performance optimization: reduce logging frequency
@@ -1153,9 +1183,9 @@ impl AudioPipeline {
         if self.state.is_paused() {
             return;
         }
-        let is_realtime = crate::audio::recording_preferences::is_real_time_transcription();
-        let redemption_ms = if is_realtime { 350 } else { 800 };
-        let redemption = std::time::Duration::from_millis(redemption_ms);
+        let real_time = crate::audio::recording_preferences::is_real_time_transcription();
+        let (redemption_ms, _) = crate::audio::near_live::vad_timing(self.near_live_mode, real_time);
+        let redemption = std::time::Duration::from_millis(redemption_ms.into());
         let mut completed = Vec::new();
         if now.duration_since(self.last_mic_input) >= redemption {
             if let Some(segment) = self.mic_vad.finalize_active_speech() {
@@ -1177,7 +1207,7 @@ impl AudioPipeline {
         }
     }
 
-    /// Run VAD on one source and enqueue any finished speech segments for Whisper.
+    /// Run VAD on one source and enqueue finished speech segments for live ASR.
     /// `device_type` is the true origin (mic vs system) — not a post-mix guess.
     fn emit_source_speech(
         vad: &mut ContinuousVadProcessor,
@@ -1185,10 +1215,14 @@ impl AudioPipeline {
         device_type: DeviceType,
         transcription_sender: &mpsc::UnboundedSender<AudioChunk>,
         chunk_id_counter: &mut u64,
+        near_live_mode: bool,
+        preview_sender: Option<&tokio::sync::watch::Sender<Option<AudioChunk>>>,
+        last_preview_sample: &mut u64,
     ) {
         // Dynamically adjust max speech duration if preference changed during recording
         let is_realtime = crate::audio::recording_preferences::is_real_time_transcription();
-        vad.set_max_speech_duration_ms(if is_realtime { 3500 } else { 6000 });
+        let (_, max_duration_ms) = crate::audio::near_live::vad_timing(near_live_mode, is_realtime);
+        vad.set_max_speech_duration_ms(max_duration_ms);
 
         match vad.process_audio_observed(samples, |start, audio| {
             if matches!(device_type, DeviceType::System) {
@@ -1197,11 +1231,30 @@ impl AudioPipeline {
         }) {
             Ok(speech_segments) => Self::enqueue_source_speech(
                 speech_segments,
-                device_type,
+                device_type.clone(),
                 transcription_sender,
                 chunk_id_counter,
             ),
             Err(e) => warn!("⚠️ {:?} VAD error: {}", device_type, e),
+        }
+
+        if near_live_mode {
+            if let (Some(sender), Some((length, end_sample))) = (preview_sender, vad.active_speech_position()) {
+                // 0.8 s minimum gives batch Parakeet enough context; update at
+                // most every 0.5 s of captured audio. send_replace is bounded.
+                if length >= 12_800 && (end_sample as u64) >= last_preview_sample.saturating_add(8_000) {
+                    if let Some(snapshot) = vad.active_speech_snapshot() {
+                        sender.send_replace(Some(AudioChunk {
+                            data: snapshot.samples,
+                            sample_rate: 16_000,
+                            timestamp: snapshot.start_timestamp_ms / 1000.0,
+                            chunk_id: u64::MAX,
+                            device_type,
+                        }));
+                        *last_preview_sample = end_sample as u64;
+                    }
+                }
+            }
         }
     }
 
@@ -1364,9 +1417,11 @@ impl AudioPipeline {
                     }
                     if self.ring_buffer.needs_timeline_reset(&chunk.device_type, chunk.data.len(), chunk.timestamp) {
                         // A driver/system stall can leave a sub-window tail on
-                        // either source. Save it and finalize VAD before resetting
+                        // either source. Save it to speech/recording before resetting
                         // both clocks; clearing first silently loses real samples.
-                        self.flush_remaining_audio()?;
+                        // NOTE: Do NOT call flush_remaining_audio() here, as that terminates
+                        // live Nemotron diarization and flushes VAD mid-session!
+                        self.drain_ring_buffer_tail()?;
                     }
                     let discontinuity_start = self.ring_buffer.add_samples(
                         chunk.device_type.clone(),
@@ -1374,6 +1429,7 @@ impl AudioPipeline {
                         chunk.timestamp,
                     );
                     if let Some(start_seconds) = discontinuity_start {
+                        if let Some(guard) = &mut self.echo_guard { guard.reset(); }
                         let mut completed = Vec::new();
                         if let Some(segment) = self.mic_vad.finalize_active_speech() {
                             completed.push((DeviceType::Microphone, segment));
@@ -1396,6 +1452,12 @@ impl AudioPipeline {
                     // STEP 2: Mix audio in fixed windows when both streams have sufficient data
                     while self.ring_buffer.can_mix() {
             if let Some((mic_window, sys_window)) = self.ring_buffer.extract_window() {
+                            // Only the mic transcription/source track is filtered.
+                            // Keep the original mic in mixed playback so the
+                            // user's recording is still audibly reviewable.
+                            let mic_for_stt = self.echo_guard.as_mut()
+                                .map(|guard| guard.filter_window(&mic_window, &sys_window))
+                                .unwrap_or_else(|| mic_window.clone());
                             // STEP 3: Transcribe each source independently.
                             // Same wall-clock windows (aligned by the ring buffer),
                             // separate sample streams + VAD state — so when both
@@ -1403,10 +1465,13 @@ impl AudioPipeline {
                             // other before Whisper, and device_type is exact.
                             Self::emit_source_speech(
                                 &mut self.mic_vad,
-                                &mic_window,
+                                &mic_for_stt,
                                 DeviceType::Microphone,
                                 &self.transcription_sender,
                                 &mut self.chunk_id_counter,
+                                self.near_live_mode,
+                                self.preview_senders.as_ref().map(|senders| &senders.microphone),
+                                &mut self.last_mic_preview_sample,
                             );
                             Self::emit_source_speech(
                                 &mut self.system_vad,
@@ -1414,6 +1479,9 @@ impl AudioPipeline {
                                 DeviceType::System,
                                 &self.transcription_sender,
                                 &mut self.chunk_id_counter,
+                                self.near_live_mode,
+                                self.preview_senders.as_ref().map(|senders| &senders.system),
+                                &mut self.last_system_preview_sample,
                             );
 
                             // STEP 4: Persist three tracks for offline diarization + playback.
@@ -1424,7 +1492,7 @@ impl AudioPipeline {
                                 let ts = chunk.timestamp;
                                 let sr = self.sample_rate;
                                 let _ = sender.send(AudioChunk {
-                                    data: mic_window.clone(),
+                                    data: mic_for_stt.clone(),
                                     sample_rate: sr,
                                     timestamp: ts,
                                     chunk_id: self.chunk_id_counter,
@@ -1475,19 +1543,20 @@ impl AudioPipeline {
         Ok(())
     }
 
-    fn flush_remaining_audio(&mut self) -> Result<()> {
-        info!(
-            "Flushing remaining audio from pipeline (processed {} chunks)",
-            self.processed_chunks
-        );
-
+    fn drain_ring_buffer_tail(&mut self) -> Result<()> {
         while let Some((mic_window, sys_window)) = self.ring_buffer.extract_remaining() {
+            let mic_for_stt = self.echo_guard.as_mut()
+                .map(|guard| guard.filter_window(&mic_window, &sys_window))
+                .unwrap_or_else(|| mic_window.clone());
             Self::emit_source_speech(
                 &mut self.mic_vad,
-                &mic_window,
+                &mic_for_stt,
                 DeviceType::Microphone,
                 &self.transcription_sender,
                 &mut self.chunk_id_counter,
+                self.near_live_mode,
+                self.preview_senders.as_ref().map(|senders| &senders.microphone),
+                &mut self.last_mic_preview_sample,
             );
             Self::emit_source_speech(
                 &mut self.system_vad,
@@ -1495,12 +1564,15 @@ impl AudioPipeline {
                 DeviceType::System,
                 &self.transcription_sender,
                 &mut self.chunk_id_counter,
+                self.near_live_mode,
+                self.preview_senders.as_ref().map(|senders| &senders.system),
+                &mut self.last_system_preview_sample,
             );
 
             if let Some(sender) = &self.recording_sender_for_mixed {
                 let chunk_id = self.chunk_id_counter;
                 for (data, device_type) in [
-                    (mic_window.clone(), DeviceType::Microphone),
+                    (mic_for_stt, DeviceType::Microphone),
                     (sys_window.clone(), DeviceType::System),
                     (
                         self.mixer.mix_window(&mic_window, &sys_window),
@@ -1517,6 +1589,16 @@ impl AudioPipeline {
                 }
             }
         }
+        Ok(())
+    }
+
+    fn flush_remaining_audio(&mut self) -> Result<()> {
+        info!(
+            "Flushing remaining audio from pipeline (processed {} chunks)",
+            self.processed_chunks
+        );
+
+        self.drain_ring_buffer_tail()?;
 
         crate::diarization::live_nemotron::finish();
         let mic_final = self.mic_vad.flush();
@@ -1586,6 +1668,7 @@ impl AudioPipelineManager {
         &mut self,
         state: Arc<RecordingState>,
         transcription_sender: mpsc::UnboundedSender<AudioChunk>,
+        preview_senders: super::near_live::PreviewSenders,
         target_chunk_duration_ms: u32,
         sample_rate: u32,
         create_recording_sender: F,
@@ -1622,6 +1705,7 @@ impl AudioPipelineManager {
             system_device_name,
             system_device_kind,
         ).map_err(crate::onnx_runtime::InitializationError)?;
+        pipeline.preview_senders = Some(preview_senders);
 
         // VAD construction must succeed before creating folders or saver tasks.
         // The fork's saver still validates all three aligned destinations before
@@ -2018,6 +2102,41 @@ mod ring_buffer_tests {
 
         assert_eq!(mic, vec![1.0; 2_400]);
         assert_eq!(system, vec![2.0; 2_400]);
+    }
+
+    #[test]
+    fn pauses_and_resumptions_do_not_drop_samples_or_shred_audio() {
+        let mut ring = AudioMixerRingBuffer::new(48_000, true, true);
+        // Both start at 0.05
+        ring.add_samples(DeviceType::Microphone, vec![1.0; 2_400], 0.05);
+        ring.add_samples(DeviceType::System, vec![2.0; 2_400], 0.05);
+        let _ = ring.extract_window().unwrap();
+
+        // Microphone continues streaming (remote speaker paused on system audio)
+        for i in 2..=5 {
+            let t = i as f64 * 0.05;
+            ring.add_samples(DeviceType::Microphone, vec![1.0; 2_400], t);
+            while let Some(_) = ring.extract_window() {}
+        }
+
+        // Now system audio resumes with speech at 0.28 (2400 samples)
+        ring.add_samples(DeviceType::System, vec![3.0; 2_400], 0.28);
+        // And follows up with another block at 0.33
+        ring.add_samples(DeviceType::System, vec![4.0; 2_400], 0.33);
+
+        let mut collected_system = Vec::new();
+        while let Some((_, sys)) = ring.extract_window() {
+            collected_system.extend(sys);
+        }
+        while let Some((_, sys)) = ring.extract_remaining() {
+            collected_system.extend(sys);
+        }
+
+        // All 2400 samples of 3.0 and 2400 samples of 4.0 must be preserved!
+        let count_threes = collected_system.iter().filter(|&&s| (s - 3.0).abs() < 1e-4).count();
+        let count_fours = collected_system.iter().filter(|&&s| (s - 4.0).abs() < 1e-4).count();
+        assert_eq!(count_threes, 2_400, "Resumed speech samples must not be dropped by ring buffer");
+        assert_eq!(count_fours, 2_400, "Subsequent speech samples must not be dropped by ring buffer");
     }
 
     #[test]

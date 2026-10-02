@@ -66,6 +66,12 @@ Var MeetilyCudaNotice
     ${If} ${FileExists} "$R1\DirectML.dll"
       CopyFiles /SILENT "$R1\DirectML.dll" "$INSTDIR\"
     ${EndIf}
+    ${If} ${FileExists} "$R1\onnxruntime.dll"
+      CopyFiles /SILENT "$R1\onnxruntime.dll" "$INSTDIR\"
+    ${EndIf}
+    ${If} ${FileExists} "$R1\onnxruntime_providers_shared.dll"
+      CopyFiles /SILENT "$R1\onnxruntime_providers_shared.dll" "$INSTDIR\"
+    ${EndIf}
     DetailPrint "      GPU runtime libraries installed."
   ${ElseIf} ${FileExists} "$INSTDIR\resources\runtime-deps\cudart64_13.dll"
     ; Fallback if resource layout ever nests under resources\
@@ -76,6 +82,12 @@ Var MeetilyCudaNotice
     CopyFiles /SILENT "$R1\cublasLt64_13.dll" "$INSTDIR\"
     ${If} ${FileExists} "$R1\DirectML.dll"
       CopyFiles /SILENT "$R1\DirectML.dll" "$INSTDIR\"
+    ${EndIf}
+    ${If} ${FileExists} "$R1\onnxruntime.dll"
+      CopyFiles /SILENT "$R1\onnxruntime.dll" "$INSTDIR\"
+    ${EndIf}
+    ${If} ${FileExists} "$R1\onnxruntime_providers_shared.dll"
+      CopyFiles /SILENT "$R1\onnxruntime_providers_shared.dll" "$INSTDIR\"
     ${EndIf}
     DetailPrint "      GPU runtime libraries installed."
   ${Else}
@@ -90,6 +102,12 @@ Var MeetilyCudaNotice
     DetailPrint "      DirectML / ONNX runtime installed."
   ${Else}
     DetailPrint "      WARNING: DirectML.dll missing from bundle."
+  ${EndIf}
+  ${If} ${FileExists} "$R1\onnxruntime.dll"
+    CopyFiles /SILENT "$R1\onnxruntime.dll" "$INSTDIR\"
+  ${EndIf}
+  ${If} ${FileExists} "$R1\onnxruntime_providers_shared.dll"
+    CopyFiles /SILENT "$R1\onnxruntime_providers_shared.dll" "$INSTDIR\"
   ${EndIf}
 !macroend
 

@@ -38,6 +38,12 @@ pub struct Meeting {
     pub duration_seconds: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_data: Option<String>,
+    #[serde(default)]
+    pub named_participants: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -166,6 +172,8 @@ pub struct MeetingTranscript {
     /// Speaker label: capture source ("You"/"Guest") or diarization ("Speaker N")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speaker: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub words: Option<serde_json::Value>,
 }
 
 /// Meeting metadata without transcripts (for pagination)
@@ -177,6 +185,8 @@ pub struct MeetingMetadata {
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub folder_path: Option<String>,
+    #[serde(default)]
+    pub speakers: Vec<String>,
 }
 
 /// Paginated transcripts response with total count
@@ -223,6 +233,8 @@ pub struct TranscriptSegment {
     /// at save time silently erases the user's identity from every meeting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speaker: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub words: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -392,6 +404,33 @@ pub async fn api_get_meetings<R: Runtime>(
                     .filter_map(|(id, group)| group.map(|group| (id, group)))
                     .collect();
 
+            // All meetings can expand an entire day at once. Fetch summaries
+            // and labels in batches rather than making one native call per row.
+            let summaries: HashMap<String, String> = sqlx::query_as::<_, (String, String)>(
+                "SELECT meeting_id, result FROM summary_processes WHERE result IS NOT NULL",
+            )
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("Failed to read meeting summaries: {}", e))?
+            .into_iter()
+            .collect();
+            let speaker_rows: Vec<(String, String)> = sqlx::query_as(
+                "SELECT meeting_id, speaker FROM transcripts WHERE speaker IS NOT NULL \
+                 GROUP BY meeting_id, speaker ORDER BY meeting_id, MIN(COALESCE(audio_start_time, 1e12)), MIN(rowid)",
+            )
+            .fetch_all(pool)
+            .await
+            .map_err(|e| format!("Failed to read meeting participants: {}", e))?;
+            let mut participants: HashMap<String, Vec<String>> = HashMap::new();
+            for (meeting_id, speaker) in speaker_rows {
+                if crate::database::repositories::person::is_person_name(&speaker) {
+                    let names = participants.entry(meeting_id).or_default();
+                    if !names.iter().any(|name| name.eq_ignore_ascii_case(&speaker)) {
+                        names.push(speaker);
+                    }
+                }
+            }
+
             let mut result: Vec<Meeting> = Vec::with_capacity(meeting_models.len());
             for m in meeting_models {
                 let metadata_started_at = m.folder_path.as_deref().and_then(|folder| {
@@ -410,6 +449,10 @@ pub async fn api_get_meetings<R: Runtime>(
                 result.push(Meeting {
                     duration_seconds: durations.get(&m.id).copied(),
                     group_id: groups.get(&m.id).cloned(),
+                    summary_preview: summaries.get(&m.id).and_then(|raw|
+                        crate::database::repositories::person::visible_summary_text(raw)),
+                    summary_data: summaries.get(&m.id).cloned(),
+                    named_participants: participants.remove(&m.id).unwrap_or_default(),
                     id: m.id,
                     title: m.title,
                     created_at: Some(created_at.to_rfc3339()),
@@ -431,6 +474,8 @@ pub async fn api_get_meetings<R: Runtime>(
 pub struct MeetingAudio {
     /// Mixed playback track (`audio.mp4`, or the imported file).
     pub path: Option<String>,
+    /// Video track if the meeting has an associated video recording or download (`video.mp4`).
+    pub video_path: Option<String>,
     pub mic_path: Option<String>,
     pub system_path: Option<String>,
 }
@@ -450,6 +495,7 @@ pub async fn api_get_meeting_audio<R: Runtime>(
 
     let none = MeetingAudio {
         path: None,
+        video_path: None,
         mic_path: None,
         system_path: None,
     };
@@ -469,6 +515,10 @@ pub async fn api_get_meeting_audio<R: Runtime>(
         let path = dir.join(name);
         path.is_file().then(|| path.to_string_lossy().to_string())
     };
+    let video_path = existing("video.mp4")
+        .or_else(|| existing("video.webm"))
+        .or_else(|| existing("video.mov"))
+        .or_else(|| existing("video.mkv"));
     let playback = existing("audio.mp4").or_else(|| {
         std::fs::read_dir(&dir).ok().and_then(|entries| {
             entries.filter_map(Result::ok).map(|entry| entry.path()).find(|path| {
@@ -482,13 +532,14 @@ pub async fn api_get_meeting_audio<R: Runtime>(
             })
         })
         .map(|path| path.to_string_lossy().to_string())
-    });
+    }).or_else(|| video_path.clone());
     let audio = MeetingAudio {
         path: playback,
+        video_path,
         mic_path: existing("mic.mp4"),
         system_path: existing("system.mp4"),
     };
-    if audio.path.is_some() || audio.mic_path.is_some() || audio.system_path.is_some() {
+    if audio.path.is_some() || audio.video_path.is_some() || audio.mic_path.is_some() || audio.system_path.is_some() {
         app.asset_protocol_scope()
             .allow_directory(&dir, false)
             .map_err(|e| format!("Failed to allow playback of the recording: {}", e))?;
@@ -986,9 +1037,10 @@ pub async fn api_delete_api_key<R: Runtime>(
 
 #[tauri::command]
 pub async fn api_delete_meeting<R: Runtime>(
-    _app: AppHandle<R>,
+    app: AppHandle<R>,
     state: tauri::State<'_, AppState>,
     meeting_id: String,
+    delete_local_files: Option<bool>,
     auth_token: Option<String>,
 ) -> Result<serde_json::Value, String> {
     log_info!(
@@ -998,6 +1050,33 @@ pub async fn api_delete_meeting<R: Runtime>(
     );
 
     let pool = state.db_manager.pool();
+
+    if delete_local_files.unwrap_or(false) {
+        // The folder comes from this meeting's database row, never a WebView
+        // path. The existing native guard rejects paths outside known recording
+        // roots and refuses to remove a root itself.
+        let folder: Option<Option<String>> = sqlx::query_scalar(
+            "SELECT folder_path FROM meetings WHERE id = ?",
+        )
+        .bind(&meeting_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+        if let Some(Some(folder)) = folder {
+            let other_meetings: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM meetings WHERE folder_path = ? AND id != ?",
+            )
+            .bind(&folder)
+            .bind(&meeting_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+            if other_meetings > 0 {
+                return Err("Recording folder is shared by another meeting; files were kept".into());
+            }
+            crate::audio::recording_preferences::discard_recording_folder(app, folder).await?;
+        }
+    }
 
     match MeetingsRepository::delete_meeting(pool, &meeting_id).await {
         Ok(true) => {
@@ -1075,13 +1154,22 @@ pub async fn api_get_meeting_metadata<R: Runtime>(
                     .await
                     .map_err(|e| format!("Failed to repair meeting start time: {}", e))?;
             }
-            log_info!("Successfully retrieved meeting metadata {}", meeting_id);
+            let speakers: Vec<String> = sqlx::query_scalar(
+                "SELECT DISTINCT speaker FROM transcripts WHERE meeting_id = ? AND speaker IS NOT NULL AND TRIM(speaker) != '' ORDER BY id ASC"
+            )
+            .bind(&meeting_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+
+            log_info!("Successfully retrieved meeting metadata {} with {} speakers", meeting_id, speakers.len());
             Ok(MeetingMetadata {
                 id: meeting.id,
                 title: meeting.title,
                 created_at: created_at.to_rfc3339(),
                 updated_at: meeting.updated_at.0.to_rfc3339(),
                 folder_path: meeting.folder_path,
+                speakers,
             })
         }
         Ok(None) => {
@@ -1125,14 +1213,18 @@ pub async fn api_get_meeting_transcripts<R: Runtime>(
             // Convert Transcript to MeetingTranscript
             let meeting_transcripts = transcripts
                 .into_iter()
-                .map(|t| MeetingTranscript {
-                    id: t.id,
-                    text: t.transcript,
-                    timestamp: t.timestamp,
-                    audio_start_time: t.audio_start_time,
-                    audio_end_time: t.audio_end_time,
-                    duration: t.duration,
-                    speaker: t.speaker,
+                .map(|t| {
+                    let words = t.words.as_deref().and_then(|w| serde_json::from_str::<serde_json::Value>(w).ok());
+                    MeetingTranscript {
+                        id: t.id,
+                        text: t.transcript,
+                        timestamp: t.timestamp,
+                        audio_start_time: t.audio_start_time,
+                        audio_end_time: t.audio_end_time,
+                        duration: t.duration,
+                        speaker: t.speaker,
+                        words,
+                    }
                 })
                 .collect::<Vec<_>>();
 
@@ -1259,6 +1351,7 @@ pub async fn api_save_transcript<R: Runtime>(
     .await
     {
         Ok(meeting_id) => {
+            crate::diarization::voice_profiles::auto_save_named_voices(_app.clone(), pool.clone(), meeting_id.clone(), None);
             log_info!(
                 "Successfully saved transcript and created meeting with id: {}",
                 meeting_id

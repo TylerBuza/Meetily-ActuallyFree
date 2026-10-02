@@ -2,18 +2,26 @@ export interface LabsPreferences {
   meetingAutomation: boolean;
   transcriptScrubbing: boolean;
   voiceProfiles: boolean;
+  autoSaveVoiceProfiles: boolean;
   whisperSilenceGuard: boolean;
   cleanTranscript: boolean;
   parakeetGpu: boolean;
+  nearLiveCaptions: boolean;
+  micPlaybackSuppression: boolean;
+  wordTimestamps: boolean;
 }
 
 export const defaultLabsPreferences: LabsPreferences = {
   meetingAutomation: false,
   transcriptScrubbing: false,
   voiceProfiles: false,
+  autoSaveVoiceProfiles: false,
   whisperSilenceGuard: false,
   cleanTranscript: false,
   parakeetGpu: false,
+  nearLiveCaptions: false,
+  micPlaybackSuppression: false,
+  wordTimestamps: false,
 };
 
 const key = 'meetily-labs-v1';

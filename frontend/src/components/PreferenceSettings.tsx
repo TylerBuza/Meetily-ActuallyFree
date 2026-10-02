@@ -9,7 +9,11 @@ import Analytics from "@/lib/analytics"
 import { useConfig, NotificationSettings } from "@/contexts/ConfigContext"
 import { ThemePicker } from "@/components/settings/ThemePicker"
 
+import { useTranscriptLeftAligned, useTranscriptHideSpeakerDots } from "@/lib/transcript-layout"
+
 export function PreferenceSettings() {
+  const [leftAligned, setLeftAligned] = useTranscriptLeftAligned();
+  const [hideSpeakerDots, setHideSpeakerDots] = useTranscriptHideSpeakerDots();
   const {
     notificationSettings,
     storageLocations,
@@ -197,6 +201,14 @@ export function PreferenceSettings() {
         <h3 className="text-[15px] font-semibold text-af-text mb-1">Theme</h3>
         <p className="text-sm text-af-text-2 mb-4">Applies to every window, including the floating recording bar.</p>
         <ThemePicker />
+        <div className="mt-5 flex items-center justify-between gap-4">
+          <div><p className="text-sm font-medium text-af-text">Align speaker names to the left</p><p className="text-xs text-af-text-3">Show names in a left column with transcript text indented beside them.</p></div>
+          <Switch checked={leftAligned} onCheckedChange={setLeftAligned} aria-label="Align speaker names to the left" />
+        </div>
+        <div className="mt-3 flex items-center justify-between gap-4 pl-4">
+          <div><p className="text-sm font-medium text-af-text">Hide speaker dots</p><p className="text-xs text-af-text-3">Remove the bullet before speaker names in any transcript layout.</p></div>
+          <Switch checked={hideSpeakerDots} onCheckedChange={setHideSpeakerDots} aria-label="Hide speaker dots" />
+        </div>
       </div>
 
       {/* Your Name Section */}

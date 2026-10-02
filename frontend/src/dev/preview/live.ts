@@ -4,6 +4,7 @@
  * backend, and stopping runs the normal save flow into the sample library.
  */
 import { emit } from '@tauri-apps/api/event';
+import { loadLabsPreferences } from '@/lib/labs';
 import type { PreviewTranscript } from './fixtures';
 
 const SCRIPT: Array<[string, string]> = [
@@ -103,6 +104,16 @@ export function handleLiveCommand(cmd: string, args: Record<string, any>): unkno
           speaker,
           confidence: 0.93,
         };
+        if (loadLabsPreferences().nearLiveCaptions) {
+          const source = speaker === 'You' ? 'microphone' : 'system';
+          void emit('near-live-finalized', { source, end_time: start + 2.4 });
+          const next = SCRIPT[index];
+          if (next) void emit('near-live-caption', {
+            source: next[0] === 'You' ? 'microphone' : 'system',
+            start_time: elapsed(), end_time: elapsed() + 0.8,
+            text: next[1].split(' ').slice(0, 8).join(' '),
+          });
+        }
         live.lines.push(line);
         void emit('transcript-update', {
           text,

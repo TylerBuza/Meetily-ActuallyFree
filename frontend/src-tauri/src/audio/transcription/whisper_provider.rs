@@ -26,13 +26,14 @@ impl TranscriptionProvider for WhisperProvider {
     ) -> std::result::Result<TranscriptResult, TranscriptionError> {
         match self
             .engine
-            .transcribe_audio_with_confidence(audio, language, None)
+            .transcribe_audio_with_words(audio, language, None, 0.0)
             .await
         {
-            Ok((text, confidence, is_partial)) => Ok(TranscriptResult {
+            Ok((text, confidence, is_partial, words)) => Ok(TranscriptResult {
                 text: text.trim().to_string(),
                 confidence: Some(confidence),
                 is_partial,
+                words,
             }),
             Err(e) => Err(TranscriptionError::EngineFailed(e.to_string())),
         }

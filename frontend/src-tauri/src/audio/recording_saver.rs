@@ -27,6 +27,8 @@ pub struct TranscriptSegment {
     /// offline diarize both depend on it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speaker: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub words: Option<Vec<crate::database::models::WordTiming>>,
 }
 
 /// Meeting metadata structure
@@ -168,6 +170,7 @@ impl RecordingSaver {
             confidence: 1.0,
             sequence_id: 0,
             speaker: None,
+            words: None,
         };
         self.add_transcript_segment(segment);
     }
@@ -564,6 +567,7 @@ mod tests {
             confidence: 0.9,
             sequence_id: 1,
             speaker: Some("You".to_string()),
+            words: None,
         }
     }
 

@@ -148,6 +148,38 @@ fn is_self_process(name: &str) -> bool {
     n.contains("meetily") || n.contains("meetily-actually")
 }
 
+// Process iteration order from sysinfo is not stable. On macOS, several idle
+// conferencing apps can stay open, so choosing a different one on each poll
+// would bypass the monitor's one-prompt guard.
+fn first_process_only_match(
+    process_names: impl IntoIterator<Item = String>,
+    settings: &MeetingDetectionSettings,
+) -> Option<(String, String, bool)> {
+    let mut names: Vec<String> = process_names.into_iter().map(|name| name.to_lowercase()).collect();
+    names.sort_unstable();
+    for keyword in &settings.meeting_apps {
+        let keyword = keyword.trim().to_lowercase();
+        if keyword.is_empty() { continue; }
+        for name in &names {
+            if is_self_process(name)
+                || settings.ignored_apps.iter().any(|ignored| {
+                    let ignored = ignored.trim().to_lowercase();
+                    !ignored.is_empty() && name.contains(&ignored)
+                })
+            { continue; }
+            if process_matches_keyword(name, &keyword) {
+                return Some((friendly_name(&keyword), name.clone(), false));
+            }
+        }
+    }
+    None
+}
+
+fn same_alert(previous: &(String, String, bool), current: &(String, String, bool)) -> bool {
+    previous.0 == current.0 && previous.2 == current.2
+        && (!current.2 || previous.1 == current.1)
+}
+
 /// Scan the process list once and, if a (non-ignored) meeting app is present,
 /// return `(friendly_name, process_name)`.
 ///
@@ -198,7 +230,9 @@ fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, 
 
     // 1) Known meeting app that is actively using mic/camera (best signal).
     if !media_in_use.is_empty() {
-        for process in sys.processes().values() {
+        let mut processes: Vec<_> = sys.processes().values().collect();
+        processes.sort_unstable_by_key(|process| process.name().to_string_lossy().to_lowercase());
+        for process in processes {
             let name = process.name().to_string_lossy().to_lowercase();
             if is_skipped(&name) || !matches_media(&name) {
                 continue;
@@ -224,22 +258,10 @@ fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, 
     }
 
     // 2) No CAM signal: process-name match only (macOS/Linux / older Windows).
-    for process in sys.processes().values() {
-        let name = process.name().to_string_lossy().to_lowercase();
-        if is_skipped(&name) {
-            continue;
-        }
-        for keyword in &settings.meeting_apps {
-            let kw = keyword.trim().to_lowercase();
-            if kw.is_empty() {
-                continue;
-            }
-            if process_matches_keyword(&name, &kw) {
-                return Some((friendly_name(&kw), name, false));
-            }
-        }
-    }
-    None
+    first_process_only_match(
+        sys.processes().values().map(|process| process.name().to_string_lossy().into_owned()),
+        settings,
+    )
 }
 
 /// Windows: executables currently holding microphone or webcam via
@@ -349,7 +371,19 @@ fn process_matches_keyword(process_name: &str, keyword: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_self_process, process_matches_keyword};
+    use super::{first_process_only_match, is_self_process, process_matches_keyword, same_alert, MeetingDetectionSettings};
+
+    #[test]
+    fn process_only_selection_is_stable_and_ignores_helper_changes() {
+        let settings = MeetingDetectionSettings::default();
+        let first = first_process_only_match(vec!["slack".into(), "zoom.us".into(), "teams".into()], &settings).unwrap();
+        let reordered = first_process_only_match(vec!["teams".into(), "zoom.us".into(), "slack".into()], &settings).unwrap();
+        assert_eq!(first, reordered);
+        let helper = (first.0.clone(), "zoom helper".into(), false);
+        assert!(same_alert(&first, &helper));
+        assert!(!same_alert(&first, &("Slack".into(), "slack".into(), false)));
+        assert!(!same_alert(&first, &(first.0.clone(), first.1.clone(), true)));
+    }
 
     #[test]
     fn never_treats_meetily_as_a_meeting() {
@@ -428,15 +462,17 @@ fn start_monitor<R: Runtime>(app: &AppHandle<R>) {
             };
             if MONITOR_GENERATION.load(Ordering::SeqCst) != generation { break; }
             // A process-only fallback must not keep a formerly active meeting
-            // alive after its microphone lease ends while the app stays open.
+            // alive after its microphone lease ends, or replace it with an
+            // unrelated idle app before the meeting-ended grace period.
             let scan = match (alerted.as_ref(), scan) {
-                (Some((_, process, true)), Some((_, candidate, false))) if process == &candidate => None,
+                (Some((_, _, true)), Some((_, _, false))) => None,
                 (_, other) => other,
             };
             match scan {
                 Some((friendly, process, active_media)) => {
                     missing_since = None;
-                    if alerted.as_ref() != Some(&(friendly.clone(), process.clone(), active_media)) {
+                    let candidate = (friendly.clone(), process.clone(), active_media);
+                    if !alerted.as_ref().is_some_and(|previous| same_alert(previous, &candidate)) {
                         alerted = Some((friendly.clone(), process.clone(), active_media));
                         log::info!("🔔 Meeting app detected: {} ({})", friendly, process);
                         let _ = app.emit(
@@ -503,15 +539,18 @@ pub async fn set_meeting_detection_settings<R: Runtime>(
     settings.interval_secs = settings.interval_secs.clamp(3, 3600);
 
     save_settings_to_disk(&settings)?;
-    {
+    let was_enabled = {
         let mut guard = SETTINGS.lock().unwrap();
+        let was_enabled = guard.as_ref().is_some_and(|previous| previous.enabled);
         *guard = Some(settings.clone());
-    }
+        was_enabled
+    };
 
-    // Apply immediately: (re)start or stop the monitor.
-    if settings.enabled {
+    // The loop reads settings each tick. Restarting it on every edit forgets
+    // which process was already announced and produces duplicate prompts.
+    if settings.enabled && !was_enabled {
         start_monitor(&app);
-    } else {
+    } else if !settings.enabled && was_enabled {
         MONITOR_GENERATION.fetch_add(1, Ordering::SeqCst);
     }
     Ok(())

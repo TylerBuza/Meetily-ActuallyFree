@@ -17,17 +17,24 @@
  *   3. `hooks/usePaginatedTranscripts.ts`               (paginated)
  */
 
-import { memo, startTransition, useEffect, useMemo, useReducer, useRef } from 'react';
+import { memo, startTransition, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { motion } from 'framer-motion';
-import { GitMerge, Mic } from 'lucide-react';
+import { Camera, ChevronDown, GitMerge, Mic } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import type { MeetingImage } from '@/lib/meeting-images';
 import { useAutoScroll } from '@/hooks/useAutoScroll';
 import { useTranscriptStreaming } from '@/hooks/useTranscriptStreaming';
+import { useTranscriptLeftAligned, useTranscriptHideSpeakerDots } from '@/lib/transcript-layout';
 import { useUserName } from '@/hooks/useUserName';
 import { TranscriptSegmentData } from '@/types';
 import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import { cleanTranscriptText } from '@/lib/labs';
+import { useLabs } from '@/hooks/useLabs';
+import { liveTurnIdentity, mergeInterleavedSpeakerTurns, retainLiveText } from '@/lib/nearLiveCaptions';
 import { displaySpeaker, isUserSpeaker, speakerColor, speakerColorIndexMap, speakerColorValue, speakerDot, speakerKey } from '@/utils/speakerUtils';
 
 /**
@@ -39,7 +46,10 @@ export type TranscriptTextMode = 'tidy' | 'clean' | 'verbatim';
 
 export interface VirtualizedTranscriptViewProps {
   segments: TranscriptSegmentData[];
+  /** Saved images shown at their recording time on the post-call transcript. */
+  meetingImages?: MeetingImage[];
   isRecording?: boolean;
+  nearLiveCaptions?: boolean;
   isPaused?: boolean;
   isProcessing?: boolean;
   isStopping?: boolean;
@@ -76,6 +86,10 @@ export interface VirtualizedTranscriptViewProps {
   textMode?: TranscriptTextMode;
   /** Colour slot per speaker key (speakerColorIndexMap). Worked out from the lines when not given. */
   colorIndices?: Map<string, number>;
+  /** Translated text mapped by transcript segment ID */
+  translations?: Record<string, string>;
+  /** How translations should be rendered relative to original text */
+  translationMode?: 'original' | 'translated' | 'bilingual';
 }
 
 const VIRTUALIZATION_THRESHOLD = 10;
@@ -115,7 +129,11 @@ function mergeTurns(segments: TranscriptSegmentData[], maxGapSecs = 2.5): Turn[]
       last.text = `${last.text.trim()} ${segment.text.trim()}`.replace(/\s+/g, ' ').trim();
       last.endTime = segment.endTime ?? segment.timestamp;
       last.memberIds.push(segment.id);
+      last.provisional = last.provisional || segment.provisional;
       if (segment.confidence != null) last.confidence = Math.min(last.confidence ?? 1, segment.confidence);
+      if (last.words || segment.words) {
+        last.words = [...(last.words || []), ...(segment.words || [])];
+      }
     } else {
       out.push({ ...segment, memberIds: [segment.id] });
     }
@@ -151,12 +169,17 @@ const TurnRow = memo(function TurnRow({
   colorIndex,
   isStreaming,
   userName,
+  leftAligned,
+  hideSpeakerDots,
   active,
+  activeTime,
   flash,
   onSpeakerClick,
   onRenameSpeaker,
   onMergeSpeaker,
   onSeek,
+  translations,
+  translationMode = 'original',
 }: {
   turn: Turn;
   text: string;
@@ -165,26 +188,66 @@ const TurnRow = memo(function TurnRow({
   colorIndex?: number;
   isStreaming: boolean;
   userName: string;
+  leftAligned: boolean;
+  hideSpeakerDots: boolean;
   active: boolean;
+  activeTime?: number | null;
   flash: boolean;
   onSpeakerClick?: VirtualizedTranscriptViewProps['onSpeakerClick'];
   onRenameSpeaker?: VirtualizedTranscriptViewProps['onRenameSpeaker'];
   onMergeSpeaker?: VirtualizedTranscriptViewProps['onMergeSpeaker'];
   onSeek?: VirtualizedTranscriptViewProps['onSeek'];
+  translations?: Record<string, string>;
+  translationMode?: 'original' | 'translated' | 'bilingual';
 }) {
+  const { labs } = useLabs();
   const speaker = turn.speaker;
   const isYou = isUserSpeaker(speaker);
   const label = speaker ? displaySpeaker(speaker, userName) : '';
   const shown = shownText(text, textMode) || (text.trim() === '' ? '[Silence]' : text);
-  const clickable = !!speaker && (!!onSpeakerClick || !!onRenameSpeaker);
+  const clickable = !!speaker && !turn.provisional && (!!onSpeakerClick || !!onRenameSpeaker);
+  const currentMs = active && activeTime != null ? activeTime * 1000 : null;
+  const showWords = Boolean(labs.wordTimestamps && turn.words && turn.words.length > 0 && !isStreaming);
+
+  const translationText = useMemo(() => {
+    if (!translations || translationMode === 'original') return null;
+    const parts = turn.memberIds
+      .map((id) => translations[id])
+      .filter(Boolean);
+    if (parts.length > 0) return parts.join(' ');
+    return translations[turn.id] || null;
+  }, [translations, translationMode, turn.memberIds, turn.id]);
+
+  const activeWordIndex = useMemo(() => {
+    if (currentMs == null || !turn.words || turn.words.length === 0) return -1;
+    const words = turn.words;
+    let lo = 0;
+    let hi = words.length - 1;
+    let best = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (words[mid].startTime <= currentMs) {
+        best = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    if (best === -1) return -1;
+    const word = words[best];
+    const nextWord = best + 1 < words.length ? words[best + 1] : null;
+    const graceEnd = nextWord ? Math.min(word.endTime + 150, nextWord.startTime) : word.endTime + 150;
+    return currentMs <= graceEnd ? best : -1;
+  }, [currentMs, turn.words]);
 
   return (
-    <div id={`segment-${turn.id}`} className={cn('flex pb-3', isYou ? 'justify-end pl-8' : 'justify-start pr-8')}>
-      <div className={cn('flex min-w-0 max-w-[92%] flex-col gap-1', isYou ? 'items-end' : 'items-start')}>
-        <div className={cn('flex items-center gap-2', isYou && 'flex-row-reverse')}>
-          <span aria-hidden className={cn('h-2 w-2 shrink-0 rounded-full', speakerDot(speaker, colorIndex))} />
+    <div id={`segment-${turn.id}`} className={cn('flex pb-3', leftAligned ? 'justify-start' : isYou ? 'justify-end pl-8' : 'justify-start pr-8')}>
+      <div className={cn(leftAligned ? 'grid w-full min-w-0 grid-cols-[minmax(70px,110px)_minmax(0,1fr)] items-start gap-3' : 'flex min-w-0 max-w-[92%] flex-col gap-1', !leftAligned && (isYou ? 'items-end' : 'items-start'))}>
+        <div className={cn(leftAligned ? 'flex min-w-0 flex-col items-start gap-1' : 'flex items-center gap-2', !leftAligned && isYou && 'flex-row-reverse')}>
+          <div className={cn('flex min-w-0 items-start gap-2', !leftAligned && isYou && 'flex-row-reverse')}>
+          {!hideSpeakerDots && <span aria-hidden className={cn('mt-1 h-2 w-2 shrink-0 rounded-full', speakerDot(speaker, colorIndex))} />}
           {speaker && (
-            <span className="group/speaker flex items-center gap-1">
+            <span className="group/speaker flex min-w-0 items-center gap-1">
               {clickable ? (
                 <button
                   type="button"
@@ -193,6 +256,7 @@ const TurnRow = memo(function TurnRow({
                   }
                   className={cn(
                     'rounded px-0.5 text-xs font-semibold transition-colors hover:bg-af-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60',
+                    leftAligned && 'min-w-0 break-words px-0 text-left',
                     speakerColor(speaker, colorIndex),
                   )}
                 >
@@ -201,7 +265,7 @@ const TurnRow = memo(function TurnRow({
               ) : (
                 <span className={cn('text-xs font-semibold', speakerColor(speaker, colorIndex))}>{label}</span>
               )}
-              {!onSpeakerClick && onMergeSpeaker && (
+              {!turn.provisional && !onSpeakerClick && onMergeSpeaker && (
                 <button
                   type="button"
                   onClick={() => onMergeSpeaker(speaker)}
@@ -213,11 +277,13 @@ const TurnRow = memo(function TurnRow({
               )}
             </span>
           )}
+          </div>
+          <div className={cn(leftAligned && !hideSpeakerDots && 'pl-4')}>
           {onSeek ? (
             <button
               type="button"
               onClick={() => onSeek(turn.timestamp)}
-              className="rounded px-1 text-[11px] tabular-nums text-af-text-4 transition-colors hover:bg-af-hover hover:text-af-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60"
+              className={cn('rounded text-[11px] tabular-nums text-af-text-4 transition-colors hover:bg-af-hover hover:text-af-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60', leftAligned ? 'px-0' : 'px-1')}
               aria-label={`Play from ${clock(turn.timestamp)}`}
             >
               {clock(turn.timestamp)}
@@ -225,18 +291,60 @@ const TurnRow = memo(function TurnRow({
           ) : (
             <span className="text-[11px] tabular-nums text-af-text-4">{clock(turn.timestamp)}</span>
           )}
+          </div>
         </div>
         <div
           className={cn(
-            'rounded-2xl border px-3.5 py-2 transition-[box-shadow,border-color,background-color] duration-200',
+            leftAligned ? 'min-w-0 rounded-md px-1 transition-colors' : 'rounded-2xl border px-3.5 py-2 transition-[box-shadow,border-color,background-color] duration-200',
             // Others' bubbles carry a faint wash of their colour (globals.css).
-            isYou ? 'rounded-tr-md border-af-accent/25 bg-af-accent/[0.12]' : 'af-speaker-bubble rounded-tl-md',
+            !leftAligned && (isYou ? 'rounded-tr-md border-af-accent/25 bg-af-accent/[0.12]' : 'af-speaker-bubble rounded-tl-md'),
             active && 'border-af-accent/60 shadow-[0_0_0_3px_rgb(var(--af-accent-rgb)/0.14)]',
             flash && 'animate-af-flash',
           )}
           style={isYou ? undefined : ({ '--chip': speakerColorValue(speaker, colorIndex) } as React.CSSProperties)}
         >
-          <p className={cn('text-sm leading-relaxed text-af-text', isStreaming && 'opacity-80')}>{shown}</p>
+          {translationMode === 'translated' && translationText ? (
+            <p className="text-sm leading-relaxed text-af-text whitespace-pre-wrap select-text">
+              {translationText}
+            </p>
+          ) : showWords ? (
+            <p className="text-sm leading-relaxed text-af-text whitespace-pre-wrap select-text">
+              {turn.words!.map((w, idx) => {
+                const isWordActive = idx === activeWordIndex;
+                return (
+                  <span
+                    key={w.wordID}
+                    onClick={
+                      onSeek
+                        ? (e) => {
+                            e.stopPropagation();
+                            onSeek(w.startTime / 1000);
+                          }
+                        : undefined
+                    }
+                    className={cn(
+                      'inline transition-colors duration-75 rounded-sm',
+                      onSeek && 'cursor-pointer hover:bg-af-accent/20 hover:text-af-accent',
+                      isWordActive && 'bg-af-accent/25 text-af-accent font-semibold px-0.5 rounded shadow-sm'
+                    )}
+                    title={onSeek ? `Seek to ${clock(w.startTime / 1000)}` : undefined}
+                  >
+                    {w.text}
+                  </span>
+                );
+              })}
+            </p>
+          ) : (
+            <p className={cn('text-sm leading-relaxed text-af-text', isStreaming && 'opacity-80')}>{shown}</p>
+          )}
+
+          {translationMode === 'bilingual' && translationText && (
+            <div className="mt-2 pt-2 border-t border-af-border/40 text-xs sm:text-[13px] leading-relaxed text-af-text-2 italic select-text">
+              {translationText}
+            </div>
+          )}
+
+          {turn.provisional && <span className="mt-1 block text-[10px] text-af-text-4">Updating…</span>}
         </div>
       </div>
     </div>
@@ -245,7 +353,9 @@ const TurnRow = memo(function TurnRow({
 
 export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps> = ({
   segments,
+  meetingImages = [],
   isRecording = false,
+  nearLiveCaptions = false,
   isPaused = false,
   isProcessing = false,
   isStopping = false,
@@ -267,9 +377,45 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
   bottomInset = 0,
   textMode = 'tidy',
   colorIndices: givenColorIndices,
+  translations,
+  translationMode = 'original',
 }) => {
   const userName = useUserName();
-  const turns = useMemo(() => mergeTurns(segments), [segments]);
+  const [leftAligned] = useTranscriptLeftAligned();
+  const [hideSpeakerDots] = useTranscriptHideSpeakerDots();
+  const shownLiveText = useRef(new Map<string, string>());
+  const turns = useMemo(() => {
+    const live = nearLiveCaptions && isRecording;
+    const merged = mergeTurns(live ? mergeInterleavedSpeakerTurns(segments) : segments);
+    if (!live) {
+      shownLiveText.current.clear();
+      return merged;
+    }
+    return retainLiveText(merged, shownLiveText.current);
+  }, [segments, nearLiveCaptions, isRecording]);
+  const [selectedImage, setSelectedImage] = useState<MeetingImage | null>(null);
+  const imagesByTurn = useMemo(() => {
+    const grouped = new Map<string, MeetingImage[]>();
+    if (turns.length === 0) return grouped;
+    for (const image of meetingImages) {
+      if (!Number.isFinite(image.audioTime)) continue;
+      // Pages load from the beginning. Wait for later transcript pages before
+      // attaching an image beyond the last loaded turn.
+      const last = turns[turns.length - 1];
+      if (hasMore && image.audioTime > (last.endTime ?? last.timestamp) + 2.5) continue;
+      let lo = 0;
+      let hi = turns.length - 1;
+      let index = 0;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (turns[mid].timestamp <= image.audioTime) { index = mid; lo = mid + 1; }
+        else hi = mid - 1;
+      }
+      const key = turns[index].id;
+      grouped.set(key, [...(grouped.get(key) ?? []), image]);
+    }
+    return grouped;
+  }, [turns, meetingImages, hasMore]);
   // One colour per speaker in first-spoken order, so a renamed speaker keeps theirs.
   const ownColorIndices = useMemo(
     () => speakerColorIndexMap(turns.map((turn) => turn.speaker ?? '').filter(Boolean)),
@@ -288,12 +434,14 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     // rename, or diarization after the call) merges two turns, the turns
     // after it move up a slot; keyed by position they kept the old slot's
     // height and overlapped the bubble above.
-    getItemKey: (index) => turns[index]?.id ?? index,
+    getItemKey: (index) => turns[index]
+      ? (nearLiveCaptions && isRecording ? liveTurnIdentity(turns[index]) : turns[index].id)
+      : index,
     overscan: 10,
     onChange: () => startTransition(() => rerender()),
   });
 
-  useAutoScroll({
+  const { autoScroll, scrollToBottom } = useAutoScroll({
     scrollRef,
     segments: turns,
     isRecording,
@@ -371,7 +519,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     return () => element.removeEventListener('scroll', onScroll);
   }, [onLoadMore, hasMore, isLoadingMore, isRecording]);
 
-  const row = (turn: Turn, index: number) => (
+  const row = (turn: Turn, index: number) => (<>
     <TurnRow
       turn={turn}
       text={getDisplayText(turn)}
@@ -379,14 +527,31 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
       colorIndex={turn.speaker ? colorIndices.get(speakerKey(turn.speaker)) : undefined}
       isStreaming={streamingSegmentId === turn.id}
       userName={userName}
+      leftAligned={leftAligned}
+      hideSpeakerDots={hideSpeakerDots}
       active={index === activeIndex}
+      activeTime={index === activeIndex ? playbackTime : null}
       flash={index === flashIndex}
       onSpeakerClick={onSpeakerClick}
       onRenameSpeaker={onRenameSpeaker}
       onMergeSpeaker={onMergeSpeaker}
       onSeek={onSeek}
+      translations={translations}
+      translationMode={translationMode}
     />
-  );
+    {imagesByTurn.get(turn.id)?.length ? (
+      <div className="mb-4 ml-4 flex flex-wrap gap-2" aria-label="Images captured at this point in the meeting">
+        {imagesByTurn.get(turn.id)?.map((image) => (
+          <button key={image.id} type="button" onClick={() => setSelectedImage(image)}
+            className="overflow-hidden rounded-lg border border-af-border bg-af-panel-2 text-left transition-colors hover:border-af-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60"
+            aria-label={`Open meeting image at ${clock(image.audioTime)}`}>
+            <img src={convertFileSrc(image.path)} alt={`Meeting image at ${clock(image.audioTime)}`} className="h-16 w-24 object-cover" />
+            <span className="flex items-center gap-1 px-1.5 py-1 text-[11px] tabular-nums text-af-text-3"><Camera className="h-3 w-3" /> {clock(image.audioTime)}</span>
+          </button>
+        ))}
+      </div>
+    ) : null}
+  </>);
 
   const footer = (
     <>
@@ -404,7 +569,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
         </div>
       )}
       {!isStopping && isRecording && !isProcessing && turns.length > 0 && (
-        <div className="mb-2 mt-4 flex min-h-[1.25rem] items-center gap-2 text-af-text-3">
+        <div className="mb-2 mt-2 flex min-h-[1.25rem] items-center gap-2 text-af-text-3">
           {isPaused ? (
             <span className="text-xs text-af-warning">Paused</span>
           ) : (
@@ -419,12 +584,13 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
   );
 
   return (
-    <div
-      ref={scrollRef}
-      className="flex h-full flex-col overflow-y-auto px-4 py-3"
-      style={bottomInset ? { scrollPaddingBottom: bottomInset } : undefined}
-    >
-      <div className={isRecording ? 'pb-4 pt-2' : ''} style={bottomInset ? { paddingBottom: bottomInset } : undefined}>
+    <div className="relative h-full w-full min-h-0 min-w-0">
+      <div
+        ref={scrollRef}
+        className="flex h-full flex-col overflow-y-auto px-4 py-3"
+        style={bottomInset ? { scrollPaddingBottom: bottomInset } : undefined}
+      >
+        <div className={isRecording ? 'pt-1' : ''} style={bottomInset ? { paddingBottom: bottomInset } : undefined}>
         {turns.length === 0 ? (
           isRecording ? (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-16 flex flex-col items-center text-center">
@@ -444,7 +610,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                 const turn = turns[item.index];
                 return (
                   <div
-                    key={turn.id}
+                    key={nearLiveCaptions && isRecording ? liveTurnIdentity(turn) : turn.id}
                     data-index={item.index}
                     ref={virtualizer.measureElement}
                     style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${item.start}px)` }}
@@ -460,7 +626,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
           <>
             <div className="space-y-1">
               {turns.map((turn, index) => (
-                <motion.div key={turn.id} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.15 }}>
+                <motion.div key={nearLiveCaptions && isRecording ? liveTurnIdentity(turn) : turn.id} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.15 }}>
                   {row(turn, index)}
                 </motion.div>
               ))}
@@ -468,7 +634,30 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
             {footer}
           </>
         )}
+        </div>
       </div>
+
+      {!autoScroll && turns.length > 0 && (
+        <button
+          type="button"
+          onClick={scrollToBottom}
+          className="group absolute right-6 z-20 flex items-center gap-1.5 rounded-full border border-af-border bg-af-panel/95 px-3 py-1.5 text-xs font-medium text-af-text shadow-lg backdrop-blur-md transition-all hover:bg-af-hover hover:border-af-accent/40 hover:text-af-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent animate-in fade-in-0 slide-in-from-bottom-2"
+          style={{ bottom: (bottomInset || 0) + 12 }}
+          aria-label="Scroll down to resume live transcript"
+        >
+          {isRecording && <span className="h-1.5 w-1.5 rounded-full bg-af-record animate-pulse" />}
+          <span className="text-[11px] font-medium">{isRecording ? 'Resume Live' : 'Jump to latest'}</span>
+          <ChevronDown className="h-3.5 w-3.5 text-af-text-3 transition-transform group-hover:translate-y-0.5 group-hover:text-af-accent" />
+        </button>
+      )}
+
+      <Dialog open={selectedImage !== null} onOpenChange={(open) => !open && setSelectedImage(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader><DialogTitle>Meeting image · {selectedImage ? clock(selectedImage.audioTime) : ''}</DialogTitle></DialogHeader>
+          {selectedImage && <img src={convertFileSrc(selectedImage.path)} alt={`Meeting image at ${clock(selectedImage.audioTime)}`} className="max-h-[70vh] w-full object-contain" />}
+          {selectedImage && onSeek && <div className="flex justify-end"><Button variant="secondary" onClick={() => { onSeek(selectedImage.audioTime); setSelectedImage(null); }}>Play from here</Button></div>}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

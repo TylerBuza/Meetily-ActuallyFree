@@ -81,6 +81,15 @@ fn compact_mode_allowed(is_recording: bool, is_stopping: bool) -> bool {
 
 // Global recording manager and transcription task to keep them alive during recording
 static RECORDING_MANAGER: Mutex<Option<RecordingManager>> = Mutex::new(None);
+
+/// Snapshot the active recording folder without holding the manager lock across
+/// image encoding, file I/O, or SQLite work.
+pub fn active_meeting_folder() -> Option<std::path::PathBuf> {
+    if !IS_RECORDING.load(Ordering::SeqCst) {
+        return None;
+    }
+    RECORDING_MANAGER.lock().ok()?.as_ref()?.get_meeting_folder().map(|path| path.to_path_buf())
+}
 static TRANSCRIPTION_TASK: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
 // Listener ID for proper cleanup - prevents microphone from staying active after recording stops
@@ -498,6 +507,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
                     } else {
                         Some(update.source.clone())
                     },
+                    words: update.words.clone(),
                 };
 
                 // Save to recording manager
@@ -754,6 +764,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
                     } else {
                         Some(update.source.clone())
                     },
+                    words: update.words.clone(),
                 };
 
                 // Save to recording manager

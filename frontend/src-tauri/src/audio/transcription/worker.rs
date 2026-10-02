@@ -28,6 +28,7 @@ use crate::database::repositories::vocabulary::VocabularyRepository;
 use crate::state::AppState;
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
@@ -57,6 +58,67 @@ pub struct TranscriptUpdate {
     pub audio_start_time: f64, // Seconds from recording start (e.g., 125.3)
     pub audio_end_time: f64,   // Seconds from recording start (e.g., 128.6)
     pub duration: f64,          // Segment duration in seconds (e.g., 3.3)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub words: Option<Vec<crate::database::models::WordTiming>>,
+}
+
+/// Final mic turns wait briefly for ASR from the aligned system source. The
+/// pipeline often queues mic first, so an immediate emit cannot compare the
+/// remote text. The pending queue and wait are bounded; stop flushes it.
+struct LiveDuplicateFilter {
+    system: VecDeque<(TranscriptUpdate, Vec<f32>)>,
+    pending_mic: VecDeque<(TranscriptUpdate, Vec<f32>, std::time::Instant)>,
+}
+
+impl LiveDuplicateFilter {
+    fn new() -> Self { Self { system: VecDeque::new(), pending_mic: VecDeque::new() } }
+
+    fn duplicate(&self, mic: &TranscriptUpdate, mic_envelope: &[f32]) -> bool {
+        self.system.iter().any(|(remote, system_envelope)| crate::audio::echo_guard::duplicated_mic_with_envelope(
+            &mic.text, mic.audio_start_time, mic.audio_end_time, mic_envelope, mic.audio_start_time,
+            &remote.text, remote.audio_start_time, remote.audio_end_time, system_envelope, remote.audio_start_time,
+        ))
+    }
+
+    fn accept(&mut self, update: TranscriptUpdate, microphone: bool, envelope: Vec<f32>) -> Vec<TranscriptUpdate> {
+        if microphone {
+            if self.duplicate(&update, &envelope) { return Vec::new(); }
+            if self.pending_mic.len() >= 4 {
+                let oldest = self.pending_mic.pop_front().unwrap().0;
+                self.pending_mic.push_back((update, envelope, std::time::Instant::now()));
+                return vec![oldest];
+            }
+            self.pending_mic.push_back((update, envelope, std::time::Instant::now()));
+            return Vec::new();
+        }
+        let newest_start = update.audio_start_time;
+        self.system.push_back((update.clone(), envelope));
+        while self.system.front().is_some_and(|(old, _)| old.audio_end_time < newest_start - 15.0) {
+            self.system.pop_front();
+        }
+        let mut ready = vec![update];
+        let mut waiting = VecDeque::new();
+        while let Some((mic, mic_envelope, since)) = self.pending_mic.pop_front() {
+            if self.duplicate(&mic, &mic_envelope) { continue; }
+            if ready[0].audio_end_time >= mic.audio_end_time + 0.3 {
+                ready.push(mic);
+            } else {
+                waiting.push_back((mic, mic_envelope, since));
+            }
+        }
+        self.pending_mic = waiting;
+        ready
+    }
+
+    fn flush_due(&mut self, force: bool) -> Vec<TranscriptUpdate> {
+        let mut ready = Vec::new();
+        while self.pending_mic.front().is_some_and(|(_, _, since)|
+            force || since.elapsed() >= std::time::Duration::from_millis(800)) {
+            let (mic, mic_envelope, _) = self.pending_mic.pop_front().unwrap();
+            if !self.duplicate(&mic, &mic_envelope) { ready.push(mic); }
+        }
+        ready
+    }
 }
 
 fn should_emit_transcript(transcript: &str, _confidence: Option<f32>) -> bool {
@@ -68,15 +130,51 @@ fn should_emit_transcript(transcript: &str, _confidence: Option<f32>) -> bool {
     true
 }
 
+#[cfg(test)]
+mod playback_tests {
+    use super::{LiveDuplicateFilter, TranscriptUpdate};
+
+    fn turn(text: &str, source: &str, start: f64, end: f64) -> TranscriptUpdate {
+        TranscriptUpdate {
+            text: text.into(), timestamp: String::new(), source: source.into(),
+            sequence_id: 0, chunk_start_time: start, is_partial: false,
+            confidence: 0.9, audio_start_time: start, audio_end_time: end,
+            duration: end - start,
+            words: None,
+        }
+    }
+
+    #[test]
+    fn delayed_system_turn_removes_duplicate_mic_but_keeps_local_speech() {
+        let mut filter = LiveDuplicateFilter::new();
+        let duplicate = turn("Lucky you're beautiful because there's nothing up here. What does he mean?", "You", 55.8, 60.88);
+        assert!(filter.accept(duplicate, true, Vec::new()).is_empty());
+        let remote = turn("Lucky you're beautiful because there's nothing up here. What? That's mean.", "Scarlett", 55.62, 60.73);
+        assert_eq!(filter.accept(remote, false, Vec::new()).len(), 1);
+        assert!(filter.flush_due(true).is_empty());
+
+        let local = turn("I disagree because my microphone is on", "You", 65.0, 67.0);
+        assert!(filter.accept(local, true, Vec::new()).is_empty());
+        let retained = filter.flush_due(true);
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].source, "You");
+    }
+}
+
 // NOTE: get_transcript_history and get_recording_meeting_name functions
 // have been moved to recording_commands.rs where they have access to RECORDING_MANAGER
 
 /// Optimized parallel transcription task ensuring ZERO chunk loss
 pub fn start_transcription_task<R: Runtime>(
     app: AppHandle<R>,
-    transcription_receiver: tokio::sync::mpsc::UnboundedReceiver<AudioChunk>,
+    inputs: crate::audio::near_live::LiveTranscriptionInputs,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let crate::audio::near_live::LiveTranscriptionInputs {
+            final_chunks: transcription_receiver,
+            mut microphone_previews,
+            mut system_previews,
+        } = inputs;
         info!("🚀 Starting optimized parallel transcription task - guaranteeing zero chunk loss");
 
         let initial_prompt = match app.try_state::<AppState>() {
@@ -114,6 +212,57 @@ pub fn start_transcription_task<R: Runtime>(
         let chunks_completed = Arc::new(AtomicU64::new(0));
         let input_finished = Arc::new(AtomicBool::new(false));
 
+        // Provisional windows never enter the final transcript channel. One
+        // decoder task shares the loaded Parakeet model, consumes only the
+        // newest window per source, and yields whenever final chunks are queued.
+        let preview_handle = match &transcription_engine {
+            TranscriptionEngine::Parakeet(engine) if crate::audio::near_live::enabled() => {
+                let engine = engine.clone();
+                let app = app.clone();
+                let queued = chunks_queued.clone();
+                let completed = chunks_completed.clone();
+                let finished = input_finished.clone();
+                Some(tokio::spawn(async move {
+                    let (mut mic_open, mut system_open) = (true, true);
+                    while (mic_open || system_open) && !finished.load(Ordering::SeqCst) {
+                        let preview = tokio::select! {
+                            result = microphone_previews.changed(), if mic_open => {
+                                if result.is_err() { mic_open = false; continue; }
+                                microphone_previews.borrow_and_update().clone()
+                            }
+                            result = system_previews.changed(), if system_open => {
+                                if result.is_err() { system_open = false; continue; }
+                                system_previews.borrow_and_update().clone()
+                            }
+                        };
+                        let Some(chunk) = preview else { continue; };
+                        if queued.load(Ordering::SeqCst) > completed.load(Ordering::SeqCst) + 1 { continue; }
+                        let source = match chunk.device_type {
+                            crate::audio::recording_state::DeviceType::Microphone => "microphone",
+                            crate::audio::recording_state::DeviceType::System => "system",
+                            crate::audio::recording_state::DeviceType::Mixed => continue,
+                        };
+                        let start = chunk.timestamp;
+                        let end = start + chunk.data.len() as f64 / 16_000.0;
+                        let began = std::time::Instant::now();
+                        match engine.transcribe_audio(chunk.data).await {
+                            Ok(text) if !text.trim().is_empty()
+                                && !finished.load(Ordering::SeqCst) => {
+                                info!("Near-live {source} preview {:.2}-{:.2}s decoded in {}ms", start, end, began.elapsed().as_millis());
+                                let _ = app.emit("near-live-caption", serde_json::json!({
+                                    "source": source, "start_time": start,
+                                    "end_time": end, "text": text.trim(),
+                                }));
+                            }
+                            Err(error) => warn!("Near-live preview failed: {error}"),
+                            _ => {}
+                        }
+                    }
+                }))
+            }
+            _ => None,
+        };
+
         info!("📊 Starting {} transcription worker{} (serial mode for ordered emission)", NUM_WORKERS, if NUM_WORKERS == 1 { "" } else { "s" });
 
         // Spawn worker tasks
@@ -133,6 +282,8 @@ pub fn start_transcription_task<R: Runtime>(
 
             let worker_handle = tokio::spawn(async move {
                 info!("👷 Worker {} started", worker_id);
+                let mut duplicate_filter = crate::audio::echo_guard::enabled()
+                    .then(LiveDuplicateFilter::new);
 
                 // PRE-VALIDATE model state to avoid repeated async calls per chunk
                 let initial_model_loaded = engine_clone.is_model_loaded().await;
@@ -156,7 +307,17 @@ pub fn start_transcription_task<R: Runtime>(
                     // Try to get a chunk to process
                     let chunk = {
                         let mut receiver = work_receiver_clone.lock().await;
-                        receiver.recv().await
+                        match tokio::time::timeout(std::time::Duration::from_millis(250), receiver.recv()).await {
+                            Ok(chunk) => chunk,
+                            Err(_) => {
+                                if let Some(filter) = &mut duplicate_filter {
+                                    for update in filter.flush_due(false) {
+                                        let _ = app_clone.emit("transcript-update", &update);
+                                    }
+                                }
+                                continue;
+                            }
+                        }
                     };
 
                     match chunk {
@@ -184,6 +345,13 @@ pub fn start_transcription_task<R: Runtime>(
 
                             let chunk_timestamp = chunk.timestamp;
                             let chunk_duration = chunk.data.len() as f64 / chunk.sample_rate as f64;
+                            let duplicate_envelope = duplicate_filter.as_ref()
+                                .map(|_| crate::audio::echo_guard::rms_envelope(&chunk.data));
+                            let capture_source = match &chunk.device_type {
+                                crate::audio::recording_state::DeviceType::Microphone => "microphone",
+                                crate::audio::recording_state::DeviceType::System => "system",
+                                crate::audio::recording_state::DeviceType::Mixed => "mixed",
+                            };
 
                             // Speaker label for this segment.
                             //
@@ -234,7 +402,7 @@ pub fn start_transcription_task<R: Runtime>(
                             )
                             .await
                             {
-                            Ok((transcript, confidence_opt, is_partial)) => {
+                            Ok((transcript, confidence_opt, is_partial, words_opt)) => {
                                 if nemotron_remote {
                                     // Inference runs concurrently with ASR. Wait only for bounded
                                     // lookahead here, never on the capture or Tokio worker thread.
@@ -301,14 +469,21 @@ pub fn start_transcription_task<R: Runtime>(
                                             audio_start_time,
                                             audio_end_time,
                                             duration: chunk_duration,
+                                            words: words_opt,
                                         };
 
-                                        if let Err(e) = app_clone.emit("transcript-update", &update)
-                                        {
-                                            error!(
-                                                "Worker {}: Failed to emit transcript update: {}",
-                                                worker_id, e
-                                            );
+                                        let updates = match &mut duplicate_filter {
+                                            Some(filter) => {
+                                                let mut u = filter.accept(update, capture_source == "microphone", duplicate_envelope.unwrap_or_default());
+                                                u.extend(filter.flush_due(false));
+                                                u
+                                            }
+                                            None => vec![update],
+                                        };
+                                        for update in updates {
+                                            if let Err(e) = app_clone.emit("transcript-update", &update) {
+                                                error!("Worker {}: Failed to emit transcript update: {}", worker_id, e);
+                                            }
                                         }
                                         // PERFORMANCE: Removed verbose logging of every emission
                                     } else if !transcript.trim().is_empty() && should_log_this_chunk
@@ -325,6 +500,10 @@ pub fn start_transcription_task<R: Runtime>(
                                         TranscriptionError::AudioTooShort { .. } => {
                                             // Skip silently, this is expected for very short chunks
                                             info!("Worker {}: {}", worker_id, e);
+                                            let _ = app_clone.emit("near-live-finalized", serde_json::json!({
+                                                "source": capture_source,
+                                                "end_time": chunk_timestamp + chunk_duration,
+                                            }));
                                             chunks_completed_clone.fetch_add(1, Ordering::SeqCst);
                                             continue;
                                         }
@@ -340,6 +519,11 @@ pub fn start_transcription_task<R: Runtime>(
                                     }
                                 }
                             }
+
+                            let _ = app_clone.emit("near-live-finalized", serde_json::json!({
+                                "source": capture_source,
+                                "end_time": chunk_timestamp + chunk_duration,
+                            }));
 
                             // Mark chunk as completed
                             let completed =
@@ -380,6 +564,11 @@ pub fn start_transcription_task<R: Runtime>(
                                 let final_completed = chunks_completed_clone.load(Ordering::SeqCst);
 
                                 if final_completed >= final_queued {
+                                    if let Some(filter) = &mut duplicate_filter {
+                                        for update in filter.flush_due(true) {
+                                            let _ = app_clone.emit("transcript-update", &update);
+                                        }
+                                    }
                                     info!(
                                         "👷 Worker {} finishing - all {}/{} chunks processed",
                                         worker_id, final_completed, final_queued
@@ -421,6 +610,7 @@ pub fn start_transcription_task<R: Runtime>(
 
         // Signal that input is finished
         input_finished.store(true, Ordering::SeqCst);
+        if let Some(handle) = preview_handle { let _ = handle.await; }
         drop(work_sender); // Close the channel to signal workers
 
         let total_chunks_queued = chunks_queued.load(Ordering::SeqCst);
@@ -488,12 +678,12 @@ pub fn start_transcription_task<R: Runtime>(
 }
 
 /// Transcribe audio chunk using the appropriate provider (Whisper, Parakeet, or trait-based)
-/// Returns: (text, confidence Option, is_partial)
+/// Returns: (text, confidence Option, is_partial, words Option)
 async fn transcribe_chunk_with_provider(
     engine: &TranscriptionEngine,
     chunk: AudioChunk,
     initial_prompt: Option<&str>,
-) -> std::result::Result<(String, Option<f32>, bool), TranscriptionError> {
+) -> std::result::Result<(String, Option<f32>, bool, Option<Vec<crate::database::models::WordTiming>>), TranscriptionError> {
     // Convert to 16kHz mono for transcription
     let transcription_data = if chunk.sample_rate != 16000 {
         crate::audio::audio_processing::resample_audio(&chunk.data, chunk.sample_rate, 16000)
@@ -528,7 +718,7 @@ async fn transcribe_chunk_with_provider(
             "Audio chunk {} has near-zero energy (rms: {:.6}, peak: {:.6}), skipping transcription",
             chunk.chunk_id, rms, peak
         );
-        return Ok((String::new(), Some(1.0), false));
+        return Ok((String::new(), Some(1.0), false, None));
     }
 
     info!(
@@ -546,13 +736,13 @@ async fn transcribe_chunk_with_provider(
             let language = crate::get_language_preference_internal();
 
             match whisper_engine
-                .transcribe_audio_with_confidence(speech_samples, language, initial_prompt)
+                .transcribe_audio_with_words(speech_samples, language, initial_prompt, chunk.timestamp)
                 .await
             {
-                Ok((text, confidence, is_partial)) => {
+                Ok((text, confidence, is_partial, words)) => {
                     let cleaned_text = text.trim().to_string();
                     if cleaned_text.is_empty() {
-                        return Ok((String::new(), Some(confidence), is_partial));
+                        return Ok((String::new(), Some(confidence), is_partial, None));
                     }
 
                     // Quiet replies such as "you" and "thanks" remain valid speech.
@@ -563,7 +753,7 @@ async fn transcribe_chunk_with_provider(
                         chunk.chunk_id, cleaned_text, confidence, is_partial
                     );
 
-                    Ok((cleaned_text, Some(confidence), is_partial))
+                    Ok((cleaned_text, Some(confidence), is_partial, words))
                 }
                 Err(e) => {
                     error!(
@@ -577,29 +767,56 @@ async fn transcribe_chunk_with_provider(
             }
         }
         TranscriptionEngine::Parakeet(parakeet_engine) => {
-            match parakeet_engine.transcribe_audio(speech_samples).await {
-                Ok(text) => {
-                    let cleaned_text = text.trim().to_string();
-                    if cleaned_text.is_empty() {
-                        return Ok((String::new(), None, false));
+            if crate::audio::word_timestamps::enabled() {
+                match parakeet_engine.transcribe_audio_with_words(speech_samples, chunk.timestamp).await {
+                    Ok((text, words)) => {
+                        let cleaned_text = text.trim().to_string();
+                        if cleaned_text.is_empty() {
+                            return Ok((String::new(), None, false, None));
+                        }
+
+                        info!(
+                            "Parakeet transcription complete for chunk {}: '{}' ({} words)",
+                            chunk.chunk_id, cleaned_text, words.len()
+                        );
+
+                        Ok((cleaned_text, None, false, Some(words)))
                     }
+                    Err(e) => {
+                        error!(
+                            "Parakeet transcription failed for chunk {}: {}",
+                            chunk.chunk_id, e
+                        );
 
-                    info!(
-                        "Parakeet transcription complete for chunk {}: '{}'",
-                        chunk.chunk_id, cleaned_text
-                    );
-
-                    // Parakeet doesn't provide confidence or partial results
-                    Ok((cleaned_text, None, false))
+                        let transcription_error = TranscriptionError::EngineFailed(e.to_string());
+                        Err(transcription_error)
+                    }
                 }
-                Err(e) => {
-                    error!(
-                        "Parakeet transcription failed for chunk {}: {}",
-                        chunk.chunk_id, e
-                    );
+            } else {
+                match parakeet_engine.transcribe_audio(speech_samples).await {
+                    Ok(text) => {
+                        let cleaned_text = text.trim().to_string();
+                        if cleaned_text.is_empty() {
+                            return Ok((String::new(), None, false, None));
+                        }
 
-                    let transcription_error = TranscriptionError::EngineFailed(e.to_string());
-                    Err(transcription_error)
+                        info!(
+                            "Parakeet transcription complete for chunk {}: '{}'",
+                            chunk.chunk_id, cleaned_text
+                        );
+
+                        // Parakeet doesn't provide confidence or partial results
+                        Ok((cleaned_text, None, false, None))
+                    }
+                    Err(e) => {
+                        error!(
+                            "Parakeet transcription failed for chunk {}: {}",
+                            chunk.chunk_id, e
+                        );
+
+                        let transcription_error = TranscriptionError::EngineFailed(e.to_string());
+                        Err(transcription_error)
+                    }
                 }
             }
         }
@@ -611,7 +828,7 @@ async fn transcribe_chunk_with_provider(
                 Ok(result) => {
                     let cleaned_text = result.text.trim().to_string();
                     if cleaned_text.is_empty() {
-                        return Ok((String::new(), result.confidence, result.is_partial));
+                        return Ok((String::new(), result.confidence, result.is_partial, None));
                     }
 
                     let confidence_str = match result.confidence {
@@ -628,7 +845,7 @@ async fn transcribe_chunk_with_provider(
                         result.is_partial
                     );
 
-                    Ok((cleaned_text, result.confidence, result.is_partial))
+                    Ok((cleaned_text, result.confidence, result.is_partial, result.words))
                 }
                 Err(e) => {
                     error!(

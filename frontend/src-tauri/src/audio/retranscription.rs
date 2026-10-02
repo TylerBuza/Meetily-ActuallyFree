@@ -2,7 +2,7 @@
 
 use crate::audio::decoder::decode_audio_file;
 use crate::audio::vad::get_speech_chunks_with_thresholds_and_progress;
-use super::common::{create_transcript_segments, split_segment_at_silence, write_transcripts_json};
+use super::common::{create_transcript_segments_with_words, split_segment_at_silence, write_transcripts_json};
 use super::constants::AUDIO_EXTENSIONS;
 use crate::config::{DEFAULT_WHISPER_MODEL, DEFAULT_PARAKEET_MODEL};
 use crate::database::models::DateTimeUtc;
@@ -153,6 +153,7 @@ fn find_audio_file(folder: &Path) -> Result<PathBuf> {
         "audio.mp4", "audio.m4a", "audio.wav", "audio.mp3",
         "audio.flac", "audio.ogg", "recording.mp4",
         "audio.mkv", "audio.webm", "audio.wma",
+        "video.mp4", "video.webm", "video.mov", "video.mkv",
     ];
 
     for name in candidates {
@@ -237,12 +238,12 @@ fn is_manual_speaker_label(label: &str) -> bool {
 }
 
 fn create_source_labeled_segments(
-    transcripts: &[(String, f64, f64)],
+    transcripts: &[(String, f64, f64, Option<Vec<crate::database::models::WordTiming>>)],
     speaker_hints: &[Option<&str>],
     recording_started_at: DateTime<Utc>,
 ) -> Result<Vec<crate::api::TranscriptSegment>> {
     debug_assert_eq!(transcripts.len(), speaker_hints.len());
-    let mut segments = create_transcript_segments(transcripts, recording_started_at)?;
+    let mut segments = create_transcript_segments_with_words(transcripts, recording_started_at)?;
     for (segment, speaker_hint) in segments.iter_mut().zip(speaker_hints) {
         segment.speaker = speaker_hint.map(str::to_string);
     }
@@ -274,6 +275,8 @@ async fn run_retranscription<R: Runtime>(
     let source_count = sources.len();
     let mut duration_seconds = 0.0f64;
     let mut speech_segments = Vec::new();
+    let mut mic_envelope = Vec::new();
+    let mut system_envelope = Vec::new();
 
     // Retained source tracks prevent one speaker from masking the other. Older
     // recordings fall back to the mixed playback file.
@@ -303,6 +306,13 @@ async fn run_retranscription<R: Runtime>(
         let audio_samples = tokio::task::spawn_blocking(move || decoded.to_whisper_format())
             .await
             .map_err(|e| anyhow!("Resample task panicked: {}", e))?;
+        if crate::audio::echo_guard::enabled() {
+            match source.speaker_hint {
+                Some("You") => mic_envelope = crate::audio::echo_guard::rms_envelope(&audio_samples),
+                Some("Guest") => system_envelope = crate::audio::echo_guard::rms_envelope(&audio_samples),
+                _ => {}
+            }
+        }
         let app_for_vad = app.clone();
         let meeting_id_for_vad = meeting_id.clone();
         let source_label = source.label;
@@ -434,7 +444,7 @@ async fn run_retranscription<R: Runtime>(
     info!("Processing {} segments (after splitting)", processable_count);
 
     // Process each speech segment with progress updates
-    let mut all_transcripts: Vec<(String, f64, f64)> = Vec::new(); // (text, start_ms, end_ms)
+    let mut all_transcripts: Vec<(String, f64, f64, Option<Vec<crate::database::models::WordTiming>>)> = Vec::new(); // (text, start_ms, end_ms, words)
     let mut speaker_hints: Vec<Option<&'static str>> = Vec::new();
     let mut total_confidence = 0.0f32;
 
@@ -476,24 +486,34 @@ async fn run_retranscription<R: Runtime>(
         }
 
         // Transcribe this segment
-        let (text, conf) = if use_parakeet {
+        let chunk_start_sec = segment.start_timestamp_ms / 1000.0;
+        let (text, conf, words) = if use_parakeet {
             let engine = parakeet_engine.as_ref().unwrap();
-            let text = engine
-                .transcribe_audio(segment.samples.clone())
-                .await
-                .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
-            (text, 0.9f32)
+            if crate::audio::word_timestamps::enabled() {
+                let (text, words) = engine
+                    .transcribe_audio_with_words(segment.samples.clone(), chunk_start_sec)
+                    .await
+                    .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
+                (text, 0.9f32, Some(words))
+            } else {
+                let text = engine
+                    .transcribe_audio(segment.samples.clone())
+                    .await
+                    .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
+                (text, 0.9f32, None)
+            }
         } else {
             let engine = whisper_engine.as_ref().unwrap();
-            let (text, conf, _) = engine
-                .transcribe_audio_with_confidence(
+            let (text, conf, _, words) = engine
+                .transcribe_audio_with_words(
                     segment.samples.clone(),
                     language.clone(),
                     initial_prompt.as_deref(),
+                    chunk_start_sec,
                 )
                 .await
                 .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?;
-            (text, conf)
+            (text, conf, words)
         };
 
         // Skip empty transcripts
@@ -512,12 +532,61 @@ async fn run_retranscription<R: Runtime>(
                 i + 1, processable_count, segment_duration_sec, conf,
                 if trimmed.len() > 80 { let mut end = 80; while !trimmed.is_char_boundary(end) { end -= 1; } &trimmed[..end] } else { trimmed }
             );
-            all_transcripts.push((text, segment.start_timestamp_ms, segment.end_timestamp_ms));
+            all_transcripts.push((text, segment.start_timestamp_ms, segment.end_timestamp_ms, words));
             speaker_hints.push(*speaker_hint);
             total_confidence += conf;
         } else {
             debug!("Segment {}/{}: {:.1}s — empty transcription", i + 1, processable_count, segment_duration_sec);
         }
+    }
+
+    if crate::audio::echo_guard::enabled() {
+        // Saved mic audio from processed microphones can still contain remote
+        // speech even after acoustic filtering. Compare completed ASR turns
+        // across source tracks before replacing the saved transcript. A mic
+        // turn can span two consecutive system turns, so compare their combined
+        // text as well as each turn separately. Keep a borderline mic turn when
+        // it flows directly into an uncontested local turn.
+        let keep: Vec<bool> = all_transcripts.iter().enumerate().map(|(index, (text, start, end, _))| {
+            if speaker_hints[index] != Some("You") { return true; }
+            let overlapping_remote: Vec<_> = all_transcripts.iter().enumerate()
+                .filter(|(other_index, (_, remote_start, remote_end, _))| {
+                    speaker_hints[*other_index] != Some("You")
+                        && remote_end.min(*end) - remote_start.max(*start) >= 500.0
+                })
+                .map(|(_, turn)| turn).collect();
+            if overlapping_remote.is_empty() { return true; }
+            let clear_local_followup = all_transcripts.iter().enumerate().any(|(other_index, (_, local_start, local_end, _))| {
+                other_index != index && speaker_hints[other_index] == Some("You")
+                    && *local_start >= *end && *local_start - *end <= 250.0
+                    && all_transcripts.iter().enumerate().all(|(remote_index, (_, remote_start, remote_end, _))| {
+                        speaker_hints[remote_index] == Some("You")
+                            || remote_end.min(*local_end) - remote_start.max(*local_start) < 500.0
+                    })
+            });
+            if clear_local_followup { return true; }
+            let duplicate = |remote_text: &str, remote_start: f64, remote_end: f64| {
+                crate::audio::echo_guard::duplicated_mic_with_envelope(
+                    text, *start / 1000.0, *end / 1000.0, &mic_envelope, 0.0,
+                    remote_text, remote_start / 1000.0, remote_end / 1000.0, &system_envelope, 0.0,
+                )
+            };
+            if overlapping_remote.iter().any(|(remote_text, remote_start, remote_end, _)|
+                duplicate(remote_text, *remote_start, *remote_end)) { return false; }
+            let context = overlapping_remote.iter().map(|(remote_text, _, _, _)| remote_text.as_str())
+                .collect::<Vec<_>>().join(" ");
+            let context_start = overlapping_remote.iter().map(|(_, start, _, _)| *start)
+                .fold(f64::INFINITY, f64::min);
+            let context_end = overlapping_remote.iter().map(|(_, _, end, _)| *end)
+                .fold(f64::NEG_INFINITY, f64::max);
+            !duplicate(&context, context_start, context_end)
+        }).collect();
+        let removed = keep.iter().filter(|&&retained| !retained).count();
+        all_transcripts = all_transcripts.into_iter().enumerate()
+            .filter_map(|(index, turn)| keep[index].then_some(turn)).collect();
+        speaker_hints = speaker_hints.into_iter().enumerate()
+            .filter_map(|(index, hint)| keep[index].then_some(hint)).collect();
+        info!("Mic playback suppression removed {removed} duplicate post-call turns");
     }
 
     let transcribed_count = all_transcripts.len();
@@ -582,6 +651,11 @@ async fn run_retranscription<R: Runtime>(
         })
         .collect();
 
+    let retained_mic_ranges: Vec<(f64, f64)> = all_transcripts.iter().zip(&speaker_hints)
+        .filter(|(_, hint)| **hint == Some("You"))
+        .map(|((_, start, end, _), _)| (*start / 1000.0, *end / 1000.0))
+        .collect();
+
     // Reconstructed timestamps must remain stable across repeated runs.
     let mut segments =
         create_source_labeled_segments(&all_transcripts, &speaker_hints, recording_started_at)?;
@@ -614,7 +688,11 @@ async fn run_retranscription<R: Runtime>(
                 }
                 if let Some(name) = best_name {
                     if best_overlap > 0.05 {
-                        segment.speaker = Some(name);
+                        let confirmed = retained_mic_ranges.iter().any(|(mic_start, mic_end)|
+                            seg_end.min(*mic_end) - seg_start.max(*mic_start) >= 0.5);
+                        segment.speaker = crate::audio::echo_guard::strip_unconfirmed_user_label(
+                            Some(name), crate::audio::echo_guard::enabled(), confirmed,
+                        );
                     }
                 }
             }
@@ -642,9 +720,10 @@ async fn run_retranscription<R: Runtime>(
         .map_err(|e| anyhow!("Failed to delete existing transcripts: {}", e))?;
 
     for segment in &segments {
+        let words_json = segment.words.as_ref().map(|w| serde_json::to_string(w).unwrap_or_default());
         sqlx::query(
-            "INSERT INTO transcripts (id, meeting_id, transcript, timestamp, audio_start_time, audio_end_time, duration, speaker)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO transcripts (id, meeting_id, transcript, timestamp, audio_start_time, audio_end_time, duration, speaker, words)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&segment.id)
         .bind(&meeting_id)
@@ -654,13 +733,17 @@ async fn run_retranscription<R: Runtime>(
         .bind(segment.audio_end_time)
         .bind(segment.duration)
         .bind(&segment.speaker)
+        .bind(words_json)
         .execute(&mut *tx)
         .await
         .map_err(|e| anyhow!("Failed to insert transcript: {}", e))?;
     }
 
+    crate::database::repositories::person::PeopleRepository::link_named_speakers(&mut tx, &meeting_id).await
+        .map_err(|e| anyhow!("Failed to link named speakers: {e}"))?;
     tx.commit().await
         .map_err(|e| anyhow!("Failed to commit transaction: {}", e))?;
+    crate::diarization::voice_profiles::auto_save_named_voices(app.clone(), pool.clone(), meeting_id.clone(), None);
 
     info!(
         "Updated {} transcripts for meeting {} in transaction",
@@ -1077,6 +1160,7 @@ pub async fn is_retranscription_in_progress_command() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::common::create_transcript_segments;
 
     #[test]
     fn retranscription_repairs_duration_and_preserves_metadata() {
@@ -1241,8 +1325,8 @@ mod tests {
     #[test]
     fn source_hints_stay_aligned_with_successful_transcripts() {
         let transcripts = vec![
-            ("Hello one two three".to_string(), 14_970.0, 18_880.0),
-            ("Remote speech".to_string(), 16_770.0, 26_980.0),
+            ("Hello one two three".to_string(), 14_970.0, 18_880.0, None),
+            ("Remote speech".to_string(), 16_770.0, 26_980.0, None),
         ];
         let segments = create_source_labeled_segments(
             &transcripts,

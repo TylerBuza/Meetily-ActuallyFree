@@ -24,6 +24,9 @@ pub mod capture_worker;
 pub mod recording_manager;
 pub mod recording_commands;
 pub mod recording_preferences;
+pub mod near_live;
+pub mod echo_guard;
+pub mod word_timestamps;
 pub mod recording_saver;
 pub mod incremental_saver;  // NEW: Incremental audio saving with checkpoints
 pub mod level_monitor;
@@ -55,6 +58,12 @@ pub mod retranscription;
 
 // Import module (import external audio files as new meetings)
 pub mod import;
+
+// YouTube download and transcription
+pub mod youtube;
+
+// Background watch folders
+pub mod watch_folders;
 
 pub use devices::{
     default_input_device, default_output_device, get_device_and_config, list_audio_devices,

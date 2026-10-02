@@ -33,13 +33,26 @@ impl TranscriptionProvider for ParakeetProvider {
             );
         }
 
-        match self.engine.transcribe_audio(audio).await {
-            Ok(text) => Ok(TranscriptResult {
-                text: text.trim().to_string(),
-                confidence: None, // Parakeet doesn't provide confidence scores
-                is_partial: false, // Parakeet doesn't provide partial results
-            }),
-            Err(e) => Err(TranscriptionError::EngineFailed(e.to_string())),
+        if crate::audio::word_timestamps::enabled() {
+            match self.engine.transcribe_audio_with_words(audio, 0.0).await {
+                Ok((text, words)) => Ok(TranscriptResult {
+                    text: text.trim().to_string(),
+                    confidence: None,
+                    is_partial: false,
+                    words: Some(words),
+                }),
+                Err(e) => Err(TranscriptionError::EngineFailed(e.to_string())),
+            }
+        } else {
+            match self.engine.transcribe_audio(audio).await {
+                Ok(text) => Ok(TranscriptResult {
+                    text: text.trim().to_string(),
+                    confidence: None, // Parakeet doesn't provide confidence scores
+                    is_partial: false, // Parakeet doesn't provide partial results
+                    words: None,
+                }),
+                Err(e) => Err(TranscriptionError::EngineFailed(e.to_string())),
+            }
         }
     }
 
