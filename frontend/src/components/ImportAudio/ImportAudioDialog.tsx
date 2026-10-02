@@ -102,14 +102,25 @@ export function ImportAudioDialog({
 
   // Listen for youtube download and extraction progress
   useEffect(() => {
-    let unlisten: (() => void) | null = null;
+    let unlistenYoutube: (() => void) | null = null;
+    let unlistenImport: (() => void) | null = null;
     void listen<{ stage: string; percent: number; message: string }>('youtube-progress', (event) => {
       setYoutubeProgress(event.payload);
     }).then((un) => {
-      unlisten = un;
+      unlistenYoutube = un;
+    });
+    void listen<{ stage: string; progress_percentage: number; message: string }>('import-progress', (event) => {
+      setYoutubeProgress({
+        stage: event.payload.stage,
+        percent: event.payload.progress_percentage,
+        message: event.payload.message,
+      });
+    }).then((un) => {
+      unlistenImport = un;
     });
     return () => {
-      if (unlisten) unlisten();
+      if (unlistenYoutube) unlistenYoutube();
+      if (unlistenImport) unlistenImport();
     };
   }, []);
 
@@ -216,7 +227,13 @@ export function ImportAudioDialog({
     setYoutubeError(null);
     setYoutubeProgress({ stage: 'Starting download...', percent: 5, message: 'Connecting to YouTube...' });
     try {
-      const result = await transcribeYoutubeUrl(youtubeUrl.trim(), selectedModel?.name || null);
+      const result = await transcribeYoutubeUrl(
+        youtubeUrl.trim(),
+        title.trim() || youtubeInfo?.title || null,
+        isParakeetModel ? null : selectedLang === 'auto' ? null : selectedLang,
+        selectedModel?.name || null,
+        selectedModel?.provider || null,
+      );
       handleImportComplete(result);
     } catch (err: any) {
       setIsProcessingYoutube(false);

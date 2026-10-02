@@ -268,10 +268,22 @@ export const fetchYouTubeInfo = (url: string) =>
   invoke<YouTubeVideoInfo>('fetch_youtube_info_command', { url });
 export const fetchYoutubeInfo = fetchYouTubeInfo;
 
-export const transcribeYouTubeUrl = (url: string, preferredModel?: string | null) =>
+export const transcribeYouTubeUrl = (
+  url: string,
+  title?: string | null,
+  language?: string | null,
+  model?: string | null,
+  provider?: string | null,
+) =>
   invoke<{ meeting_id: string; title: string; segments_count: number; duration_seconds: number }>(
     'transcribe_youtube_url_command',
-    { url, preferredModel },
+    {
+      url,
+      title: title || null,
+      language: language || null,
+      model: model || null,
+      provider: provider || null,
+    },
   );
 export const transcribeYoutubeUrl = transcribeYouTubeUrl;
 

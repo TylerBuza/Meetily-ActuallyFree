@@ -333,8 +333,24 @@ async fn run_import<R: Runtime>(
         title, source_path, language, model, provider
     );
 
-    // Determine which provider to use (default to whisper)
-    let use_parakeet = provider.as_deref() == Some("parakeet");
+    // Determine which provider to use (default to configured provider, or whisper if not set)
+    let effective_provider = match provider.as_deref() {
+        Some(p) => p.to_string(),
+        None => {
+            let state = app.try_state::<AppState>();
+            if let Some(state) = state {
+                sqlx::query_scalar::<_, String>("SELECT provider FROM transcript_settings WHERE id = '1'")
+                    .fetch_optional(state.db_manager.pool())
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "whisper".to_string())
+            } else {
+                "whisper".to_string()
+            }
+        }
+    };
+    let use_parakeet = effective_provider == "parakeet";
     let initial_prompt = if use_parakeet {
         None
     } else {
@@ -844,9 +860,23 @@ async fn get_or_init_whisper<R: Runtime>(
                     warn!("Model discovery error (continuing): {}", e);
                 }
 
-                e.load_model(&target_model)
-                    .await
-                    .map_err(|e| anyhow!("Failed to load model '{}': {}", target_model, e))?;
+                if let Err(load_err) = e.load_model(&target_model).await {
+                    let available = e.discover_models().await.unwrap_or_default();
+                    if let Some(fallback) = available
+                        .iter()
+                        .find(|m| matches!(m.status, crate::whisper_engine::ModelStatus::Available))
+                    {
+                        info!(
+                            "Whisper model '{}' unavailable ({}), falling back to available model '{}'",
+                            target_model, load_err, fallback.name
+                        );
+                        e.load_model(&fallback.name)
+                            .await
+                            .map_err(|e| anyhow!("Failed to load fallback model '{}': {}", fallback.name, e))?;
+                    } else {
+                        return Err(anyhow!("Failed to load model '{}': {}", target_model, load_err));
+                    }
+                }
             }
 
             Ok(e)
@@ -890,9 +920,23 @@ async fn get_or_init_parakeet<R: Runtime>(
                     warn!("Model discovery error (continuing): {}", e);
                 }
 
-                e.load_model(&target_model)
-                    .await
-                    .map_err(|e| anyhow!("Failed to load model '{}': {}", target_model, e))?;
+                if let Err(load_err) = e.load_model(&target_model).await {
+                    let available = e.discover_models().await.unwrap_or_default();
+                    if let Some(fallback) = available
+                        .iter()
+                        .find(|m| matches!(m.status, crate::parakeet_engine::ModelStatus::Available))
+                    {
+                        info!(
+                            "Parakeet model '{}' unavailable ({}), falling back to available model '{}'",
+                            target_model, load_err, fallback.name
+                        );
+                        e.load_model(&fallback.name)
+                            .await
+                            .map_err(|e| anyhow!("Failed to load fallback model '{}': {}", fallback.name, e))?;
+                    } else {
+                        return Err(anyhow!("Failed to load model '{}': {}", target_model, load_err));
+                    }
+                }
             }
 
             Ok(e)
