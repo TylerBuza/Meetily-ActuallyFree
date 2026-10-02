@@ -196,6 +196,9 @@ pub fn init_watch_folder_worker<R: Runtime>(app: AppHandle<R>) {
                                     None,
                                     None,
                                     None,
+                                    Some(true),
+                                    None,
+                                    None,
                                 )
                                 .await;
 

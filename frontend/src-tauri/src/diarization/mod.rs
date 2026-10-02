@@ -812,7 +812,7 @@ pub struct MeetingDiarizationResult {
 
 /// Audio container extensions a meeting recording may use. Recordings are
 /// normally written as `audio.mp4`; `.wav` covers imports and older saves.
-const AUDIO_EXTS: [&str; 5] = ["mp4", "m4a", "wav", "mp3", "webm"];
+const AUDIO_EXTS: [&str; 9] = ["mp4", "m4a", "wav", "mp3", "webm", "mov", "mkv", "flac", "ogg"];
 
 fn is_audio_file(path: &Path) -> bool {
     path.extension()
@@ -825,7 +825,7 @@ fn is_audio_file(path: &Path) -> bool {
 fn newest_audio_in(dir: &Path) -> Option<PathBuf> {
     // Always use the mixed playback file as the meeting anchor. Dedicated
     // mic/system siblings are discovered from its parent by diarize_meeting.
-    for name in ["audio.mp4", "audio.m4a", "audio.wav", "audio.mp3", "audio.webm"] {
+    for name in ["audio.mp4", "audio.m4a", "audio.wav", "audio.mp3", "audio.webm", "video.mp4", "video.webm"] {
         let preferred = dir.join(name);
         if preferred.is_file() {
             return Some(preferred);
@@ -987,8 +987,8 @@ fn ensure_wav(path: &Path) -> Result<(PathBuf, bool)> {
 
 /// Diarize a meeting's recording and assign "Speaker N" labels to its transcript segments.
 #[tauri::command]
-pub async fn diarize_meeting(
-    app: tauri::AppHandle,
+pub async fn diarize_meeting<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: tauri::State<'_, crate::state::AppState>,
     meeting_id: String,
     audio_path: Option<String>,
@@ -998,8 +998,18 @@ pub async fn diarize_meeting(
 ) -> Result<MeetingDiarizationResult, String> {
     let _operation_guard = operation_guard().await;
     let pool = state.db_manager.pool();
-    let selected_engine = engine.unwrap_or_else(get_active_engine);
+    let mut selected_engine = engine.unwrap_or_else(get_active_engine);
     if !matches!(selected_engine.as_str(), "pyannote" | "nemotron") { return Err("Unknown diarization engine".into()); }
+    // If the selected engine is missing models, try to fallback to the other if available
+    if !models_available_for_engine(&selected_engine) {
+        if selected_engine == "nemotron" && pyannote_models_available() {
+            log::info!("Nemotron-3 model not found, falling back to Pyannote for diarization");
+            selected_engine = "pyannote".to_string();
+        } else if selected_engine == "pyannote" && nemotron_models_available() {
+            log::info!("Pyannote models not found, falling back to Nemotron-3 for diarization");
+            selected_engine = "nemotron".to_string();
+        }
+    }
     // Counts saved by older UI versions must not silently switch the engine.
     let num_speakers = if selected_engine == "nemotron" { None } else { num_speakers };
 

@@ -260,6 +260,9 @@ pub async fn start_import<R: Runtime>(
     language: Option<String>,
     model: Option<String>,
     provider: Option<String>,
+    diarize: Option<bool>,
+    diarization_engine: Option<String>,
+    num_speakers: Option<usize>,
 ) -> Result<ImportResult> {
     // Acquire guard - ensures flag is cleared even on panic/early return
     let _guard = ImportGuard::acquire().map_err(|e| anyhow!(e))?;
@@ -276,6 +279,9 @@ pub async fn start_import<R: Runtime>(
         language,
         model,
         provider,
+        diarize,
+        diarization_engine,
+        num_speakers,
     )
     .await;
     drop(batch_lease);
@@ -319,6 +325,9 @@ async fn run_import<R: Runtime>(
     language: Option<String>,
     model: Option<String>,
     provider: Option<String>,
+    diarize: Option<bool>,
+    diarization_engine: Option<String>,
+    num_speakers: Option<usize>,
 ) -> Result<ImportResult> {
     let source = PathBuf::from(&source_path);
     let title_is_manual = is_import_title_manual(&title, &source);
@@ -726,6 +735,61 @@ async fn run_import<R: Runtime>(
         warn!("Failed to write metadata.json: {}", e);
     }
 
+    // Optional post-import speaker diarization
+    let should_diarize = diarize.unwrap_or(true);
+    let engine_to_use = match diarization_engine.as_deref() {
+        Some("nemotron") if crate::diarization::nemotron_models_available() => "nemotron".to_string(),
+        Some("pyannote") if crate::diarization::pyannote_models_available() => "pyannote".to_string(),
+        _ => {
+            let active = crate::diarization::get_active_engine();
+            if crate::diarization::models_available_for_engine(&active) {
+                active
+            } else if crate::diarization::pyannote_models_available() {
+                "pyannote".to_string()
+            } else if crate::diarization::nemotron_models_available() {
+                "nemotron".to_string()
+            } else {
+                active
+            }
+        }
+    };
+
+    if should_diarize && crate::diarization::models_available_for_engine(&engine_to_use) {
+        let display_engine = if engine_to_use.eq_ignore_ascii_case("nemotron") {
+            "NVIDIA Nemotron-3"
+        } else {
+            "Pyannote"
+        };
+        emit_progress(&app, "diarizing", 94, &format!("Separating speakers ({display_engine})..."));
+        info!(
+            "🧑‍🤝‍🧑 Running speaker diarization on imported media: {} using {}",
+            dest_path.display(),
+            engine_to_use
+        );
+
+        match crate::diarization::diarize_meeting(
+            app.clone(),
+            app_state.clone(),
+            meeting_id.clone(),
+            Some(dest_path.to_string_lossy().to_string()),
+            num_speakers,
+            None,
+            Some(engine_to_use.clone()),
+        )
+        .await
+        {
+            Ok(d_res) => {
+                info!(
+                    "✅ Post-import diarization completed for {}: {} speakers, {} turns labeled",
+                    meeting_id, d_res.num_speakers, d_res.labeled
+                );
+            }
+            Err(e) => {
+                warn!("Post-import diarization skipped or failed non-fatally: {}", e);
+            }
+        }
+    }
+
     emit_progress(&app, "complete", 100, "Import complete");
 
     Ok(ImportResult {
@@ -1075,6 +1139,9 @@ pub async fn start_import_audio_command<R: Runtime>(
     language: Option<String>,
     model: Option<String>,
     provider: Option<String>,
+    diarize: Option<bool>,
+    diarization_engine: Option<String>,
+    num_speakers: Option<usize>,
 ) -> Result<ImportStarted, String> {
     // Check if import is already in progress (guard will be acquired in start_import)
     if IMPORT_IN_PROGRESS.load(Ordering::SeqCst) {
@@ -1083,7 +1150,18 @@ pub async fn start_import_audio_command<R: Runtime>(
 
     // Spawn import in background
     tauri::async_runtime::spawn(async move {
-        let result = start_import(app, source_path, title, language, model, provider).await;
+        let result = start_import(
+            app,
+            source_path,
+            title,
+            language,
+            model,
+            provider,
+            diarize,
+            diarization_engine,
+            num_speakers,
+        )
+        .await;
 
         if let Err(e) = result {
             error!("Import failed: {}", e);

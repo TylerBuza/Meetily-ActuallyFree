@@ -14,7 +14,9 @@ import {
   ChevronUp,
   Video,
   ExternalLink,
+  Users,
 } from 'lucide-react';
+import { useDiarizationEngine } from '@/hooks/useDiarizationEngine';
 import { listen } from '@tauri-apps/api/event';
 import { cn } from '@/lib/utils';
 import {
@@ -94,6 +96,26 @@ export function ImportAudioDialog({
   const [isProcessingYoutube, setIsProcessingYoutube] = useState(false);
   const [youtubeProgress, setYoutubeProgress] = useState<{ stage: string; percent: number; message: string } | null>(null);
   const [youtubeError, setYoutubeError] = useState<string | null>(null);
+
+  const {
+    engine: activeDiarizationEngine,
+    nemotronAvailable,
+    pyannoteAvailable,
+  } = useDiarizationEngine(open);
+
+  const [enableDiarization, setEnableDiarization] = useState(true);
+  const [selectedDiarizationEngine, setSelectedDiarizationEngine] = useState<string>('nemotron');
+  const [numSpeakers, setNumSpeakers] = useState<string>('');
+
+  useEffect(() => {
+    if (activeDiarizationEngine) {
+      setSelectedDiarizationEngine(activeDiarizationEngine);
+    } else if (nemotronAvailable) {
+      setSelectedDiarizationEngine('nemotron');
+    } else if (pyannoteAvailable) {
+      setSelectedDiarizationEngine('pyannote');
+    }
+  }, [activeDiarizationEngine, nemotronAvailable, pyannoteAvailable]);
 
   // Always start as false — represents "dialog has not yet been opened".
   // Do NOT initialize from the `open` prop: if the component mounts with open=true
@@ -227,12 +249,16 @@ export function ImportAudioDialog({
     setYoutubeError(null);
     setYoutubeProgress({ stage: 'Starting download...', percent: 5, message: 'Connecting to YouTube...' });
     try {
+      const parsedSpeakers = numSpeakers.trim() ? parseInt(numSpeakers.trim(), 10) : null;
       const result = await transcribeYoutubeUrl(
         youtubeUrl.trim(),
         title.trim() || youtubeInfo?.title || null,
         isParakeetModel ? null : selectedLang === 'auto' ? null : selectedLang,
         selectedModel?.name || null,
         selectedModel?.provider || null,
+        enableDiarization,
+        selectedDiarizationEngine,
+        Number.isFinite(parsedSpeakers as number) ? parsedSpeakers : null,
       );
       handleImportComplete(result);
     } catch (err: any) {
@@ -276,12 +302,16 @@ export function ImportAudioDialog({
   const handleStartImport = async () => {
     if (!fileInfo) return;
 
+    const parsedSpeakers = numSpeakers.trim() ? parseInt(numSpeakers.trim(), 10) : null;
     await startImport(
       fileInfo.path,
       title || fileInfo.filename,
       isParakeetModel ? null : selectedLang === 'auto' ? null : selectedLang,
       selectedModel?.name || null,
-      selectedModel?.provider || null
+      selectedModel?.provider || null,
+      enableDiarization,
+      selectedDiarizationEngine,
+      Number.isFinite(parsedSpeakers as number) ? parsedSpeakers : null,
     );
   };
 
@@ -534,6 +564,67 @@ export function ImportAudioDialog({
                           </Select>
                         </div>
                       )}
+
+                      {/* Speaker Diarization Option */}
+                      <div className="rounded-xl border border-af-border bg-af-panel-2/50 p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Users className="h-4 w-4 text-af-accent" />
+                            <span className="text-xs font-semibold uppercase tracking-wider text-af-text-2">Separate Speakers</span>
+                          </div>
+                          <label className="flex items-center gap-2 cursor-pointer text-xs">
+                            <input
+                              type="checkbox"
+                              checked={enableDiarization}
+                              onChange={(e) => setEnableDiarization(e.target.checked)}
+                              className="h-4 w-4 rounded border-af-border text-af-accent focus:ring-af-accent"
+                            />
+                            <span className="font-medium text-af-text-2">{enableDiarization ? 'Enabled' : 'Disabled'}</span>
+                          </label>
+                        </div>
+
+                        {enableDiarization && (
+                          <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
+                            <div>
+                              <label className="text-[11px] text-af-text-3 font-medium">Model</label>
+                              <Select
+                                value={selectedDiarizationEngine}
+                                onValueChange={setSelectedDiarizationEngine}
+                              >
+                                <SelectTrigger className="h-8 mt-1 text-xs">
+                                  <SelectValue placeholder="Diarization engine" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {nemotronAvailable && (
+                                    <SelectItem value="nemotron">NVIDIA Nemotron-3 (Auto)</SelectItem>
+                                  )}
+                                  {pyannoteAvailable && (
+                                    <SelectItem value="pyannote">Pyannote (Bundled)</SelectItem>
+                                  )}
+                                  {!nemotronAvailable && !pyannoteAvailable && (
+                                    <SelectItem value={selectedDiarizationEngine}>{selectedDiarizationEngine}</SelectItem>
+                                  )}
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            {selectedDiarizationEngine === 'pyannote' && (
+                              <div>
+                                <label className="text-[11px] text-af-text-3 font-medium">Expected Speakers</label>
+                                <Input
+                                  type="number"
+                                  min={1}
+                                  max={20}
+                                  value={numSpeakers}
+                                  onChange={(e) => setNumSpeakers(e.target.value)}
+                                  placeholder="Auto-detect"
+                                  className="h-8 mt-1 text-xs"
+                                />
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -645,6 +736,67 @@ export function ImportAudioDialog({
                   </Select>
                 </div>
               )}
+
+              {/* Speaker Diarization Option for YouTube */}
+              <div className="rounded-xl border border-af-border bg-af-panel-2/50 p-3 space-y-2 mt-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Users className="h-4 w-4 text-af-accent" />
+                    <span className="text-xs font-semibold uppercase tracking-wider text-af-text-2">Separate Speakers (Diarization)</span>
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer text-xs">
+                    <input
+                      type="checkbox"
+                      checked={enableDiarization}
+                      onChange={(e) => setEnableDiarization(e.target.checked)}
+                      className="h-4 w-4 rounded border-af-border text-af-accent focus:ring-af-accent"
+                    />
+                    <span className="font-medium text-af-text-2">{enableDiarization ? 'Enabled' : 'Disabled'}</span>
+                  </label>
+                </div>
+
+                {enableDiarization && (
+                  <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
+                    <div>
+                      <label className="text-[11px] text-af-text-3 font-medium">Model</label>
+                      <Select
+                        value={selectedDiarizationEngine}
+                        onValueChange={setSelectedDiarizationEngine}
+                      >
+                        <SelectTrigger className="h-8 mt-1 text-xs">
+                          <SelectValue placeholder="Diarization engine" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {nemotronAvailable && (
+                            <SelectItem value="nemotron">NVIDIA Nemotron-3 (Auto 8 spk)</SelectItem>
+                          )}
+                          {pyannoteAvailable && (
+                            <SelectItem value="pyannote">Pyannote (Bundled)</SelectItem>
+                          )}
+                          {!nemotronAvailable && !pyannoteAvailable && (
+                            <SelectItem value={selectedDiarizationEngine}>{selectedDiarizationEngine}</SelectItem>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {selectedDiarizationEngine === 'pyannote' && (
+                      <div>
+                        <label className="text-[11px] text-af-text-3 font-medium">Expected Speakers</label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={20}
+                          value={numSpeakers}
+                          onChange={(e) => setNumSpeakers(e.target.value)}
+                          placeholder="Auto-detect"
+                          className="h-8 mt-1 text-xs"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

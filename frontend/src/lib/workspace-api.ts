@@ -274,6 +274,9 @@ export const transcribeYouTubeUrl = (
   language?: string | null,
   model?: string | null,
   provider?: string | null,
+  diarize?: boolean | null,
+  diarizationEngine?: string | null,
+  numSpeakers?: number | null,
 ) =>
   invoke<{ meeting_id: string; title: string; segments_count: number; duration_seconds: number }>(
     'transcribe_youtube_url_command',
@@ -283,6 +286,9 @@ export const transcribeYouTubeUrl = (
       language: language || null,
       model: model || null,
       provider: provider || null,
+      diarize: diarize ?? true,
+      diarizationEngine: diarizationEngine || null,
+      numSpeakers: numSpeakers || null,
     },
   );
 export const transcribeYoutubeUrl = transcribeYouTubeUrl;

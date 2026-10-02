@@ -302,6 +302,9 @@ pub async fn transcribe_youtube_url_command<R: Runtime>(
     language: Option<String>,
     model: Option<String>,
     provider: Option<String>,
+    diarize: Option<bool>,
+    diarization_engine: Option<String>,
+    num_speakers: Option<usize>,
 ) -> Result<crate::audio::import::ImportResult, String> {
     let app_clone = app.clone();
     let url_clone = url.clone();
@@ -336,6 +339,9 @@ pub async fn transcribe_youtube_url_command<R: Runtime>(
         language,
         model,
         provider,
+        diarize,
+        diarization_engine,
+        num_speakers,
     )
     .await
     .map_err(|e| format!("Import failed: {}", e))?;

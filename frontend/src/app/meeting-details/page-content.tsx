@@ -468,6 +468,7 @@ export default function PageContent({
   const refreshAfterSpeakerChange = useCallback(
     async (rename?: { from: string; to: string; removedName: boolean }) => {
       await onRefetchTranscripts?.();
+      await onMeetingUpdated?.();
       announceChange('people');
       if (rename && meetingData.aiSummary) {
         setRegenerateRequest({
@@ -479,7 +480,7 @@ export default function PageContent({
         });
       }
     },
-    [onRefetchTranscripts, meetingData.aiSummary],
+    [onRefetchTranscripts, onMeetingUpdated, meetingData.aiSummary],
   );
 
   const mergeSpeakers = async (source: string, target: string) => {
@@ -540,6 +541,7 @@ export default function PageContent({
         }}
         people={speakers.map((speaker) => speaker.label)}
         onPersonClick={(label, anchor) => setCardTarget({ speaker: label, segmentId: '', rect: anchor.getBoundingClientRect() })}
+        onQuickIdentify={(label) => setIdentity({ speaker: label, transcriptId: null })}
         onExport={() => setExportOpen(true)}
         onCopyTranscript={copyOperations.handleCopyTranscript}
         onCopySummary={copyOperations.handleCopySummary}
