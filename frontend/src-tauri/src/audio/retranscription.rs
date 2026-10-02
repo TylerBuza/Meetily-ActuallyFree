@@ -153,6 +153,7 @@ fn find_audio_file(folder: &Path) -> Result<PathBuf> {
         "audio.mp4", "audio.m4a", "audio.wav", "audio.mp3",
         "audio.flac", "audio.ogg", "recording.mp4",
         "audio.mkv", "audio.webm", "audio.wma",
+        "video.mp4", "video.webm", "video.mov", "video.mkv",
     ];
 
     for name in candidates {

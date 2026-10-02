@@ -380,16 +380,23 @@ async fn run_import<R: Runtime>(
     let base_folder = get_default_recordings_folder();
     let meeting_folder = create_meeting_folder(&base_folder, &title, false)?;
 
-    // Copy audio file to meeting folder
-    emit_progress(&app, "copying", 10, "Copying audio file...");
+    // Copy media file to meeting folder
+    emit_progress(&app, "copying", 10, "Copying media file...");
 
-    let dest_filename = format!(
-        "audio.{}",
-        source
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("mp4")
-    );
+    let ext_lower = source
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_else(|| "mp4".to_string());
+
+    // If source is a video container (mp4, webm, mov, mkv), store once as video.<ext>.
+    // Otherwise store as audio.<ext>. Never duplicate the same file into both.
+    let is_video = ["mp4", "webm", "mov", "mkv"].contains(&ext_lower.as_str());
+    let dest_filename = if is_video {
+        format!("video.{}", ext_lower)
+    } else {
+        format!("audio.{}", ext_lower)
+    };
     let dest_path = meeting_folder.join(&dest_filename);
 
     let src = source.clone();
@@ -397,25 +404,9 @@ async fn run_import<R: Runtime>(
     tokio::task::spawn_blocking(move || std::fs::copy(&src, &dst))
         .await
         .map_err(|e| anyhow!("Copy task join error: {}", e))?
-        .map_err(|e| anyhow!("Failed to copy audio file: {}", e))?;
+        .map_err(|e| anyhow!("Failed to copy media file: {}", e))?;
 
-    info!("Copied audio to: {}", dest_path.display());
-
-    // If source is a video file (mp4, webm, mov, mkv), preserve it as video.<ext>
-    let ext_lower = source
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase())
-        .unwrap_or_default();
-    if ["mp4", "webm", "mov", "mkv"].contains(&ext_lower.as_str()) {
-        let video_dest = meeting_folder.join(format!("video.{}", ext_lower));
-        if video_dest != dest_path {
-            let src_v = source.clone();
-            let dest_v = video_dest.clone();
-            let _ = tokio::task::spawn_blocking(move || std::fs::copy(&src_v, &dest_v)).await;
-            info!("Preserved video track as: {}", video_dest.display());
-        }
-    }
+    info!("Saved imported media to: {}", dest_path.display());
 
     // Check for cancellation
     if IMPORT_CANCELLED.load(Ordering::SeqCst) {

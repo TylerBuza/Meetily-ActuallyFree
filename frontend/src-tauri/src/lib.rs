@@ -279,7 +279,10 @@ async fn get_meeting_playback_audio<R: Runtime>(
         .fetch_optional(state.db_manager.pool())
         .await.map_err(|error| error.to_string())?.flatten();
     let Some(folder) = folder else { return Ok(None); };
-    for name in ["audio.mp4", "audio.m4a", "audio.wav", "audio.mp3", "audio.webm"] {
+    for name in [
+        "audio.mp4", "audio.m4a", "audio.wav", "audio.mp3", "audio.webm",
+        "video.mp4", "video.webm", "video.mov", "video.mkv",
+    ] {
         let file = std::path::Path::new(&folder).join(name);
         if file.is_file() {
             app.asset_protocol_scope().allow_file(&file).map_err(|error| error.to_string())?;
