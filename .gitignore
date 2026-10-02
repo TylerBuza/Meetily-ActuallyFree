@@ -91,3 +91,5 @@ frontend/src-tauri/nsis-progress/*.obj
 frontend/MeetilyProgress.obj
 
 CLAUDE.md
+dist-labs-cuda-test/
+.cargo/

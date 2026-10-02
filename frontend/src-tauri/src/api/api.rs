@@ -172,6 +172,8 @@ pub struct MeetingTranscript {
     /// Speaker label: capture source ("You"/"Guest") or diarization ("Speaker N")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speaker: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub words: Option<serde_json::Value>,
 }
 
 /// Meeting metadata without transcripts (for pagination)
@@ -231,6 +233,8 @@ pub struct TranscriptSegment {
     /// at save time silently erases the user's identity from every meeting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speaker: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub words: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1201,14 +1205,18 @@ pub async fn api_get_meeting_transcripts<R: Runtime>(
             // Convert Transcript to MeetingTranscript
             let meeting_transcripts = transcripts
                 .into_iter()
-                .map(|t| MeetingTranscript {
-                    id: t.id,
-                    text: t.transcript,
-                    timestamp: t.timestamp,
-                    audio_start_time: t.audio_start_time,
-                    audio_end_time: t.audio_end_time,
-                    duration: t.duration,
-                    speaker: t.speaker,
+                .map(|t| {
+                    let words = t.words.as_deref().and_then(|w| serde_json::from_str::<serde_json::Value>(w).ok());
+                    MeetingTranscript {
+                        id: t.id,
+                        text: t.transcript,
+                        timestamp: t.timestamp,
+                        audio_start_time: t.audio_start_time,
+                        audio_end_time: t.audio_end_time,
+                        duration: t.duration,
+                        speaker: t.speaker,
+                        words,
+                    }
                 })
                 .collect::<Vec<_>>();
 

@@ -221,6 +221,7 @@ export function LiveSession({
       text: t.text,
       confidence: t.confidence,
       speaker: t.speaker,
+      words: t.words,
     }));
     return saved;
   }, [transcripts]);

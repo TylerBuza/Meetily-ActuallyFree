@@ -58,6 +58,8 @@ pub struct TranscriptUpdate {
     pub audio_start_time: f64, // Seconds from recording start (e.g., 125.3)
     pub audio_end_time: f64,   // Seconds from recording start (e.g., 128.6)
     pub duration: f64,          // Segment duration in seconds (e.g., 3.3)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub words: Option<Vec<crate::database::models::WordTiming>>,
 }
 
 /// Final mic turns wait briefly for ASR from the aligned system source. The
@@ -399,7 +401,7 @@ pub fn start_transcription_task<R: Runtime>(
                             )
                             .await
                             {
-                            Ok((transcript, confidence_opt, is_partial)) => {
+                            Ok((transcript, confidence_opt, is_partial, words_opt)) => {
                                 if nemotron_remote {
                                     // Inference runs concurrently with ASR. Wait only for bounded
                                     // lookahead here, never on the capture or Tokio worker thread.
@@ -466,6 +468,7 @@ pub fn start_transcription_task<R: Runtime>(
                                             audio_start_time,
                                             audio_end_time,
                                             duration: chunk_duration,
+                                            words: words_opt,
                                         };
 
                                         let updates = match &mut duplicate_filter {
@@ -674,12 +677,12 @@ pub fn start_transcription_task<R: Runtime>(
 }
 
 /// Transcribe audio chunk using the appropriate provider (Whisper, Parakeet, or trait-based)
-/// Returns: (text, confidence Option, is_partial)
+/// Returns: (text, confidence Option, is_partial, words Option)
 async fn transcribe_chunk_with_provider(
     engine: &TranscriptionEngine,
     chunk: AudioChunk,
     initial_prompt: Option<&str>,
-) -> std::result::Result<(String, Option<f32>, bool), TranscriptionError> {
+) -> std::result::Result<(String, Option<f32>, bool, Option<Vec<crate::database::models::WordTiming>>), TranscriptionError> {
     // Convert to 16kHz mono for transcription
     let transcription_data = if chunk.sample_rate != 16000 {
         crate::audio::audio_processing::resample_audio(&chunk.data, chunk.sample_rate, 16000)
@@ -714,7 +717,7 @@ async fn transcribe_chunk_with_provider(
             "Audio chunk {} has near-zero energy (rms: {:.6}, peak: {:.6}), skipping transcription",
             chunk.chunk_id, rms, peak
         );
-        return Ok((String::new(), Some(1.0), false));
+        return Ok((String::new(), Some(1.0), false, None));
     }
 
     info!(
@@ -732,13 +735,13 @@ async fn transcribe_chunk_with_provider(
             let language = crate::get_language_preference_internal();
 
             match whisper_engine
-                .transcribe_audio_with_confidence(speech_samples, language, initial_prompt)
+                .transcribe_audio_with_words(speech_samples, language, initial_prompt, chunk.timestamp)
                 .await
             {
-                Ok((text, confidence, is_partial)) => {
+                Ok((text, confidence, is_partial, words)) => {
                     let cleaned_text = text.trim().to_string();
                     if cleaned_text.is_empty() {
-                        return Ok((String::new(), Some(confidence), is_partial));
+                        return Ok((String::new(), Some(confidence), is_partial, None));
                     }
 
                     // Quiet replies such as "you" and "thanks" remain valid speech.
@@ -749,7 +752,7 @@ async fn transcribe_chunk_with_provider(
                         chunk.chunk_id, cleaned_text, confidence, is_partial
                     );
 
-                    Ok((cleaned_text, Some(confidence), is_partial))
+                    Ok((cleaned_text, Some(confidence), is_partial, words))
                 }
                 Err(e) => {
                     error!(
@@ -763,29 +766,56 @@ async fn transcribe_chunk_with_provider(
             }
         }
         TranscriptionEngine::Parakeet(parakeet_engine) => {
-            match parakeet_engine.transcribe_audio(speech_samples).await {
-                Ok(text) => {
-                    let cleaned_text = text.trim().to_string();
-                    if cleaned_text.is_empty() {
-                        return Ok((String::new(), None, false));
+            if crate::audio::word_timestamps::enabled() {
+                match parakeet_engine.transcribe_audio_with_words(speech_samples, chunk.timestamp).await {
+                    Ok((text, words)) => {
+                        let cleaned_text = text.trim().to_string();
+                        if cleaned_text.is_empty() {
+                            return Ok((String::new(), None, false, None));
+                        }
+
+                        info!(
+                            "Parakeet transcription complete for chunk {}: '{}' ({} words)",
+                            chunk.chunk_id, cleaned_text, words.len()
+                        );
+
+                        Ok((cleaned_text, None, false, Some(words)))
                     }
+                    Err(e) => {
+                        error!(
+                            "Parakeet transcription failed for chunk {}: {}",
+                            chunk.chunk_id, e
+                        );
 
-                    info!(
-                        "Parakeet transcription complete for chunk {}: '{}'",
-                        chunk.chunk_id, cleaned_text
-                    );
-
-                    // Parakeet doesn't provide confidence or partial results
-                    Ok((cleaned_text, None, false))
+                        let transcription_error = TranscriptionError::EngineFailed(e.to_string());
+                        Err(transcription_error)
+                    }
                 }
-                Err(e) => {
-                    error!(
-                        "Parakeet transcription failed for chunk {}: {}",
-                        chunk.chunk_id, e
-                    );
+            } else {
+                match parakeet_engine.transcribe_audio(speech_samples).await {
+                    Ok(text) => {
+                        let cleaned_text = text.trim().to_string();
+                        if cleaned_text.is_empty() {
+                            return Ok((String::new(), None, false, None));
+                        }
 
-                    let transcription_error = TranscriptionError::EngineFailed(e.to_string());
-                    Err(transcription_error)
+                        info!(
+                            "Parakeet transcription complete for chunk {}: '{}'",
+                            chunk.chunk_id, cleaned_text
+                        );
+
+                        // Parakeet doesn't provide confidence or partial results
+                        Ok((cleaned_text, None, false, None))
+                    }
+                    Err(e) => {
+                        error!(
+                            "Parakeet transcription failed for chunk {}: {}",
+                            chunk.chunk_id, e
+                        );
+
+                        let transcription_error = TranscriptionError::EngineFailed(e.to_string());
+                        Err(transcription_error)
+                    }
                 }
             }
         }
@@ -797,7 +827,7 @@ async fn transcribe_chunk_with_provider(
                 Ok(result) => {
                     let cleaned_text = result.text.trim().to_string();
                     if cleaned_text.is_empty() {
-                        return Ok((String::new(), result.confidence, result.is_partial));
+                        return Ok((String::new(), result.confidence, result.is_partial, None));
                     }
 
                     let confidence_str = match result.confidence {
@@ -814,7 +844,7 @@ async fn transcribe_chunk_with_provider(
                         result.is_partial
                     );
 
-                    Ok((cleaned_text, result.confidence, result.is_partial))
+                    Ok((cleaned_text, result.confidence, result.is_partial, result.words))
                 }
                 Err(e) => {
                     error!(

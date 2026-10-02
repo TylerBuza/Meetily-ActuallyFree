@@ -8,7 +8,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { invoke } from '@tauri-apps/api/core';
-import { AudioWaveform, Eraser, Fingerprint, Gauge, VolumeX, Workflow, X, type LucideIcon } from 'lucide-react';
+import { AudioWaveform, Eraser, Fingerprint, Gauge, MousePointerClick, VolumeX, Workflow, X, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Switch } from '@/components/ui/switch';
 import { Avatar } from '@/components/ui/avatar';
@@ -61,6 +61,14 @@ const GROUPS: Array<{ title: string; features: Feature[] }> = [
         description:
           'Hide hesitations and stutters ("um", "we we") in the transcript, and write new summaries from the clean text. The saved transcript stays word for word.',
         where: 'Switch between Clean and Verbatim in the meeting player.',
+      },
+      {
+        key: 'wordTimestamps',
+        icon: MousePointerClick,
+        title: 'Word-level sync & click-to-seek',
+        description:
+          'Save word-level timestamps with MacWhisper-style precision. Click any individual word in the transcript to jump audio playback directly to that moment, with real-time word highlighting.',
+        where: "In the meeting transcript view and audio player.",
       },
     ],
   },

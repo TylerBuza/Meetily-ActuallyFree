@@ -33,6 +33,7 @@ import { TranscriptSegmentData } from '@/types';
 import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import { cleanTranscriptText } from '@/lib/labs';
+import { useLabs } from '@/hooks/useLabs';
 import { liveTurnIdentity, mergeInterleavedSpeakerTurns, retainLiveText } from '@/lib/nearLiveCaptions';
 import { displaySpeaker, isUserSpeaker, speakerColor, speakerColorIndexMap, speakerColorValue, speakerDot, speakerKey } from '@/utils/speakerUtils';
 
@@ -126,6 +127,9 @@ function mergeTurns(segments: TranscriptSegmentData[], maxGapSecs = 2.5): Turn[]
       last.memberIds.push(segment.id);
       last.provisional = last.provisional || segment.provisional;
       if (segment.confidence != null) last.confidence = Math.min(last.confidence ?? 1, segment.confidence);
+      if (last.words || segment.words) {
+        last.words = [...(last.words || []), ...(segment.words || [])];
+      }
     } else {
       out.push({ ...segment, memberIds: [segment.id] });
     }
@@ -164,6 +168,7 @@ const TurnRow = memo(function TurnRow({
   leftAligned,
   hideSpeakerDots,
   active,
+  activeTime,
   flash,
   onSpeakerClick,
   onRenameSpeaker,
@@ -180,17 +185,43 @@ const TurnRow = memo(function TurnRow({
   leftAligned: boolean;
   hideSpeakerDots: boolean;
   active: boolean;
+  activeTime?: number | null;
   flash: boolean;
   onSpeakerClick?: VirtualizedTranscriptViewProps['onSpeakerClick'];
   onRenameSpeaker?: VirtualizedTranscriptViewProps['onRenameSpeaker'];
   onMergeSpeaker?: VirtualizedTranscriptViewProps['onMergeSpeaker'];
   onSeek?: VirtualizedTranscriptViewProps['onSeek'];
 }) {
+  const { labs } = useLabs();
   const speaker = turn.speaker;
   const isYou = isUserSpeaker(speaker);
   const label = speaker ? displaySpeaker(speaker, userName) : '';
   const shown = shownText(text, textMode) || (text.trim() === '' ? '[Silence]' : text);
   const clickable = !!speaker && !turn.provisional && (!!onSpeakerClick || !!onRenameSpeaker);
+  const currentMs = active && activeTime != null ? activeTime * 1000 : null;
+  const showWords = Boolean(labs.wordTimestamps && turn.words && turn.words.length > 0 && !isStreaming);
+
+  const activeWordIndex = useMemo(() => {
+    if (currentMs == null || !turn.words || turn.words.length === 0) return -1;
+    const words = turn.words;
+    let lo = 0;
+    let hi = words.length - 1;
+    let best = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (words[mid].startTime <= currentMs) {
+        best = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    if (best === -1) return -1;
+    const word = words[best];
+    const nextWord = best + 1 < words.length ? words[best + 1] : null;
+    const graceEnd = nextWord ? Math.min(word.endTime + 150, nextWord.startTime) : word.endTime + 150;
+    return currentMs <= graceEnd ? best : -1;
+  }, [currentMs, turn.words]);
 
   return (
     <div id={`segment-${turn.id}`} className={cn('flex pb-3', leftAligned ? 'justify-start' : isYou ? 'justify-end pl-8' : 'justify-start pr-8')}>
@@ -255,7 +286,36 @@ const TurnRow = memo(function TurnRow({
           )}
           style={isYou ? undefined : ({ '--chip': speakerColorValue(speaker, colorIndex) } as React.CSSProperties)}
         >
-          <p className={cn('text-sm leading-relaxed text-af-text', isStreaming && 'opacity-80')}>{shown}</p>
+          {showWords ? (
+            <p className="text-sm leading-relaxed text-af-text whitespace-pre-wrap select-text">
+              {turn.words!.map((w, idx) => {
+                const isWordActive = idx === activeWordIndex;
+                return (
+                  <span
+                    key={w.wordID}
+                    onClick={
+                      onSeek
+                        ? (e) => {
+                            e.stopPropagation();
+                            onSeek(w.startTime / 1000);
+                          }
+                        : undefined
+                    }
+                    className={cn(
+                      'inline transition-colors duration-75 rounded-sm',
+                      onSeek && 'cursor-pointer hover:bg-af-accent/20 hover:text-af-accent',
+                      isWordActive && 'bg-af-accent/25 text-af-accent font-semibold px-0.5 rounded shadow-sm'
+                    )}
+                    title={onSeek ? `Seek to ${clock(w.startTime / 1000)}` : undefined}
+                  >
+                    {w.text}
+                  </span>
+                );
+              })}
+            </p>
+          ) : (
+            <p className={cn('text-sm leading-relaxed text-af-text', isStreaming && 'opacity-80')}>{shown}</p>
+          )}
           {turn.provisional && <span className="mt-1 block text-[10px] text-af-text-4">Updating…</span>}
         </div>
       </div>
@@ -440,6 +500,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
       leftAligned={leftAligned}
       hideSpeakerDots={hideSpeakerDots}
       active={index === activeIndex}
+      activeTime={index === activeIndex ? playbackTime : null}
       flash={index === flashIndex}
       onSpeakerClick={onSpeakerClick}
       onRenameSpeaker={onRenameSpeaker}

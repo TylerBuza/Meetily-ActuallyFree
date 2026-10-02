@@ -307,6 +307,7 @@ export default function PageContent({
         text: t.text,
         confidence: t.confidence,
         speaker: t.speaker,
+        words: t.words,
       })),
     [segments, meetingData.transcripts],
   );

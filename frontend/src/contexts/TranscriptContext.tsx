@@ -296,6 +296,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
             audio_end_time: update.audio_end_time,
             duration: update.duration,
             speaker: effectiveSpeaker,
+            words: update.words,
           };
 
           // Add to buffer
@@ -366,6 +367,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
             audio_end_time: segment.audio_end_time,
             duration: segment.duration,
             speaker: editedSpeaker(activeSpeakerMeeting(), segment.sequence_id, segment.speaker ?? undefined),
+            words: segment.words,
           }));
 
           setTranscripts(formattedTranscripts);
@@ -411,6 +413,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
       audio_end_time: update.audio_end_time,
       duration: update.duration,
       speaker: effectiveSpeaker,
+      words: update.words,
     };
 
     setTranscripts(prev => {

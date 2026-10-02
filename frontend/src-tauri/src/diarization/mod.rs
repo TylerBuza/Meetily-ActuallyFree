@@ -1537,8 +1537,8 @@ pub async fn diarize_meeting(
     if let Some(ref folder) = folder_path {
         let p = PathBuf::from(folder);
         if p.is_dir() {
-            if let Ok(db_transcripts) = sqlx::query_as::<_, (String, String, String, Option<f64>, Option<f64>, Option<f64>, Option<String>)>(
-                "SELECT id, transcript, timestamp, audio_start_time, audio_end_time, duration, speaker FROM transcripts WHERE meeting_id = ? ORDER BY audio_start_time ASC"
+            if let Ok(db_transcripts) = sqlx::query_as::<_, (String, String, String, Option<f64>, Option<f64>, Option<f64>, Option<String>, Option<String>)>(
+                "SELECT id, transcript, timestamp, audio_start_time, audio_end_time, duration, speaker, words FROM transcripts WHERE meeting_id = ? ORDER BY audio_start_time ASC"
             )
             .bind(&meeting_id)
             .fetch_all(pool)
@@ -1546,14 +1546,18 @@ pub async fn diarize_meeting(
             {
                 let segments_to_write: Vec<crate::api::TranscriptSegment> = db_transcripts
                     .into_iter()
-                    .map(|(tid, text, ts, s, e, d, spk)| crate::api::TranscriptSegment {
-                        id: tid,
-                        text,
-                        timestamp: ts,
-                        audio_start_time: s,
-                        audio_end_time: e,
-                        duration: d,
-                        speaker: spk,
+                    .map(|(tid, text, ts, s, e, d, spk, w)| {
+                        let words = w.as_deref().and_then(|str_val| serde_json::from_str(str_val).ok());
+                        crate::api::TranscriptSegment {
+                            id: tid,
+                            text,
+                            timestamp: ts,
+                            audio_start_time: s,
+                            audio_end_time: e,
+                            duration: d,
+                            speaker: spk,
+                            words,
+                        }
                     })
                     .collect();
                 let _ = crate::audio::common::write_transcripts_json(&p, &segments_to_write);

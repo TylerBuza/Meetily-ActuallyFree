@@ -5,6 +5,13 @@ export interface Message {
   timestamp: string;
 }
 
+export interface WordTiming {
+  wordID: string;
+  text: string;
+  startTime: number; // in milliseconds from recording start
+  endTime: number;   // in milliseconds from recording start
+}
+
 export interface Transcript {
   id: string;
   text: string;
@@ -18,6 +25,7 @@ export interface Transcript {
   audio_end_time?: number;   // Seconds from recording start (e.g., 128.6)
   duration?: number;          // Segment duration in seconds (e.g., 3.3)
   speaker?: string;           // Speaker label: "You" (mic) or "Guest" (system audio)
+  words?: WordTiming[];
 }
 
 export interface TranscriptUpdate {
@@ -32,6 +40,7 @@ export interface TranscriptUpdate {
   audio_start_time: number; // Seconds from recording start
   audio_end_time: number;   // Seconds from recording start
   duration: number;          // Segment duration in seconds
+  words?: WordTiming[];
 }
 
 export interface Block {
@@ -128,6 +137,8 @@ export interface TranscriptSegmentData {
   speaker?: string;
   /** Ephemeral live ASR hypothesis; never saved as a transcript turn. */
   provisional?: boolean;
+  /** Word-level timestamps for click-to-seek and synchronized audio playback. */
+  words?: WordTiming[];
 }
 
 export type GlobalSearchResultKind = 'person' | 'meeting' | 'transcript' | 'summary';

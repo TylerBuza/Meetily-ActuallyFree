@@ -11,13 +11,14 @@ export type LabsFeature = keyof LabsPreferences;
 
 /** Refreshes the mirrored switches from Rust. */
 export async function syncLabsFromBackend(): Promise<LabsPreferences> {
-  const [whisper, voices, gpu, nearLive, micPlayback, autoSave] = await Promise.allSettled([
+  const [whisper, voices, gpu, nearLive, micPlayback, autoSave, wordTimestamps] = await Promise.allSettled([
     invoke<boolean>('get_whisper_strict_silence'),
     invoke<boolean>('get_voice_profiles_enabled'),
     invoke<boolean>('get_parakeet_gpu_enabled'),
     invoke<boolean>('get_near_live_captions_enabled'),
     invoke<boolean>('get_mic_playback_suppression_enabled'),
     invoke<boolean>('get_voice_profiles_auto_save'),
+    invoke<boolean>('get_word_timestamps_enabled'),
   ]);
   const current = loadLabsPreferences();
   const next: LabsPreferences = {
@@ -28,6 +29,7 @@ export async function syncLabsFromBackend(): Promise<LabsPreferences> {
     parakeetGpu: gpu.status === 'fulfilled' ? gpu.value : current.parakeetGpu,
     nearLiveCaptions: nearLive.status === 'fulfilled' ? nearLive.value : current.nearLiveCaptions,
     micPlaybackSuppression: micPlayback.status === 'fulfilled' ? micPlayback.value : current.micPlaybackSuppression,
+    wordTimestamps: wordTimestamps.status === 'fulfilled' ? wordTimestamps.value : current.wordTimestamps,
   };
   if (JSON.stringify(next) !== JSON.stringify(current)) saveLabsPreferences(next);
   return next;
@@ -66,6 +68,9 @@ export async function setLabsFeature(feature: LabsFeature, value: boolean): Prom
     case 'parakeetGpu':
       // Reloads the current Parakeet model; Rust restores CPU if that fails.
       await invoke('set_parakeet_gpu_enabled', { value });
+      break;
+    case 'wordTimestamps':
+      await invoke('set_word_timestamps_enabled', { value });
       break;
     default:
       break;

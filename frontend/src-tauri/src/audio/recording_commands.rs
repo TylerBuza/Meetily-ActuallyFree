@@ -507,6 +507,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
                     } else {
                         Some(update.source.clone())
                     },
+                    words: update.words.clone(),
                 };
 
                 // Save to recording manager
@@ -763,6 +764,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
                     } else {
                         Some(update.source.clone())
                     },
+                    words: update.words.clone(),
                 };
 
                 // Save to recording manager

@@ -57,6 +57,9 @@ export function mergeInterleavedSpeakerTurns(
       if (seg.confidence != null) {
         prior.confidence = prior.confidence == null ? seg.confidence : Math.min(prior.confidence, seg.confidence);
       }
+      if (prior.words || seg.words) {
+        prior.words = [...(prior.words || []), ...(seg.words || [])];
+      }
     } else {
       out.push({ ...seg });
       latest.set(key, out.length - 1);
