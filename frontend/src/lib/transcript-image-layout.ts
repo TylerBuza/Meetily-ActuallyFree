@@ -8,7 +8,7 @@ export interface ImageTranscriptSegment extends TranscriptSegmentData {
 }
 
 /** Display-only offsets: persisted text and word timestamps are never rewritten. */
-function cutOffsets(segment: TranscriptSegmentData, times: number[], end: number): number[] {
+export function cutOffsets(segment: TranscriptSegmentData, times: number[], end: number): number[] {
   const words = segment.words ?? [];
   let cursor = 0;
   const offsets: number[] = [];

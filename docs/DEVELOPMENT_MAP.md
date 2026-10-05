@@ -543,3 +543,12 @@ native history/export. Forward corrections are sequence-scoped in live-speaker-e
 and replayed during reload/crash recovery; detachment blocks only the chosen native
 channel until session end. Automatic sample updates and keyboard naming are
 documented in the linked voice feature note.
+
+Transcript line duration is a persisted, disabled-by-default Transcription display
+preference (`TranscriptLineLimitSetting.tsx`, `lib/transcript-line-limit.ts`).
+Enabled defaults to one whole minute, with larger values allowed. Live interleaving
+and final speaker-run merging honor the limit; long saved rows are split using word
+boundaries or approximate legacy offsets. Source IDs, words, screenshots and
+translations survive the display projection; recorded/saved text and source
+attribution are not rewritten. Tests cover preference persistence/validation,
+long timed/legacy rows, screenshot/translation placement and live merging.

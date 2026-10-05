@@ -42,6 +42,7 @@ export function retainLiveText<T extends { id: string; text: string; timestamp?:
 export function mergeInterleavedSpeakerTurns(
   segments: TranscriptSegmentData[],
   maxGapSecs = 2.5,
+  maxDurationSecs = Infinity,
 ): TranscriptSegmentData[] {
   const out: TranscriptSegmentData[] = [];
   const latest = new Map<string, number>();
@@ -50,7 +51,7 @@ export function mergeInterleavedSpeakerTurns(
     const index = latest.get(key);
     const prior = index === undefined ? undefined : out[index];
     const gap = prior ? seg.timestamp - (prior.endTime ?? prior.timestamp) : Infinity;
-    if (prior && gap >= -0.2 && gap <= maxGapSecs) {
+    if (prior && gap >= -0.2 && gap <= maxGapSecs && Math.max(prior.endTime ?? prior.timestamp, seg.endTime ?? seg.timestamp) - prior.timestamp <= maxDurationSecs) {
       prior.text = `${prior.text.trim()} ${seg.text.trim()}`.replace(/\s+/g, ' ').trim();
       prior.endTime = Math.max(prior.endTime ?? prior.timestamp, seg.endTime ?? seg.timestamp);
       prior.provisional = prior.provisional || seg.provisional;

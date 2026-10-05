@@ -1,4 +1,5 @@
 'use client';
+import { splitTranscriptLines, useTranscriptLineLimit } from '@/lib/transcript-line-limit';
 
 /**
  * The transcript renderer for both the live recorder and the meeting page.
@@ -123,13 +124,13 @@ function shownText(text: string, mode: TranscriptTextMode): string {
 }
 
 /** One turn per speaker run, joining fragments less than 2.5s apart. */
-function mergeTurns(segments: (TranscriptSegmentData & Partial<ImageTranscriptSegment>)[], maxGapSecs = 2.5): Turn[] {
+function mergeTurns(segments: (TranscriptSegmentData & Partial<ImageTranscriptSegment>)[], maxGapSecs = 2.5, maxDurationSecs = Infinity): Turn[] {
   const out: Turn[] = [];
   for (const segment of segments) {
     const last = out[out.length - 1];
     const lastEnd = last?.endTime ?? last?.timestamp ?? 0;
     const gap = segment.timestamp - lastEnd;
-    if (last && !last.imagesAfter?.length && speakerKey(last.speaker) === speakerKey(segment.speaker) && gap >= 0 && gap <= maxGapSecs) {
+    if (last && !last.imagesAfter?.length && speakerKey(last.speaker) === speakerKey(segment.speaker) && gap >= 0 && gap <= maxGapSecs && (segment.endTime ?? segment.timestamp) - last.timestamp <= maxDurationSecs) {
       last.text = `${last.text.trim()} ${segment.text.trim()}`.replace(/\s+/g, ' ').trim();
       last.endTime = segment.endTime ?? segment.timestamp;
       last.memberIds.push(segment.sourceId ?? segment.id);
@@ -390,17 +391,21 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
   const userName = useUserName();
   const [leftAligned] = useTranscriptLeftAligned();
   const [hideSpeakerDots] = useTranscriptHideSpeakerDots();
+  const [lineLimit] = useTranscriptLineLimit();
+  const maxLineSeconds = lineLimit.enabled ? lineLimit.minutes * 60 : Infinity;
+  const priorLineLimit = useRef(maxLineSeconds);
   const shownLiveText = useRef(new Map<string, string>());
   const turns = useMemo(() => {
     const live = nearLiveCaptions && isRecording;
-    const merged = mergeTurns(live ? mergeInterleavedSpeakerTurns(segments)
-      : interleaveTranscriptImages(segments, isRecording ? [] : meetingImages, hasMore, translations));
+    if (priorLineLimit.current !== maxLineSeconds) { shownLiveText.current.clear(); priorLineLimit.current = maxLineSeconds; }
+    const projected = splitTranscriptLines(interleaveTranscriptImages(segments, isRecording ? [] : meetingImages, hasMore, translations), maxLineSeconds);
+    const merged = mergeTurns(live ? mergeInterleavedSpeakerTurns(projected, 2.5, maxLineSeconds) : projected, 2.5, maxLineSeconds);
     if (!live) {
       shownLiveText.current.clear();
       return merged;
     }
     return retainLiveText(merged, shownLiveText.current);
-  }, [segments, nearLiveCaptions, isRecording, meetingImages, hasMore, translations]);
+  }, [segments, nearLiveCaptions, isRecording, meetingImages, hasMore, translations, maxLineSeconds]);
   const [selectedImage, setSelectedImage] = useState<MeetingImage | null>(null);
   // One colour per speaker in first-spoken order, so a renamed speaker keeps theirs.
   const ownColorIndices = useMemo(
