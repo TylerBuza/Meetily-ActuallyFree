@@ -48,6 +48,8 @@ export function persistTurnSpeaker(id: string, sequence: number, speaker: string
 export function persistForwardSpeaker(id: string, channel: string, sequence: number, name: string) {
   if (!/^Speaker \d+$/.test(channel) || !Number.isSafeInteger(sequence) || sequence < 0 || !name.trim()) throw new Error('Invalid speaker separation');
   const edits = read(id);
+  // The explicit onward action replaces this boundary line's earlier per-line assignment.
+  delete edits.turns[String(sequence)];
   edits.forward = [...(edits.forward ?? []).filter(edit => edit.channel !== channel || edit.sequence !== sequence), { channel, sequence, name: name.trim() }];
   localStorage.setItem(key(id), JSON.stringify(edits));
 }

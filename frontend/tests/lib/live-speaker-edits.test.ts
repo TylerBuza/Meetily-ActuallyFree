@@ -63,3 +63,11 @@ test('forward separation keeps earlier matches and other channels through histor
   expect(editedSpeaker('one', 29, 'Speaker 1', 'Speaker 1')).toBe('Bob');
   expect(editedSpeaker('one', 30, 'Speaker 1', 'Speaker 1')).toBe('Dave');
 });
+
+test('forward separation replaces an existing assignment on the selected boundary line', () => {
+  persistTurnSpeaker('one', 12, 'Wrong name');
+  persistForwardSpeaker('one', 'Speaker 2', 12, 'Correct name');
+  expect(editedSpeaker('one', 12, 'Wrong name', 'Speaker 2')).toBe('Correct name');
+  expect(editedSpeaker('one', 13, 'Speaker 2', 'Speaker 2')).toBe('Correct name');
+  expect(editedSpeaker('one', 11, 'Earlier name', 'Speaker 2')).toBe('Earlier name');
+});
