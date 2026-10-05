@@ -57,6 +57,7 @@ import { cn } from '@/lib/utils';
 import { displaySpeaker, speakerColorIndexMap, speakerKey } from '@/utils/speakerUtils';
 
 const TRANSLATION_LANGUAGES = [
+  'English',
   'Spanish',
   'French',
   'German',

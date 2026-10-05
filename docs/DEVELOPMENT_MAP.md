@@ -552,3 +552,9 @@ boundaries or approximate legacy offsets. Source IDs, words, screenshots and
 translations survive the display projection; recorded/saved text and source
 attribution are not rewritten. Tests cover preference persistence/validation,
 long timed/legacy rows, screenshot/translation placement and live merging.
+
+Post-call translation targets in `app/meeting-details/page-content.tsx` include
+English. The existing translation command receives the selected language name;
+no transcript storage or translation-provider interface changes are needed.
+Production frontend compilation verifies the menu change; actual translation
+quality depends on the configured LLM and was not requalified for this addition.
