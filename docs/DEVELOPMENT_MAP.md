@@ -168,7 +168,10 @@ Explicit meeting images use `meeting_images.rs` and the `meeting_images` table.
 The image file lives in the recording's `images/` directory; the row is keyed
 by folder path so live capture can be saved before the meeting row exists.
 `MeetingImages.tsx` handles paste and one-frame display capture in the Notes
-panel. It reads the native active recording duration (seconds excluding pauses)
+panel. `RecordingScreenshotButton.tsx` adds the same one-frame capture to the
+recording bar and navigation pill; `screen-image.ts` owns display-stream cleanup.
+The button remains busy through selection and saving, checks that recording is
+still active, and notifies the Notes strip after saving. It reads the native active recording duration (seconds excluding pauses)
 for live images and the player position for images added post-call. Capture is
 user initiated and does not block the audio callback. A 1920-pixel JPEG limit
 and an 8 MB native payload limit bound storage per image. Screen capture requires
@@ -176,8 +179,14 @@ platform support and separate screen permission; paste remains available if the
 WebView does not support `getDisplayMedia`. Images are timestamp indexed but not
 OCR indexed. No image is included in AI summary input.
 The post-call meeting page loads these rows with `list_meeting_images` and
-`VirtualizedTranscriptView.tsx` attaches each thumbnail below the transcript
-turn preceding its recording-relative time. Images beyond a partially loaded
+`VirtualizedTranscriptView.tsx` interleaves each thumbnail at its recording-relative time.
+`lib/transcript-image-layout.ts` splits display text before speaker runs are merged;
+a screenshot prevents re-merging across that point, and subsequent speech starts
+a new row for the same speaker. Saved word timings (milliseconds) choose the text
+break against image times (seconds). Older turns without aligned word timings use
+a proportional display-only text estimate. Translation text is partitioned once
+without fabricated translated word timings. Original transcript IDs are retained
+for speaker edits and search; stored text, word timings and rows are unchanged. Images beyond a partially loaded
 transcript wait for later pages. The Notes panel and transcript share an image
 change event so additions and deletions appear without reopening the meeting.
 On Windows, `convertFileSrc` uses `http://asset.localhost`; the Tauri image CSP
@@ -498,3 +507,10 @@ No real audio/model test, installed-app update or release is implied. Existing
 renames that left stale overlap components can be repaired by selecting that
 remaining component and assigning the existing contact; labels already lost by
 older per-line edits cannot be inferred back from transcript text.
+
+
+Timed-image placement regression coverage uses a synthetic hour-long speaker turn,
+multiple/simultaneous screenshots, pre-speech and gap images, pagination deferral,
+legacy untimed text, translation preservation, and unchanged source/word data.
+The frontend production build and isolated regression suite verify this projection;
+exact text placement in older recordings without word timings remains approximate.

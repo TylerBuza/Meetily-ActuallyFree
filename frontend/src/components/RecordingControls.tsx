@@ -31,6 +31,7 @@ import { usePendingGroup } from '@/hooks/usePendingGroup';
 import { deviceDisplayName, UNAVAILABLE_DEVICE_VALUE, type AudioDeviceOption } from '@/lib/audio-devices';
 import type { RecordingPreferences } from '@/components/RecordingSettings';
 import type { SelectedDevices } from '@/components/DeviceSelection';
+import { RecordingScreenshotButton } from '@/components/recording/RecordingScreenshotButton';
 import { RecordingVoiceLane } from '@/components/RecordingVoiceLane';
 import { AppAudioSource, useAppAudioSupported } from '@/components/recording/AppAudioSource';
 import { useAppAudio } from '@/hooks/useAppAudio';
@@ -511,6 +512,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
                   {isPaused ? <Play size={14} /> : <Pause size={14} />}
                 </button>
               </Hint>
+              <RecordingScreenshotButton disabled={!isRecording || isStopping} className={sideButton} />
               <Hint label="Shrink to floating bar">
                 <button
                   type="button"

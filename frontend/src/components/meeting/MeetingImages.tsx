@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type ClipboardEvent, type ReactNode }
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { Camera, ImagePlus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { screenImage } from '@/lib/screen-image';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { MEETING_IMAGES_CHANGED, type MeetingImage } from '@/lib/meeting-images';
@@ -11,28 +12,6 @@ import { MEETING_IMAGES_CHANGED, type MeetingImage } from '@/lib/meeting-images'
 function stamp(seconds: number): string {
   const whole = Math.floor(seconds);
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
-}
-
-async function screenImage(): Promise<Blob> {
-  if (!navigator.mediaDevices?.getDisplayMedia) throw new Error('Screen capture is unavailable in this WebView. Paste a screenshot instead.');
-  const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-  const video = document.createElement('video');
-  video.srcObject = stream;
-  try {
-    await video.play();
-    if (!video.videoWidth) await new Promise<void>((resolve) => { video.onloadedmetadata = () => resolve(); });
-    const scale = Math.min(1, 1920 / Math.max(video.videoWidth, video.videoHeight));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-    canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.86));
-    if (!blob) throw new Error('Could not encode the screenshot');
-    return blob;
-  } finally {
-    stream.getTracks().forEach((track) => track.stop());
-    video.srcObject = null;
-  }
 }
 
 /** Meeting-local image strip. Paste is scoped to notes, never the whole app. */
@@ -56,7 +35,12 @@ export function MeetingImages({ meetingId, live = false, currentTime = 0, onSeek
       if (!live) console.error('Could not list meeting images', error);
     }
   }, [meetingId, live]);
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+    const changed = () => { void refresh(); };
+    window.addEventListener(MEETING_IMAGES_CHANGED, changed);
+    return () => window.removeEventListener(MEETING_IMAGES_CHANGED, changed);
+  }, [refresh]);
 
   const add = async (blob: Blob) => {
     if (busy) return;
@@ -69,7 +53,7 @@ export function MeetingImages({ meetingId, live = false, currentTime = 0, onSeek
       const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
       const image = await invoke<MeetingImage>('save_meeting_image', { meetingId, live, audioTime, bytes });
       setImages((current) => [...current, image].sort((a, b) => a.audioTime - b.audioTime));
-      if (!live) window.dispatchEvent(new Event(MEETING_IMAGES_CHANGED));
+      window.dispatchEvent(new Event(MEETING_IMAGES_CHANGED));
       toast.success(`Image saved at ${stamp(image.audioTime)}`);
     } catch (error) {
       toast.error(`Could not save image: ${String(error)}`);
@@ -90,7 +74,7 @@ export function MeetingImages({ meetingId, live = false, currentTime = 0, onSeek
     try {
       await invoke('delete_meeting_image', { meetingId, live, imageId: image.id });
       setImages((current) => current.filter((item) => item.id !== image.id));
-      if (!live) window.dispatchEvent(new Event(MEETING_IMAGES_CHANGED));
+      window.dispatchEvent(new Event(MEETING_IMAGES_CHANGED));
       setSelected(null);
       toast.success('Image removed');
     } catch (error) {

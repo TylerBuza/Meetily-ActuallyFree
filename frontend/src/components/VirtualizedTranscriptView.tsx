@@ -24,6 +24,7 @@ import { motion } from 'framer-motion';
 import { Camera, ChevronDown, GitMerge, Mic } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { interleaveTranscriptImages, type ImageTranscriptSegment } from '@/lib/transcript-image-layout';
 import type { MeetingImage } from '@/lib/meeting-images';
 import { useAutoScroll } from '@/hooks/useAutoScroll';
 import { useTranscriptStreaming } from '@/hooks/useTranscriptStreaming';
@@ -95,6 +96,9 @@ export interface VirtualizedTranscriptViewProps {
 const VIRTUALIZATION_THRESHOLD = 10;
 
 interface Turn extends TranscriptSegmentData {
+  sourceId?: string;
+  imagesAfter?: MeetingImage[];
+  translatedText?: string;
   memberIds: string[];
 }
 
@@ -119,23 +123,25 @@ function shownText(text: string, mode: TranscriptTextMode): string {
 }
 
 /** One turn per speaker run, joining fragments less than 2.5s apart. */
-function mergeTurns(segments: TranscriptSegmentData[], maxGapSecs = 2.5): Turn[] {
+function mergeTurns(segments: (TranscriptSegmentData & Partial<ImageTranscriptSegment>)[], maxGapSecs = 2.5): Turn[] {
   const out: Turn[] = [];
   for (const segment of segments) {
     const last = out[out.length - 1];
     const lastEnd = last?.endTime ?? last?.timestamp ?? 0;
     const gap = segment.timestamp - lastEnd;
-    if (last && speakerKey(last.speaker) === speakerKey(segment.speaker) && gap >= 0 && gap <= maxGapSecs) {
+    if (last && !last.imagesAfter?.length && speakerKey(last.speaker) === speakerKey(segment.speaker) && gap >= 0 && gap <= maxGapSecs) {
       last.text = `${last.text.trim()} ${segment.text.trim()}`.replace(/\s+/g, ' ').trim();
       last.endTime = segment.endTime ?? segment.timestamp;
-      last.memberIds.push(segment.id);
+      last.memberIds.push(segment.sourceId ?? segment.id);
+      last.imagesAfter = segment.imagesAfter;
+      if (segment.translatedText !== undefined) last.translatedText = [last.translatedText, segment.translatedText].filter(Boolean).join(" ");
       last.provisional = last.provisional || segment.provisional;
       if (segment.confidence != null) last.confidence = Math.min(last.confidence ?? 1, segment.confidence);
       if (last.words || segment.words) {
         last.words = [...(last.words || []), ...(segment.words || [])];
       }
     } else {
-      out.push({ ...segment, memberIds: [segment.id] });
+      out.push({ ...segment, memberIds: [segment.sourceId ?? segment.id] });
     }
   }
   return out;
@@ -211,12 +217,13 @@ const TurnRow = memo(function TurnRow({
 
   const translationText = useMemo(() => {
     if (!translations || translationMode === 'original') return null;
+    if (turn.translatedText !== undefined) return turn.translatedText;
     const parts = turn.memberIds
       .map((id) => translations[id])
       .filter(Boolean);
     if (parts.length > 0) return parts.join(' ');
     return translations[turn.id] || null;
-  }, [translations, translationMode, turn.memberIds, turn.id]);
+  }, [translations, translationMode, turn.memberIds, turn.id, turn.translatedText]);
 
   const activeWordIndex = useMemo(() => {
     if (currentMs == null || !turn.words || turn.words.length === 0) return -1;
@@ -252,7 +259,7 @@ const TurnRow = memo(function TurnRow({
                 <button
                   type="button"
                   onClick={(event) =>
-                    onSpeakerClick ? onSpeakerClick(speaker, turn.id, event.currentTarget) : onRenameSpeaker?.(speaker, turn.id)
+                    onSpeakerClick ? onSpeakerClick(speaker, turn.sourceId ?? turn.id, event.currentTarget) : onRenameSpeaker?.(speaker, turn.sourceId ?? turn.id)
                   }
                   className={cn(
                     'rounded px-0.5 text-xs font-semibold transition-colors hover:bg-af-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60',
@@ -386,36 +393,15 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
   const shownLiveText = useRef(new Map<string, string>());
   const turns = useMemo(() => {
     const live = nearLiveCaptions && isRecording;
-    const merged = mergeTurns(live ? mergeInterleavedSpeakerTurns(segments) : segments);
+    const merged = mergeTurns(live ? mergeInterleavedSpeakerTurns(segments)
+      : interleaveTranscriptImages(segments, isRecording ? [] : meetingImages, hasMore, translations));
     if (!live) {
       shownLiveText.current.clear();
       return merged;
     }
     return retainLiveText(merged, shownLiveText.current);
-  }, [segments, nearLiveCaptions, isRecording]);
+  }, [segments, nearLiveCaptions, isRecording, meetingImages, hasMore, translations]);
   const [selectedImage, setSelectedImage] = useState<MeetingImage | null>(null);
-  const imagesByTurn = useMemo(() => {
-    const grouped = new Map<string, MeetingImage[]>();
-    if (turns.length === 0) return grouped;
-    for (const image of meetingImages) {
-      if (!Number.isFinite(image.audioTime)) continue;
-      // Pages load from the beginning. Wait for later transcript pages before
-      // attaching an image beyond the last loaded turn.
-      const last = turns[turns.length - 1];
-      if (hasMore && image.audioTime > (last.endTime ?? last.timestamp) + 2.5) continue;
-      let lo = 0;
-      let hi = turns.length - 1;
-      let index = 0;
-      while (lo <= hi) {
-        const mid = (lo + hi) >> 1;
-        if (turns[mid].timestamp <= image.audioTime) { index = mid; lo = mid + 1; }
-        else hi = mid - 1;
-      }
-      const key = turns[index].id;
-      grouped.set(key, [...(grouped.get(key) ?? []), image]);
-    }
-    return grouped;
-  }, [turns, meetingImages, hasMore]);
   // One colour per speaker in first-spoken order, so a renamed speaker keeps theirs.
   const ownColorIndices = useMemo(
     () => speakerColorIndexMap(turns.map((turn) => turn.speaker ?? '').filter(Boolean)),
@@ -520,7 +506,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
   }, [onLoadMore, hasMore, isLoadingMore, isRecording]);
 
   const row = (turn: Turn, index: number) => (<>
-    <TurnRow
+    {turn.text.trim() && <TurnRow
       turn={turn}
       text={getDisplayText(turn)}
       textMode={textMode}
@@ -538,10 +524,10 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
       onSeek={onSeek}
       translations={translations}
       translationMode={translationMode}
-    />
-    {imagesByTurn.get(turn.id)?.length ? (
+    />}
+    {turn.imagesAfter?.length ? (
       <div className="mb-4 ml-4 flex flex-wrap gap-2" aria-label="Images captured at this point in the meeting">
-        {imagesByTurn.get(turn.id)?.map((image) => (
+        {turn.imagesAfter?.map((image) => (
           <button key={image.id} type="button" onClick={() => setSelectedImage(image)}
             className="overflow-hidden rounded-lg border border-af-border bg-af-panel-2 text-left transition-colors hover:border-af-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60"
             aria-label={`Open meeting image at ${clock(image.audioTime)}`}>
