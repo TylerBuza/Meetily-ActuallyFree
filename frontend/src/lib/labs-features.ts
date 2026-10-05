@@ -11,7 +11,7 @@ export type LabsFeature = keyof LabsPreferences;
 
 /** Refreshes the mirrored switches from Rust. */
 export async function syncLabsFromBackend(): Promise<LabsPreferences> {
-  const [whisper, voices, gpu, nearLive, micPlayback, autoSave, wordTimestamps] = await Promise.allSettled([
+  const [whisper, voices, gpu, nearLive, micPlayback, autoSave, wordTimestamps, consensus] = await Promise.allSettled([
     invoke<boolean>('get_whisper_strict_silence'),
     invoke<boolean>('get_voice_profiles_enabled'),
     invoke<boolean>('get_parakeet_gpu_enabled'),
@@ -19,10 +19,12 @@ export async function syncLabsFromBackend(): Promise<LabsPreferences> {
     invoke<boolean>('get_mic_playback_suppression_enabled'),
     invoke<boolean>('get_voice_profiles_auto_save'),
     invoke<boolean>('get_word_timestamps_enabled'),
+    invoke<boolean>('get_voice_profiles_consensus'),
   ]);
   const current = loadLabsPreferences();
   const next: LabsPreferences = {
     ...current,
+    voiceConsensus: consensus.status === 'fulfilled' ? consensus.value : current.voiceConsensus,
     autoSaveVoiceProfiles: autoSave.status === 'fulfilled' ? autoSave.value : current.autoSaveVoiceProfiles,
     whisperSilenceGuard: whisper.status === 'fulfilled' ? whisper.value : current.whisperSilenceGuard,
     voiceProfiles: voices.status === 'fulfilled' ? voices.value : current.voiceProfiles,
@@ -55,6 +57,9 @@ export async function setLabsFeature(feature: LabsFeature, value: boolean): Prom
       break;
     case 'autoSaveVoiceProfiles':
       await invoke('set_voice_profiles_auto_save', { value });
+      break;
+    case 'voiceConsensus':
+      await invoke('set_voice_profiles_consensus', { value });
       break;
     case 'voiceProfiles':
       await invoke('set_voice_profiles_enabled', { value });

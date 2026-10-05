@@ -71,7 +71,7 @@ const state = {
     ignored_apps: [] as string[],
     notify: true,
   },
-  labs: { whisperStrictSilence: false, voiceProfiles: false, autoSaveVoiceProfiles: false, nearLiveCaptions: false, micPlaybackSuppression: false, parakeetGpu: false },
+  labs: { whisperStrictSilence: false, voiceProfiles: false, autoSaveVoiceProfiles: false, voiceConsensus: false, nearLiveCaptions: false, micPlaybackSuppression: false, parakeetGpu: false },
   voices: [{ person_id: 'person-tom', samples: 6, meetings: 1, from: ['meeting-acme-kickoff'] }] as Array<{
     person_id: string;
     samples: number;
@@ -429,6 +429,10 @@ function handle(cmd: string, args: Args): unknown {
       state.labs.whisperStrictSilence = !!args.enabled;
       return null;
     case 'list_meeting_images': return [];
+    case 'get_voice_profiles_consensus': return state.labs.voiceConsensus;
+    case 'set_voice_profiles_consensus': state.labs.voiceConsensus = !!args.value; return null;
+    case 'get_voice_profile_learning_busy': return false;
+    case 'queue_voice_profile_learning': return null;
     case 'get_voice_profiles_auto_save': return state.labs.autoSaveVoiceProfiles;
     case 'set_voice_profiles_auto_save': state.labs.autoSaveVoiceProfiles = !!args.value; return null;
     case 'get_near_live_captions_enabled': return state.labs.nearLiveCaptions;

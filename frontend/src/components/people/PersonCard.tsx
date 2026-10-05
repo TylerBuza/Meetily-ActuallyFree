@@ -4,7 +4,7 @@
  * The card that opens when you click a speaker. For a known contact: who they
  * are, how often you meet, their groups and open action items, and a link to
  * their profile. For an unidentified voice: identify, "this is me", or merge.
- * With Labs voice profiles on, a contact's voice can be learned from here.
+ * With Voice profiles on, a contact's voice can be learned from here.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -224,7 +224,7 @@ export function PersonCard({
               {canLearnVoice && (
                 <Button size="sm" variant="ghost" onClick={() => void learnVoice()} loading={learning}>
                   <Fingerprint />
-                  {voice ? 'Update voice' : 'Remember voice'}
+                  {voice ? 'Learn more turns' : 'Remember voice'}
                 </Button>
               )}
             </div>

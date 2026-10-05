@@ -1,3 +1,4 @@
+import { FeatureSettingsSwitch } from '@/components/FeatureSettingsSwitch';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Spinner } from '@/components/ui/spinner';
 import { invoke } from '@tauri-apps/api/core';
@@ -307,6 +308,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
 
     return (
         <div className="space-y-6 pb-6">
+            <FeatureSettingsSwitch feature="cleanTranscript" title="Clean Transcript" description="Hide hesitations and repeated words in the display and use clean text for new summaries. Saved text stays verbatim. Enabled by default." />
             <section className="space-y-4 rounded-2xl border border-af-border bg-af-panel-2/40 p-5 text-af-text">
                 <div className="flex items-start gap-3">
                     <Radio className="mt-0.5 h-5 w-5 shrink-0 text-af-accent" />

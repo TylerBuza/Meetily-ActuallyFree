@@ -514,3 +514,17 @@ multiple/simultaneous screenshots, pre-speech and gap images, pagination deferra
 legacy untimed text, translation preservation, and unchanged source/word data.
 The frontend production build and isolated regression suite verify this projection;
 exact text placement in older recordings without word timings remains approximate.
+
+### Promoted settings and voice-profile learning
+
+Waveform scrubbing is in General and Clean Transcript is in Transcription, both
+on by default for absent preferences. Voice Profiles owns profile matching,
+automatic enrollment, individual and bulk refresh, and an opt-in session-consensus
+matcher. Existing preference keys and native files preserve saved choices. The
+native `queue_voice_profile_learning` task owns bulk progress after navigation;
+one enrollment worker serializes it with automatic and contact-level enrollment,
+while a bounded cached WeSpeaker model runs only on blocking workers. Manual
+refresh selects twelve windows per meeting across twelve recent meetings, replaces
+repeated shares and validates normalized embeddings. See the linked
+[voice-profile feature note](LABS_MACWHISPER_FEATURES.md#voice-profiles-settings-and-bounded-learning-october-2026)
+for research, worker lifetimes, interfaces, tests, legacy behavior and accuracy limits.

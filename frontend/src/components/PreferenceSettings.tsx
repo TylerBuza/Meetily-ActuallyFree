@@ -1,5 +1,7 @@
 "use client"
 
+import { FeatureSettingsSwitch } from '@/components/FeatureSettingsSwitch';
+
 import { useEffect, useState, useRef } from "react"
 import { Switch } from "./ui/switch"
 import { FolderCog, FolderOpen } from "lucide-react"
@@ -196,6 +198,7 @@ export function PreferenceSettings() {
 
   return (
     <div className="space-y-6">
+      <FeatureSettingsSwitch feature="transcriptScrubbing" title="Waveform scrubbing" description="Show the waveform in the meeting player and seek to where people speak. Enabled by default." />
       {/* Appearance / Theme Section */}
       <div className="rounded-2xl border border-af-border bg-af-panel-2/40 p-5">
         <h3 className="text-[15px] font-semibold text-af-text mb-1">Theme</h3>

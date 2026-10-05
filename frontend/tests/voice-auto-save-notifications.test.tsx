@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 let receive: ((event: { payload: { name?: string; personId?: string; status?: string; error?: string } }) => void) | undefined;
 const calls: Array<{ kind: string; message: string; options?: { id?: string; description?: string } }> = [];
 const stop = mock(() => {});
-mock.module('@tauri-apps/api/event', () => ({ listen: async (_event: string, listener: typeof receive) => { receive = listener; return stop; } }));
+mock.module('@tauri-apps/api/event', () => ({ listen: async (event: string, listener: typeof receive) => { if (event === 'voice-profile-auto-save-result') receive = listener; return stop; } }));
 mock.module('sonner', () => ({ toast: Object.fromEntries(['loading', 'success', 'error'].map((kind) => [kind,
   (message: string, options?: { id?: string; description?: string }) => calls.push({ kind, message, options })])) }));
 const { VoiceProfileNotifications } = await import('../src/components/VoiceProfileNotifications');
@@ -42,7 +42,7 @@ test('a disposed listener cannot publish late learning results', async () => {
   await act(async () => { root = create(<VoiceProfileNotifications />); });
   await act(async () => root!.unmount()); root = undefined;
   receive!({ payload: { name: 'Alice', status: 'saved' } });
-  expect(stop).toHaveBeenCalledTimes(1);
+  expect(stop).toHaveBeenCalledTimes(2);
   expect(calls).toHaveLength(0);
   expect(changes).toBe(0);
 });

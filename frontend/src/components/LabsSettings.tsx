@@ -6,19 +6,15 @@
  * other screens (the meeting player, a contact's page, the record flow).
  */
 import { useEffect, useState, type ReactNode } from 'react';
-import Link from 'next/link';
 import { invoke } from '@tauri-apps/api/core';
-import { AudioWaveform, Eraser, Fingerprint, FolderCog, FolderOpen, Gauge, MousePointerClick, Plus, Trash2, VolumeX, Workflow, X, type LucideIcon } from 'lucide-react';
+import { AudioWaveform, FolderCog, FolderOpen, Gauge, MousePointerClick, Plus, Trash2, VolumeX, Workflow, X, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
-import { Avatar } from '@/components/ui/avatar';
 import { Spinner } from '@/components/ui/spinner';
 import { usePlatform } from '@/hooks/usePlatform';
 import { useLabs } from '@/hooks/useLabs';
-import { useVoiceProfiles } from '@/hooks/useVoiceProfiles';
 import { setLabsFeature, syncLabsFromBackend, type LabsFeature } from '@/lib/labs-features';
-import { describeVoiceError, describeVoiceSource, forgetVoice } from '@/lib/voice-profiles';
 import {
   getWatchFolders,
   setWatchFolders,
@@ -55,22 +51,6 @@ const GROUPS: Array<{ title: string; features: Feature[] }> = [
   {
     title: 'Playback and transcript',
     features: [
-      {
-        key: 'transcriptScrubbing',
-        icon: AudioWaveform,
-        title: 'Waveform scrubbing',
-        description:
-          "Show the recording's waveform in the meeting player, so you can see where people talk and jump straight there. Adds 0.5× and 0.75× speeds.",
-        where: "In the player under a meeting's transcript.",
-      },
-      {
-        key: 'cleanTranscript',
-        icon: Eraser,
-        title: 'Clean transcript',
-        description:
-          'Hide hesitations and stutters ("um", "we we") in the transcript, and write new summaries from the clean text. The saved transcript stays word for word.',
-        where: 'Switch between Clean and Verbatim in the meeting player.',
-      },
       {
         key: 'wordTimestamps',
         icon: MousePointerClick,
@@ -117,25 +97,6 @@ const GROUPS: Array<{ title: string; features: Feature[] }> = [
       },
     ],
   },
-  {
-    title: 'Voices',
-    features: [
-      {
-        key: 'voiceProfiles',
-        icon: Fingerprint,
-        title: 'Voice profiles',
-        description:
-          "Learn a contact's voice from the meetings they spoke in. When speakers are identified in later meetings, a matching voice gets their name.",
-        where: "Learn, update or forget a voice on a contact's page, or add one meeting's audio from its speaker card.",
-      },
-      {
-        key: 'autoSaveVoiceProfiles', icon: Fingerprint,
-        title: 'Automatically save newly named voices',
-        description: 'Save a first voice profile to a contact when you name a speaker. Existing profiles are kept.',
-        where: 'Requires Voice profiles, speaker models and clear saved system audio. Live names are learned after the recording is saved.',
-      },
-    ],
-  },
 ];
 
 function FeatureRow({
@@ -169,72 +130,6 @@ function FeatureRow({
         </span>
       </div>
       {children && <div className="mt-3 sm:pl-[52px]">{children}</div>}
-    </div>
-  );
-}
-
-/** The learned voices, each linked to its contact. */
-function LearnedVoices() {
-  const profiles = useVoiceProfiles();
-  const [modelsReady, setModelsReady] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    invoke<{ pyannote_available?: boolean }>('diarization_get_status')
-      .then((status) => setModelsReady(!!status.pyannote_available))
-      .catch(() => setModelsReady(null));
-  }, []);
-
-  return (
-    <div className="space-y-2">
-      {modelsReady === false && (
-        <p className="rounded-lg border border-af-warning/30 bg-af-warning/[0.08] px-3 py-2 text-xs text-af-text-2">
-          Voice profiles need the speaker models.{' '}
-          <Link href="/settings?section=transcription" className="font-medium text-af-accent hover:underline">
-            Download them in Transcription
-          </Link>
-          .
-        </p>
-      )}
-      {profiles === null ? (
-        <div className="af-skeleton h-10 rounded-lg" />
-      ) : profiles.length === 0 ? (
-        <p className="text-xs leading-relaxed text-af-text-3">
-          No voices yet. Open a contact from{' '}
-          <Link href="/contacts" className="font-medium text-af-accent hover:underline">
-            Contacts
-          </Link>{' '}
-          and choose Learn voice.
-        </p>
-      ) : (
-        <ul className="divide-y divide-af-border overflow-hidden rounded-xl border border-af-border bg-af-panel">
-          {profiles.map((profile) => (
-            <li key={profile.person_id} className="flex items-center gap-3 px-3 py-2">
-              <Avatar name={profile.name} size="sm" />
-              <Link
-                href={`/person?id=${encodeURIComponent(profile.person_id)}`}
-                className="min-w-0 flex-1 truncate text-[13px] font-medium text-af-text hover:text-af-accent"
-              >
-                {profile.name}
-              </Link>
-              <span className="shrink-0 text-[11px] tabular-nums text-af-text-4">
-                {describeVoiceSource(profile)}
-              </span>
-              <button
-                type="button"
-                aria-label={`Forget ${profile.name}'s voice`}
-                onClick={() =>
-                  forgetVoice(profile.person_id)
-                    .then(() => toast.success(`Forgot ${profile.name}'s voice`))
-                    .catch((error) => toast.error('Could not forget the voice', { description: describeVoiceError(error) }))
-                }
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-af-text-4 transition-colors hover:bg-af-danger/10 hover:text-af-danger"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }
@@ -411,7 +306,6 @@ export function LabsSettings() {
                   busy={busy === feature.key}
                   onChange={(value) => void change(feature, value)}
                 >
-                  {feature.key === 'voiceProfiles' && labs.voiceProfiles ? <LearnedVoices /> : null}
                 </FeatureRow>
               ))}
             </div>

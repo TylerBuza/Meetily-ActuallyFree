@@ -33,3 +33,17 @@ test('a WebView reload restores the native automatic-enrollment preference', asy
   expect(loadLabsPreferences().autoSaveVoiceProfiles).toBe(true);
   expect(loadLabsPreferences().voiceProfiles).toBe(false);
 });
+
+test('promoted defaults are on and existing explicit choices survive', () => {
+  expect(loadLabsPreferences().transcriptScrubbing).toBe(true);
+  expect(loadLabsPreferences().cleanTranscript).toBe(true);
+  values.set('meetily-labs-v1', JSON.stringify({ transcriptScrubbing: false, cleanTranscript: false }));
+  expect(loadLabsPreferences().transcriptScrubbing).toBe(false);
+  expect(loadLabsPreferences().cleanTranscript).toBe(false);
+});
+test('experimental consensus is opt-in and saved through native preferences', async () => {
+  expect(loadLabsPreferences().voiceConsensus).toBe(false);
+  await setLabsFeature('voiceConsensus', true);
+  expect(calls).toEqual([['set_voice_profiles_consensus', { value: true }]]);
+  expect(loadLabsPreferences().voiceConsensus).toBe(true);
+});

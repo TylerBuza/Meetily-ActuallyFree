@@ -17,7 +17,8 @@ const MATCH_THRESHOLD: f32 = 0.80;
 const MATCH_MARGIN: f32 = 0.08;
 const MAX_PROFILES: usize = 50;
 /// Clear turns learned from one meeting, spread across it.
-const LEARN_TURNS: usize = 20;
+// A compute/storage budget, not a universally optimal biometric sample count.
+const LEARN_TURNS: usize = 12;
 /// Turns compared per voice when matching during diarization.
 const MATCH_TURNS: usize = 8;
 /// Meetings a voice is learned from; the oldest share drops off first.
@@ -135,6 +136,10 @@ fn enabled_path() -> PathBuf {
     crate::paths::install_data_root().join("voice_profiles_enabled.txt")
 }
 
+static ENROLL_WORKER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static ENROLL_MODELS: Mutex<Option<DiarizationModels>> = Mutex::new(None);
+static MANUAL_LEARNING: AtomicBool = AtomicBool::new(false);
+static CONSENSUS: OnceLock<AtomicBool> = OnceLock::new();
 static ENABLED: OnceLock<AtomicBool> = OnceLock::new();
 static PROFILE_WRITE: Mutex<()> = Mutex::new(());
 static LIVE_MATCHER: Mutex<Option<LiveMatcher>> = Mutex::new(None);
@@ -262,6 +267,7 @@ pub fn set_voice_profiles_enabled(value: bool) -> Result<(), String> {
     std::fs::write(file, if value { "true" } else { "false" })
         .map_err(|error| error.to_string())?;
     enabled_flag().store(value, Ordering::Relaxed);
+    if !value { if let Ok(mut models) = ENROLL_MODELS.lock() { *models = None; } }
     Ok(())
 }
 
@@ -282,13 +288,28 @@ pub fn set_voice_profiles_auto_save(value: bool) -> Result<(), String> {
     Ok(())
 }
 
+fn consensus_flag() -> &'static AtomicBool {
+    CONSENSUS.get_or_init(|| AtomicBool::new(std::fs::read_to_string(
+        crate::paths::install_data_root().join("voice_profiles_consensus.txt")
+    ).map(|text| text.trim() == "true").unwrap_or(false)))
+}
+#[tauri::command]
+pub fn get_voice_profiles_consensus() -> bool { consensus_flag().load(Ordering::Relaxed) }
+#[tauri::command]
+pub fn set_voice_profiles_consensus(value: bool) -> Result<(), String> {
+    let file = crate::paths::install_data_root().join("voice_profiles_consensus.txt");
+    if let Some(parent) = file.parent() { std::fs::create_dir_all(parent).map_err(|error| error.to_string())?; }
+    std::fs::write(file, if value { "true" } else { "false" }).map_err(|error| error.to_string())?;
+    consensus_flag().store(value, Ordering::Relaxed);
+    Ok(())
+}
+
 /// Native ownership keeps enrollment alive after navigation. At most eight
 /// jobs may wait/run, with one enrollment at a time; capture never does inference.
 pub fn auto_save_named_voices<R: tauri::Runtime>(app: tauri::AppHandle<R>, pool: SqlitePool, meeting_id: String, speaker: Option<String>) {
     use tauri::Emitter;
     if !enabled() || !get_voice_profiles_auto_save() { return; }
     static SLOTS: OnceLock<std::sync::Arc<tokio::sync::Semaphore>> = OnceLock::new();
-    static WORKER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let permit = match SLOTS.get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(8))).clone().try_acquire_owned() {
         Ok(permit) => permit,
         Err(_) => {
@@ -298,7 +319,7 @@ pub fn auto_save_named_voices<R: tauri::Runtime>(app: tauri::AppHandle<R>, pool:
     };
     tauri::async_runtime::spawn(async move {
         let _permit = permit;
-        let _worker = WORKER.lock().await;
+        let _worker = ENROLL_WORKER.lock().await;
         // A completed name must be read from the same stable attribution used
         // for enrollment, never halfway through post-call transcript replacement.
         let _labels = super::operation_guard().await;
@@ -311,7 +332,7 @@ pub fn auto_save_named_voices<R: tauri::Runtime>(app: tauri::AppHandle<R>, pool:
                 if load().map_err(|error| error.to_string())?.iter().any(|profile| profile.person_id == person_id) { continue; }
                 let _ = app.emit("voice-profile-auto-save-result", serde_json::json!({"name": label, "personId": person_id, "status": "learning"}));
                 let enrollment: Result<String, String> = async {
-                    let (_, name, share) = meeting_share_limit(&pool, &meeting_id, &label, LEARN_TURNS).await.map_err(String::from)?;
+                    let (_, name, share) = meeting_share_limit(&pool, &meeting_id, &label, 4).await.map_err(String::from)?;
                     store_shares(&person_id, &name, vec![share], false, true).map_err(String::from)?;
                     Ok(name)
                 }.await;
@@ -379,9 +400,28 @@ fn similarity(a: &[f32], b: &[f32]) -> Option<f32> {
 }
 
 pub fn best_match<'a>(embedding: &[f32], profiles: &'a [VoiceProfile]) -> Option<&'a VoiceProfile> {
-    let mut ranked: Vec<(f32, &VoiceProfile)> = profiles.iter()
-        .filter_map(|profile| similarity(embedding, &profile.embedding).map(|score| (score, profile)))
-        .collect();
+    best_match_with_mode(embedding, profiles, get_voice_profiles_consensus())
+}
+
+/// Experimental session consensus weights meetings equally, so one long or
+/// contaminated recording cannot win just by supplying more turns. At least
+/// two real meeting shares are required; legacy aggregates are not sessions.
+fn best_match_with_mode<'a>(embedding: &[f32], profiles: &'a [VoiceProfile], consensus: bool) -> Option<&'a VoiceProfile> {
+    let mut ranked: Vec<(f32, &VoiceProfile)> = profiles.iter().filter_map(|profile| {
+        let score = if consensus {
+            let mut scores: Vec<f32> = profile.sources.iter()
+                .filter(|source| !source.meeting_id.is_empty() && source.turns >= 2)
+                .filter_map(|source| similarity(embedding, &source.sum))
+                .filter(|score| score.is_finite()).collect();
+            if scores.len() < 2 { return None; }
+            scores.sort_by(f32::total_cmp);
+            // Strict majority support, plus two independent sessions minimum.
+            if scores.iter().filter(|score| **score >= MATCH_THRESHOLD).count() < (scores.len() / 2 + 1).max(2) { return None; }
+            let middle = scores.len() / 2;
+            if scores.len() % 2 == 0 { (scores[middle - 1] + scores[middle]) / 2.0 } else { scores[middle] }
+        } else { similarity(embedding, &profile.embedding)? };
+        score.is_finite().then_some((score, profile))
+    }).collect();
     ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
     let (score, profile) = *ranked.first()?;
     let runner_up = ranked.get(1).map(|entry| entry.0).unwrap_or(-1.0);
@@ -406,12 +446,29 @@ impl From<EnrollError> for String {
 
 /// Embeds up to `LEARN_TURNS` clean turns of one meeting's call audio.
 fn embed_turns(track: &Path, turns: &[(f64, f64)]) -> Result<Vec<Vec<f32>>> {
-    embed_turns_with_models(track, turns, &super::diarization_model_dir())
+    let audio = crate::audio::decoder::decode_audio_file(track)?.to_whisper_format();
+    // One cached model owns all enrollment inference. Blocking workers hold this
+    // mutex; the audio callback never uses it. Reuse avoids loading every meeting.
+    let mut cached = ENROLL_MODELS.lock().map_err(|_| anyhow::anyhow!("Voice model lock poisoned"))?;
+    if cached.is_none() { *cached = Some(DiarizationModels::load(&super::diarization_model_dir())?); }
+    embed_windows(&audio, turns, cached.as_mut().unwrap())
 }
 
 fn embed_turns_with_models(track: &Path, turns: &[(f64, f64)], model_dir: &Path) -> Result<Vec<Vec<f32>>> {
     let audio = crate::audio::decoder::decode_audio_file(track)?.to_whisper_format();
     let mut models = DiarizationModels::load(model_dir)?;
+    embed_windows(&audio, turns, &mut models)
+}
+
+fn normalized_vector(mut vector: Vec<f32>) -> Option<Vec<f32>> {
+    if vector.len() != 128 || vector.iter().any(|value| !value.is_finite()) { return None; }
+    let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
+    if !norm.is_finite() || norm <= 1e-6 { return None; }
+    for value in &mut vector { *value /= norm; }
+    Some(vector)
+}
+
+fn embed_windows(audio: &[f32], turns: &[(f64, f64)], models: &mut DiarizationModels) -> Result<Vec<Vec<f32>>> {
     let mut vectors = Vec::new();
     let mut last_problem = None;
     for &(start, end) in turns.iter().take(LEARN_TURNS) {
@@ -422,8 +479,10 @@ fn embed_turns_with_models(track: &Path, turns: &[(f64, f64)], model_dir: &Path)
             continue;
         }
         match models.embed(&audio[first..last]) {
-            Ok(vector) if vector.len() == 128 => vectors.push(vector),
-            Ok(_) => last_problem = Some("Voice model returned an unexpected embedding size".into()),
+            Ok(vector) => match normalized_vector(vector) {
+                Some(vector) => vectors.push(vector),
+                None => last_problem = Some("Voice model returned an invalid embedding".into()),
+            },
             Err(error) => last_problem = Some(format!("Voice model could not learn a sample: {error:#}")),
         }
     }
@@ -498,7 +557,7 @@ async fn meeting_share_limit(
     use EnrollError::{Meeting, Unavailable};
     let failed = |error: sqlx::Error| Meeting(error.to_string());
     if !enabled() {
-        return Err(Unavailable("Turn on Voice profiles in Settings > Labs first.".into()));
+        return Err(Unavailable("Turn on Voice profiles in Settings > Voice Profiles first.".into()));
     }
     if !super::pyannote_models_available() {
         return Err(Unavailable("Voice profiles need the speaker models. Download them in Settings > Transcription.".into()));
@@ -595,6 +654,8 @@ pub async fn enroll_voice_profile(
     meeting_id: String,
     speaker: String,
 ) -> Result<VoiceProfileInfo, String> {
+    let _worker = ENROLL_WORKER.lock().await;
+    let _labels = super::operation_guard().await;
     let (person_id, name, share) = meeting_share(state.db_manager.pool(), &meeting_id, &speaker).await?;
     Ok(store_shares(&person_id, &name, vec![share], false, false)?)
 }
@@ -608,7 +669,12 @@ pub async fn enroll_person_voice(
     person_id: String,
     meeting_id: Option<String>,
 ) -> Result<VoiceProfileInfo, String> {
-    let pool = state.db_manager.pool();
+    let _worker = ENROLL_WORKER.lock().await;
+    let _labels = super::operation_guard().await;
+    enroll_person_from_pool(state.db_manager.pool(), person_id, meeting_id).await
+}
+
+async fn enroll_person_from_pool(pool: &SqlitePool, person_id: String, meeting_id: Option<String>) -> Result<VoiceProfileInfo, String> {
     let name: String = sqlx::query_scalar("SELECT display_name FROM people WHERE id = ?")
         .bind(&person_id).fetch_optional(pool).await.map_err(|error| error.to_string())?
         .ok_or("Contact not found")?;
@@ -642,6 +708,64 @@ pub async fn enroll_person_voice(
         ));
     }
     Ok(store_shares(&person_id, &name, shares, meeting_id.is_none(), false)?)
+}
+
+#[tauri::command]
+pub fn get_voice_profile_learning_busy() -> bool { MANUAL_LEARNING.load(Ordering::SeqCst) }
+
+/// The owned task keeps the entire bulk operation alive after WebView navigation.
+/// Work is serial with automatic/manual enrollment and does not touch capture.
+#[tauri::command]
+pub async fn queue_voice_profile_learning(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::state::AppState>,
+    person_id: Option<String>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    if !enabled() { return Err("Turn on Voice profiles in Settings > Voice Profiles first.".into()); }
+    if !super::pyannote_models_available() { return Err("Download speaker models in Transcription first.".into()); }
+    let ids = match person_id {
+        Some(id) => vec![id],
+        None => {
+            let _guard = PROFILE_WRITE.lock().map_err(|_| "Voice profile lock poisoned")?;
+            load().map_err(|error| error.to_string())?.into_iter().take(MAX_PROFILES).map(|profile| profile.person_id).collect()
+        }
+    };
+    if ids.is_empty() { return Err("No saved voice profiles to learn.".into()); }
+    if MANUAL_LEARNING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        return Err("Voice learning is already running. Wait for its result before starting again.".into());
+    }
+    let pool = state.db_manager.pool().clone();
+    tauri::async_runtime::spawn(async move {
+        struct Reset;
+        impl Drop for Reset { fn drop(&mut self) { MANUAL_LEARNING.store(false, Ordering::SeqCst); } }
+        let _reset = Reset;
+        let _worker = ENROLL_WORKER.lock().await;
+        let mut saved = 0;
+        let mut failed = 0;
+        let total = ids.len();
+        for id in ids {
+            let name: String = sqlx::query_scalar("SELECT display_name FROM people WHERE id = ?")
+                .bind(&id).fetch_optional(&pool).await.ok().flatten().unwrap_or_else(|| "Contact".into());
+            let _ = app.emit("voice-profile-learning-result", serde_json::json!({"personId": id, "name": name, "status": "learning"}));
+            let result = {
+                let _labels = super::operation_guard().await;
+                enroll_person_from_pool(&pool, id.clone(), None).await
+            };
+            match result {
+                Ok(profile) => {
+                    saved += 1;
+                    let _ = app.emit("voice-profile-learning-result", serde_json::json!({"personId": id, "name": profile.name, "status": "saved", "samples": profile.samples, "meetings": profile.meetings}));
+                }
+                Err(error) => {
+                    failed += 1;
+                    let _ = app.emit("voice-profile-learning-result", serde_json::json!({"personId": id, "name": name, "status": "failed", "error": error}));
+                }
+            }
+        }
+        let _ = app.emit("voice-profile-learning-result", serde_json::json!({"status": "complete", "saved": saved, "failed": failed, "total": total}));
+    });
+    Ok(())
 }
 
 /// Voices Meetily knows, each under its contact's current name. A voice whose
@@ -817,6 +941,31 @@ mod tests {
         let mut sum = vec![0.0; 128];
         sum[axis] = turns as f32;
         VoiceSource { meeting_id: meeting_id.into(), sum, turns }
+    }
+
+    #[test]
+    fn consensus_requires_independent_meeting_support_and_margin() {
+        let mut vector = vec![0.0; 128]; vector[0] = 1.0;
+        let mut alice = voice("p1", "Alice");
+        assert!(best_match_with_mode(&vector, &[alice.clone()], true).is_none());
+        alice.sources = vec![share("one", 0, 12), share("two", 1, 2)];
+        assert!(best_match_with_mode(&vector, &[alice.clone()], true).is_none());
+        alice.sources.push(share("three", 0, 2));
+        assert_eq!(best_match_with_mode(&vector, &[alice.clone()], true).unwrap().name, "Alice");
+        let mut bob = alice.clone(); bob.person_id = "p2".into(); bob.name = "Bob".into();
+        assert!(best_match_with_mode(&vector, &[alice, bob], true).is_none());
+    }
+
+    #[test]
+    fn enrollment_vectors_reject_invalid_values_and_normalize() {
+        assert!(normalized_vector(vec![0.0; 128]).is_none());
+        assert!(normalized_vector(vec![f32::NAN; 128]).is_none());
+        assert!(normalized_vector(vec![f32::INFINITY; 128]).is_none());
+        assert!(normalized_vector(vec![1.0; 127]).is_none());
+        let normalized = normalized_vector(vec![2.0; 128]).unwrap();
+        assert!((normalized.iter().map(|v| v*v).sum::<f32>() - 1.0).abs() < 1e-5);
+        assert_eq!(spread(&(0..1000).collect::<Vec<_>>(), LEARN_TURNS).len(), 12);
+        assert_eq!(LEARN_TURNS * MAX_SOURCES, 144);
     }
 
     #[test]

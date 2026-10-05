@@ -98,7 +98,7 @@ function PrivateNotes({ personId, initial }: { personId: string; initial: string
 }
 
 /**
- * Labs voice profiles: learn this contact's voice from their meetings, so
+ * Voice profiles: learn this contact's voice from their meetings, so
  * later meetings name a matching speaker after them. Shown while the Labs
  * switch is on, or when a voice was learned before it was turned off.
  */
@@ -140,7 +140,7 @@ function VoicePanel({ personId, first, meetingCount }: { personId: string; first
   };
 
   return (
-    <Panel title="Voice" action={<Badge variant="accent" size="xs">Labs</Badge>}>
+    <Panel title="Voice">
       {voices === null ? (
         <Skeleton className="h-16" />
       ) : voice ? (
@@ -152,13 +152,13 @@ function VoicePanel({ personId, first, meetingCount }: { personId: string; first
           <p className="mt-1 text-xs leading-relaxed text-af-text-3">
             {labs.voiceProfiles
               ? `Learned from ${describeVoiceSource(voice)}. When speakers are identified in a new meeting, a matching voice is named ${first || voice.name}. Update relearns it from all their recent meetings.`
-              : 'Voice profiles are off in Settings > Labs, so this voice is not used right now.'}
+              : 'Voice profiles are off in Settings > Voice Profiles, so this voice is not used right now.'}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {labs.voiceProfiles && (
               <Button size="sm" variant="secondary" onClick={() => void learn()} loading={busy === 'learn'} disabled={busy !== null}>
                 <Fingerprint />
-                Update voice
+                Learn more turns
               </Button>
             )}
             <Button size="sm" variant="danger-ghost" onClick={() => void forget()} loading={busy === 'forget'} disabled={busy !== null}>

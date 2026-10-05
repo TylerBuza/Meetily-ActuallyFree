@@ -10,8 +10,11 @@ recording-relative transcript turn times, and process-based meeting prompts.
 
 ## Where each feature lives in the app
 
-All switches are in Settings > Labs, and each feature also shows where it is
-used:
+Waveform scrubbing now lives in Settings > General and Clean Transcript in
+Settings > Transcription; both default on for missing preferences. Saved explicit
+choices are retained. Voice settings and saved profiles live in Settings > Voice
+Profiles. The remaining experimental switches stay in Labs. Each feature also
+shows where it is used:
 
 - Meeting automation: a switch in Settings > Meeting detection as well. A
   notice says when a call starts a recording (with an option to keep it going
@@ -93,12 +96,12 @@ verification still requires opening an uncached waveform on Windows.
 The existing `voiceprint.rs` belongs to the microphone user only. New
 `voice_profiles.rs` stores opt-in WeSpeaker post-LDA embeddings for explicitly
 named people, keyed by the existing `people` and `person_speakers` identity.
-Enrollment uses the separate system track and, from each meeting, up to twenty
+Enrollment uses the separate system track and, from each meeting, up to twelve
 non-overlapping 2–15 second turns bearing that person's saved speaker label,
 spread across the meeting. A voice keeps a share per meeting (up to twelve) and
 is the mean of all their turns; it requires at least two successful embeddings. The model runs on a blocking worker; capture
 does no inference. Profiles are saved in local app data, can be listed and
-deleted in Labs, and matching is disabled by default.
+deleted in Voice Profiles, and matching is disabled by default.
 
 On a future Pyannote live session, the remote centroid must clear cosine 0.80
 and exceed the next profile by 0.08 before a name is assigned. For Nemotron
@@ -180,7 +183,7 @@ containing these Labs changes.
 
 ## First-profile automatic enrollment (September 2026)
 
-Settings > Labs > Voices adds an opt-in automatic first-profile switch beneath
+Settings > Voice Profiles adds an opt-in automatic first-profile switch beneath
 Voice profiles. Its native preference is mirrored through `labs-features.ts`.
 Durable speaker relabel/reassignment commands schedule enrollment after contact
 link persistence; `api_save_transcript` does the same for names entered live.
@@ -209,7 +212,7 @@ subtracts other remote voices, and makes independent 2–4 second audio windows.
 Overlapping microphone rows do not disqualify the separate system track. Invalid
 ranges and duplicate timing do not become biometric evidence. First automatic
 profiles use up to four windows spread across available speech; manual learning
-retains its twenty-window limit and existing profiles are never overwritten by
+uses its twelve-window limit and existing profiles are never overwritten by
 automatic saving. At least two successful embeddings are still required.
 
 The automatic worker waits for the shared speaker-operation guard before reading
@@ -233,3 +236,62 @@ so it establishes audio/model extraction rather than end-to-end automatic profil
 persistence in an installed build. Short-caption grouping, microphone overlap,
 remote-voice exclusion, duplicate ranges, and final named-contact links have
 synthetic/native regression coverage. The production Next build also passed.
+
+## Voice Profiles settings and bounded learning (October 2026)
+
+`VoiceProfilesSettings.tsx` owns matching, first-profile automatic saving, saved
+voices, and opt-in consensus matching. General and Transcription share
+`FeatureSettingsSwitch.tsx` for the promoted controls; compatibility keys remain
+in `lib/labs.ts`, and native preferences remain authoritative for voice options.
+The Defaults change applies when a value is absent, preserving saved true/false
+choices. Clean/Verbatim remains available in the meeting player.
+
+Learn more turns refreshes that profile from its latest twelve linked meetings;
+Learn all profiles queues the same refresh for each saved profile (up to fifty).
+First automatic enrollment uses four windows. Manual refresh uses at most twelve
+independent 2–4 second clear windows per meeting, spread across the recording,
+for a maximum of 144 windows per rebuilt profile. Repeated meeting audio replaces
+its share, rather than increasing counts. Without new usable recordings a refresh
+may not increase the sample count; it is not unlimited accumulation. Legacy
+profiles are retained until explicit refresh, which may lower their sample count
+under the new budget. Missing/unsuitable audio is reported and a completely failed
+refresh keeps the prior profile. Profile audio is not duplicated into storage.
+
+The manual bulk task clones its app handle and database pool in native code,
+continues after navigation, serializes with automatic and existing manual learning,
+and takes the speaker-operation guard before reading saved labels. One bulk job
+may be pending/running, automatic jobs remain capped at eight, and the task reports
+per-contact results plus a summary. It stops on app exit and has no restart queue.
+Failed contacts do not prevent the other profiles being refreshed. A single cached
+WeSpeaker model is mutex-owned by blocking enrollment workers; disabling voice
+profiles clears this cache. Valid embeddings must have 128 finite elements and a
+nonzero norm, and each new vector is normalized before aggregation. Existing
+transactional profile-file replacement and per-meeting shares are retained.
+
+Experimental consensus compares a query separately to each real meeting's mean.
+At least two meeting shares with two successful windows each must support cosine
+0.80, a strict majority must agree, and median similarity must beat the next
+candidate by 0.08. Sessions have equal weight; a long contaminated meeting does
+not acquire more voting weight. Legacy aggregate-only and single-meeting profiles
+remain unnamed in this mode. The default aggregate matcher remains available by
+switching the experimental option off. This supplements the selected diarizer;
+it does not substitute an engine or infer identity from speaker numbers.
+
+Research rationale: [Pelecanos et al., Odyssey 2004](https://www.isca-archive.org/odyssey_2004/pelecanos04_odyssey.html)
+shows enrollment duration changes score distributions; it does not prescribe a
+universal turn count. [Krzywdziak et al., EUSIPCO 2025](https://eusipco2025.org/wp-content/uploads/pdfs/0000026.pdf)
+studies aggregation from five enrollment utterances and shows that aggregation
+and acoustic conditions matter. Its trained attention backend and ECAPA encoder
+are not this app's WeSpeaker system. [Das et al., Interspeech 2016](https://www.isca-archive.org/interspeech_2016/das16_interspeech.html)
+studies session variability and template aging. These results motivate diverse
+clear sessions and bounded sampling, not a claim that twelve is scientifically
+optimal. Twelve is an engineering budget (roughly 24–48 seconds per meeting),
+and median/majority consensus is an uncalibrated experimental adaptation, not a
+reimplementation or measured accuracy improvement from those papers. More clean,
+varied speech can help; duplicated, mislabeled or noisy speech can hurt.
+
+Qualification uses synthetic native vectors/timing fixtures for consensus,
+ambiguity rejection, normalized-vector validation, sample bounds and share
+replacement; isolated frontend tests cover defaults, native persistence and
+individual/bulk UI commands. No real model/audio enrollment or recognition
+benchmark was run for this change; improved recognition quality remains unproven.
