@@ -355,7 +355,7 @@ Live events and native transcript history/export retain `speaker_channel` separa
 from the matched display name. `live-speaker-edits.ts` stores forward corrections by
 raw channel and immutable sequence boundary; TranscriptContext and crash recovery
 replay them without changing earlier lines, other channels, text, timing or source.
-The live naming dialog defaults to Just this line. From this line onward stores a
+The live and saved naming dialogs default to Every line from the speaker. From this line onward stores a
 new channel name and invokes `detach_live_voice_match`, which clears that channel's
 voice evidence and blocks its profile matches/suggestions until recording ends.
 Queued late results still carry the raw channel, so the forward correction applies.
@@ -374,3 +374,6 @@ Qualification for these changes: 36 isolated frontend test files and TypeScript
 checking passed. Native tests passed: 20 profile tests, 3 recording-saver tests,
 and the worker regression. Model/audio fixtures were not rerun; the new correction
 checks use synthetic histories and serialization, not an installed meeting test.
+
+Hide speaker dots is an independent Theme preference, aligned with the left edge
+of Align speaker names to the left rather than indented as its dependent control.

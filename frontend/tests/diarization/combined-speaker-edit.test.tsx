@@ -47,13 +47,13 @@ test('Enter chooses the exact contact or creates a typed name instead of a highl
   await render(); await typeAndEnter('Host 2');
   expect(calls).toEqual([['rename_meeting_speaker', {meetingId:'meeting',from:'Speaker 3',to:'Host 2'}]]);
 });
-test('live naming defaults to one line and exposes forward separation explicitly', async () => {
+test('live naming defaults to every line and exposes forward separation explicitly', async () => {
   const renamed:any[]=[];
   await act(async () => {root=create(<SpeakerIdentityDialog open onOpenChange={()=>{}} speaker="Host" transcriptId="later" canSeparateLive onRenameLive={(...args)=>{renamed.push(args)}}/>);});
   const input=root.root.findByProps({'data-search':true});
   expect(input.props.autoFocus).toBe(true);
   await typeAndEnter('Host 2');
-  expect(renamed).toEqual([['Host','Host 2','line']]);
+  expect(renamed).toEqual([['Host','Host 2','all']]);
   await act(async () => root.root.findAllByType('button').find(button=>button.children.includes('From this line onward'))!.props.onClick());
   await typeAndEnter('Someone else');
   expect(renamed[1]).toEqual(['Host','Someone else','future']);

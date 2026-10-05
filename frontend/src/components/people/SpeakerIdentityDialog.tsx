@@ -75,7 +75,7 @@ export function SpeakerIdentityDialog({
   useEffect(() => {
     if (!open) return;
     setQuery('');
-    setScope(!meetingId && transcriptId ? 'line' : 'all');
+    setScope('all');
     setSelectedSpeaker(splitSpeakerLabel(speaker ?? '')[0] ?? '');
   }, [open, transcriptId, speaker]);
 

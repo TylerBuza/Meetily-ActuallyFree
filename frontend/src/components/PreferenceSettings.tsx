@@ -208,7 +208,7 @@ export function PreferenceSettings() {
           <div><p className="text-sm font-medium text-af-text">Align speaker names to the left</p><p className="text-xs text-af-text-3">Show names in a left column with transcript text indented beside them.</p></div>
           <Switch checked={leftAligned} onCheckedChange={setLeftAligned} aria-label="Align speaker names to the left" />
         </div>
-        <div className="mt-3 flex items-center justify-between gap-4 pl-4">
+        <div className="mt-3 flex items-center justify-between gap-4">
           <div><p className="text-sm font-medium text-af-text">Hide speaker dots</p><p className="text-xs text-af-text-3">Remove the bullet before speaker names in any transcript layout.</p></div>
           <Switch checked={hideSpeakerDots} onCheckedChange={setHideSpeakerDots} aria-label="Hide speaker dots" />
         </div>
