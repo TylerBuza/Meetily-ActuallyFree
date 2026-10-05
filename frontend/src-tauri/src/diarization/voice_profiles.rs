@@ -152,6 +152,7 @@ struct LiveMatcher {
     evidence: HashMap<String, Vec<Vec<f32>>>,
     pending: HashMap<String, Vec<f32>>,
     pending_end: HashMap<String, f64>,
+    blocked: std::collections::HashSet<String>,
 }
 
 /// Identity matching supplements Nemotron's meeting-local channels; it does not
@@ -162,7 +163,7 @@ pub fn start_live_matcher() -> Result<()> {
     let profiles = load_for_matching()?;
     if profiles.is_empty() { return Ok(()); }
     let models = DiarizationModels::load(&super::diarization_model_dir())?;
-    *guard = Some(LiveMatcher { models, profiles, evidence: HashMap::new(), pending: HashMap::new(), pending_end: HashMap::new() });
+    *guard = Some(LiveMatcher { models, profiles, evidence: HashMap::new(), pending: HashMap::new(), pending_end: HashMap::new(), blocked: Default::default() });
     Ok(())
 }
 
@@ -177,6 +178,7 @@ pub fn name_live_nemotron_turn(label: &str, samples: &[f32], start_seconds: f64)
     if ranges.is_empty() { return None; }
     let mut guard = LIVE_MATCHER.lock().ok()?;
     let matcher = guard.as_mut()?;
+    if matcher.blocked.contains(label) { return None; }
     for (first, last) in ranges.into_iter().take(MATCH_TURNS) {
         let start = start_seconds + first as f64 / 16_000.0;
         let end = start_seconds + last as f64 / 16_000.0;
@@ -319,6 +321,43 @@ pub fn set_voice_profiles_match_threshold(value: f32) -> Result<(), String> {
     Ok(())
 }
 
+static AUTO_SAMPLES: OnceLock<AtomicU32> = OnceLock::new();
+fn auto_samples() -> &'static AtomicU32 {
+    AUTO_SAMPLES.get_or_init(|| AtomicU32::new(std::fs::read_to_string(crate::paths::install_data_root().join("voice_profiles_auto_samples.txt"))
+        .ok().and_then(|text| text.trim().parse::<u32>().ok()).filter(|value| (2..=12).contains(value)).unwrap_or(12)))
+}
+#[tauri::command]
+pub fn get_voice_profiles_auto_samples() -> u32 { auto_samples().load(Ordering::Relaxed) }
+#[tauri::command]
+pub fn set_voice_profiles_auto_samples(value: u32) -> Result<(), String> {
+    if !(2..=12).contains(&value) { return Err("Automatic sample limit must be between 2 and 12".into()); }
+    let file = crate::paths::install_data_root().join("voice_profiles_auto_samples.txt");
+    if let Some(parent) = file.parent() { std::fs::create_dir_all(parent).map_err(|error| error.to_string())?; }
+    std::fs::write(file, value.to_string()).map_err(|error| error.to_string())?;
+    auto_samples().store(value, Ordering::Relaxed); Ok(())
+}
+#[tauri::command]
+pub async fn detach_live_voice_match(speaker_channel: String) -> Result<(), String> {
+    if !speaker_channel.strip_prefix("Speaker ").is_some_and(|number| number.parse::<usize>().is_ok_and(|value| (1..=8).contains(&value))) {
+        return Err("Choose a single remote speaker channel".into());
+    }
+    tokio::task::spawn_blocking(move || {
+        let mut guard = LIVE_MATCHER.lock().map_err(|error| error.to_string())?;
+        if let Some(matcher) = guard.as_mut() {
+            matcher.blocked.insert(speaker_channel.clone());
+            matcher.evidence.remove(&speaker_channel); matcher.pending.remove(&speaker_channel);
+        }
+        drop(guard);
+        super::online::detach_voice_match(&speaker_channel);
+        Ok(())
+    }).await.map_err(|error| error.to_string())?
+}
+
+fn automatic_update_allowed(person_id: &str, share: &VoiceSource, profiles: &[VoiceProfile]) -> bool {
+    !profiles.iter().any(|profile| profile.person_id == person_id)
+        || best_match(&share.sum, profiles).is_some_and(|profile| profile.person_id == person_id)
+}
+
 /// Native ownership keeps enrollment alive after navigation. At most eight
 /// jobs may wait/run, with one enrollment at a time; capture never does inference.
 pub fn auto_save_named_voices<R: tauri::Runtime>(app: tauri::AppHandle<R>, pool: SqlitePool, meeting_id: String, speaker: Option<String>) {
@@ -335,6 +374,7 @@ pub fn auto_save_named_voices<R: tauri::Runtime>(app: tauri::AppHandle<R>, pool:
     tauri::async_runtime::spawn(async move {
         let _permit = permit;
         let _worker = ENROLL_WORKER.lock().await;
+        if !enabled() || !get_voice_profiles_auto_save() { return; }
         // A completed name must be read from the same stable attribution used
         // for enrollment, never halfway through post-call transcript replacement.
         let _labels = super::operation_guard().await;
@@ -344,11 +384,14 @@ pub fn auto_save_named_voices<R: tauri::Runtime>(app: tauri::AppHandle<R>, pool:
             ).bind(&meeting_id).bind(&speaker).bind(&speaker).fetch_all(&pool).await.map_err(|error| error.to_string())?;
             for (person_id, label) in named {
                 if !crate::database::repositories::person::is_person_name(&label) { continue; }
-                if load().map_err(|error| error.to_string())?.iter().any(|profile| profile.person_id == person_id) { continue; }
                 let _ = app.emit("voice-profile-auto-save-result", serde_json::json!({"name": label, "personId": person_id, "status": "learning"}));
                 let enrollment: Result<String, String> = async {
-                    let (_, name, share) = meeting_share_limit(&pool, &meeting_id, &label, LEARN_TURNS).await.map_err(String::from)?;
-                    store_shares(&person_id, &name, vec![share], false, true).map_err(String::from)?;
+                    let (_, name, share) = meeting_share_limit(&pool, &meeting_id, &label, get_voice_profiles_auto_samples() as usize).await.map_err(String::from)?;
+                    let profiles = load().map_err(|error| error.to_string())?;
+                    if !automatic_update_allowed(&person_id, &share, &profiles) {
+                        return Err("New samples do not clearly confirm the existing voice. Existing samples were kept; review the speaker labels before using Learn more turns.".into());
+                    }
+                    store_shares(&person_id, &name, vec![share], false, false).map_err(String::from)?;
                     Ok(name)
                 }.await;
                 match enrollment {
@@ -504,6 +547,7 @@ pub async fn get_possible_voice_match(state: tauri::State<'_, crate::state::AppS
     let Some(meeting_id) = meeting_id else {
         if let Ok(guard) = LIVE_MATCHER.try_lock() {
             if let Some(matcher) = guard.as_ref() {
+                if matcher.blocked.contains(&speaker) { return Ok(None); }
                 return Ok(matcher.evidence.get(&speaker).and_then(|vectors| possible_match(vectors, &matcher.profiles)));
             }
         }
@@ -1056,6 +1100,22 @@ mod tests {
         assert_eq!(possible_match(&[query.clone(), query], &[alice.clone()]).unwrap().name, "Alice");
         let mut bob = voice("b", "Bob"); bob.embedding[0] = 0.0; bob.embedding[1] = 1.0;
         assert!(possible_match(&[alice.embedding.clone(), bob.embedding.clone()], &[alice,bob]).is_none());
+    }
+
+    #[test]
+    fn automatic_updates_reject_conflicting_identity_and_invalid_sample_budgets() {
+        assert!(set_voice_profiles_auto_samples(1).is_err());
+        assert!(set_voice_profiles_auto_samples(13).is_err());
+        let alice = voice("alice", "Alice");
+        let mut bob = voice("bob", "Bob"); bob.embedding[0] = 0.0; bob.embedding[1] = 1.0;
+        let profiles = vec![alice, bob];
+        assert!(automatic_update_allowed("alice", &share("meeting",0,12), &profiles));
+        assert!(!automatic_update_allowed("alice", &share("meeting",1,12), &profiles));
+        assert!(automatic_update_allowed("new", &share("meeting",1,12), &profiles));
+        let mut sources = vec![share("old",0,12)];
+        for index in 0..20 { sources = merge_shares(sources, vec![share(&index.to_string(),0,12)]); }
+        assert_eq!(sources.len(), MAX_SOURCES);
+        assert_eq!(sources.iter().map(|source| source.turns).sum::<u32>(), 144);
     }
 
     #[test]

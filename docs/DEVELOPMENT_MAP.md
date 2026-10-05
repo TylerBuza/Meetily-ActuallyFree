@@ -537,3 +537,9 @@ feature note documents sample exclusion, consensus fallback and diagnostic limit
 Tentative lower-score candidates use `get_possible_voice_match` and the shared
 `PossibleVoiceMatch.tsx` live/saved UI. Only explicit acceptance enters the existing
 speaker rename flow; the voice feature note records bounds and unavailable tracks.
+
+Live match correction retains `speaker_channel` through transcript events and
+native history/export. Forward corrections are sequence-scoped in live-speaker-edits
+and replayed during reload/crash recovery; detachment blocks only the chosen native
+channel until session end. Automatic sample updates and keyboard naming are
+documented in the linked voice feature note.

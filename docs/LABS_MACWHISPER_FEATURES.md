@@ -338,3 +338,39 @@ channel remained unnamed. The first recording's manually named host channel also
 contained windows matching the other voice and correctly lacked a confirmed name.
 This is a narrow fixture check, not a diarization/recognition accuracy benchmark,
 and does not establish runtime capture quality or mutate installed user data.
+
+### Automatic refresh and correcting live matches
+
+The existing automatic-save preference now means save **and update** named voices.
+`get/set_voice_profiles_auto_samples` persists a per-meeting limit from 2 to 12
+(default 12); the existing twelve-meeting history cap remains. Saved meetings and
+explicit speaker naming trigger native enrollment. Repeated meetings replace
+samples rather than inflate counts. Existing profiles update only if the new
+meeting aggregate clearly matches that contact; failed/uncertain updates retain
+prior samples and report the error. Changing the limit affects subsequent automatic
+sampling; manual refresh still uses its twelve-sample budget. This is bounded
+profile maintenance, not continuous inference or unlimited accumulation.
+
+Live events and native transcript history/export retain `speaker_channel` separately
+from the matched display name. `live-speaker-edits.ts` stores forward corrections by
+raw channel and immutable sequence boundary; TranscriptContext and crash recovery
+replay them without changing earlier lines, other channels, text, timing or source.
+The live naming dialog defaults to Just this line. From this line onward stores a
+new channel name and invokes `detach_live_voice_match`, which clears that channel's
+voice evidence and blocks its profile matches/suggestions until recording ends.
+Queued late results still carry the raw channel, so the forward correction applies.
+Older live rows lacking channel metadata support per-line correction only. If the
+diarizer reuses one channel for different people later, another forward correction
+may be necessary; this does not repair diarization clustering.
+
+Review match sits beside the speaker name in the live panel, with the possible
+name below it. The identity dialog focuses its input on open; Enter accepts an
+exact contact name (case-insensitive) or adds the typed name, regardless of a
+highlighted partial match. IME composition does not submit. Regression coverage
+includes typed Enter, safe default scope, forward history replay with sequence 0,
+other-channel preservation, sample limits, and previously named overlap editing.
+
+Qualification for these changes: 36 isolated frontend test files and TypeScript
+checking passed. Native tests passed: 20 profile tests, 3 recording-saver tests,
+and the worker regression. Model/audio fixtures were not rerun; the new correction
+checks use synthetic histories and serialization, not an installed meeting test.

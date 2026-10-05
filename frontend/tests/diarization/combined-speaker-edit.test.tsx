@@ -12,7 +12,7 @@ mock.module('@/lib/workspace-api', () => ({announceChange: () => {}}));
 mock.module('sonner', () => ({toast: {success: () => {}, error: () => {}}}));
 const wrap = ({children}: any) => <div>{children}</div>;
 mock.module('@/components/ui/dialog', () => ({Dialog:wrap, DialogContent:wrap, DialogDescription:wrap, DialogTitle:wrap}));
-mock.module('@/components/ui/command', () => ({Command:wrap, CommandEmpty:wrap, CommandGroup:wrap, CommandInput:wrap, CommandList:wrap, CommandItem: (props:any) => <button data-choice={props.value} onClick={props.onSelect}>{props.children}</button>}));
+mock.module('@/components/ui/command', () => ({Command:wrap, CommandEmpty:wrap, CommandGroup:wrap, CommandInput: (props:any) => <input data-search {...props} />, CommandList:wrap, CommandItem: (props:any) => <button data-choice={props.value} onClick={props.onSelect}>{props.children}</button>}));
 mock.module('@/components/ui/avatar', () => ({Avatar:wrap}));
 mock.module('@/components/ui/button', () => ({Button: (props:any) => <button {...props}/> }));
 const { SpeakerIdentityDialog } = await import('../../src/components/people/SpeakerIdentityDialog');
@@ -34,4 +34,27 @@ test('per-line edit sends the selected component and transcript identity', async
   await act(async () => root.root.findAllByType('button').find(button => button.children.includes('Just this line'))!.props.onClick());
   await chooseHost();
   expect(calls).toEqual([['reassign_transcript_speaker', {meetingId:'meeting', transcriptId:'turn', from:'Speaker 3', to:'Host'}]]);
+});
+
+async function typeAndEnter(name: string) {
+  await act(async () => root.root.findByProps({'data-search':true}).props.onValueChange(name));
+  await act(async () => root.root.findByProps({'data-search':true}).props.onKeyDown({key:'Enter',nativeEvent:{isComposing:false},preventDefault:()=>{},stopPropagation:()=>{}}));
+}
+test('Enter chooses the exact contact or creates a typed name instead of a highlighted partial match', async () => {
+  await render(); await typeAndEnter('host');
+  expect(calls).toEqual([['rename_meeting_speaker', {meetingId:'meeting',from:'Speaker 3',to:'Host'}]]);
+  calls.length=0;
+  await render(); await typeAndEnter('Host 2');
+  expect(calls).toEqual([['rename_meeting_speaker', {meetingId:'meeting',from:'Speaker 3',to:'Host 2'}]]);
+});
+test('live naming defaults to one line and exposes forward separation explicitly', async () => {
+  const renamed:any[]=[];
+  await act(async () => {root=create(<SpeakerIdentityDialog open onOpenChange={()=>{}} speaker="Host" transcriptId="later" canSeparateLive onRenameLive={(...args)=>{renamed.push(args)}}/>);});
+  const input=root.root.findByProps({'data-search':true});
+  expect(input.props.autoFocus).toBe(true);
+  await typeAndEnter('Host 2');
+  expect(renamed).toEqual([['Host','Host 2','line']]);
+  await act(async () => root.root.findAllByType('button').find(button=>button.children.includes('From this line onward'))!.props.onClick());
+  await typeAndEnter('Someone else');
+  expect(renamed[1]).toEqual(['Host','Someone else','future']);
 });

@@ -67,6 +67,7 @@ struct OnlineDiarizer {
     /// Set from a verified vector match, never from a meeting-local channel number.
     names: Vec<Option<String>>,
     profile_evidence: Vec<Vec<Vec<f32>>>,
+    blocked_profiles: std::collections::HashSet<usize>,
 }
 
 impl OnlineDiarizer {
@@ -96,11 +97,22 @@ impl OnlineDiarizer {
 static ONLINE: Mutex<Option<OnlineDiarizer>> = Mutex::new(None);
 
 /// Whether live speaker identification is currently active.
+pub fn detach_voice_match(label: &str) {
+    let Some(index) = label.strip_prefix("Speaker ").and_then(|number| number.parse::<usize>().ok()).and_then(|value| value.checked_sub(1)) else { return; };
+    if let Ok(mut guard) = ONLINE.lock() {
+        if let Some(diarizer) = guard.as_mut() {
+            diarizer.blocked_profiles.insert(index);
+            if let Some(name) = diarizer.names.get_mut(index) { *name = None; }
+            if let Some(evidence) = diarizer.profile_evidence.get_mut(index) { evidence.clear(); }
+        }
+    }
+}
+
 pub fn possible_voice_match(label: &str) -> Option<super::voice_profiles::PossibleVoiceMatch> {
     let index = label.strip_prefix("Speaker ")?.parse::<usize>().ok()?.checked_sub(1)?;
     let guard = ONLINE.try_lock().ok()?;
     let diarizer = guard.as_ref()?;
-    if diarizer.user_speaker() == Some(index) { return None; }
+    if diarizer.user_speaker() == Some(index) || diarizer.blocked_profiles.contains(&index) { return None; }
     super::voice_profiles::possible_match(diarizer.profile_evidence.get(index)?, &diarizer.profiles)
 }
 
@@ -153,6 +165,7 @@ pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<()> {
         last_system_speaker: None,
         last_mic_speaker: has_enrolled.then_some(0),
         profiles,
+        blocked_profiles: Default::default(),
         profile_evidence: if has_enrolled { vec![Vec::new()] } else { Vec::new() },
         names: if has_enrolled { vec![None] } else { Vec::new() },
     });
@@ -315,7 +328,7 @@ pub fn assign_speaker(samples: &[f32], mic_dominant: bool) -> Option<LiveSpeaker
     }
 
     d.last_speaker = speaker;
-    if let Some(vector) = profile_embedding {
+    if let Some(vector) = profile_embedding.filter(|_| !d.blocked_profiles.contains(&speaker)) {
         super::voice_profiles::push_match_evidence(&mut d.profile_evidence[speaker], vector);
         d.names[speaker] = super::voice_profiles::confirmed_match(&d.profile_evidence[speaker], &d.profiles)
             .map(|profile| profile.name.clone());

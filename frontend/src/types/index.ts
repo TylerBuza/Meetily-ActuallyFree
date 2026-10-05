@@ -25,6 +25,7 @@ export interface Transcript {
   audio_end_time?: number;   // Seconds from recording start (e.g., 128.6)
   duration?: number;          // Segment duration in seconds (e.g., 3.3)
   speaker?: string;           // Speaker label: "You" (mic) or "Guest" (system audio)
+  speaker_channel?: string; // Raw meeting-local channel, independent of a matched name.
   words?: WordTiming[];
 }
 
@@ -40,6 +41,7 @@ export interface TranscriptUpdate {
   audio_start_time: number; // Seconds from recording start
   audio_end_time: number;   // Seconds from recording start
   duration: number;          // Segment duration in seconds
+  speaker_channel?: string; // Raw meeting-local channel, independent of a matched name.
   words?: WordTiming[];
 }
 

@@ -429,6 +429,9 @@ function handle(cmd: string, args: Args): unknown {
       state.labs.whisperStrictSilence = !!args.enabled;
       return null;
     case 'list_meeting_images': return [];
+    case 'detach_live_voice_match': return;
+    case 'get_voice_profiles_auto_samples': return Number(localStorage.getItem('preview-voice-auto-samples') ?? '12');
+    case 'set_voice_profiles_auto_samples': localStorage.setItem('preview-voice-auto-samples', String(args.value)); return;
     case 'get_possible_voice_match': return null;
     case 'get_voice_profiles_match_threshold': return Number(localStorage.getItem('preview-voice-match-threshold') ?? '0.55');
     case 'set_voice_profiles_match_threshold': localStorage.setItem('preview-voice-match-threshold', String(args.value)); return;

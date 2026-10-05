@@ -44,6 +44,33 @@ function VoiceMatchThreshold() {
   </section>;
 }
 
+function AutomaticSampleLimit() {
+  const [value, setValue] = useState('12');
+  const [saved, setSaved] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let disposed = false;
+    void invoke<number>('get_voice_profiles_auto_samples').then(limit => { if (!disposed) { setSaved(limit); setValue(String(limit)); } }).catch(reason => { if (!disposed) setError(describeVoiceError(reason)); });
+    return () => { disposed = true; };
+  }, []);
+  const limit = Number(value);
+  const valid = Number.isInteger(limit) && limit >= 2 && limit <= 12;
+  const save = async () => {
+    if (!valid || busy || saved === null) return;
+    setBusy(true); setError('');
+    try { await invoke('set_voice_profiles_auto_samples', { value: limit }); setSaved(limit); }
+    catch (reason) { setError(describeVoiceError(reason)); }
+    finally { setBusy(false); }
+  };
+  return <div className="flex flex-wrap items-center gap-3 px-5 text-xs text-af-text-2">
+    <label htmlFor="automatic-voice-samples">Automatic samples per meeting</label>
+    <input id="automatic-voice-samples" type="number" min="2" max="12" step="1" disabled={saved === null || busy} value={value} onChange={event => setValue(event.target.value)} className="w-16 rounded border border-af-border bg-af-panel px-2 py-1" />
+    <Button size="sm" disabled={!valid || saved === null || saved === limit || busy} onClick={() => void save()}>Save limit</Button>
+    {error && <p role="alert" className="text-af-danger">{error}</p>}
+  </div>;
+}
+
 /** The learned voices, each linked to its contact. */
 function LearnedVoices() {
   const profiles = useVoiceProfiles();
@@ -143,7 +170,8 @@ function LearnedVoices() {
 export function VoiceProfilesSettings() {
   return <div className="space-y-5">
     <FeatureSettingsSwitch feature="voiceProfiles" title="Recognize saved voices" description="Learn named contacts from clear recorded call audio, then suggest their names when speakers are identified." />
-    <FeatureSettingsSwitch feature="autoSaveVoiceProfiles" title="Automatically save newly named voices" description="Save up to 12 clear speech samples after you name a new speaker. Requires saved call audio and speaker models; existing profiles are kept." />
+    <FeatureSettingsSwitch feature="autoSaveVoiceProfiles" title="Automatically save and update clear speech samples" description="Learn named voices and refresh existing profiles from saved call audio, up to the sample limit below across 12 recent meetings. Repeated meetings replace their samples; unclear updates keep the existing voice." />
+    <AutomaticSampleLimit />
     <FeatureSettingsSwitch feature="voiceConsensus" title="Consensus voice matching (experimental)" description="Use separate meeting samples when available, with repeated clear-speech confirmation. Single-meeting profiles can also match. This may leave uncertain speakers unnamed. Off by default." />
     <VoiceMatchThreshold />
     <section className="rounded-2xl border border-af-border bg-af-panel-2/40 p-5"><h3 className="mb-3 text-sm font-semibold">Saved voices</h3><LearnedVoices /></section>

@@ -8,6 +8,7 @@ let rejectScore = false;
 const profiles = [{ person_id: 'alice', name: 'Alice', samples: 4, meetings: 1 }, { person_id: 'bob', name: 'Bob', samples: 8, meetings: 2 }];
 mock.module('@tauri-apps/api/core', () => ({ invoke: async (command: string, args: any) => {
   calls.push([command, args]);
+  if (command === 'get_voice_profiles_auto_samples') return 12;
   if (command === 'get_voice_profiles_match_threshold') return 0.55;
   if (command === 'set_voice_profiles_match_threshold' && rejectScore) throw new Error('Disk unavailable');
   if (command === 'diarization_get_status') return { pyannote_available: ready };
@@ -62,4 +63,16 @@ test('matching threshold loads, validates, saves, and reports failed persistence
   await act(async () => save().props.onClick());
   expect(root.root.findByProps({ role: 'alert' }).props.children).toBe('Disk unavailable');
   expect(save().props.disabled).toBe(false);
+});
+
+test('automatic sample budget defaults to twelve and saves valid bounded values', async () => {
+  await act(async () => { root = create(<VoiceProfilesSettings />); });
+  const input = () => root.root.findByProps({ id: 'automatic-voice-samples' });
+  const save = () => root.root.findAllByType('button').find(button => button.props.children === 'Save limit')!;
+  expect(input().props.value).toBe('12');
+  await act(async () => input().props.onChange({target:{value:'13'}}));
+  expect(save().props.disabled).toBe(true);
+  await act(async () => input().props.onChange({target:{value:'6'}}));
+  await act(async () => save().props.onClick());
+  expect(calls).toContainEqual(['set_voice_profiles_auto_samples',{value:6}]);
 });

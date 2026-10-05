@@ -50,6 +50,8 @@ pub struct TranscriptUpdate {
     pub text: String,
     pub timestamp: String, // Wall-clock time for reference (e.g., "14:30:05")
     pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker_channel: Option<String>,
     pub sequence_id: u64,
     pub chunk_start_time: f64, // Legacy field, kept for compatibility
     pub is_partial: bool,
@@ -136,7 +138,7 @@ mod playback_tests {
 
     fn turn(text: &str, source: &str, start: f64, end: f64) -> TranscriptUpdate {
         TranscriptUpdate {
-            text: text.into(), timestamp: String::new(), source: source.into(),
+            text: text.into(), timestamp: String::new(), source: source.into(), speaker_channel: None,
             sequence_id: 0, chunk_start_time: start, is_partial: false,
             confidence: 0.9, audio_start_time: start, audio_end_time: end,
             duration: end - start,
@@ -364,6 +366,7 @@ pub fn start_transcription_task<R: Runtime>(
                         let nemotron_remote = matches!(chunk.device_type, crate::audio::recording_state::DeviceType::System)
                             && crate::diarization::live_nemotron::active();
                         let profile_samples = nemotron_remote.then(|| chunk.data.clone());
+                        let mut speaker_channel = None;
                         let mut chunk_source = match &chunk.device_type {
                                 crate::audio::recording_state::DeviceType::Microphone => {
                                     // Still feed the online diarizer so it learns the
@@ -383,7 +386,11 @@ pub fn start_transcription_task<R: Runtime>(
                                             // System path shouldn't be the user; keep a speaker id.
                                             format!("Speaker {}", s.index + 1)
                                         }
-                                        Some(s) => s.profile_name.unwrap_or_else(|| format!("Speaker {}", s.index + 1)),
+                                        Some(s) => {
+                                            let channel = format!("Speaker {}", s.index + 1);
+                                            speaker_channel = Some(channel.clone());
+                                            s.profile_name.unwrap_or(channel)
+                                        },
                                         None => "Guest".to_string(),
                                     }
                                 }
@@ -406,12 +413,14 @@ pub fn start_transcription_task<R: Runtime>(
                                 if nemotron_remote {
                                     // Inference runs concurrently with ASR. Wait only for bounded
                                     // lookahead here, never on the capture or Tokio worker thread.
-                                    chunk_source = tokio::task::spawn_blocking(move || {
+                                    let attribution = tokio::task::spawn_blocking(move || {
                                         let label = crate::diarization::live_nemotron::label(chunk_timestamp, chunk_duration)?;
                                         let name = profile_samples.as_deref()
                                             .and_then(|samples| crate::diarization::voice_profiles::name_live_nemotron_turn(&label, samples, chunk_timestamp));
-                                        Some(name.unwrap_or(label))
-                                    }).await.ok().flatten().unwrap_or_else(|| "Guest".into());
+                                        Some((name.unwrap_or_else(|| label.clone()), label))
+                                    }).await.ok().flatten();
+                                    if let Some((name, channel)) = attribution { chunk_source = name; speaker_channel = Some(channel); }
+                                    else { chunk_source = "Guest".into(); }
                                 }
                                     let confidence_str = match confidence_opt {
                                         Some(c) => format!("{:.2}", c),
@@ -461,6 +470,7 @@ pub fn start_transcription_task<R: Runtime>(
                                             text: transcript,
                                             timestamp: format_current_timestamp(), // Wall-clock for reference
                                             source: chunk_source.clone(),
+                                            speaker_channel: speaker_channel.clone(),
                                             sequence_id,
                                             chunk_start_time: chunk_timestamp, // Legacy compatibility
                                             is_partial,

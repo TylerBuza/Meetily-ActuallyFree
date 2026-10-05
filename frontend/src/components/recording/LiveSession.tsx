@@ -56,6 +56,7 @@ export function LiveSession({
     detectedSpeakers,
     renameSpeaker,
     reassignSegment,
+    separateSpeaker,
     mergeSpeakers,
     copyTranscript,
     meetingTitle,
@@ -391,9 +392,10 @@ export function LiveSession({
             tab={tab}
             onTabChange={setTab}
             speakers={detectedSpeakers}
+            speakerChannels={new Map(transcripts.filter(turn => turn.speaker && turn.speaker_channel).map(turn => [turn.speaker!, turn.speaker_channel!]))}
             lines={lines}
             sessionKey={String(live?.startedAt ?? 'current')}
-            onIdentify={(speaker) => setIdentity({ speaker, transcriptId: null })}
+            onIdentify={(speaker) => setIdentity({ speaker, transcriptId: [...transcripts].reverse().find(turn => turn.speaker === speaker)?.id ?? null })}
             onMarkMe={(speaker) => renameSpeaker(speaker, 'You')}
             onJumpTo={jumpTo}
           />
@@ -406,9 +408,12 @@ export function LiveSession({
         speaker={identity?.speaker ?? null}
         transcriptId={identity?.transcriptId}
         speakers={detectedSpeakers.map((speaker) => speaker.name)}
-        onRenameLive={(from, to, scope) => {
+        speakerChannel={transcripts.find(turn => turn.id === identity?.transcriptId)?.speaker_channel}
+        canSeparateLive={/^Speaker \d+$/.test(transcripts.find(turn => turn.id === identity?.transcriptId)?.speaker_channel ?? '')}
+        onRenameLive={async (from, to, scope) => {
           const target = to.trim() || genericLabel();
-          if (scope === 'line' && identity?.transcriptId) reassignSegment(identity.transcriptId, replaceSpeakerComponent(identity.speaker, from, target));
+          if (scope === 'future' && identity?.transcriptId) await separateSpeaker(identity.transcriptId, target);
+          else if (scope === 'line' && identity?.transcriptId) reassignSegment(identity.transcriptId, replaceSpeakerComponent(identity.speaker, from, target));
           else renameSpeaker(from, target);
         }}
         onMerge={(source, target) => mergeSpeakers(source, target)}
