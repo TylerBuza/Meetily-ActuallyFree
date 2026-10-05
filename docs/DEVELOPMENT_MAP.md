@@ -360,3 +360,70 @@ Development labels 0.2.18–0.2.20 in historical notes were consolidated into th
 0.2.17 candidate after checking GitHub's published 0.2.16. Re-check the actual
 release state before future version work; do not treat this historical statement
 as a permanently current release number.
+
+<!-- The following PR #38 feature notes describe the contributor branch;
+only the combined-speaker fix is integrated at this point. See
+OCTOBER_PR_INTEGRATION.md for current integration/verification status. -->
+
+### Transcript layout preference
+
+Settings > General, under Theme, offers left-aligned speaker names.
+`lib/transcript-layout.ts` owns the WebView preference and change notifications;
+the shared `VirtualizedTranscriptView` uses a left name column and indented
+plain text for both local and remote speakers, in live and saved meetings.
+The default bubble view remains available. Speaker clicks, colors, seeking,
+virtualization and saved transcript data retain their existing owners. Production
+frontend build/type validation passed; Chrome preview verified aligned live/saved
+turns, the fixed caption box, and its stable paused state using synthetic meetings.
+The preference is local to WebView storage and does not change exports.
+
+Transcript appearance: `src/lib/transcript-layout.ts` owns persisted left-column and hide-speaker-dots preferences, shared through storage/events. Theme settings expose the dot option beneath left alignment. `VirtualizedTranscriptView` keeps the name/dot row together and places timestamps on a separate row below names in the left column; transcript content and provenance are unchanged. Production frontend compilation checks these interfaces.
+
+The hide-speaker-dots preference is independent of left alignment and applies
+to transcript names in both bubble and column layouts. Voice enrollment progress
+is owned by `VoiceProfileNotifications.tsx`; model/sample selection and native
+retry after saved post-call changes are documented in
+[LABS_MACWHISPER_FEATURES.md](LABS_MACWHISPER_FEATURES.md). Supervised per-app
+client recovery and its opt-in Windows fixture are documented in
+[AUDIO_CALLBACK_CONTINUITY.md](AUDIO_CALLBACK_CONTINUITY.md).
+
+### PR frontend CI dependency ownership
+
+`frontend/pnpm-workspace.yaml` owns dependency overrides and build-script policy.
+Regenerate `frontend/pnpm-lock.yaml` with CI's pnpm 11.9.0 whenever overrides
+change; CI deliberately uses `pnpm install --frozen-lockfile` to detect drift.
+PR #38's lockfile omitted the override configuration and prevented every later
+check from running. Its CI action pins now use Node.js 24 runtimes.
+The engine-selection fixtures resolve the newest status request because the hook
+refreshes after listener registration to close the subscription gap; earlier
+responses remain stale. Verification uses frozen installation, all 30 isolated
+frontend test files, the production build, and a subsequent TypeScript check.
+These checks do not qualify native capture or model/audio behavior.
+
+### Combined speaker labels (issues #44 and #45)
+
+Overlap labels retain the diarizer's ` + ` separator. `speakerUtils.ts` splits
+components for display and live aliases: `You + Speaker 1` displays the local
+user name plus the remote label, and has a distinct identity key from `You`.
+The shared display helper is used by transcript views and copy/export.
+`SpeakerIdentityDialog.tsx` offers a component selector for overlap labels;
+meeting-wide edits rename that component everywhere, while per-line edits send
+an optional `from` component to the native `reassign_transcript_speaker` command.
+`PeopleRepository` updates only matching components inside a transaction and
+keeps other voices, row IDs, text, timestamps and source provenance intact.
+Merges deduplicate equal labels. Ambiguous legacy per-line calls fail rather
+than replacing a combined label; single-speaker calls remain compatible.
+`person_speakers` links named components independently without a schema change.
+Live history, buffered turns and meeting-scoped recovery apply component aliases;
+per-line overrides retain the other components.
+
+Regression coverage includes shared display/export labels, exact matches
+(`Speaker 3` versus `Speaker 30`), UI selection/IPC, live recovery, and native
+SQLite rename/reassignment preserving text/times/source and meeting isolation.
+The 32 isolated frontend test files and 17 native person-repository tests passed
+on Windows (CPU feature configuration, synthetic in-memory database fixtures).
+Production frontend build/type validation covers the affected interfaces.
+No real audio/model test, installed-app update or release is implied. Existing
+renames that left stale overlap components can be repaired by selecting that
+remaining component and assigning the existing contact; labels already lost by
+older per-line edits cannot be inferred back from transcript text.

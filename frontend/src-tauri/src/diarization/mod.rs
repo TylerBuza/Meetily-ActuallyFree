@@ -759,12 +759,14 @@ pub async fn reassign_transcript_speaker(
     meeting_id: String,
     transcript_id: String,
     to: String,
+    from: Option<String>,
 ) -> Result<MeetingSpeakerRenameResult, String> {
     let _operation_guard = operation_guard().await;
-    let outcome = crate::database::repositories::person::PeopleRepository::reassign_transcript_speaker(
+    let outcome = crate::database::repositories::person::PeopleRepository::reassign_transcript_speaker_component(
         state.db_manager.pool(),
         &meeting_id,
         &transcript_id,
+        from.as_deref(),
         &to,
     )
     .await

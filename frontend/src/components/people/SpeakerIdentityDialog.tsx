@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { useUserName } from '@/hooks/useUserName';
 import { announceChange } from '@/lib/workspace-api';
-import { displaySpeaker, isUserSpeaker, speakerDot } from '@/utils/speakerUtils';
+import { displaySpeaker, isUserSpeaker, speakerDot, splitSpeakerLabel } from '@/utils/speakerUtils';
 
 export interface SpeakerRenameResult {
   from: string;
@@ -63,19 +63,22 @@ export function SpeakerIdentityDialog({
   const userName = useUserName();
   const [query, setQuery] = useState('');
   const [scope, setScope] = useState<'all' | 'line'>('all');
+  const [selectedSpeaker, setSelectedSpeaker] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setQuery('');
     setScope('all');
-  }, [open, transcriptId]);
+    setSelectedSpeaker(splitSpeakerLabel(speaker ?? '')[0] ?? '');
+  }, [open, transcriptId, speaker]);
 
-  const current = speaker ?? '';
-  const canRemove = !!speaker && !isGenerated(speaker) && !isUserSpeaker(speaker);
+  const components = splitSpeakerLabel(speaker ?? '');
+  const current = components.length > 1 ? selectedSpeaker : (speaker ?? '');
+  const canRemove = !!current && !isGenerated(current) && !isUserSpeaker(current);
   const trimmed = query.trim();
   const exact = people.some((person) => person.displayName.toLowerCase() === trimmed.toLowerCase());
-  const mergeTargets = useMemo(() => speakers.filter((label) => label !== speaker), [speakers, speaker]);
+  const mergeTargets = useMemo(() => [...new Set(speakers.flatMap(splitSpeakerLabel))].filter((label) => label !== current), [speakers, current]);
 
   const apply = async (target: string) => {
     if (!speaker || saving) return;
@@ -84,31 +87,31 @@ export function SpeakerIdentityDialog({
     setSaving(true);
     try {
       if (!meetingId) {
-        await onRenameLive?.(speaker, next, scope);
-        toast.success(scope === 'line' ? 'Line reassigned' : `${speaker} is now ${next === 'You' ? displaySpeaker('You', userName) : next}`, {
+        await onRenameLive?.(current, next, scope);
+        toast.success(scope === 'line' ? 'Speaker on this line changed' : `${current} is now ${next === 'You' ? displaySpeaker('You', userName) : next}`, {
           description: next && next !== 'You' ? 'Saved as a contact when the recording ends.' : undefined,
         });
-        await onRenamed?.({ from: speaker, to: next, count: 0, removedName: !next });
+        await onRenamed?.({ from: current, to: next, count: 0, removedName: !next });
         onOpenChange(false);
         return;
       }
       const result =
         scope === 'line' && transcriptId
-          ? await invoke<{ speaker: string; count: number; removedName: boolean }>('reassign_transcript_speaker', { meetingId, transcriptId, to: next })
-          : await invoke<{ speaker: string; count: number; removedName: boolean }>('rename_meeting_speaker', { meetingId, from: speaker, to: next });
+          ? await invoke<{ speaker: string; count: number; removedName: boolean }>('reassign_transcript_speaker', { meetingId, transcriptId, from: current, to: next })
+          : await invoke<{ speaker: string; count: number; removedName: boolean }>('rename_meeting_speaker', { meetingId, from: current, to: next });
       announceChange('people');
       if (result.removedName) {
-        const kept = people.some((person) => person.displayName.toLowerCase() === speaker.toLowerCase());
+        const kept = people.some((person) => person.displayName.toLowerCase() === current.toLowerCase());
         toast.success('Name removed', {
-          description: `Lines are now labelled ${result.speaker}.${kept ? ` ${speaker} is still in your contacts.` : ''}`,
+          description: `Lines are now labelled ${result.speaker}.${kept ? ` ${current} is still in your contacts.` : ''}`,
         });
       } else {
         const shown = result.speaker === 'You' ? displaySpeaker('You', userName) : result.speaker;
-        toast.success(scope === 'line' ? `Line now attributed to ${shown}` : `${speaker} is now ${shown}`, {
+        toast.success(scope === 'line' ? `Speaker on this line is now ${shown}` : `${current} is now ${shown}`, {
           description: scope === 'line' ? undefined : `${result.count} line${result.count === 1 ? '' : 's'} updated.`,
         });
       }
-      await onRenamed?.({ from: speaker, to: result.speaker, count: result.count, removedName: result.removedName });
+      await onRenamed?.({ from: current, to: result.speaker, count: result.count, removedName: result.removedName });
       onOpenChange(false);
     } catch (error) {
       toast.error('Could not update the speaker', { description: error instanceof Error ? error.message : String(error) });
@@ -121,7 +124,7 @@ export function SpeakerIdentityDialog({
     if (!speaker || !onMerge || saving) return;
     setSaving(true);
     try {
-      await onMerge(speaker, target);
+      await onMerge(current, target);
       onOpenChange(false);
     } finally {
       setSaving(false);
@@ -138,6 +141,18 @@ export function SpeakerIdentityDialog({
           </DialogTitle>
           <DialogDescription>Pick a contact, type a new name, or merge with another voice.</DialogDescription>
         </div>
+
+        {components.length > 1 && (
+          <div className="px-5 pb-3">
+            <label className="block text-xs text-af-text-3">
+              Speaker to change
+              <select aria-label="Speaker to change" value={current} onChange={event => setSelectedSpeaker(event.target.value)} disabled={saving} className="mt-1 w-full rounded border border-af-border bg-af-panel p-2 text-af-text">
+                {components.map(part => <option key={part} value={part}>{displaySpeaker(part, userName)}</option>)}
+              </select>
+            </label>
+            <p className="mt-1 text-xs text-af-text-3">The other speakers on this line will be kept.</p>
+          </div>
+        )}
 
         {transcriptId && (
           <div className="px-5 pb-3">
@@ -174,7 +189,7 @@ export function SpeakerIdentityDialog({
           />
           <CommandList className="max-h-[min(22rem,50vh)] p-1.5">
             <CommandEmpty>No matching contacts.</CommandEmpty>
-            {!isUserSpeaker(speaker) && (
+            {!isUserSpeaker(current) && (
               <CommandGroup heading="You">
                 <CommandItem value={`me you ${userName}`} onSelect={() => apply('You')} disabled={saving}>
                   <Avatar name={userName || 'You'} size="sm" />

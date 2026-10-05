@@ -1,4 +1,5 @@
 'use client';
+import { replaceSpeakerComponent } from '@/utils/speakerUtils';
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode, MutableRefObject, useMemo } from 'react';
 import { Transcript, TranscriptUpdate, DetectedSpeaker } from '@/types';
@@ -488,17 +489,17 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
     });
 
     transcriptsRef.current = transcriptsRef.current.map(t =>
-      t.speaker?.trim() === trimmedOld ? { ...t, speaker: trimmedNew } : t
+      t.speaker ? { ...t, speaker: replaceSpeakerComponent(t.speaker, trimmedOld, trimmedNew) } : t
     );
 
     setTranscripts(prev =>
-      prev.map(t => (t.speaker?.trim() === trimmedOld ? { ...t, speaker: trimmedNew } : t))
+      prev.map(t => (t.speaker ? { ...t, speaker: replaceSpeakerComponent(t.speaker, trimmedOld, trimmedNew) } : t))
     );
 
     if (transcriptBufferRef.current) {
       for (const [seqId, t] of transcriptBufferRef.current.entries()) {
-        if (t.speaker?.trim() === trimmedOld) {
-          transcriptBufferRef.current.set(seqId, { ...t, speaker: trimmedNew });
+        if (t.speaker) {
+          transcriptBufferRef.current.set(seqId, { ...t, speaker: replaceSpeakerComponent(t.speaker, trimmedOld, trimmedNew) });
         }
       }
     }
@@ -548,17 +549,17 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
     });
 
     transcriptsRef.current = transcriptsRef.current.map(t =>
-      t.speaker?.trim() === trimmedSource ? { ...t, speaker: trimmedTarget } : t
+      t.speaker ? { ...t, speaker: replaceSpeakerComponent(t.speaker, trimmedSource, trimmedTarget) } : t
     );
 
     setTranscripts(prev =>
-      prev.map(t => (t.speaker?.trim() === trimmedSource ? { ...t, speaker: trimmedTarget } : t))
+      prev.map(t => (t.speaker ? { ...t, speaker: replaceSpeakerComponent(t.speaker, trimmedSource, trimmedTarget) } : t))
     );
 
     if (transcriptBufferRef.current) {
       for (const [seqId, t] of transcriptBufferRef.current.entries()) {
-        if (t.speaker?.trim() === trimmedSource) {
-          transcriptBufferRef.current.set(seqId, { ...t, speaker: trimmedTarget });
+        if (t.speaker) {
+          transcriptBufferRef.current.set(seqId, { ...t, speaker: replaceSpeakerComponent(t.speaker, trimmedSource, trimmedTarget) });
         }
       }
     }

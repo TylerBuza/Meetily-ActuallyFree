@@ -111,14 +111,22 @@ const SLOT_COLOR_VALUES = [
 export function isUserSpeaker(speaker?: string | null): boolean {
   if (!speaker) return false;
   const normalized = speaker.trim();
-  return /^you\b/i.test(normalized) || /\(\s*you\s*\)$/i.test(normalized);
+  return splitSpeakerLabel(normalized).length === 1 && (/^you$/i.test(normalized) || /\(\s*you\s*\)$/i.test(normalized));
+}
+
+/** Overlap labels use the diarizer's spaced separator; names remain atomic. */
+export function splitSpeakerLabel(speaker: string): string[] {
+  return speaker.split(' + ').map(part => part.trim()).filter(Boolean);
+}
+
+export function replaceSpeakerComponent(label: string, from: string, to: string): string {
+  const parts = splitSpeakerLabel(label).map(part => part === from.trim() ? to.trim() : part);
+  return [...new Set(parts)].join(' + ');
 }
 
 export function displaySpeaker(speaker: string, userName: string): string {
-  if (isUserSpeaker(speaker)) {
-    return userName ? `${userName} (You)` : 'You';
-  }
-  return speaker;
+  return splitSpeakerLabel(speaker).map(part => isUserSpeaker(part)
+    ? (userName ? `${userName} (You)` : 'You') : part).join(' + ');
 }
 
 /** Normalize speaker keys so "You" / "you" / empty compare cleanly. */
@@ -188,6 +196,8 @@ export function speakerBadgeClass(speaker?: string | null): string {
  * Follows renames and merges until stable.
  */
 export function resolveSpeaker(rawSpeaker: string, speakerMap: Record<string, string>): string {
+  const components = splitSpeakerLabel(rawSpeaker);
+  if (components.length > 1) return [...new Set(components.map(part => resolveSpeaker(part, speakerMap)))].join(' + ');
   let current = rawSpeaker.trim();
   let depth = 0;
   const visited = new Set<string>();
