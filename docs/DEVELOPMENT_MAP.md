@@ -457,3 +457,16 @@ retry after saved post-call changes are documented in
 [LABS_MACWHISPER_FEATURES.md](LABS_MACWHISPER_FEATURES.md). Supervised per-app
 client recovery and its opt-in Windows fixture are documented in
 [AUDIO_CALLBACK_CONTINUITY.md](AUDIO_CALLBACK_CONTINUITY.md).
+
+### PR frontend CI dependency ownership
+
+`frontend/pnpm-workspace.yaml` owns dependency overrides and build-script policy.
+Regenerate `frontend/pnpm-lock.yaml` with CI's pnpm 11.9.0 whenever overrides
+change; CI deliberately uses `pnpm install --frozen-lockfile` to detect drift.
+PR #38's lockfile omitted the override configuration and prevented every later
+check from running. Its CI action pins now use Node.js 24 runtimes.
+The engine-selection fixtures resolve the newest status request because the hook
+refreshes after listener registration to close the subscription gap; earlier
+responses remain stale. Verification uses frozen installation, all 30 isolated
+frontend test files, the production build, and a subsequent TypeScript check.
+These checks do not qualify native capture or model/audio behavior.
