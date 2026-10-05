@@ -29,7 +29,7 @@ import { formatClock } from '@/lib/dates';
 import type { LiveLine } from '@/lib/live-context';
 import { useLabs } from '@/hooks/useLabs';
 import { isDuplicatedMicCaption, previewHasFinalTurn } from '@/lib/nearLiveCaptions';
-import { speakerKey } from '@/utils/speakerUtils';
+import { speakerKey, replaceSpeakerComponent } from '@/utils/speakerUtils';
 
 const PANEL_KEY = 'af-live-panel-open';
 const PANEL_WIDTH = 340;
@@ -408,7 +408,7 @@ export function LiveSession({
         speakers={detectedSpeakers.map((speaker) => speaker.name)}
         onRenameLive={(from, to, scope) => {
           const target = to.trim() || genericLabel();
-          if (scope === 'line' && identity?.transcriptId) reassignSegment(identity.transcriptId, target);
+          if (scope === 'line' && identity?.transcriptId) reassignSegment(identity.transcriptId, replaceSpeakerComponent(identity.speaker, from, target));
           else renameSpeaker(from, target);
         }}
         onMerge={(source, target) => mergeSpeakers(source, target)}

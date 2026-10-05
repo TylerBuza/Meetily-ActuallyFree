@@ -21,7 +21,7 @@ import { useVoiceProfiles } from '@/hooks/useVoiceProfiles';
 import { describeVoiceError, describeVoiceSource, learnSpeakerVoice } from '@/lib/voice-profiles';
 import { listActionItems, type ActionItem } from '@/lib/workspace-api';
 import { formatRelativePast, parseDate } from '@/lib/dates';
-import { displaySpeaker, isUserSpeaker, speakerDot } from '@/utils/speakerUtils';
+import { displaySpeaker, isUserSpeaker, speakerDot, splitSpeakerLabel } from '@/utils/speakerUtils';
 import { cn } from '@/lib/utils';
 
 export interface PersonCardTarget {
@@ -195,7 +195,7 @@ export function PersonCard({
                 <UserRoundSearch />
                 {contact || isYou ? 'Change' : 'Identify'}
               </Button>
-              {!isYou && !contact && onMarkMe && (
+              {!isYou && !contact && splitSpeakerLabel(speaker).length === 1 && onMarkMe && (
                 <Button
                   size="sm"
                   variant="ghost"

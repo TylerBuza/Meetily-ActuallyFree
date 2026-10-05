@@ -531,8 +531,11 @@ impl PeopleRepository {
         .fetch_all(&mut **tx)
         .await?;
         for label in labels {
-            if is_person_name(&label) {
-                Self::reconcile_speaker_identity(tx, meeting_id, &label, &label).await?;
+            // One identity link per named component, including overlap-only voices.
+            for component in speaker_components(&label) {
+                if is_person_name(component) {
+                    Self::reconcile_speaker_identity(tx, meeting_id, component, component).await?;
+                }
             }
         }
         Ok(())
@@ -893,14 +896,22 @@ impl PeopleRepository {
         } else {
             to.to_string()
         };
-        let result =
-            sqlx::query("UPDATE transcripts SET speaker = ? WHERE meeting_id = ? AND speaker = ?")
-                .bind(&resolved_to)
-                .bind(meeting_id)
-                .bind(from)
-                .execute(&mut *tx)
-                .await?;
-        let count = result.rows_affected();
+        if speaker_components(from).len() != 1 || speaker_components(&resolved_to).len() != 1 {
+            return Err(sqlx::Error::Protocol("Choose one speaker inside the combined label".into()));
+        }
+        // Match components, never substrings (Speaker 3 != Speaker 30).
+        // Only attribution changes; row IDs, source provenance, text and timing stay intact.
+        let rows = sqlx::query_as::<_, (String, String)>(
+            "SELECT id, speaker FROM transcripts WHERE meeting_id = ? AND speaker IS NOT NULL",
+        ).bind(meeting_id).fetch_all(&mut *tx).await?;
+        let mut count = 0;
+        for (id, label) in rows {
+            if speaker_components(&label).contains(&from.trim()) {
+                let updated = replace_speaker_component(&label, from, &resolved_to);
+                count += sqlx::query("UPDATE transcripts SET speaker = ? WHERE id = ? AND meeting_id = ?")
+                    .bind(updated).bind(id).bind(meeting_id).execute(&mut *tx).await?.rows_affected();
+            }
+        }
 
         if removed_name {
             sqlx::query("DELETE FROM person_speakers WHERE meeting_id = ? AND speaker_label = ?")
@@ -927,6 +938,16 @@ impl PeopleRepository {
         transcript_id: &str,
         to: &str,
     ) -> Result<SpeakerRenameOutcome, sqlx::Error> {
+        Self::reassign_transcript_speaker_component(pool, meeting_id, transcript_id, None, to).await
+    }
+
+    pub(crate) async fn reassign_transcript_speaker_component(
+        pool: &SqlitePool,
+        meeting_id: &str,
+        transcript_id: &str,
+        component: Option<&str>,
+        to: &str,
+    ) -> Result<SpeakerRenameOutcome, sqlx::Error> {
         let to = to.trim();
         let mut tx = pool.begin().await?;
         let current: Option<String> = sqlx::query_scalar(
@@ -939,6 +960,14 @@ impl PeopleRepository {
         let Some(from) = current else {
             return Err(sqlx::Error::RowNotFound);
         };
+        let parts = speaker_components(&from);
+        let selected = component.unwrap_or(&from).trim();
+        if !parts.contains(&selected) || speaker_components(selected).len() != 1 {
+            return Err(sqlx::Error::Protocol("Choose one speaker inside the combined label".into()));
+        }
+        if !to.is_empty() && speaker_components(to).len() != 1 {
+            return Err(sqlx::Error::Protocol("Choose a single replacement speaker".into()));
+        }
         let removed_name = to.is_empty();
         let resolved_to = if removed_name {
             next_available_speaker_label(&mut tx, meeting_id).await?
@@ -946,28 +975,22 @@ impl PeopleRepository {
             to.to_string()
         };
 
+        let updated = replace_speaker_component(&from, selected, &resolved_to);
         let result = sqlx::query(
             "UPDATE transcripts SET speaker = ? WHERE id = ? AND meeting_id = ?",
         )
-        .bind(&resolved_to)
+        .bind(&updated)
         .bind(transcript_id)
         .bind(meeting_id)
         .execute(&mut *tx)
         .await?;
 
-        let remaining: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM transcripts WHERE meeting_id = ? AND speaker = ?",
-        )
-        .bind(meeting_id)
-        .bind(&from)
-        .fetch_one(&mut *tx)
-        .await?;
-        if remaining == 0 {
+        let remaining: Vec<String> = sqlx::query_scalar(
+            "SELECT speaker FROM transcripts WHERE meeting_id = ? AND speaker IS NOT NULL",
+        ).bind(meeting_id).fetch_all(&mut *tx).await?;
+        if !remaining.iter().any(|label| speaker_components(label).contains(&selected)) {
             sqlx::query("DELETE FROM person_speakers WHERE meeting_id = ? AND speaker_label = ?")
-                .bind(meeting_id)
-                .bind(&from)
-                .execute(&mut *tx)
-                .await?;
+                .bind(meeting_id).bind(selected).execute(&mut *tx).await?;
         }
         if is_person_name(&resolved_to) {
             ensure_label_identity(&mut tx, meeting_id, &resolved_to).await?;
@@ -1344,6 +1367,19 @@ async fn relabel_person(
     Ok(())
 }
 
+fn speaker_components(label: &str) -> Vec<&str> {
+    label.split(" + ").map(str::trim).filter(|part| !part.is_empty()).collect()
+}
+
+fn replace_speaker_component(label: &str, from: &str, to: &str) -> String {
+    let mut result = Vec::new();
+    for part in speaker_components(label) {
+        let replacement = if part == from.trim() { to.trim() } else { part };
+        if !result.contains(&replacement) { result.push(replacement); }
+    }
+    result.join(" + ")
+}
+
 pub(crate) fn normalize_person_name(name: &str) -> String {
     name.trim().to_lowercase()
 }
@@ -1381,7 +1417,7 @@ async fn next_available_speaker_label(
         let candidate = format!("Speaker {}", index);
         if !labels
             .iter()
-            .any(|label| label.eq_ignore_ascii_case(&candidate))
+            .any(|label| speaker_components(label).iter().any(|part| part.eq_ignore_ascii_case(&candidate)))
         {
             return Ok(candidate);
         }
@@ -1674,6 +1710,45 @@ mod tests {
         visible_summary_text, PeopleRepository, PersonContextMeeting, PersonContextMessage,
         PERSON_CONTEXT_CHARS,
     };
+
+    #[tokio::test]
+    async fn combined_speaker_edits_preserve_other_voices_and_transcript_data() {
+        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE people (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, normalized_name TEXT NOT NULL UNIQUE, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, is_manual INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE person_speakers (person_id TEXT NOT NULL, meeting_id TEXT NOT NULL, speaker_label TEXT NOT NULL, UNIQUE(meeting_id, speaker_label));
+             CREATE TABLE transcripts (id TEXT PRIMARY KEY, meeting_id TEXT NOT NULL, speaker TEXT, transcript TEXT, audio_start_time REAL, source_type TEXT);
+             INSERT INTO transcripts VALUES
+             ('a', 'm1', 'Speaker 3', 'words a', 1.5, 'system'),
+             ('b', 'm1', 'You + Speaker 3 + Speaker 6', 'words b', 2.5, 'mic'),
+             ('c', 'm1', 'Speaker 30 + Speaker 6', 'words c', 3.5, 'system'),
+             ('d', 'm2', 'Speaker 3 + Speaker 6', 'words d', 4.5, 'system');"
+        ).execute(&pool).await.unwrap();
+        let before: Vec<(String, String, f64, String)> = sqlx::query_as(
+            "SELECT id, transcript, audio_start_time, source_type FROM transcripts ORDER BY id"
+        ).fetch_all(&pool).await.unwrap();
+        let renamed = PeopleRepository::rename_meeting_speaker(&pool, "m1", "Speaker 3", "Host").await.unwrap();
+        assert_eq!(renamed.count, 2);
+        let label = |id: &'static str| {
+            let pool = pool.clone();
+            async move { sqlx::query_scalar::<_, String>("SELECT speaker FROM transcripts WHERE id = ?").bind(id).fetch_one(&pool).await.unwrap() }
+        };
+        assert_eq!(label("b").await, "You + Host + Speaker 6");
+        assert_eq!(label("c").await, "Speaker 30 + Speaker 6");
+        assert_eq!(label("d").await, "Speaker 3 + Speaker 6");
+        // Legacy callers must not silently collapse an overlap without a component.
+        assert!(PeopleRepository::reassign_transcript_speaker(&pool, "m1", "b", "Alice").await.is_err());
+        PeopleRepository::reassign_transcript_speaker_component(&pool, "m1", "b", Some("Host"), "Alice").await.unwrap();
+        assert_eq!(label("b").await, "You + Alice + Speaker 6");
+        assert_eq!(label("a").await, "Host");
+        PeopleRepository::rename_meeting_speaker(&pool, "m1", "Speaker 6", "Alice").await.unwrap();
+        assert_eq!(label("b").await, "You + Alice");
+        assert!(PeopleRepository::reassign_transcript_speaker_component(&pool, "m1", "b", Some("Missing"), "Bob").await.is_err());
+        let after: Vec<(String, String, f64, String)> = sqlx::query_as(
+            "SELECT id, transcript, audio_start_time, source_type FROM transcripts ORDER BY id"
+        ).fetch_all(&pool).await.unwrap();
+        assert_eq!(before, after);
+    }
 
     #[test]
     fn normalizes_and_filters_identity_labels() {

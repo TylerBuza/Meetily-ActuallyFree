@@ -39,3 +39,12 @@ test('failed persistence is surfaced before UI edit acknowledgement', () => {
   localStorage.setItem = () => { throw new Error('quota'); };
   expect(() => persistSpeakerRename('one', 'Speaker 1', 'Alice')).toThrow('quota');
 });
+
+test('overlap names survive live history, reload and per-turn overrides', () => {
+  persistSpeakerRename('one', 'Speaker 3', 'Host');
+  expect(editedSpeaker('one', 0, 'You + Speaker 3 + Speaker 6')).toBe('You + Host + Speaker 6');
+  persistTurnSpeaker('one', 1, 'You + Host + Speaker 6');
+  persistSpeakerRename('one', 'Speaker 6', 'Guest name');
+  expect(editedSpeaker('one', 1, 'Speaker 3')).toBe('You + Host + Guest name');
+  expect(editedSpeaker('two', 0, 'Speaker 3 + Speaker 6')).toBe('Speaker 3 + Speaker 6');
+});

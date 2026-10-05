@@ -470,3 +470,31 @@ refreshes after listener registration to close the subscription gap; earlier
 responses remain stale. Verification uses frozen installation, all 30 isolated
 frontend test files, the production build, and a subsequent TypeScript check.
 These checks do not qualify native capture or model/audio behavior.
+
+### Combined speaker labels (issues #44 and #45)
+
+Overlap labels retain the diarizer's ` + ` separator. `speakerUtils.ts` splits
+components for display and live aliases: `You + Speaker 1` displays the local
+user name plus the remote label, and has a distinct identity key from `You`.
+The shared display helper is used by transcript views and copy/export.
+`SpeakerIdentityDialog.tsx` offers a component selector for overlap labels;
+meeting-wide edits rename that component everywhere, while per-line edits send
+an optional `from` component to the native `reassign_transcript_speaker` command.
+`PeopleRepository` updates only matching components inside a transaction and
+keeps other voices, row IDs, text, timestamps and source provenance intact.
+Merges deduplicate equal labels. Ambiguous legacy per-line calls fail rather
+than replacing a combined label; single-speaker calls remain compatible.
+`person_speakers` links named components independently without a schema change.
+Live history, buffered turns and meeting-scoped recovery apply component aliases;
+per-line overrides retain the other components.
+
+Regression coverage includes shared display/export labels, exact matches
+(`Speaker 3` versus `Speaker 30`), UI selection/IPC, live recovery, and native
+SQLite rename/reassignment preserving text/times/source and meeting isolation.
+The 32 isolated frontend test files and 17 native person-repository tests passed
+on Windows (CPU feature configuration, synthetic in-memory database fixtures).
+Production frontend build/type validation covers the affected interfaces.
+No real audio/model test, installed-app update or release is implied. Existing
+renames that left stale overlap components can be repaired by selecting that
+remaining component and assigning the existing contact; labels already lost by
+older per-line edits cannot be inferred back from transcript text.
