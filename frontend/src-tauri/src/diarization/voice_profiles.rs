@@ -4,7 +4,7 @@
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::OnceLock;
 use std::sync::Mutex;
 use std::collections::HashMap;
@@ -13,8 +13,10 @@ use sqlx::SqlitePool;
 use super::models::DiarizationModels;
 
 const MODEL: &str = "wespeaker-resnet34-LM/lda-128";
-const MATCH_THRESHOLD: f32 = 0.80;
-const MATCH_MARGIN: f32 = 0.08;
+// Read-only recording qualification found genuine post-LDA scores around 0.56–0.73.
+// Require repeated evidence and a competitor margin instead of a single 0.80 hit.
+const MATCH_THRESHOLD: f32 = 0.55;
+const MATCH_MARGIN: f32 = 0.12;
 const MAX_PROFILES: usize = 50;
 /// Clear turns learned from one meeting, spread across it.
 // A compute/storage budget, not a universally optimal biometric sample count.
@@ -147,8 +149,9 @@ static LIVE_MATCHER: Mutex<Option<LiveMatcher>> = Mutex::new(None);
 struct LiveMatcher {
     models: DiarizationModels,
     profiles: Vec<VoiceProfile>,
-    names: HashMap<String, String>,
+    evidence: HashMap<String, Vec<Vec<f32>>>,
     pending: HashMap<String, Vec<f32>>,
+    pending_end: HashMap<String, f64>,
 }
 
 /// Identity matching supplements Nemotron's meeting-local channels; it does not
@@ -159,7 +162,7 @@ pub fn start_live_matcher() -> Result<()> {
     let profiles = load_for_matching()?;
     if profiles.is_empty() { return Ok(()); }
     let models = DiarizationModels::load(&super::diarization_model_dir())?;
-    *guard = Some(LiveMatcher { models, profiles, names: HashMap::new(), pending: HashMap::new() });
+    *guard = Some(LiveMatcher { models, profiles, evidence: HashMap::new(), pending: HashMap::new(), pending_end: HashMap::new() });
     Ok(())
 }
 
@@ -168,30 +171,31 @@ pub fn stop_live_matcher() {
 }
 
 /// Called on a blocking ASR worker, never on the capture thread.
-pub fn name_live_nemotron_turn(label: &str, samples: &[f32]) -> Option<String> {
-    if !label.starts_with("Speaker ") { return None; }
+pub fn name_live_nemotron_turn(label: &str, samples: &[f32], start_seconds: f64) -> Option<String> {
+    // Only diarizer-confirmed single-speaker ranges are biometric evidence.
+    let ranges = super::live_nemotron::clear_audio_ranges(label, start_seconds, samples.len());
+    if ranges.is_empty() { return None; }
     let mut guard = LIVE_MATCHER.lock().ok()?;
     let matcher = guard.as_mut()?;
-    if let Some(name) = matcher.names.get(label) { return Some(name.clone()); }
-    // Near-live chunks can be shorter than the embedding model's 2 s window.
-    // Keep at most 4 s for this meeting-local channel, never as an identity.
-    let ready = {
+    for (first, last) in ranges.into_iter().take(MATCH_TURNS) {
+        let start = start_seconds + first as f64 / 16_000.0;
+        let end = start_seconds + last as f64 / 16_000.0;
         let pending = matcher.pending.entry(label.to_string()).or_default();
-        append_live_profile_audio(pending, samples);
-        (pending.len() >= 32_000).then(|| pending.clone())
-    };
-    if let Some(audio) = ready {
-        if let Ok(embedding) = matcher.models.embed(&audio) {
-            if let Some(profile) = best_match(&embedding, &matcher.profiles) {
-                let name = profile.name.clone();
-                matcher.names.insert(label.to_string(), name.clone());
-                matcher.pending.remove(label);
-                return Some(name);
-            }
+        if let Some(previous_end) = matcher.pending_end.get(label) {
+            if end <= *previous_end { continue; } // Never count replayed/out-of-order audio twice.
+            if start < *previous_end - 0.001 || start > *previous_end + 0.25 { pending.clear(); }
         }
-        if audio.len() >= 64_000 { matcher.pending.remove(label); }
+        append_live_profile_audio(pending, &samples[first..last]);
+        matcher.pending_end.insert(label.to_string(), end);
+        if pending.len() < 32_000 { continue; }
+        let audio = std::mem::take(pending); // Independent samples, never re-embed the same pending audio.
+        match matcher.models.embed(&audio).ok().and_then(normalized_vector) {
+            Some(vector) => push_match_evidence(matcher.evidence.entry(label.to_string()).or_default(), vector),
+            None => log::debug!("Named voice matching: unusable sample for {label}"),
+        }
     }
-    None
+    let vectors = matcher.evidence.get(label)?;
+    confirmed_match(vectors, &matcher.profiles).map(|profile| profile.name.clone())
 }
 
 fn append_live_profile_audio(pending: &mut Vec<f32>, samples: &[f32]) {
@@ -209,31 +213,14 @@ pub fn match_offline_speakers(track: &Path, segments: &[super::DiarizationSegmen
     if profiles.is_empty() { return Ok(HashMap::new()); }
     let audio = crate::audio::decoder::decode_audio_file(track)?.to_whisper_format();
     let mut models = DiarizationModels::load(&super::diarization_model_dir())?;
-    let mut vectors: HashMap<usize, Vec<Vec<f32>>> = HashMap::new();
-    for segment in segments {
-        let duration = segment.end - segment.start;
-        // Cross-track overlap with the local mic does not contaminate the
-        // separate system file. Only another remote channel makes it unsafe.
-        let remote_overlap = segments.iter().any(|other| other.speaker != segment.speaker
-            && other.start < segment.end && other.end > segment.start);
-        if remote_overlap || !(2.0..=15.0).contains(&duration) { continue; }
-        let entries = vectors.entry(segment.speaker).or_default();
-        if entries.len() >= MATCH_TURNS { continue; }
-        let first = (segment.start * 16_000.0) as usize;
-        let last = (segment.end * 16_000.0) as usize;
-        if first >= last || last > audio.len() { continue; }
-        if let Ok(vector) = models.embed(&audio[first..last]) {
-            if vector.len() == 128 { entries.push(vector); }
-        }
-    }
+    let rows: Vec<_> = segments.iter().map(|segment|
+        (format!("Speaker {}", segment.speaker), Some(segment.start as f64), Some(segment.end as f64))).collect();
+    let speakers: std::collections::BTreeSet<_> = segments.iter().map(|segment| segment.speaker).collect();
     let mut names = HashMap::new();
-    for (speaker, samples) in vectors {
-        if samples.len() < 2 { continue; }
-        let mut mean = vec![0.0f32; 128];
-        for vector in &samples {
-            for (target, value) in mean.iter_mut().zip(vector) { *target += *value; }
-        }
-        if let Some(profile) = best_match(&mean, &profiles) {
+    for speaker in speakers {
+        let windows = spread(&enrollment_windows(&rows, &format!("Speaker {speaker}")), MATCH_TURNS);
+        let vectors = embed_windows(&audio, &windows, &mut models)?;
+        if let Some(profile) = confirmed_match(&vectors, &profiles) {
             names.insert(speaker, profile.name.clone());
         }
     }
@@ -304,6 +291,34 @@ pub fn set_voice_profiles_consensus(value: bool) -> Result<(), String> {
     Ok(())
 }
 
+const MIN_MATCH_THRESHOLD: f32 = 0.35;
+const MAX_MATCH_THRESHOLD: f32 = 0.95;
+static MATCH_SCORE: OnceLock<AtomicU32> = OnceLock::new();
+fn valid_match_threshold(value: f32) -> bool {
+    value.is_finite() && (MIN_MATCH_THRESHOLD..=MAX_MATCH_THRESHOLD).contains(&value)
+}
+fn match_score() -> &'static AtomicU32 {
+    MATCH_SCORE.get_or_init(|| {
+        let value = std::fs::read_to_string(crate::paths::install_data_root().join("voice_profiles_match_threshold.txt"))
+            .ok().and_then(|text| text.trim().parse::<f32>().ok())
+            .filter(|value| valid_match_threshold(*value)).unwrap_or(MATCH_THRESHOLD);
+        AtomicU32::new(value.to_bits())
+    })
+}
+#[tauri::command]
+pub fn get_voice_profiles_match_threshold() -> f32 {
+    f32::from_bits(match_score().load(Ordering::Relaxed))
+}
+#[tauri::command]
+pub fn set_voice_profiles_match_threshold(value: f32) -> Result<(), String> {
+    if !valid_match_threshold(value) { return Err("Matching score must be between 0.35 and 0.95".into()); }
+    let file = crate::paths::install_data_root().join("voice_profiles_match_threshold.txt");
+    if let Some(parent) = file.parent() { std::fs::create_dir_all(parent).map_err(|error| error.to_string())?; }
+    std::fs::write(file, value.to_string()).map_err(|error| error.to_string())?;
+    match_score().store(value.to_bits(), Ordering::Relaxed);
+    Ok(())
+}
+
 /// Native ownership keeps enrollment alive after navigation. At most eight
 /// jobs may wait/run, with one enrollment at a time; capture never does inference.
 pub fn auto_save_named_voices<R: tauri::Runtime>(app: tauri::AppHandle<R>, pool: SqlitePool, meeting_id: String, speaker: Option<String>) {
@@ -332,7 +347,7 @@ pub fn auto_save_named_voices<R: tauri::Runtime>(app: tauri::AppHandle<R>, pool:
                 if load().map_err(|error| error.to_string())?.iter().any(|profile| profile.person_id == person_id) { continue; }
                 let _ = app.emit("voice-profile-auto-save-result", serde_json::json!({"name": label, "personId": person_id, "status": "learning"}));
                 let enrollment: Result<String, String> = async {
-                    let (_, name, share) = meeting_share_limit(&pool, &meeting_id, &label, 4).await.map_err(String::from)?;
+                    let (_, name, share) = meeting_share_limit(&pool, &meeting_id, &label, LEARN_TURNS).await.map_err(String::from)?;
                     store_shares(&person_id, &name, vec![share], false, true).map_err(String::from)?;
                     Ok(name)
                 }.await;
@@ -405,27 +420,114 @@ pub fn best_match<'a>(embedding: &[f32], profiles: &'a [VoiceProfile]) -> Option
 
 /// Experimental session consensus weights meetings equally, so one long or
 /// contaminated recording cannot win just by supplying more turns. At least
-/// two real meeting shares are required; legacy aggregates are not sessions.
+/// multiple real meeting shares use consensus; single-session profiles use their aggregate.
 fn best_match_with_mode<'a>(embedding: &[f32], profiles: &'a [VoiceProfile], consensus: bool) -> Option<&'a VoiceProfile> {
+    best_match_with_options(embedding, profiles, consensus, get_voice_profiles_match_threshold())
+}
+fn best_match_with_options<'a>(embedding: &[f32], profiles: &'a [VoiceProfile], consensus: bool, threshold: f32) -> Option<&'a VoiceProfile> {
     let mut ranked: Vec<(f32, &VoiceProfile)> = profiles.iter().filter_map(|profile| {
         let score = if consensus {
             let mut scores: Vec<f32> = profile.sources.iter()
                 .filter(|source| !source.meeting_id.is_empty() && source.turns >= 2)
                 .filter_map(|source| similarity(embedding, &source.sum))
                 .filter(|score| score.is_finite()).collect();
-            if scores.len() < 2 { return None; }
+            if scores.len() < 2 {
+                similarity(embedding, &profile.embedding)?
+            } else {
             scores.sort_by(f32::total_cmp);
             // Strict majority support, plus two independent sessions minimum.
-            if scores.iter().filter(|score| **score >= MATCH_THRESHOLD).count() < (scores.len() / 2 + 1).max(2) { return None; }
+            if scores.iter().filter(|score| **score >= threshold).count() < (scores.len() / 2 + 1).max(2) { return None; }
             let middle = scores.len() / 2;
             if scores.len() % 2 == 0 { (scores[middle - 1] + scores[middle]) / 2.0 } else { scores[middle] }
+            }
         } else { similarity(embedding, &profile.embedding)? };
         score.is_finite().then_some((score, profile))
     }).collect();
     ranked.sort_by(|a, b| b.0.total_cmp(&a.0));
     let (score, profile) = *ranked.first()?;
     let runner_up = ranked.get(1).map(|entry| entry.0).unwrap_or(-1.0);
-    (score >= MATCH_THRESHOLD && score - runner_up >= MATCH_MARGIN).then_some(profile)
+    (score >= threshold && score - runner_up >= MATCH_MARGIN).then_some(profile)
+}
+
+/// Bounded independent evidence shared by both live engines and post-call matching.
+pub fn push_match_evidence(vectors: &mut Vec<Vec<f32>>, vector: Vec<f32>) {
+    if vectors.len() >= MATCH_TURNS { vectors.remove(0); }
+    vectors.push(vector);
+}
+
+pub fn confirmed_match<'a>(vectors: &[Vec<f32>], profiles: &'a [VoiceProfile]) -> Option<&'a VoiceProfile> {
+    confirmed_match_with_mode(vectors, profiles, get_voice_profiles_consensus())
+}
+
+fn confirmed_match_with_mode<'a>(vectors: &[Vec<f32>], profiles: &'a [VoiceProfile], consensus: bool) -> Option<&'a VoiceProfile> {
+    if vectors.len() < 2 || vectors.iter().any(|vector| vector.len() != 128 || vector.iter().any(|value| !value.is_finite())) { return None; }
+    let threshold = get_voice_profiles_match_threshold();
+    // Uncertain samples abstain; conflicting confident identities still vote.
+    // Require two independent hits, a supermajority, and aggregate confirmation.
+    let votes: Vec<_> = vectors.iter().filter_map(|vector|
+        best_match_with_options(vector, profiles, consensus, threshold).map(|profile| (profile, vector))).collect();
+    let candidate = profiles.iter().max_by_key(|profile| votes.iter().filter(|(voter, _)| voter.person_id == profile.person_id).count())?;
+    let agreeing: Vec<_> = votes.iter().filter(|(profile, _)| profile.person_id == candidate.person_id).collect();
+    if agreeing.len() < 2 || agreeing.len() * 3 < votes.len() * 2 { return None; }
+    let mut mean = vec![0.0; 128];
+    for (_, vector) in agreeing { for (target, value) in mean.iter_mut().zip(vector.iter()) { *target += value; } }
+    best_match_with_options(&mean, profiles, consensus, threshold)
+        .filter(|profile| profile.person_id == candidate.person_id)
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PossibleVoiceMatch { pub person_id: String, pub name: String, pub score: f32 }
+
+/// Suggestions never relabel audio or train a profile. Only explicit UI acceptance does.
+pub fn possible_match(vectors: &[Vec<f32>], profiles: &[VoiceProfile]) -> Option<PossibleVoiceMatch> {
+    if vectors.len() < 2 { return None; }
+    let floor = (get_voice_profiles_match_threshold() - 0.15).max(MIN_MATCH_THRESHOLD);
+    let mut mean = vec![0.0; 128];
+    for vector in vectors {
+        if vector.len() != 128 || vector.iter().any(|value| !value.is_finite()) { return None; }
+        for (target, value) in mean.iter_mut().zip(vector) { *target += value; }
+    }
+    let mut ranked: Vec<_> = profiles.iter().filter_map(|profile| similarity(&mean, &profile.embedding).map(|score| (score, profile))).collect();
+    ranked.sort_by(|a,b| b.0.total_cmp(&a.0));
+    let (score, profile) = *ranked.first()?;
+    if score < floor || score - ranked.get(1).map(|entry| entry.0).unwrap_or(-1.0) < 0.04 { return None; }
+    // Two windows must support the same candidate; an evenly split mixed turn cannot suggest a name.
+    let supporting = vectors.iter().filter(|vector| best_match_with_options(vector, profiles, false, floor)
+        .is_some_and(|candidate| candidate.person_id == profile.person_id)).count();
+    if supporting < 2 { return None; }
+    Some(PossibleVoiceMatch { person_id: profile.person_id.clone(), name: profile.name.clone(), score })
+}
+
+#[tauri::command]
+pub async fn get_possible_voice_match(state: tauri::State<'_, crate::state::AppState>, meeting_id: Option<String>, speaker: String) -> Result<Option<PossibleVoiceMatch>, String> {
+    if !enabled() || !speaker.strip_prefix("Speaker ").is_some_and(|number| number.parse::<usize>().is_ok()) { return Ok(None); }
+    let Some(meeting_id) = meeting_id else {
+        if let Ok(guard) = LIVE_MATCHER.try_lock() {
+            if let Some(matcher) = guard.as_ref() {
+                return Ok(matcher.evidence.get(&speaker).and_then(|vectors| possible_match(vectors, &matcher.profiles)));
+            }
+        }
+        return Ok(super::online::possible_voice_match(&speaker));
+    };
+    static SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+    let _slot = SLOTS.try_acquire().map_err(|_| "Voice suggestions are busy. Try again shortly.".to_string())?;
+    // One inference owner shared with enrollment. Navigating away cannot create unbounded parallel model work.
+    let _worker = ENROLL_WORKER.lock().await;
+    let pool = state.db_manager.pool();
+    let folder: Option<String> = sqlx::query_scalar("SELECT folder_path FROM meetings WHERE id = ?")
+        .bind(&meeting_id).fetch_optional(pool).await.map_err(|error| error.to_string())?.flatten();
+    let Some(folder) = folder else { return Ok(None); };
+    let track = PathBuf::from(folder).join("system.mp4");
+    if !track.is_file() { return Ok(None); }
+    let rows: Vec<(String, Option<f64>, Option<f64>)> = sqlx::query_as("SELECT COALESCE(speaker, ''), audio_start_time, audio_end_time FROM transcripts WHERE meeting_id = ? ORDER BY audio_start_time")
+        .bind(&meeting_id).fetch_all(pool).await.map_err(|error| error.to_string())?;
+    let windows = spread(&enrollment_windows(&rows, &speaker), MATCH_TURNS);
+    if windows.len() < 2 { return Ok(None); }
+    tokio::task::spawn_blocking(move || {
+        let profiles = load_for_matching().map_err(|error| error.to_string())?;
+        let vectors = embed_turns(&track, &windows).map_err(|error| error.to_string())?;
+        Ok(possible_match(&vectors, &profiles))
+    }).await.map_err(|error| error.to_string())?
 }
 
 /// Why a voice could not be learned. `Unavailable` holds for every meeting
@@ -910,6 +1012,30 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Requires explicit local recordings, profiles and WeSpeaker models; read-only"]
+    fn voice_matching_recording_diagnostic() {
+        #[derive(Deserialize)]
+        struct Case { track: PathBuf, label: String, ranges: Vec<(f64, f64)> }
+        let cases: Vec<Case> = serde_json::from_slice(&std::fs::read(std::env::var("MEETILY_MATCH_CASES").unwrap()).unwrap()).unwrap();
+        let profiles: Vec<VoiceProfile> = serde_json::from_slice(&std::fs::read(std::env::var("MEETILY_MATCH_PROFILES").unwrap()).unwrap()).unwrap();
+        let mut models = DiarizationModels::load(&PathBuf::from(std::env::var("MEETILY_MATCH_MODELS").unwrap())).unwrap();
+        for case in cases {
+            let audio = crate::audio::decoder::decode_audio_file(&case.track).unwrap().to_whisper_format();
+            let rows: Vec<_> = case.ranges.iter().map(|(a,b)| row(&case.label, *a, *b)).collect();
+            let windows = spread(&enrollment_windows(&rows, &case.label), MATCH_TURNS);
+            let mut evidence = Vec::new();
+            for (start,end) in windows {
+                let vector = models.embed(&audio[(start*16000.0) as usize..(end*16000.0) as usize]).unwrap();
+                evidence.push(vector.clone());
+                let mut scores: Vec<_> = profiles.iter().filter_map(|p| similarity(&vector,&p.embedding).map(|score| (score,p))).collect();
+                scores.sort_by(|a,b| b.0.total_cmp(&a.0));
+                println!("case {} {:.2}-{:.2} top={:.3} runner_up={:.3} default={:?} consensus={:?}", case.label, start,end,scores[0].0,scores[1].0,best_match_with_mode(&vector,&profiles,false).map(|p|p.name.as_str()),best_match_with_mode(&vector,&profiles,true).map(|p|p.name.as_str()));
+            }
+            println!("EVIDENCE {} {} samples={} default={:?} consensus={:?}", case.label, case.track.file_name().unwrap().to_string_lossy(), evidence.len(), confirmed_match_with_mode(&evidence,&profiles,false).map(|p|p.name.as_str()),confirmed_match_with_mode(&evidence,&profiles,true).map(|p|p.name.as_str()));
+        }
+    }
+
+    #[test]
     fn short_live_chunks_accumulate_to_embedding_length_with_bounded_memory() {
         let mut pending = Vec::new();
         append_live_profile_audio(&mut pending, &vec![0.2; 20_000]);
@@ -919,6 +1045,42 @@ mod tests {
         append_live_profile_audio(&mut pending, &vec![0.4; 50_000]);
         assert_eq!(pending.len(), 64_000);
         assert_eq!(pending[0], 0.3);
+    }
+
+    #[test]
+    fn tentative_matches_need_repeated_evidence_and_reject_mixed_identity() {
+        let alice = voice("a", "Alice");
+        let mut query = vec![0.0; 128]; query[0] = 0.48; query[2] = (1.0_f32 - 0.48*0.48).sqrt();
+        assert!(best_match_with_options(&query, &[alice.clone()], false, 0.55).is_none());
+        assert!(possible_match(&[query.clone()], &[alice.clone()]).is_none());
+        assert_eq!(possible_match(&[query.clone(), query], &[alice.clone()]).unwrap().name, "Alice");
+        let mut bob = voice("b", "Bob"); bob.embedding[0] = 0.0; bob.embedding[1] = 1.0;
+        assert!(possible_match(&[alice.embedding.clone(), bob.embedding.clone()], &[alice,bob]).is_none());
+    }
+
+    #[test]
+    fn threshold_validation_and_stricter_matching() {
+        for value in [f32::NAN, f32::INFINITY, 0.34, 0.96] { assert!(!valid_match_threshold(value)); }
+        for value in [0.35, 0.55, 0.95] { assert!(valid_match_threshold(value)); }
+        let profile = voice("p1", "Alice");
+        let mut query = vec![0.0; 128]; query[0] = 0.6; query[1] = 0.8;
+        assert!(best_match_with_options(&query, &[profile.clone()], false, 0.55).is_some());
+        assert!(best_match_with_options(&query, &[profile], false, 0.80).is_none());
+    }
+
+    #[test]
+    fn repeated_matching_rejects_mixed_voices_and_bounds_evidence() {
+        let alice = voice("p1", "Alice");
+        let mut bob = voice("p2", "Bob"); bob.embedding[0] = 0.0; bob.embedding[1] = 1.0;
+        let profiles = vec![alice.clone(), bob.clone()];
+        assert!(confirmed_match_with_mode(&[alice.embedding.clone()], &profiles, false).is_none());
+        assert!(confirmed_match_with_mode(&[alice.embedding.clone(), bob.embedding.clone()], &profiles, false).is_none());
+        assert_eq!(confirmed_match_with_mode(&[alice.embedding.clone(), alice.embedding.clone()], &profiles, false).unwrap().name, "Alice");
+        let mut uncertain = vec![0.0; 128]; uncertain[2] = 1.0;
+        assert_eq!(confirmed_match_with_mode(&[alice.embedding.clone(), uncertain, alice.embedding.clone()], &profiles, false).unwrap().name, "Alice");
+        let mut evidence = vec![];
+        for _ in 0..20 { push_match_evidence(&mut evidence, alice.embedding.clone()); }
+        assert_eq!(evidence.len(), MATCH_TURNS);
     }
 
     #[test]
@@ -947,7 +1109,7 @@ mod tests {
     fn consensus_requires_independent_meeting_support_and_margin() {
         let mut vector = vec![0.0; 128]; vector[0] = 1.0;
         let mut alice = voice("p1", "Alice");
-        assert!(best_match_with_mode(&vector, &[alice.clone()], true).is_none());
+        assert_eq!(best_match_with_mode(&vector, &[alice.clone()], true).unwrap().name, "Alice");
         alice.sources = vec![share("one", 0, 12), share("two", 1, 2)];
         assert!(best_match_with_mode(&vector, &[alice.clone()], true).is_none());
         alice.sources.push(share("three", 0, 2));

@@ -11,6 +11,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowUpRight, CheckCircle2, Circle, Fingerprint, GitMerge, UserCheck, UserRoundSearch } from 'lucide-react';
 import { toast } from 'sonner';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
+import { PossibleVoiceMatch } from '@/components/people/PossibleVoiceMatch';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { GroupChip } from '@/components/groups/GroupBits';
@@ -141,6 +142,8 @@ export function PersonCard({
                 )}
               </div>
             </div>
+
+            {!contact && !isYou && <PossibleVoiceMatch speaker={speaker} meetingId={meetingId} review onAccept={() => { onClose(); onIdentify(speaker, target.segmentId); }} />}
 
             {canLearnVoice && voice && (
               <p className="flex items-center gap-1.5 px-4 pb-3 text-[11px] text-af-text-3">

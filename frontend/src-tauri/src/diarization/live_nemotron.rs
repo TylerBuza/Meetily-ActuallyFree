@@ -26,6 +26,29 @@ impl Timeline {
         self.segments.retain(|s| s.end >= oldest);
     }
 
+    fn clear_ranges(&self, speaker: usize, start: u64, end: u64) -> Vec<(u64, u64)> {
+        if self.failed || end <= start || start < self.ready_until.saturating_sub(HISTORY) { return Vec::new(); }
+        let end = end.min(self.ready_until);
+        let mut own: Vec<_> = self.segments.iter().filter(|segment| segment.speaker_id == speaker)
+            .map(|segment| (segment.start.max(start), segment.end.min(end))).filter(|(a,b)| b>a).collect();
+        own.sort_unstable();
+        let mut merged: Vec<(u64,u64)> = Vec::new();
+        for (a,b) in own {
+            if let Some(last) = merged.last_mut().filter(|last| a <= last.1) { last.1 = last.1.max(b); }
+            else { merged.push((a,b)); }
+        }
+        for other in self.segments.iter().filter(|segment| segment.speaker_id != speaker) {
+            merged = merged.into_iter().flat_map(|(a,b)| {
+                if other.end <= a || other.start >= b { return vec![(a,b)]; }
+                let mut pieces = Vec::new();
+                if a < other.start { pieces.push((a,other.start.min(b))); }
+                if other.end < b { pieces.push((other.end.max(a),b)); }
+                pieces
+            }).collect();
+        }
+        merged
+    }
+
     fn label(&self, start: u64, end: u64) -> Option<String> {
         if self.failed || end <= start || start < self.ready_until.saturating_sub(HISTORY) { return None; }
         let mut coverage = [0u64; 8];
@@ -152,6 +175,18 @@ pub fn label(start_seconds: f64, duration: f64) -> Option<String> {
     state.label(start, end)
 }
 
+/// Recording-relative 16 kHz sample offsets for exclusive activity of this
+/// channel. No inference or lookahead wait here: label() already performed it.
+pub fn clear_audio_ranges(label: &str, start_seconds: f64, sample_count: usize) -> Vec<(usize, usize)> {
+    let Some(speaker) = label.strip_prefix("Speaker ").and_then(|value| value.parse::<usize>().ok()).and_then(|value| value.checked_sub(1)) else { return Vec::new(); };
+    if speaker >= 8 || !start_seconds.is_finite() || start_seconds < 0.0 { return Vec::new(); }
+    let Some(shared) = SESSION.lock().ok().and_then(|state| state.as_ref().map(|session| session.shared.clone())) else { return Vec::new(); };
+    let start = (start_seconds * RATE as f64).round() as u64;
+    let Ok(state) = shared.0.lock() else { return Vec::new(); };
+    state.clear_ranges(speaker, start, start.saturating_add(sample_count as u64)).into_iter()
+        .map(|(a,b)| ((a-start) as usize,(b-start) as usize)).collect()
+}
+
 pub fn stop() {
     let session = SESSION.lock().ok().and_then(|mut s| s.take());
     if let Some(mut session) = session {
@@ -190,6 +225,17 @@ mod tests {
     fn segment(start: u64, end: u64, speaker_id: usize) -> StreamingSpeakerSegment {
         StreamingSpeakerSegment { start, end, speaker_id }
     }
+    #[test]
+    fn voice_evidence_excludes_other_speakers_and_preserves_original_offsets() {
+        let mut timeline = Timeline::default();
+        timeline.append(vec![segment(0, RATE * 3, 0), segment(RATE * 3, RATE * 8, 0),
+            segment(RATE * 2, RATE * 4, 1), segment(RATE * 7, RATE * 9, 1)], RATE * 10);
+        assert_eq!(timeline.clear_ranges(0,0,RATE * 10), vec![(0,RATE * 2),(RATE * 4,RATE * 7)]);
+        assert_eq!(timeline.clear_ranges(0,RATE,RATE * 5), vec![(RATE,RATE * 2),(RATE * 4,RATE * 5)]);
+        timeline.failed = true;
+        assert!(timeline.clear_ranges(0,0,RATE * 10).is_empty());
+    }
+
     #[test]
     fn labels_follow_overlap_not_the_last_detected_speaker() {
         let mut timeline = Timeline::default();

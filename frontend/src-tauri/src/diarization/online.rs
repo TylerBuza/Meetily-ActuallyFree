@@ -66,6 +66,7 @@ struct OnlineDiarizer {
     profiles: Vec<super::voice_profiles::VoiceProfile>,
     /// Set from a verified vector match, never from a meeting-local channel number.
     names: Vec<Option<String>>,
+    profile_evidence: Vec<Vec<Vec<f32>>>,
 }
 
 impl OnlineDiarizer {
@@ -95,6 +96,14 @@ impl OnlineDiarizer {
 static ONLINE: Mutex<Option<OnlineDiarizer>> = Mutex::new(None);
 
 /// Whether live speaker identification is currently active.
+pub fn possible_voice_match(label: &str) -> Option<super::voice_profiles::PossibleVoiceMatch> {
+    let index = label.strip_prefix("Speaker ")?.parse::<usize>().ok()?.checked_sub(1)?;
+    let guard = ONLINE.try_lock().ok()?;
+    let diarizer = guard.as_ref()?;
+    if diarizer.user_speaker() == Some(index) { return None; }
+    super::voice_profiles::possible_match(diarizer.profile_evidence.get(index)?, &diarizer.profiles)
+}
+
 pub fn is_active() -> bool {
     super::live_nemotron::active() || ONLINE.lock().map(|g| g.is_some()).unwrap_or(false)
 }
@@ -144,6 +153,7 @@ pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<()> {
         last_system_speaker: None,
         last_mic_speaker: has_enrolled.then_some(0),
         profiles,
+        profile_evidence: if has_enrolled { vec![Vec::new()] } else { Vec::new() },
         names: if has_enrolled { vec![None] } else { Vec::new() },
     });
     log::info!(
@@ -221,6 +231,8 @@ pub fn assign_speaker(samples: &[f32], mic_dominant: bool) -> Option<LiveSpeaker
         }
     };
 
+    let profile_embedding = (!mic_dominant && samples.len() >= 32_000).then(|| embedding.clone());
+
     // Closest known speaker by cosine similarity (embeddings are unit-length).
     // Prefer matching remote segments to non-user centroids first so the local
     // voice cluster doesn't absorb everyone else.
@@ -263,6 +275,7 @@ pub fn assign_speaker(samples: &[f32], mic_dominant: bool) -> Option<LiveSpeaker
         d.counts.push(1.0);
         d.mic_counts.push(0.0);
         d.names.push(None);
+        d.profile_evidence.push(Vec::new());
         0
     } else if (1.0 - best_sim) <= threshold || d.centroids.len() >= MAX_LIVE_SPEAKERS {
         // Fold into the matched speaker as an incremental mean, then restore
@@ -284,6 +297,7 @@ pub fn assign_speaker(samples: &[f32], mic_dominant: bool) -> Option<LiveSpeaker
         d.counts.push(1.0);
         d.mic_counts.push(0.0);
         d.names.push(None);
+        d.profile_evidence.push(Vec::new());
         log::info!(
             "🧑‍🤝‍🧑 Live diarization: new speaker {} detected (path={})",
             d.centroids.len(),
@@ -301,8 +315,9 @@ pub fn assign_speaker(samples: &[f32], mic_dominant: bool) -> Option<LiveSpeaker
     }
 
     d.last_speaker = speaker;
-    if !mic_dominant {
-        d.names[speaker] = super::voice_profiles::best_match(&d.centroids[speaker], &d.profiles)
+    if let Some(vector) = profile_embedding {
+        super::voice_profiles::push_match_evidence(&mut d.profile_evidence[speaker], vector);
+        d.names[speaker] = super::voice_profiles::confirmed_match(&d.profile_evidence[speaker], &d.profiles)
             .map(|profile| profile.name.clone());
     }
     let user = d.user_speaker();

@@ -103,8 +103,8 @@ is the mean of all their turns; it requires at least two successful embeddings. 
 does no inference. Profiles are saved in local app data, can be listed and
 deleted in Voice Profiles, and matching is disabled by default.
 
-On a future Pyannote live session, the remote centroid must clear cosine 0.80
-and exceed the next profile by 0.08 before a name is assigned. For Nemotron
+Originally a future Pyannote live session required a remote centroid at cosine
+0.80 with a 0.08 margin. The October matching update below replaces this policy. For Nemotron
 live sessions, a separate WeSpeaker matcher compares 2–15 second system-audio
 speech turns on the transcription worker and caches a verified name for that
 meeting-local channel. Nemotron still owns diarization; its channel number is
@@ -211,7 +211,7 @@ Enrollment now joins adjacent same-name saved ranges (up to a 250 ms quiet gap),
 subtracts other remote voices, and makes independent 2–4 second audio windows.
 Overlapping microphone rows do not disqualify the separate system track. Invalid
 ranges and duplicate timing do not become biometric evidence. First automatic
-profiles use up to four windows spread across available speech; manual learning
+profiles originally used up to four windows spread across available speech; manual learning
 uses its twelve-window limit and existing profiles are never overwritten by
 automatic saving. At least two successful embeddings are still required.
 
@@ -248,7 +248,7 @@ choices. Clean/Verbatim remains available in the meeting player.
 
 Learn more turns refreshes that profile from its latest twelve linked meetings;
 Learn all profiles queues the same refresh for each saved profile (up to fifty).
-First automatic enrollment uses four windows. Manual refresh uses at most twelve
+First automatic enrollment uses up to twelve windows. Manual refresh uses at most twelve
 independent 2–4 second clear windows per meeting, spread across the recording,
 for a maximum of 144 windows per rebuilt profile. Repeated meeting audio replaces
 its share, rather than increasing counts. Without new usable recordings a refresh
@@ -268,14 +268,26 @@ profiles clears this cache. Valid embeddings must have 128 finite elements and a
 nonzero norm, and each new vector is normalized before aggregation. Existing
 transactional profile-file replacement and per-meeting shares are retained.
 
-Experimental consensus compares a query separately to each real meeting's mean.
-At least two meeting shares with two successful windows each must support cosine
-0.80, a strict majority must agree, and median similarity must beat the next
-candidate by 0.08. Sessions have equal weight; a long contaminated meeting does
-not acquire more voting weight. Legacy aggregate-only and single-meeting profiles
-remain unnamed in this mode. The default aggregate matcher remains available by
-switching the experimental option off. This supplements the selected diarizer;
-it does not substitute an engine or infer identity from speaker numbers.
+Voice matching has a native-persisted score threshold in Voice Profiles (0.35–0.95,
+default 0.55). The getter/setter validate finite values and update an atomic cached
+value only after a successful file write. Settings provides a slider, numeric input,
+and explicit Save score action; the setting applies to both matching modes.
+Read-only qualification of the supplied recordings found genuine post-LDA scores
+around 0.56–0.73, which the former 0.80 threshold rejected. These two voices do not
+establish a universal accuracy or false-acceptance rate.
+
+Both modes require at least two independent clear speech windows, two-thirds
+agreement among confident windows (uncertain samples abstain), and a 0.12 margin over competing profiles. Post-call matching samples
+up to eight 2–4 second windows after excluding overlapping remote speech. Live
+Nemotron accumulates contiguous exclusive audio, rejects duplicate intervals,
+and keeps bounded per-channel evidence instead of permanently caching one name.
+Pyannote uses repeated clear embeddings of at least two seconds. Shorter isolated
+Pyannote turns can remain unnamed. Capture does not run this inference.
+Experimental consensus compares each real meeting mean with equal session weight,
+requiring strict majority support and median similarity. Single-meeting and legacy
+profiles fall back to their aggregate, still requiring repeated query confirmation.
+Mixed-speaker diarization channels can remain anonymous: profile matching does not
+repair an incorrectly clustered channel or infer identity from its number.
 
 Research rationale: [Pelecanos et al., Odyssey 2004](https://www.isca-archive.org/odyssey_2004/pelecanos04_odyssey.html)
 shows enrollment duration changes score distributions; it does not prescribe a
@@ -294,4 +306,35 @@ Qualification uses synthetic native vectors/timing fixtures for consensus,
 ambiguity rejection, normalized-vector validation, sample bounds and share
 replacement; isolated frontend tests cover defaults, native persistence and
 individual/bulk UI commands. No real model/audio enrollment or recognition
-benchmark was run for this change; improved recognition quality remains unproven.
+benchmark was run for the original promotion. Subsequent read-only recording qualification is documented below.
+
+The ignored `voice_matching_recording_diagnostic` accepts external model, profile,
+and recording-case paths. It reads audio/profile data without saving or modifying
+profiles and logs scores and identities, never vectors or transcript text. Private
+fixtures stay outside the repository.
+
+Possible matches: `get_possible_voice_match` reads the current live Nemotron or
+Pyannote clear-window history, or samples a saved meeting's separate system track
+on a blocking worker. Saved inference shares the enrollment model owner, with at
+most two active/waiting suggestion requests. Suggestions need two supporting
+windows, a score floor 0.15 below the configured automatic threshold (minimum
+0.35), and separation from competing profiles. They ignore session consensus for
+candidate discovery. They are advisory and never relabel, link or train by themselves.
+The live speaker panel and saved speaker popover show “Maybe [name]?”; Review match
+opens speaker identification, where Match this person uses the existing all-lines
+or single-line rename flow. Anonymous combined labels and microphone labels are
+never guessed. Closing the UI ignores completed results; no audio is cached in JS.
+Live suggestions poll existing evidence every three seconds with one request per
+visible speaker; saved suggestions compute only when identification UI is opened.
+Imported recordings lacking a separate system track have no saved suggestion.
+
+Final qualification: 36 isolated frontend test files and TypeScript checking passed;
+19 synthetic native profile tests plus one exclusive-timeline test passed. The
+explicitly enabled real-audio diagnostic loaded the installed WeSpeaker models
+and existing profiles and sampled the three user-supplied recordings read-only.
+Both modes recognized the two separate channels in the second recording and the
+clear single-person channel in the third; the third recording's mixed two-voice
+channel remained unnamed. The first recording's manually named host channel also
+contained windows matching the other voice and correctly lacked a confirmed name.
+This is a narrow fixture check, not a diarization/recognition accuracy benchmark,
+and does not establish runtime capture quality or mutate installed user data.

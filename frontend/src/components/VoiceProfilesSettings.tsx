@@ -11,6 +11,39 @@ import { useVoiceProfiles } from '@/hooks/useVoiceProfiles';
 import { useLabs } from '@/hooks/useLabs';
 import { describeVoiceError, describeVoiceSource, forgetVoice, queueVoiceLearning } from '@/lib/voice-profiles';
 import { FeatureSettingsSwitch } from '@/components/FeatureSettingsSwitch';
+function VoiceMatchThreshold() {
+  const [saved, setSaved] = useState<number | null>(null);
+  const [value, setValue] = useState('0.55');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let disposed = false;
+    void invoke<number>('get_voice_profiles_match_threshold').then(score => {
+      if (!disposed) { setSaved(score); setValue(score.toFixed(2)); }
+    }).catch(reason => { if (!disposed) setError(describeVoiceError(reason)); });
+    return () => { disposed = true; };
+  }, []);
+  const score = Number(value);
+  const valid = value.trim() !== '' && Number.isFinite(score) && score >= 0.35 && score <= 0.95;
+  const save = async () => {
+    if (!valid || busy || saved === null) return;
+    setBusy(true); setError('');
+    try { await invoke('set_voice_profiles_match_threshold', { value: score }); setSaved(score); }
+    catch (reason) { setError(describeVoiceError(reason)); }
+    finally { setBusy(false); }
+  };
+  return <section className="rounded-2xl border border-af-border bg-af-panel-2/40 p-5">
+    <label htmlFor="voice-match-score" className="text-sm font-semibold">Voice matching score threshold</label>
+    <p className="my-2 text-xs text-af-text-3">Higher scores make matching stricter. Lower scores may confuse similar voices. Default: 0.55. Repeated clear speech and a margin over other profiles are still required.</p>
+    <div className="flex items-center gap-3">
+      <input aria-label="Voice matching score slider" type="range" min="0.35" max="0.95" step="0.01" disabled={saved === null || busy} value={valid ? score : saved ?? 0.55} onChange={event => setValue(event.target.value)} className="min-w-0 flex-1" />
+      <input id="voice-match-score" type="number" min="0.35" max="0.95" step="0.01" disabled={saved === null || busy} value={value} onChange={event => setValue(event.target.value)} className="w-20 rounded border border-af-border bg-af-panel px-2 py-1" />
+      <Button size="sm" disabled={!valid || saved === null || score === saved || busy} onClick={() => void save()}>Save score</Button>
+    </div>
+    {error && <p role="alert" className="mt-2 text-xs text-af-danger">{error}</p>}
+  </section>;
+}
+
 /** The learned voices, each linked to its contact. */
 function LearnedVoices() {
   const profiles = useVoiceProfiles();
@@ -110,8 +143,9 @@ function LearnedVoices() {
 export function VoiceProfilesSettings() {
   return <div className="space-y-5">
     <FeatureSettingsSwitch feature="voiceProfiles" title="Recognize saved voices" description="Learn named contacts from clear recorded call audio, then suggest their names when speakers are identified." />
-    <FeatureSettingsSwitch feature="autoSaveVoiceProfiles" title="Automatically save newly named voices" description="Save the first profile after you name a speaker. Requires saved call audio and speaker models; existing profiles are kept." />
-    <FeatureSettingsSwitch feature="voiceConsensus" title="Consensus voice matching (experimental)" description="Compare against separate meeting samples and require agreement across at least two meetings. This can reduce uncertain matches but may leave more speakers unnamed. Off by default; learn from two meetings before enabling." />
+    <FeatureSettingsSwitch feature="autoSaveVoiceProfiles" title="Automatically save newly named voices" description="Save up to 12 clear speech samples after you name a new speaker. Requires saved call audio and speaker models; existing profiles are kept." />
+    <FeatureSettingsSwitch feature="voiceConsensus" title="Consensus voice matching (experimental)" description="Use separate meeting samples when available, with repeated clear-speech confirmation. Single-meeting profiles can also match. This may leave uncertain speakers unnamed. Off by default." />
+    <VoiceMatchThreshold />
     <section className="rounded-2xl border border-af-border bg-af-panel-2/40 p-5"><h3 className="mb-3 text-sm font-semibold">Saved voices</h3><LearnedVoices /></section>
   </div>;
 }

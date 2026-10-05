@@ -13,6 +13,7 @@ import { Hint } from '@/components/ui/tooltip';
 import { NotesEditor, type NotesContent } from '@/components/editor/NotesEditor';
 import { MeetingImages } from '@/components/meeting/MeetingImages';
 import { ChatThread } from '@/components/chat/ChatThread';
+import { PossibleVoiceMatch } from '@/components/people/PossibleVoiceMatch';
 import { useUserName } from '@/hooks/useUserName';
 import { displaySpeaker, isUserSpeaker, speakerDot, speakerKey } from '@/utils/speakerUtils';
 import { buildLiveContext, lineAt, type LiveLine } from '@/lib/live-context';
@@ -89,6 +90,7 @@ function SpeakersTab({
                   </span>
                 </span>
               </button>
+              {!you && <PossibleVoiceMatch speaker={speaker.name} review onAccept={() => onIdentify(speaker.name)} />}
               {!you && (
                 <Hint label="This is me">
                   <button

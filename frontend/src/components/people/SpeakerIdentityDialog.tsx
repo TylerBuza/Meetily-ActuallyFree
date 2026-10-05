@@ -13,6 +13,7 @@ import { GitMerge, Unlink, UserPlus, UserRound } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
+import { PossibleVoiceMatch } from '@/components/people/PossibleVoiceMatch';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
@@ -141,6 +142,8 @@ export function SpeakerIdentityDialog({
           </DialogTitle>
           <DialogDescription>Pick a contact, type a new name, or merge with another voice.</DialogDescription>
         </div>
+
+        {open && <PossibleVoiceMatch speaker={current} meetingId={meetingId} disabled={saving} onAccept={name => void apply(name)} />}
 
         {components.length > 1 && (
           <div className="px-5 pb-3">

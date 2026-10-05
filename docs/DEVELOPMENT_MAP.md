@@ -528,3 +528,12 @@ refresh selects twelve windows per meeting across twelve recent meetings, replac
 repeated shares and validates normalized embeddings. See the linked
 [voice-profile feature note](LABS_MACWHISPER_FEATURES.md#voice-profiles-settings-and-bounded-learning-october-2026)
 for research, worker lifetimes, interfaces, tests, legacy behavior and accuracy limits.
+
+Voice matching score is persisted natively via `get/set_voice_profiles_match_threshold`
+and edited in Voice Profiles. Both matchers require repeated clear-window evidence;
+automatic first enrollment now shares the twelve-window budget. The linked voice
+feature note documents sample exclusion, consensus fallback and diagnostic limits.
+
+Tentative lower-score candidates use `get_possible_voice_match` and the shared
+`PossibleVoiceMatch.tsx` live/saved UI. Only explicit acceptance enters the existing
+speaker rename flow; the voice feature note records bounds and unavailable tracks.

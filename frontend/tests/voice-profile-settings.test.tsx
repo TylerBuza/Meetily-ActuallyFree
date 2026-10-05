@@ -4,9 +4,12 @@ import { afterEach, expect, mock, test } from 'bun:test';
 const calls: Array<[string, any]> = [];
 let receive: (event: { payload: { status: string } }) => void;
 let ready = true;
+let rejectScore = false;
 const profiles = [{ person_id: 'alice', name: 'Alice', samples: 4, meetings: 1 }, { person_id: 'bob', name: 'Bob', samples: 8, meetings: 2 }];
 mock.module('@tauri-apps/api/core', () => ({ invoke: async (command: string, args: any) => {
   calls.push([command, args]);
+  if (command === 'get_voice_profiles_match_threshold') return 0.55;
+  if (command === 'set_voice_profiles_match_threshold' && rejectScore) throw new Error('Disk unavailable');
   if (command === 'diarization_get_status') return { pyannote_available: ready };
   if (command === 'get_voice_profile_learning_busy') return false;
   return null;
@@ -21,7 +24,7 @@ mock.module('next/link', () => ({ default: ({ children, ...props }: any) => <a {
 mock.module('sonner', () => ({ toast: { success: () => {}, error: () => {} } }));
 const { VoiceProfilesSettings } = await import('../src/components/VoiceProfilesSettings');
 let root: ReactTestRenderer;
-afterEach(async () => { await act(async () => root?.unmount()); calls.length = 0; ready = true; });
+afterEach(async () => { await act(async () => root?.unmount()); calls.length = 0; ready = true; rejectScore = false; });
 
 test('individual and bulk learning use native jobs and wait for completion', async () => {
   await act(async () => { root = create(<VoiceProfilesSettings />); });
@@ -41,4 +44,22 @@ test('missing speaker models disable learning and provide setup guidance', async
   await act(async () => { root = create(<VoiceProfilesSettings />); });
   expect(root.root.findAllByType('button').filter(button => String(button.props.children).startsWith('Learn')).every(button => button.props.disabled)).toBe(true);
   expect(root.root.findAllByType('a').some(link => link.props.href === '/settings?section=transcription')).toBe(true);
+});
+
+test('matching threshold loads, validates, saves, and reports failed persistence', async () => {
+  await act(async () => { root = create(<VoiceProfilesSettings />); });
+  const input = () => root.root.findByProps({ id: 'voice-match-score' });
+  const save = () => root.root.findAllByType('button').find(button => button.props.children === 'Save score')!;
+  expect(input().props.value).toBe('0.55');
+  await act(async () => input().props.onChange({ target: { value: '0.2' } }));
+  expect(save().props.disabled).toBe(true);
+  await act(async () => input().props.onChange({ target: { value: '0.65' } }));
+  await act(async () => save().props.onClick());
+  expect(calls).toContainEqual(['set_voice_profiles_match_threshold', { value: 0.65 }]);
+  expect(save().props.disabled).toBe(true);
+  rejectScore = true;
+  await act(async () => input().props.onChange({ target: { value: '0.70' } }));
+  await act(async () => save().props.onClick());
+  expect(root.root.findByProps({ role: 'alert' }).props.children).toBe('Disk unavailable');
+  expect(save().props.disabled).toBe(false);
 });

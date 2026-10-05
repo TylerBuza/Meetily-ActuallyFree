@@ -409,7 +409,7 @@ pub fn start_transcription_task<R: Runtime>(
                                     chunk_source = tokio::task::spawn_blocking(move || {
                                         let label = crate::diarization::live_nemotron::label(chunk_timestamp, chunk_duration)?;
                                         let name = profile_samples.as_deref()
-                                            .and_then(|samples| crate::diarization::voice_profiles::name_live_nemotron_turn(&label, samples));
+                                            .and_then(|samples| crate::diarization::voice_profiles::name_live_nemotron_turn(&label, samples, chunk_timestamp));
                                         Some(name.unwrap_or(label))
                                     }).await.ok().flatten().unwrap_or_else(|| "Guest".into());
                                 }
