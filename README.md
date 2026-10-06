@@ -26,7 +26,7 @@ speaker-aware transcripts at the center of recording, notes, and follow-up.
   and summaries in one workspace. No account or paid tier required.
 
 [Download Windows](https://github.com/TylerBuza/Meetily-ActuallyFree/releases/latest)
-· [macOS Apple Silicon preview](https://github.com/TylerBuza/Meetily-ActuallyFree/releases/tag/v0.2.20-macos)
+· [macOS Apple Silicon preview](https://github.com/TylerBuza/Meetily-ActuallyFree/releases/tag/v0.2.21-macos)
 · [Release notes](https://github.com/TylerBuza/Meetily-ActuallyFree/releases)
 · [Report an issue](https://github.com/TylerBuza/Meetily-ActuallyFree/issues)
 
@@ -174,7 +174,7 @@ checksums; the Windows updater payload has a separate cryptographic signature.
 <summary><strong>macOS Apple Silicon preview setup</strong></summary>
 
 1. Download the Apple Silicon `.dmg` from the
-[macOS release](https://github.com/TylerBuza/Meetily-ActuallyFree/releases/tag/v0.2.20-macos).
+[macOS release](https://github.com/TylerBuza/Meetily-ActuallyFree/releases/tag/v0.2.21-macos).
 2. Open the DMG and drag **Meetily - Actually Free** into Applications.
 3. Grant microphone and Audio Capture permissions when prompted.
 

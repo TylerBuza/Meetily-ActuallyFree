@@ -5,6 +5,13 @@ post-call ownership/cancellation; #22 Linux capture; #38 remaining features;
 #27 Markdown export; #10 vocabulary; #8 ROCm; #12 superseded permission probe.
 
 This note tracks source integration and qualification, not a published release.
+Update: macOS-only preview `v0.2.21-macos` is now published from `5f37f2a`.
+Windows publication is on hold at the user's request; v0.2.20 remains Latest.
+Mac candidate `37490748085`, publication `37492451509`, and public-download
+smoke test `37492566726` passed, including two launches of the published app.
+The immutable DMG SHA-256 is
+`705093a9bd4950726fd14a6429d94af6d89a19ead33d5d04d187f68c2bc5d4bf`.
+This is CI qualification, not physical-device recording confirmation of #42.
 Starting point: main `162dd7c`, Windows v0.2.20.
 Integrated source: `9d196677a2a35eefe11110502c206e1ba7a6d8e7`, pushed to main.
 PRs #8/#10/#27 were closed as manually incorporated, preserving authorship.
