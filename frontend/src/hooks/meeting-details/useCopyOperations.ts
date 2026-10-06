@@ -112,7 +112,7 @@ export function useCopyOperations({ meeting, meetingTitle, aiSummary }: UseCopyO
       try {
         // Fetch once for both Markdown frontmatter and transcript content. Other
         // formats keep their existing rendering and do not receive wikilinks.
-        const rows = format === 'md' ? await allTranscripts(meeting.id) : undefined;
+        const rows = format === 'markdown' ? await allTranscripts(meeting.id) : undefined;
         const sections: Array<[string, string]> = [];
         if (content !== 'transcript') {
           const body = summaryBody();
@@ -123,7 +123,7 @@ export function useCopyOperations({ meeting, meetingTitle, aiSummary }: UseCopyO
           sections.push(['Summary', body.replace(/^(#{1,5})(\s)/gm, '#$1$2')]);
         }
         if (content !== 'summary') {
-          const body = await transcriptBody(format === 'md' ? linkStyle : undefined, rows);
+          const body = await transcriptBody(format === 'markdown' ? linkStyle : undefined, rows);
           if (!body) {
             toast.error('There is no transcript to export yet');
             return false;
@@ -131,7 +131,7 @@ export function useCopyOperations({ meeting, meetingTitle, aiSummary }: UseCopyO
           sections.push(['Transcript', body]);
         }
         let markdown = document(sections);
-        if (format === 'md') {
+        if (format === 'markdown') {
           const attendees = [...new Set((rows ?? []).flatMap(row => splitSpeakerLabel(row.speaker ?? '')))]
             .filter(isLinkableSpeakerName);
           markdown = `${buildFrontmatter({ title, meetingId: meeting.id, date: new Date(meeting.created_at), attendees, linkStyle })}\n\n${markdown}`;
