@@ -1,6 +1,6 @@
 {
     "name": "meetily",
-    "version": "0.2.20",
+    "version": "0.2.21",
     "private": true,
     "main": "electron/main.js",
     "scripts": {
