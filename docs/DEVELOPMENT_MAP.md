@@ -157,7 +157,12 @@ identification must preserve transcript text, row identity, and timestamps.
 Read [PR34_NEMOTRON.md](PR34_NEMOTRON.md) before changing that contract.
 
 Frontend post-call sequencing lives in
-`frontend/src/components/MeetingDetails/PostCallProcessingDialog.tsx` and related
+`frontend/src/components/MeetingDetails/PostCallProcessingWorker.tsx`, owned above
+navigation by `frontend/src/contexts/PostCallJobsContext.tsx`. The page's
+`PostCallProcessingDialog.tsx` registers/detaches only its view. Completion and
+transcript refresh target the matching mounted meeting; inactive meetings refresh
+on return. See [OCTOBER_PR_INTEGRATION.md](OCTOBER_PR_INTEGRATION.md) for cancellation
+ownership and lifecycle limits. Related
 speaker/retranscription dialogs. `useDiarizationEngine.ts` refreshes selected-engine
 state for dialogs, including native activation events and stale-response guards.
 

@@ -21,6 +21,30 @@ does not establish or claim a fix for the reporter's new failure.
 
 ## Pending review
 
+## Speaker labels #44/#45
+
+Integrated contributor commit `1c9f89d` independently of the remaining #38 feature
+bundle. All 28 isolated frontend test files, Next production build/type checks,
+and 17 native person-repository tests passed. The regression exercises combined
+renames, per-line component selection, meeting isolation, and unchanged source,
+text, row IDs, and timing. These are synthetic/UI and in-memory SQLite checks.
+
+## Post-call #31/#35
+
+`PostCallJobsContext` now owns the handoff worker above navigation. Pages attach
+as views; detached pages are not refreshed, and completion/dirty state is consumed
+on return. Jobs are presented serially because native retranscription is global
+single-flight. “Keep live transcript” skips enhancement and diarization; Escape
+also dismisses the prompt. Active cancellation targets the meeting and retains
+ownership until the native step settles. Native diarization is not preemptible:
+cancellation during it prevents later steps after it returns, rather than falsely
+claiming resources are already free. WebView reload durability is not established
+by this frontend owner; app reload/exit remains a separate lifecycle limit.
+
+The native retranscription guard owns the active meeting ID under a mutex.
+Optional meeting-scoped cancellation cannot cancel another meeting after a race;
+legacy callers without a meeting ID retain global cancellation behavior.
+
 - #38: `330e194`; frontend CI passed, but native feature/hardware claims require
   independent checks. Voice matching must remain opt-in and beta.
 - #22: `559f1fd`; rebased, native shutdown and ALSA ownership require review.

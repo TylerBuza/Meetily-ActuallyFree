@@ -4,6 +4,7 @@ import React, { useEffect, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { useRecordingStop } from '@/hooks/useRecordingStop';
 import { toast } from 'sonner';
+import { PostCallJobsProvider } from './PostCallJobsContext';
 
 /**
  * RecordingPostProcessingProvider
@@ -120,5 +121,5 @@ export function RecordingPostProcessingProvider({ children }: { children: React.
     };
   }, []);
 
-  return <>{children}</>;
+  return <PostCallJobsProvider>{children}</PostCallJobsProvider>;
 }
