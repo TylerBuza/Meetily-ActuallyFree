@@ -29,9 +29,9 @@ use tauri::{AppHandle, Runtime};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_store::StoreExt;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 #[cfg(any(target_os = "macos", test))]
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 
 static MIC_GAIN_BITS: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(1.0f32.to_bits()));
 static SYSTEM_GAIN_BITS: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(1.0f32.to_bits()));
