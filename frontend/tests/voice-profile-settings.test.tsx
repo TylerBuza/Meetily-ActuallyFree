@@ -76,3 +76,11 @@ test('automatic sample budget defaults to twelve and saves valid bounded values'
   await act(async () => save().props.onClick());
   expect(calls).toContainEqual(['set_voice_profiles_auto_samples',{value:6}]);
 });
+
+test('promoted matching remains explicitly beta with uncertainty guidance', async () => {
+  await act(async () => { root = create(<VoiceProfilesSettings />); });
+  const text = JSON.stringify(root.toJSON());
+  expect(text).toContain('Recognize saved voices (beta)');
+  expect(text).toContain('off by default');
+  expect(text).toContain('not verified identities');
+});

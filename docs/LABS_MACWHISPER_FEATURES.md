@@ -377,3 +377,14 @@ checks use synthetic histories and serialization, not an installed meeting test.
 
 Hide speaker dots is an independent Theme preference, aligned with the left edge
 of Align speaker names to the left rather than indented as its dependent control.
+
+## Voice matching beta qualification
+
+Moving the controls into Voice Profiles does not graduate identity inference:
+recognition remains an opt-in beta, off by default in both frontend and native
+preferences. Existing explicit opt-ins are preserved. The category and recognition
+switch identify the beta, explain uncertainty and advise reviewing names. Automatic
+matches and Maybe suggestions are estimates, never verified identity; microphone
+and system provenance remains independent. The settings regression checks the beta
+and uncertainty guidance. Synthetic profile tests and contributor recordings do
+not constitute an accuracy benchmark or identity verification.

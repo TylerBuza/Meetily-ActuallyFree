@@ -32,7 +32,7 @@ const SECTIONS: Array<{ id: SectionId; label: string; hint: string; description:
   { id: 'general', label: 'General', hint: 'Theme, name, notifications', description: 'How Meetily looks, what it calls you, and where it keeps your files.', icon: Settings2 },
   { id: 'recording', label: 'Recording', hint: 'Saving, computer audio', description: 'How recordings are saved, and which computer audio they capture.', icon: Mic },
   { id: 'transcription', label: 'Transcription', hint: 'Speech models, speakers', description: 'The speech models that write the transcript, and telling voices apart.', icon: AudioLines },
-  { id: 'voices', label: 'Voice Profiles', hint: 'Learn and recognize voices', description: 'Manage saved voices and learn from named speakers in recorded meetings.', icon: Fingerprint },
+  { id: 'voices', label: 'Voice Profiles', hint: 'Optional beta voice matching', description: 'Opt-in beta voice suggestions and saved samples. Matches do not verify identity.', icon: Fingerprint },
   { id: 'summaries', label: 'Summaries', hint: 'Model, language', description: 'Which AI model writes summaries and answers Ask AI, and in what language.', icon: Sparkles },
   { id: 'detection', label: 'Meeting detection', hint: 'Prompt to record', description: 'Get a prompt to record when a call starts in another app.', icon: Radar },
   { id: 'local', label: 'Local AI', hint: 'Runtime status', description: 'The on-device engines that run transcription and summaries.', icon: Cpu },

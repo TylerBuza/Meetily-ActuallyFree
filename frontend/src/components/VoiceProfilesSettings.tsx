@@ -169,7 +169,8 @@ function LearnedVoices() {
 
 export function VoiceProfilesSettings() {
   return <div className="space-y-5">
-    <FeatureSettingsSwitch feature="voiceProfiles" title="Recognize saved voices" description="Learn named contacts from clear recorded call audio, then suggest their names when speakers are identified." />
+    <p className="rounded-2xl border border-af-border bg-af-panel-2/40 p-5 text-[13px] text-af-text-3">Voice matching is beta and off by default. Matches are uncertain suggestions, not verified identities. Review names before relying on them; capture-source labels and recordings remain separate from voice matches.</p>
+    <FeatureSettingsSwitch feature="voiceProfiles" title="Recognize saved voices (beta)" description="Opt in to learning named contacts from clear recorded call audio and suggesting names. Similar voices, mixed speech, and device differences can produce incorrect matches." />
     <FeatureSettingsSwitch feature="autoSaveVoiceProfiles" title="Automatically save and update clear speech samples" description="Learn named voices and refresh existing profiles from saved call audio, up to the sample limit below across 12 recent meetings. Repeated meetings replace their samples; unclear updates keep the existing voice." />
     <AutomaticSampleLimit />
     <FeatureSettingsSwitch feature="voiceConsensus" title="Consensus voice matching (experimental)" description="Use separate meeting samples when available, with repeated clear-speech confirmation. Single-meeting profiles can also match. This may leave uncertain speakers unnamed. Off by default." />
