@@ -63,6 +63,9 @@ Screenshots use demo meetings and simulated recording.
 
 ## What you can do
 
+Current source builds add YAML frontmatter and an optional Obsidian link style
+for named speakers. Other export formats keep their existing formatting.
+
 Local transcription, live speaker editing, organized meeting notes, flexible AI
 providers, and optional Labs features—all without a paid app tier.
 

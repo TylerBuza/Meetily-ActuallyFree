@@ -229,7 +229,12 @@ unconfirmed `You` from an already saved combined label on rerun.
 Read [PR34_NEMOTRON.md](PR34_NEMOTRON.md) before changing that contract.
 
 Frontend post-call sequencing lives in
-`frontend/src/components/MeetingDetails/PostCallProcessingDialog.tsx` and related
+`frontend/src/components/MeetingDetails/PostCallProcessingWorker.tsx`, owned above
+navigation by `frontend/src/contexts/PostCallJobsContext.tsx`. The page's
+`PostCallProcessingDialog.tsx` registers/detaches only its view. Completion and
+transcript refresh target the matching mounted meeting; inactive meetings refresh
+on return. See [OCTOBER_PR_INTEGRATION.md](OCTOBER_PR_INTEGRATION.md) for cancellation
+ownership and lifecycle limits. Related
 speaker/retranscription dialogs. `useDiarizationEngine.ts` refreshes selected-engine
 state for dialogs, including native activation events and stale-response guards.
 
@@ -237,6 +242,30 @@ Live ASR and post-call ASR defaults are independent. Optional Whisper activation
 saves the **post-call** default; it must not replace the live Parakeet selection.
 
 ## 4. Optional download ownership and UI synchronization
+
+### October integration interfaces
+
+- `speakerUtils.ts` splits overlap labels for display and live aliases. Native
+  `PeopleRepository` renames exact components transactionally; optional `from` on
+  `reassign_transcript_speaker` selects one component without losing other voices.
+  Speaker edits preserve transcript rows, text, timestamps, and source provenance.
+  Coverage: `combined-speakers`, `combined-speaker-edit`, `live-speaker-edits`, and
+  the native person-repository regressions.
+- Markdown export uses `exportMarkdownFrontmatter.ts` and the current
+  `useCopyOperations` hook. Named overlap components get separate optional links;
+  generic labels do not become contacts. Other formats retain their old rendering.
+- Vocabulary IPC names are now model-neutral (`api_get_vocabulary`,
+  `api_save_global_vocabulary`, `api_save_meeting_vocabulary`). Existing vocabulary
+  database tables remain. `parakeet_engine/model.rs` owns glossary token boosts and
+  post-decode canonicalization; the seven synthetic regressions are not speech
+  accuracy qualification. Import/live/post-call paths pass the saved glossary.
+- Linux source builds map transcription `hipblas` to llama-helper `rocm` and
+  resolve distro-specific SDK paths. Four ROCm parser regressions and normalized
+  shell syntax checks ran; actual AMD build/inference did not.
+
+See [OCTOBER_PR_INTEGRATION.md](OCTOBER_PR_INTEGRATION.md) for reviewed but blocked
+PR #22/#38, qualification, and release status. These changes are source work;
+published v0.2.20 installers do not contain them.
 
 `frontend/src/contexts/OptionalModelDownloadsContext.tsx` owns optional jobs above
 onboarding and Settings so normal navigation does not cancel them. This is not an
@@ -304,7 +333,9 @@ See `.github/workflows/MACOS_RELEASE.md` for dispatch and remaining limitations.
 The `v0.2.19-macos` preview packages the #42 callback change; build
 `36790029640` and published-asset smoke test `36790877680` passed. It remains
 unqualified for physical microphone capture and the reporter's device. The
-Windows Latest release remains v0.2.18.
+Windows Latest release is now v0.2.20; see
+[RELEASE_V0220_QUALIFICATION.md](RELEASE_V0220_QUALIFICATION.md) for Windows build,
+hardware-capture, installed-upgrade, and public updater verification.
 The `v0.2.20-macos` follow-up packages explicit worker shutdown and short-gap
 source recovery for #42. Apple Silicon build `36876715270` passed all 22 worker
 and pipeline regressions plus bundle/launch checks; public smoke test

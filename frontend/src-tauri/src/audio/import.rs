@@ -360,14 +360,8 @@ async fn run_import<R: Runtime>(
         }
     };
     let use_parakeet = effective_provider == "parakeet";
-    let initial_prompt = if use_parakeet {
-        None
-    } else {
-        let state = app
-            .try_state::<AppState>()
-            .ok_or_else(|| anyhow!("Database not initialized"))?;
-        VocabularyRepository::get_effective(state.db_manager.pool(), None).await?
-    };
+    let state = app.try_state::<AppState>().ok_or_else(|| anyhow!("Database not initialized"))?;
+    let vocabulary = VocabularyRepository::get_effective(state.db_manager.pool(), None).await?;
 
     emit_progress(&app, "copying", 5, "Creating meeting folder...");
 
@@ -629,13 +623,13 @@ async fn run_import<R: Runtime>(
             let engine = parakeet_engine.as_ref().unwrap();
             if crate::audio::word_timestamps::enabled() {
                 let (text, words) = engine
-                    .transcribe_audio_with_words(segment.samples.clone(), chunk_start_sec)
+                    .transcribe_audio_with_words(segment.samples.clone(), chunk_start_sec, vocabulary.as_deref())
                     .await
                     .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
                 (text, 0.9f32, Some(words))
             } else {
                 let text = engine
-                    .transcribe_audio(segment.samples.clone())
+                    .transcribe_audio(segment.samples.clone(), vocabulary.as_deref())
                     .await
                     .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
                 (text, 0.9f32, None)
@@ -646,7 +640,7 @@ async fn run_import<R: Runtime>(
                 .transcribe_audio_with_words(
                     segment.samples.clone(),
                     language.clone(),
-                    initial_prompt.as_deref(),
+                    vocabulary.as_deref(),
                     chunk_start_sec,
                 )
                 .await

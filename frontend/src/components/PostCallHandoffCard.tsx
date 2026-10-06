@@ -19,6 +19,7 @@ export function PostCallHandoffCard({
   icon,
   children,
   centered = false,
+  onDismiss,
 }: {
   title: string;
   detail?: string;
@@ -27,14 +28,15 @@ export function PostCallHandoffCard({
   children?: ReactNode;
   /** Center choices/errors; busy progress stays compact in the nonmodal dock. */
   centered?: boolean;
+  onDismiss?: () => void;
 }) {
   if (centered && !busy) {
     return (
-      <Dialog open>
+      <Dialog open onOpenChange={(open) => { if (!open) onDismiss?.(); }}>
         <DialogContent
           className="max-w-sm gap-4 p-5"
-          showCloseButton={false}
-          onEscapeKeyDown={(event) => event.preventDefault()}
+          showCloseButton={!!onDismiss}
+          onEscapeKeyDown={(event) => { if (!onDismiss) event.preventDefault(); }}
           onPointerDownOutside={(event) => event.preventDefault()}
         >
           <div className="flex items-start gap-3">

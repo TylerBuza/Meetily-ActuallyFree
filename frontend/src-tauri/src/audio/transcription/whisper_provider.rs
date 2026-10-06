@@ -23,10 +23,11 @@ impl TranscriptionProvider for WhisperProvider {
         &self,
         audio: Vec<f32>,
         language: Option<String>,
+        vocabulary: Option<&str>,
     ) -> std::result::Result<TranscriptResult, TranscriptionError> {
         match self
             .engine
-            .transcribe_audio_with_words(audio, language, None, 0.0)
+            .transcribe_audio_with_words(audio, language, vocabulary, 0.0)
             .await
         {
             Ok((text, confidence, is_partial, words)) => Ok(TranscriptResult {

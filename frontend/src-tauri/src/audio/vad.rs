@@ -846,7 +846,7 @@ mod tests {
             assert!(end <= audio.len());
             assert!(segment.samples == audio[start..end], "unaligned audio at {start}");
             assert!((segment.end_timestamp_ms * 16.0 - end as f64).abs() < 0.01);
-            let text = model.as_mut().map(|model| model.transcribe_samples(segment.samples).unwrap().text);
+            let text = model.as_mut().map(|model| model.transcribe_samples(segment.samples, None).unwrap().text);
             println!("REPLAY {:.3}-{:.3}: {:?}", segment.start_timestamp_ms / 1000.0, segment.end_timestamp_ms / 1000.0, text);
         }
     }

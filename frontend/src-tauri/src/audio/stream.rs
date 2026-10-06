@@ -346,7 +346,7 @@ impl AudioStream {
                                 "Core Audio stopped delivering callbacks for {}",
                                 device_name
                             );
-                            state_for_stream.report_error(AudioError::ChannelClosed);
+                            state_for_stream.report_error(AudioError::SystemCaptureStalled);
                             terminal_error_reported = true;
                             break;
                         }
@@ -384,7 +384,7 @@ impl AudioStream {
 
                 if !terminal_error_reported && state_for_stream.is_recording() {
                     error!("Core Audio stream ended unexpectedly for {}", device_name);
-                    state_for_stream.report_error(AudioError::ChannelClosed);
+                    state_for_stream.report_error(AudioError::SystemCaptureEnded);
                 }
 
                 info!("⚠️ Stream: Core Audio processing task ended for {}", device_name);

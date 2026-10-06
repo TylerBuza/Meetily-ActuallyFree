@@ -55,7 +55,7 @@ pub async fn uninstall_optional_model(app: tauri::AppHandle, model: String) -> R
     let _diarization = crate::diarization::try_operation_guard()?;
     let _engines = crate::audio::common::acquire_engine_lifecycle_lock().await;
     if crate::audio::recording_commands::is_recording().await
-        || crate::audio::retranscription::is_retranscription_in_progress_command().await
+        || crate::audio::retranscription::is_retranscription_in_progress_command(None).await
     {
         return Err("Finish recording or post-call processing before uninstalling a model".into());
     }

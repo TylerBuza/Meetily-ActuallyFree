@@ -24,6 +24,7 @@ impl TranscriptionProvider for ParakeetProvider {
         &self,
         audio: Vec<f32>,
         language: Option<String>,
+        vocabulary: Option<&str>,
     ) -> std::result::Result<TranscriptResult, TranscriptionError> {
         // Log language preference warning if set (Parakeet doesn't support it yet)
         if let Some(ref lang) = language {
@@ -34,7 +35,7 @@ impl TranscriptionProvider for ParakeetProvider {
         }
 
         if crate::audio::word_timestamps::enabled() {
-            match self.engine.transcribe_audio_with_words(audio, 0.0).await {
+            match self.engine.transcribe_audio_with_words(audio, 0.0, vocabulary).await {
                 Ok((text, words)) => Ok(TranscriptResult {
                     text: text.trim().to_string(),
                     confidence: None,
@@ -44,7 +45,7 @@ impl TranscriptionProvider for ParakeetProvider {
                 Err(e) => Err(TranscriptionError::EngineFailed(e.to_string())),
             }
         } else {
-            match self.engine.transcribe_audio(audio).await {
+            match self.engine.transcribe_audio(audio, vocabulary).await {
                 Ok(text) => Ok(TranscriptResult {
                     text: text.trim().to_string(),
                     confidence: None, // Parakeet doesn't provide confidence scores

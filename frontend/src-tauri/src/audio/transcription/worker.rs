@@ -179,11 +179,11 @@ pub fn start_transcription_task<R: Runtime>(
         } = inputs;
         info!("🚀 Starting optimized parallel transcription task - guaranteeing zero chunk loss");
 
-        let initial_prompt = match app.try_state::<AppState>() {
+        let vocabulary = match app.try_state::<AppState>() {
             Some(state) => match VocabularyRepository::get_effective(state.db_manager.pool(), None).await {
                 Ok(prompt) => prompt,
                 Err(error) => {
-                    warn!("Failed to load Whisper vocabulary: {}", error);
+                    warn!("Failed to load transcription vocabulary: {}", error);
                     None
                 }
             },
@@ -224,6 +224,7 @@ pub fn start_transcription_task<R: Runtime>(
                 let queued = chunks_queued.clone();
                 let completed = chunks_completed.clone();
                 let finished = input_finished.clone();
+                let preview_vocabulary = vocabulary.clone();
                 Some(tokio::spawn(async move {
                     let (mut mic_open, mut system_open) = (true, true);
                     while (mic_open || system_open) && !finished.load(Ordering::SeqCst) {
@@ -247,7 +248,7 @@ pub fn start_transcription_task<R: Runtime>(
                         let start = chunk.timestamp;
                         let end = start + chunk.data.len() as f64 / 16_000.0;
                         let began = std::time::Instant::now();
-                        match engine.transcribe_audio(chunk.data).await {
+                        match engine.transcribe_audio(chunk.data, preview_vocabulary.as_deref()).await {
                             Ok(text) if !text.trim().is_empty()
                                 && !finished.load(Ordering::SeqCst) => {
                                 info!("Near-live {source} preview {:.2}-{:.2}s decoded in {}ms", start, end, began.elapsed().as_millis());
@@ -276,7 +277,7 @@ pub fn start_transcription_task<R: Runtime>(
                 TranscriptionEngine::Provider(p) => TranscriptionEngine::Provider(p.clone()),
             };
             let app_clone = app.clone();
-            let initial_prompt_clone = initial_prompt.clone();
+            let vocabulary_clone = vocabulary.clone();
             let work_receiver_clone = work_receiver.clone();
             let chunks_completed_clone = chunks_completed.clone();
             let input_finished_clone = input_finished.clone();
@@ -405,7 +406,7 @@ pub fn start_transcription_task<R: Runtime>(
                             match transcribe_chunk_with_provider(
                                 &engine_clone,
                                 chunk,
-                                initial_prompt_clone.as_deref(),
+                            vocabulary_clone.as_deref(),
                             )
                             .await
                             {
@@ -692,7 +693,7 @@ pub fn start_transcription_task<R: Runtime>(
 async fn transcribe_chunk_with_provider(
     engine: &TranscriptionEngine,
     chunk: AudioChunk,
-    initial_prompt: Option<&str>,
+    vocabulary: Option<&str>,
 ) -> std::result::Result<(String, Option<f32>, bool, Option<Vec<crate::database::models::WordTiming>>), TranscriptionError> {
     // Convert to 16kHz mono for transcription
     let transcription_data = if chunk.sample_rate != 16000 {
@@ -746,7 +747,7 @@ async fn transcribe_chunk_with_provider(
             let language = crate::get_language_preference_internal();
 
             match whisper_engine
-                .transcribe_audio_with_words(speech_samples, language, initial_prompt, chunk.timestamp)
+                .transcribe_audio_with_words(speech_samples, language, vocabulary, chunk.timestamp)
                 .await
             {
                 Ok((text, confidence, is_partial, words)) => {
@@ -778,7 +779,7 @@ async fn transcribe_chunk_with_provider(
         }
         TranscriptionEngine::Parakeet(parakeet_engine) => {
             if crate::audio::word_timestamps::enabled() {
-                match parakeet_engine.transcribe_audio_with_words(speech_samples, chunk.timestamp).await {
+                match parakeet_engine.transcribe_audio_with_words(speech_samples, chunk.timestamp, vocabulary).await {
                     Ok((text, words)) => {
                         let cleaned_text = text.trim().to_string();
                         if cleaned_text.is_empty() {
@@ -803,7 +804,7 @@ async fn transcribe_chunk_with_provider(
                     }
                 }
             } else {
-                match parakeet_engine.transcribe_audio(speech_samples).await {
+                match parakeet_engine.transcribe_audio(speech_samples, vocabulary).await {
                     Ok(text) => {
                         let cleaned_text = text.trim().to_string();
                         if cleaned_text.is_empty() {
@@ -834,7 +835,7 @@ async fn transcribe_chunk_with_provider(
             // NEW: Trait-based provider (clean, unified interface)
             let language = crate::get_language_preference_internal();
 
-            match provider.transcribe(speech_samples, language).await {
+            match provider.transcribe(speech_samples, language, vocabulary).await {
                 Ok(result) => {
                     let cleaned_text = result.text.trim().to_string();
                     if cleaned_text.is_empty() {

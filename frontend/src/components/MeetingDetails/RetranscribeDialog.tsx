@@ -55,7 +55,7 @@ interface RetranscriptionError {
   error: string;
 }
 
-interface WhisperVocabularyConfig {
+interface VocabularyConfig {
   global: string;
   meeting: string;
 }
@@ -155,7 +155,7 @@ export function RetranscribeDialog({
           console.error('Failed to load post-call transcription config:', loadError);
           return fetchModels();
         });
-      invoke<WhisperVocabularyConfig>('api_get_whisper_vocabulary', { meetingId })
+      invoke<VocabularyConfig>('api_get_vocabulary', { meetingId })
         .then((config) => setSavedMeetingVocabulary(config.meeting || ''))
         .catch((loadError) => console.error('Failed to load meeting vocabulary:', loadError));
     }
@@ -279,8 +279,8 @@ export function RetranscribeDialog({
         language: languageToSend,
         model: selectedModelDetails?.name || null,
         provider: selectedModelDetails?.provider || null,
-        vocabularyTerms: isParakeetModel ? null : vocabularyTerms.trim() || null,
-        vocabularyScope: isParakeetModel ? null : vocabularyScope,
+        vocabularyTerms: vocabularyTerms.trim() || null,
+        vocabularyScope,
       });
     } catch (err: any) {
       setIsProcessing(false);
@@ -308,7 +308,7 @@ export function RetranscribeDialog({
   const clearMeetingVocabulary = async () => {
     setIsClearingMeetingVocabulary(true);
     try {
-      await invoke<string>('api_save_meeting_whisper_vocabulary', {
+      await invoke<string>('api_save_meeting_vocabulary', {
         meetingId,
         vocabulary: '',
       });
@@ -456,7 +456,7 @@ export function RetranscribeDialog({
                       </span>
                     </div>
                     <p className="mt-1 text-muted-foreground">
-                      Faster and smaller with automatic language detection. Does not support vocabulary hints.
+                      Faster and smaller with automatic language detection and contextual vocabulary boosting.
                     </p>
                   </div>
                   <div className="rounded-md border border-border bg-muted/30 p-3">
@@ -467,7 +467,7 @@ export function RetranscribeDialog({
                       </span>
                     </div>
                     <p className="mt-1 text-muted-foreground">
-                      Better control for names and jargon, with vocabulary hints and manual language selection. Usually slower and larger.
+                      Manual language selection, vocabulary prompting, and broad language support. Usually slower and larger.
                     </p>
                     {!hasWhisperModel && (
                       <Button
@@ -486,7 +486,7 @@ export function RetranscribeDialog({
             </div>
           )}
 
-          {!isProcessing && !error && !isParakeetModel && (
+          {!isProcessing && !error && (
             <div className="space-y-3 rounded-lg border border-border p-3">
               <div className="flex items-center gap-2">
                 <BookOpen className="h-4 w-4 text-muted-foreground" />
@@ -500,7 +500,7 @@ export function RetranscribeDialog({
                 placeholder={'Participant names, company names, acronyms, or technical terms'}
               />
               <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>Meeting terms take priority within Whisper&apos;s prompt limit.</span>
+                <span>Terms are saved and applied by the selected transcription model.</span>
                 <span>{vocabularyTerms.length}/1000</span>
               </div>
               {vocabularyTerms.trim() && (

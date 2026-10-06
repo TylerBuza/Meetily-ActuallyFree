@@ -483,8 +483,13 @@ impl ParakeetEngine {
         self.current_model.read().await.is_some()
     }
 
-    /// Transcribe audio samples using the loaded Parakeet model
-    pub async fn transcribe_audio(&self, audio_data: Vec<f32>) -> Result<String> {
+    /// Transcribe audio samples using the loaded Parakeet model and optional
+    /// comma- or newline-separated vocabulary phrases.
+    pub async fn transcribe_audio(
+        &self,
+        audio_data: Vec<f32>,
+        vocabulary: Option<&str>,
+    ) -> Result<String> {
         let mut model_guard = self.current_model.write().await;
         let model = model_guard
             .as_mut()
@@ -499,7 +504,7 @@ impl ParakeetEngine {
 
         // Transcribe using Parakeet model
         let result = model
-            .transcribe_samples(audio_data)
+            .transcribe_samples(audio_data, vocabulary)
             .map_err(|e| anyhow!("Parakeet transcription failed: {}", e))?;
 
         log::debug!("Parakeet transcription result: '{}'", result.text);
@@ -512,6 +517,7 @@ impl ParakeetEngine {
         &self,
         audio_data: Vec<f32>,
         chunk_start_sec: f64,
+        vocabulary: Option<&str>,
     ) -> Result<(String, Vec<crate::database::models::WordTiming>)> {
         let mut model_guard = self.current_model.write().await;
         let model = model_guard
@@ -519,7 +525,7 @@ impl ParakeetEngine {
             .ok_or_else(|| anyhow!("No Parakeet model loaded. Please load a model first."))?;
 
         let result = model
-            .transcribe_samples(audio_data)
+            .transcribe_samples(audio_data, vocabulary)
             .map_err(|e| anyhow!("Parakeet transcription failed: {}", e))?;
 
         let words = Self::extract_words_from_parakeet(&result.tokens, &result.timestamps, chunk_start_sec);

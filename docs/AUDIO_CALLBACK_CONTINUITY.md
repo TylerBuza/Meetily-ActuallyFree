@@ -63,7 +63,9 @@ audio the driver never delivered or replace silence already emitted after the
 bounded wait. Adaptive resampling for indefinite independent-device clock drift
 is not implemented. Physical sustained recording under inference load, Windows
 installer qualification, and reporter-device confirmation are still required.
-This follow-up is source work, not part of a published Windows or Mac installer.
+The Windows v0.2.20 release includes this follow-up and the subsequent hardware
+corrections below; the existing v0.2.20-macos preview predates them. See
+[RELEASE_V0220_QUALIFICATION.md](RELEASE_V0220_QUALIFICATION.md).
 
 ### Opt-in Windows hardware capture check
 

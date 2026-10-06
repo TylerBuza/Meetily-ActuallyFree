@@ -24,6 +24,9 @@ static RETRANSCRIPTION_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 /// Global flag to signal cancellation
 static RETRANSCRIPTION_CANCELLED: AtomicBool = AtomicBool::new(false);
+// Serialize cancellation with ownership changes so a stale UI cannot cancel
+// the next meeting's retranscription after its own job has finished.
+static RETRANSCRIPTION_MEETING: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 /// RAII guard for RETRANSCRIPTION_IN_PROGRESS flag
 /// Ensures flag is cleared even if retranscription panics or returns early
@@ -31,19 +34,24 @@ struct RetranscriptionGuard;
 
 impl RetranscriptionGuard {
     /// Create guard and set flag atomically
-    fn acquire() -> Result<Self, String> {
+    fn acquire(meeting_id: &str) -> Result<Self, String> {
+        let mut owner = RETRANSCRIPTION_MEETING.lock().unwrap();
         if RETRANSCRIPTION_IN_PROGRESS
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
             return Err("Retranscription already in progress".to_string());
         }
+        *owner = Some(meeting_id.to_owned());
+        RETRANSCRIPTION_CANCELLED.store(false, Ordering::SeqCst);
         Ok(RetranscriptionGuard)
     }
 }
 
 impl Drop for RetranscriptionGuard {
     fn drop(&mut self) {
+        let mut owner = RETRANSCRIPTION_MEETING.lock().unwrap();
+        *owner = None;
         RETRANSCRIPTION_IN_PROGRESS.store(false, Ordering::SeqCst);
     }
 }
@@ -98,7 +106,7 @@ async fn start_retranscription<R: Runtime>(
     language: Option<String>,
     model: Option<String>,
     provider: Option<String>,
-    initial_prompt: Option<String>,
+    vocabulary: Option<String>,
 ) -> Result<RetranscriptionResult> {
     let use_parakeet = provider.as_deref() == Some("parakeet");
     let batch_lease = super::common::acquire_stt_batch_lease().await;
@@ -109,7 +117,7 @@ async fn start_retranscription<R: Runtime>(
         language,
         model,
         provider,
-        initial_prompt,
+        vocabulary,
     )
     .await;
     drop(batch_lease);
@@ -258,7 +266,7 @@ async fn run_retranscription<R: Runtime>(
     language: Option<String>,
     model: Option<String>,
     provider: Option<String>,
-    initial_prompt: Option<String>,
+    vocabulary: Option<String>,
 ) -> Result<RetranscriptionResult> {
     let folder_path = PathBuf::from(&meeting_folder_path);
     let audio_path = find_audio_file(&folder_path)?;
@@ -491,13 +499,13 @@ async fn run_retranscription<R: Runtime>(
             let engine = parakeet_engine.as_ref().unwrap();
             if crate::audio::word_timestamps::enabled() {
                 let (text, words) = engine
-                    .transcribe_audio_with_words(segment.samples.clone(), chunk_start_sec)
+                    .transcribe_audio_with_words(segment.samples.clone(), chunk_start_sec, vocabulary.as_deref())
                     .await
                     .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
                 (text, 0.9f32, Some(words))
             } else {
                 let text = engine
-                    .transcribe_audio(segment.samples.clone())
+                    .transcribe_audio(segment.samples.clone(), vocabulary.as_deref())
                     .await
                     .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
                 (text, 0.9f32, None)
@@ -508,7 +516,7 @@ async fn run_retranscription<R: Runtime>(
                 .transcribe_audio_with_words(
                     segment.samples.clone(),
                     language.clone(),
-                    initial_prompt.as_deref(),
+                    vocabulary.as_deref(),
                     chunk_start_sec,
                 )
                 .await
@@ -1076,41 +1084,29 @@ pub async fn start_retranscription_command<R: Runtime>(
 
     // Reserve before returning so duplicate requests and cancellation also see
     // jobs queued behind an offline diarization pass.
-    let guard = RetranscriptionGuard::acquire()?;
-    RETRANSCRIPTION_CANCELLED.store(false, Ordering::SeqCst);
+    let guard = RetranscriptionGuard::acquire(&meeting_id)?;
 
-    let use_parakeet = provider.as_deref() == Some("parakeet");
-    let initial_prompt = if use_parakeet {
-        if vocabulary_terms
-            .as_deref()
-            .is_some_and(|terms| !terms.trim().is_empty())
-        {
-            return Err("Vocabulary hints are only supported by Whisper".to_string());
-        }
-        None
-    } else {
-        let state = app
-            .try_state::<AppState>()
-            .ok_or_else(|| "Database not initialized".to_string())?;
-        let pool = state.db_manager.pool();
-        if let Some(terms) = vocabulary_terms
-            .as_deref()
-            .filter(|terms| !terms.trim().is_empty())
-        {
-            match vocabulary_scope.as_deref().unwrap_or("meeting") {
-                "meeting" => {
-                    VocabularyRepository::add_meeting(pool, &meeting_id, terms).await?;
-                }
-                "global" => {
-                    VocabularyRepository::add_global(pool, terms).await?;
-                }
-                _ => return Err("Invalid vocabulary scope".to_string()),
+    let state = app
+        .try_state::<AppState>()
+        .ok_or_else(|| "Database not initialized".to_string())?;
+    let pool = state.db_manager.pool();
+    if let Some(terms) = vocabulary_terms
+        .as_deref()
+        .filter(|terms| !terms.trim().is_empty())
+    {
+        match vocabulary_scope.as_deref().unwrap_or("meeting") {
+            "meeting" => {
+                VocabularyRepository::add_meeting(pool, &meeting_id, terms).await?;
             }
+            "global" => {
+                VocabularyRepository::add_global(pool, terms).await?;
+            }
+            _ => return Err("Invalid vocabulary scope".to_string()),
         }
-        VocabularyRepository::get_effective(pool, Some(&meeting_id))
-            .await
-            .map_err(|error| error.to_string())?
-    };
+    }
+    let vocabulary = VocabularyRepository::get_effective(pool, Some(&meeting_id))
+        .await
+        .map_err(|error| error.to_string())?;
 
     // Clone values for the spawned task
     let meeting_id_clone = meeting_id.clone();
@@ -1126,7 +1122,7 @@ pub async fn start_retranscription_command<R: Runtime>(
             language,
             model,
             provider,
-            initial_prompt,
+            vocabulary,
         )
         .await;
 
@@ -1144,7 +1140,13 @@ pub async fn start_retranscription_command<R: Runtime>(
 }
 
 #[tauri::command]
-pub async fn cancel_retranscription_command() -> Result<(), String> {
+pub async fn cancel_retranscription_command(meeting_id: Option<String>) -> Result<(), String> {
+    let owner = RETRANSCRIPTION_MEETING.lock().unwrap();
+    if let Some(expected) = meeting_id.as_deref() {
+        if owner.as_deref() != Some(expected) {
+            return Err("This meeting has no active retranscription".into());
+        }
+    }
     if !is_retranscription_in_progress() {
         return Err("No retranscription in progress".to_string());
     }
@@ -1153,12 +1155,26 @@ pub async fn cancel_retranscription_command() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn is_retranscription_in_progress_command() -> bool {
-    is_retranscription_in_progress()
+pub async fn is_retranscription_in_progress_command(meeting_id: Option<String>) -> bool {
+    match meeting_id {
+        Some(expected) => RETRANSCRIPTION_MEETING.lock().unwrap().as_deref() == Some(expected.as_str()),
+        None => is_retranscription_in_progress(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn stale_meeting_cancellation_cannot_cancel_another_job() {
+        let guard = super::RetranscriptionGuard::acquire("meeting-b").unwrap();
+        assert!(super::cancel_retranscription_command(Some("meeting-a".into())).await.is_err());
+        assert!(!super::RETRANSCRIPTION_CANCELLED.load(std::sync::atomic::Ordering::SeqCst));
+        super::cancel_retranscription_command(Some("meeting-b".into())).await.unwrap();
+        assert!(super::RETRANSCRIPTION_CANCELLED.load(std::sync::atomic::Ordering::SeqCst));
+        drop(guard);
+        assert!(super::RETRANSCRIPTION_MEETING.lock().unwrap().is_none());
+        super::RETRANSCRIPTION_CANCELLED.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
     use super::*;
     use crate::audio::common::create_transcript_segments;
 
