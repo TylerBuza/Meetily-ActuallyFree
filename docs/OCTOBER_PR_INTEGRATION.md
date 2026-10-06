@@ -6,11 +6,15 @@ post-call ownership/cancellation; #22 Linux capture; #38 remaining features;
 
 This note tracks source integration and qualification, not a published release.
 Starting point: main `162dd7c`, Windows v0.2.20.
+Integrated source: `9d196677a2a35eefe11110502c206e1ba7a6d8e7`, pushed to main.
+PRs #8/#10/#27 were closed as manually incorporated, preserving authorship.
+PRs #22/#38 remain open with changes requested. #12 was closed as withdrawn/
+superseded. Issues with source fixes stay open for installer/reporter validation.
 
 ## Recording #42
 
 The Windows reporter confirmed a 20-minute recording without microphone dropouts.
-The latest Mac screenshot says “Audio channel was closed unexpectedly”. Current
+The latest Mac screenshot says “Audio channel was closed unexpectedly”. The original
 code uses that same fatal error for a five-second system-tap inactivity timeout,
 an ended Core Audio stream, and closed pipeline delivery. The screenshot cannot
 distinguish these paths. Requested exact build, capture mode, device/model/macOS,
@@ -45,7 +49,7 @@ establish a working AMD GPU build or inference. No installer advertises ROCm.
 ## Permission probe #12
 
 Author requested not merging. The cited upstream commit changes device monitoring,
-not every permission-probe/UI behavior in this PR. Close as superseded/withdrawn,
+not every permission-probe/UI behavior in this PR. Closed as superseded/withdrawn,
 without claiming the entire proposed feature is already implemented in this fork.
 
 ## Speaker labels #44/#45
@@ -71,12 +75,6 @@ by this frontend owner; app reload/exit remains a separate lifecycle limit.
 The native retranscription guard owns the active meeting ID under a mutex.
 Optional meeting-scoped cancellation cannot cancel another meeting after a race;
 legacy callers without a meeting ID retain global cancellation behavior.
-
-- #38: `330e194`; frontend CI passed, but native feature/hardware claims require
-  independent checks. Voice matching must remain opt-in and beta.
-- #22: `559f1fd`; rebased, native shutdown and ALSA ownership require review.
-- #27/#10/#8 conflict with main and require integration plus targeted checks.
-- #12 author recommends superseding with upstream; compare behavior before closing.
 
 ## Markdown export #27
 
@@ -106,6 +104,10 @@ retains the original argmax path. Model-dependent accuracy remains unqualified.
   navigation, reattachment, completion isolation, skip, Escape, and cancellation.
   Markdown integration tests distinguish `.md` from TXT/clipboard output.
 - Next production build and its type validation passed after integration.
+- GitHub frontend CI `37486430437` passed at the integrated source commit.
+  Apple Silicon candidate `37486428999` also passed its native build, bundle
+  verification, and 30 capture regressions (eight worker, 22 pipeline). Its unsigned
+  DMG is a workflow artifact only; no GitHub release was published or replaced.
 - llama-helper CPU build/tests: **2 passed**. Four ROCm parser tests passed using
   the actual parser/test source extracted into a std-only Rust test executable;
   this is not a HIP/ROCm dependency build. Node script syntax and LF-normalized
