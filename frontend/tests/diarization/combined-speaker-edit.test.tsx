@@ -58,3 +58,12 @@ test('live naming defaults to every line and exposes forward separation explicit
   await typeAndEnter('Someone else');
   expect(renamed[1]).toEqual(['Host','Someone else','future']);
 });
+
+
+test('AI name is display-only until explicitly saved using the original speaker channel', async () => {
+  await act(async () => {root=create(<SpeakerIdentityDialog open onOpenChange={()=>{}} speaker="Host + Speaker 7" transcriptId="turn" meetingId="meeting" aiSpeakerNames={{'Speaker 7':'Tony'}}/>);});
+  expect(calls).toEqual([]);
+  expect(root.root.findByType('select').props.value).toBe('Speaker 7');
+  await act(async () => root.root.findAllByType('button').find(button=>button.children.includes('Save AI name'))!.props.onClick());
+  expect(calls).toEqual([['rename_meeting_speaker',{meetingId:'meeting',from:'Speaker 7',to:'Tony'}]]);
+});

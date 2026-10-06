@@ -23,6 +23,8 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { motion } from 'framer-motion';
 import { Camera, ChevronDown, GitMerge, Mic } from 'lucide-react';
+import { AISpeakerHint } from '@/components/people/AISpeakerHint';
+import { projectAISpeakerLabel, type AISpeakerNames } from '@/lib/summary-speaker-names';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { interleaveTranscriptImages, type ImageTranscriptSegment } from '@/lib/transcript-image-layout';
@@ -50,6 +52,8 @@ export interface VirtualizedTranscriptViewProps {
   segments: TranscriptSegmentData[];
   /** Saved images shown at their recording time on the post-call transcript. */
   meetingImages?: MeetingImage[];
+  aiSpeakerNames?: AISpeakerNames;
+  onReviewAISpeakerName?: (speaker: string, segmentId: string) => void;
   isRecording?: boolean;
   nearLiveCaptions?: boolean;
   isPaused?: boolean;
@@ -182,6 +186,8 @@ const TurnRow = memo(function TurnRow({
   activeTime,
   flash,
   onSpeakerClick,
+  aiSpeakerNames = {},
+  onReviewAISpeakerName,
   onRenameSpeaker,
   onMergeSpeaker,
   onSeek,
@@ -201,6 +207,8 @@ const TurnRow = memo(function TurnRow({
   activeTime?: number | null;
   flash: boolean;
   onSpeakerClick?: VirtualizedTranscriptViewProps['onSpeakerClick'];
+  aiSpeakerNames?: AISpeakerNames;
+  onReviewAISpeakerName?: VirtualizedTranscriptViewProps['onReviewAISpeakerName'];
   onRenameSpeaker?: VirtualizedTranscriptViewProps['onRenameSpeaker'];
   onMergeSpeaker?: VirtualizedTranscriptViewProps['onMergeSpeaker'];
   onSeek?: VirtualizedTranscriptViewProps['onSeek'];
@@ -210,7 +218,7 @@ const TurnRow = memo(function TurnRow({
   const { labs } = useLabs();
   const speaker = turn.speaker;
   const isYou = isUserSpeaker(speaker);
-  const label = speaker ? displaySpeaker(speaker, userName) : '';
+  const label = speaker ? displaySpeaker(projectAISpeakerLabel(speaker, aiSpeakerNames), userName) : '';
   const shown = shownText(text, textMode) || (text.trim() === '' ? '[Silence]' : text);
   const clickable = !!speaker && !turn.provisional && (!!onSpeakerClick || !!onRenameSpeaker);
   const currentMs = active && activeTime != null ? activeTime * 1000 : null;
@@ -286,6 +294,7 @@ const TurnRow = memo(function TurnRow({
             </span>
           )}
           </div>
+          {speaker && <AISpeakerHint speaker={speaker} names={aiSpeakerNames} onReview={onReviewAISpeakerName ? () => onReviewAISpeakerName(speaker, turn.sourceId ?? turn.id) : undefined} />}
           <div className={cn(leftAligned && !hideSpeakerDots && 'pl-4')}>
           {onSeek ? (
             <button
@@ -362,6 +371,8 @@ const TurnRow = memo(function TurnRow({
 export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps> = ({
   segments,
   meetingImages = [],
+  aiSpeakerNames = {},
+  onReviewAISpeakerName,
   isRecording = false,
   nearLiveCaptions = false,
   isPaused = false,
@@ -523,6 +534,8 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
       active={index === activeIndex}
       activeTime={index === activeIndex ? playbackTime : null}
       flash={index === flashIndex}
+      aiSpeakerNames={aiSpeakerNames}
+      onReviewAISpeakerName={onReviewAISpeakerName}
       onSpeakerClick={onSpeakerClick}
       onRenameSpeaker={onRenameSpeaker}
       onMergeSpeaker={onMergeSpeaker}

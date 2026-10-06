@@ -600,3 +600,5 @@ Model speaker numbers cannot confer microphone provenance. See
 source-order and electronic-copy checks, retained limits and hardware reproduction.
 Voice Profiles remains opt-in beta after promotion; see its qualification in
 [LABS_MACWHISPER_FEATURES.md](LABS_MACWHISPER_FEATURES.md).
+
+AI summary speaker-name suggestions, display-only identity boundaries and cache/navigation ownership are documented in [SUMMARY_SPEAKER_SUGGESTIONS.md](SUMMARY_SPEAKER_SUGGESTIONS.md).

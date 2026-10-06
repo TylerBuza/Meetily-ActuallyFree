@@ -61,6 +61,8 @@ const ENGLISH_CACHE_FIELD: &str = "english_cache";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct SummaryCacheSource {
+    #[serde(default)]
+    suggest_speaker_names: bool,
     transcript_fingerprint: String,
     custom_prompt_fingerprint: String,
     template_id: String,
@@ -110,6 +112,7 @@ fn build_summary_cache_source(
     top_p: Option<f32>,
 ) -> SummaryCacheSource {
     SummaryCacheSource {
+        suggest_speaker_names: super::speaker_names::get_summary_speaker_names_enabled(),
         transcript_fingerprint: stable_text_fingerprint(text),
         custom_prompt_fingerprint: stable_text_fingerprint(custom_prompt),
         template_id: template_id.to_string(),
@@ -624,6 +627,7 @@ impl SummaryService {
             summary_language.as_deref(),
             detected_summary_language.as_deref(),
             cached_english.as_deref(),
+            cache_source.suggest_speaker_names,
         )
         .await;
 
@@ -899,6 +903,23 @@ mod tests {
         assert_eq!(
             extract_cached_english_markdown(&raw, &source, Some("de")).unwrap(),
             Some("# Meeting\n## Points\nHello".to_string())
+        );
+    }
+
+    #[test]
+    fn changed_speaker_suggestion_option_rejects_translation_cache() {
+        let source = sample_cache_source();
+        let raw = build_summary_result_json(
+            "# Reunion\nBonjour",
+            "# Meeting\nHello",
+            source.clone(),
+            Some("fr"),
+        ).to_string();
+        let mut changed = source;
+        changed.suggest_speaker_names = !changed.suggest_speaker_names;
+        assert_eq!(
+            extract_cached_english_markdown(&raw, &changed, Some("de")).unwrap(),
+            None,
         );
     }
 

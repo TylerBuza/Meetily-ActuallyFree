@@ -53,6 +53,7 @@ import {
 import { deleteMeetings, renameMeeting } from '@/lib/meeting-actions';
 import { displayTitle } from '@/lib/meeting-titles';
 import { MEETING_IMAGES_CHANGED, type MeetingImage } from '@/lib/meeting-images';
+import { summarySpeakerNames, useSummarySpeakerNames } from '@/lib/summary-speaker-names';
 import { cn } from '@/lib/utils';
 import { displaySpeaker, speakerColorIndexMap, speakerKey } from '@/utils/speakerUtils';
 
@@ -141,6 +142,8 @@ export default function PageContent({
   const [regenerateRequest, setRegenerateRequest] = useState<{ open: boolean; context: string; reason?: string } | null>(null);
 
   const meetingData = useMeetingData({ meeting, summaryData });
+  const {enabled: summaryNamingEnabled} = useSummarySpeakerNames();
+  const aiSpeakerNames = useMemo(() => summaryNamingEnabled ? summarySpeakerNames(meetingData.aiSummary, summaryUserEdited) : {}, [summaryNamingEnabled, meetingData.aiSummary, summaryUserEdited]);
   const templates = useTemplates();
   const meetingOperations = useMeetingOperations({ meeting });
   const audio = useMeetingAudio(meeting.id);
@@ -691,6 +694,8 @@ export default function PageContent({
             <VirtualizedTranscriptView
               segments={transcriptSegments}
               meetingImages={meetingImages}
+              aiSpeakerNames={aiSpeakerNames}
+              onReviewAISpeakerName={(speaker, transcriptId) => setIdentity({speaker, transcriptId})}
               disableAutoScroll
               hasMore={hasMore}
               isLoadingMore={isLoadingMore}
@@ -796,6 +801,7 @@ export default function PageContent({
         open={identity !== null}
         onOpenChange={(open) => !open && setIdentity(null)}
         speaker={identity?.speaker ?? null}
+        aiSpeakerNames={aiSpeakerNames}
         transcriptId={identity?.transcriptId}
         meetingId={meeting.id}
         speakers={speakers.map((speaker) => speaker.label)}

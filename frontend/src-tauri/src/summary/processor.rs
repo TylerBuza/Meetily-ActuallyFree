@@ -373,6 +373,7 @@ pub async fn generate_meeting_summary(
     summary_language: Option<&str>,
     detected_transcript_language: Option<&str>,
     cached_english: Option<&str>,
+    suggest_speaker_names: bool,
 ) -> Result<(String, String, i64), String> {
     if let Some(token) = cancellation_token {
         if token.is_cancelled() {
@@ -430,7 +431,9 @@ pub async fn generate_meeting_summary(
                 }
 
                 info!("Processing chunk {}/{}", i + 1, num_chunks);
-                let user_prompt_chunk = build_chunk_summary_user_prompt(chunk);
+                let user_prompt_chunk = super::speaker_names::prompt(
+                    build_chunk_summary_user_prompt(chunk), suggest_speaker_names,
+                );
 
                 match generate_summary(
                     client,
@@ -488,7 +491,9 @@ pub async fn generate_meeting_summary(
                 );
                 let combined_text = chunk_summaries.join("\n---\n");
                 let system_prompt_combine = "You are an expert at synthesizing meeting summaries.";
-                let user_prompt_combine = build_combine_summary_user_prompt(&combined_text);
+                let user_prompt_combine = super::speaker_names::prompt(
+                    build_combine_summary_user_prompt(&combined_text), suggest_speaker_names,
+                );
                 let combined = generate_summary(
                     client,
                     provider,
@@ -518,8 +523,10 @@ pub async fn generate_meeting_summary(
         let clean_template_markdown = template.to_markdown_structure();
         let section_instructions = template.to_section_instructions();
 
-        let final_system_prompt =
-            build_final_report_system_prompt(&section_instructions, &clean_template_markdown);
+        let final_system_prompt = super::speaker_names::prompt(
+            build_final_report_system_prompt(&section_instructions, &clean_template_markdown),
+            suggest_speaker_names,
+        );
 
         let mut final_user_prompt = format!(
             "<transcript_chunks>\n{content_to_summarize}\n</transcript_chunks>\n"

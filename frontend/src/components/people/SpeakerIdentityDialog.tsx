@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { PossibleVoiceMatch } from '@/components/people/PossibleVoiceMatch';
+import type { AISpeakerNames } from '@/lib/summary-speaker-names';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
@@ -44,6 +45,7 @@ export interface SpeakerIdentityDialogProps {
   onMerge?: (source: string, target: string) => Promise<void> | void;
   canSeparateLive?: boolean;
   speakerChannel?: string;
+  aiSpeakerNames?: AISpeakerNames;
   /** Colour slot of a speaker in this meeting. */
   colorIndexOf?: (speaker: string) => number | undefined;
 }
@@ -63,6 +65,7 @@ export function SpeakerIdentityDialog({
   colorIndexOf,
   canSeparateLive = false,
   speakerChannel,
+  aiSpeakerNames = {},
 }: SpeakerIdentityDialogProps) {
   const { people } = useWorkspace();
   const userName = useUserName();
@@ -76,11 +79,14 @@ export function SpeakerIdentityDialog({
     if (!open) return;
     setQuery('');
     setScope('all');
-    setSelectedSpeaker(splitSpeakerLabel(speaker ?? '')[0] ?? '');
+    const parts = splitSpeakerLabel(speaker ?? '');
+    setSelectedSpeaker(parts.find(part => isGenerated(part) && typeof aiSpeakerNames[part] === 'string') ?? parts[0] ?? '');
   }, [open, transcriptId, speaker]);
 
   const components = splitSpeakerLabel(speaker ?? '');
   const current = components.length > 1 ? selectedSpeaker : (speaker ?? '');
+  const suggestedName = isGenerated(current) && typeof aiSpeakerNames[current] === 'string' ? aiSpeakerNames[current] : undefined;
+  // A suggestion is offered for explicit acceptance; it never invokes rename.
   const canRemove = !!current && !isGenerated(current) && !isUserSpeaker(current);
   const trimmed = query.trim();
   const exact = people.some((person) => person.displayName.toLowerCase() === trimmed.toLowerCase());
@@ -147,6 +153,11 @@ export function SpeakerIdentityDialog({
           </DialogTitle>
           <DialogDescription>Pick a contact, type a new name, or merge with another voice.</DialogDescription>
         </div>
+
+        {suggestedName && <div className="mx-5 mb-3 rounded-lg border border-af-border p-3 text-xs">
+          <p className="mb-2 text-af-text-3">AI summary suggestion: {suggestedName} ({current}). Unverified and not saved as a contact or voice match.</p>
+          <Button disabled={saving} onClick={() => void apply(suggestedName)}>Save AI name</Button>
+        </div>}
 
         {open && <PossibleVoiceMatch speaker={current} speakerChannel={speakerChannel} meetingId={meetingId} disabled={saving} onAccept={name => void apply(name)} />}
 
