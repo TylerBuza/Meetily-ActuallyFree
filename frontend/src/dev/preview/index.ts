@@ -430,6 +430,11 @@ function handle(cmd: string, args: Args): unknown {
       return null;
     case 'list_meeting_images': return [];
     case 'detach_live_voice_match': return;
+    case 'get_voice_profiles_limit':
+      return Number(localStorage.getItem('preview-voice-profile-limit') ?? 50);
+    case 'set_voice_profiles_limit':
+      localStorage.setItem('preview-voice-profile-limit', String(args.value));
+      return null;
     case 'get_voice_profiles_auto_samples': return Number(localStorage.getItem('preview-voice-auto-samples') ?? '12');
     case 'set_voice_profiles_auto_samples': localStorage.setItem('preview-voice-auto-samples', String(args.value)); return;
     case 'get_possible_voice_match': return null;

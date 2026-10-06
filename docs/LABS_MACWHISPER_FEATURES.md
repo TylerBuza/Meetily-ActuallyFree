@@ -388,3 +388,17 @@ matches and Maybe suggestions are estimates, never verified identity; microphone
 and system provenance remains independent. The settings regression checks the beta
 and uncertainty guidance. Synthetic profile tests and contributor recordings do
 not constitute an accuracy benchmark or identity verification.
+
+## Saved profile capacity
+
+Settings > Voice Profiles exposes a saved-profile limit, default 50; any
+nonnegative whole number can be saved and 0 disables the capacity cap.
+`get/set_voice_profiles_limit` persist `voice_profiles_limit.txt` in the install
+data root. Enrollment checks the current limit under the profile-write lock only
+when adding a new person. Lowering it never deletes existing voices or prevents
+refreshing them. Learn all profiles processes every saved voice, including profiles
+above a newly lowered limit. Per-profile sample/history and single-worker learning
+bounds remain unchanged. Unlimited profiles increase memory and matching work;
+this setting does not change the selected diarization model's per-meeting channels.
+Native tests cover finite/unlimited capacity and persisted/default values;
+frontend tests cover validation, zero/custom values and failed persistence.

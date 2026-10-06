@@ -5,9 +5,13 @@ const calls: Array<[string, any]> = [];
 let receive: (event: { payload: { status: string } }) => void;
 let ready = true;
 let rejectScore = false;
+let rejectLimit = false;
+let profileLimit = 50;
 const profiles = [{ person_id: 'alice', name: 'Alice', samples: 4, meetings: 1 }, { person_id: 'bob', name: 'Bob', samples: 8, meetings: 2 }];
 mock.module('@tauri-apps/api/core', () => ({ invoke: async (command: string, args: any) => {
   calls.push([command, args]);
+  if (command === 'get_voice_profiles_limit') return profileLimit;
+  if (command === 'set_voice_profiles_limit') { if (rejectLimit) throw new Error('Disk unavailable'); profileLimit = args.value; return null; }
   if (command === 'get_voice_profiles_auto_samples') return 12;
   if (command === 'get_voice_profiles_match_threshold') return 0.55;
   if (command === 'set_voice_profiles_match_threshold' && rejectScore) throw new Error('Disk unavailable');
@@ -25,7 +29,7 @@ mock.module('next/link', () => ({ default: ({ children, ...props }: any) => <a {
 mock.module('sonner', () => ({ toast: { success: () => {}, error: () => {} } }));
 const { VoiceProfilesSettings } = await import('../src/components/VoiceProfilesSettings');
 let root: ReactTestRenderer;
-afterEach(async () => { await act(async () => root?.unmount()); calls.length = 0; ready = true; rejectScore = false; });
+afterEach(async () => { await act(async () => root?.unmount()); calls.length = 0; ready = true; rejectScore = false; rejectLimit = false; profileLimit = 50; });
 
 test('individual and bulk learning use native jobs and wait for completion', async () => {
   await act(async () => { root = create(<VoiceProfilesSettings />); });
@@ -83,4 +87,26 @@ test('promoted matching remains explicitly beta with uncertainty guidance', asyn
   expect(text).toContain('Recognize saved voices (beta)');
   expect(text).toContain('off by default');
   expect(text).toContain('not verified identities');
+});
+
+test('saved profile limit accepts custom values and zero, rejects invalid input, and reports failed saves', async () => {
+  await act(async () => {root = create(<VoiceProfilesSettings />);});
+  const input = () => root.root.findByProps({id:'saved-voice-profile-limit'});
+  const save = () => root.root.findAllByType('button').find(button => button.children.includes('Save profile limit'))!;
+  expect(input().props.value).toBe('50');
+  for (const value of ['', '-1', '1.5']) {
+    await act(async () => input().props.onChange({target:{value}}));
+    expect(save().props.disabled).toBe(true);
+  }
+  for (const value of ['125', '0']) {
+    await act(async () => input().props.onChange({target:{value}}));
+    await act(async () => save().props.onClick());
+    expect(calls).toContainEqual(['set_voice_profiles_limit', {value:Number(value)}]);
+    expect(save().props.disabled).toBe(true);
+  }
+  rejectLimit = true;
+  await act(async () => input().props.onChange({target:{value:'200'}}));
+  await act(async () => save().props.onClick());
+  expect(root.root.findByProps({role:'alert'}).children.join('')).toContain('Disk unavailable');
+  expect(save().props.disabled).toBe(false);
 });

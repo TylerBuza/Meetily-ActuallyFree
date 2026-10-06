@@ -44,6 +44,38 @@ function VoiceMatchThreshold() {
   </section>;
 }
 
+function SavedProfileLimit() {
+  const [value, setValue] = useState('50');
+  const [saved, setSaved] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let disposed = false;
+    void invoke<number>('get_voice_profiles_limit').then(limit => {
+      if (!disposed) { setSaved(limit); setValue(String(limit)); }
+    }).catch(reason => { if (!disposed) setError(describeVoiceError(reason)); });
+    return () => { disposed = true; };
+  }, []);
+  const limit = Number(value);
+  const valid = value.trim() !== '' && Number.isSafeInteger(limit) && limit >= 0;
+  const save = async () => {
+    if (!valid || busy || saved === null) return;
+    setBusy(true); setError('');
+    try { await invoke('set_voice_profiles_limit', { value: limit }); setSaved(limit); }
+    catch (reason) { setError(describeVoiceError(reason)); }
+    finally { setBusy(false); }
+  };
+  return <section className="rounded-2xl border border-af-border bg-af-panel-2/40 p-5">
+    <label htmlFor="saved-voice-profile-limit" className="text-sm font-semibold">Saved voice profile limit</label>
+    <p className="my-2 text-xs text-af-text-3">Default: 50. Set 0 for unlimited. Lowering the limit keeps existing profiles and allows updates. More profiles increase matching work.</p>
+    <div className="flex items-center gap-3">
+      <input id="saved-voice-profile-limit" type="number" min="0" step="1" disabled={saved === null || busy} value={value} onChange={event => setValue(event.target.value)} className="w-24 rounded border border-af-border bg-af-panel px-2 py-1" />
+      <Button size="sm" disabled={!valid || saved === null || saved === limit || busy} onClick={() => void save()}>Save profile limit</Button>
+    </div>
+    {error && <p role="alert" className="mt-2 text-xs text-af-danger">{error}</p>}
+  </section>;
+}
+
 function AutomaticSampleLimit() {
   const [value, setValue] = useState('12');
   const [saved, setSaved] = useState<number | null>(null);
@@ -175,6 +207,7 @@ export function VoiceProfilesSettings() {
     <AutomaticSampleLimit />
     <FeatureSettingsSwitch feature="voiceConsensus" title="Consensus voice matching (experimental)" description="Use separate meeting samples when available, with repeated clear-speech confirmation. Single-meeting profiles can also match. This may leave uncertain speakers unnamed. Off by default." />
     <VoiceMatchThreshold />
+    <SavedProfileLimit />
     <section className="rounded-2xl border border-af-border bg-af-panel-2/40 p-5"><h3 className="mb-3 text-sm font-semibold">Saved voices</h3><LearnedVoices /></section>
   </div>;
 }

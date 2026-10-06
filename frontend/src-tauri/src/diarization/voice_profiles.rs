@@ -17,7 +17,7 @@ const MODEL: &str = "wespeaker-resnet34-LM/lda-128";
 // Require repeated evidence and a competitor margin instead of a single 0.80 hit.
 const MATCH_THRESHOLD: f32 = 0.55;
 const MATCH_MARGIN: f32 = 0.12;
-const MAX_PROFILES: usize = 50;
+const DEFAULT_PROFILE_LIMIT: usize = 50;
 /// Clear turns learned from one meeting, spread across it.
 // A compute/storage budget, not a universally optimal biometric sample count.
 const LEARN_TURNS: usize = 12;
@@ -318,6 +318,28 @@ pub fn set_voice_profiles_match_threshold(value: f32) -> Result<(), String> {
     if let Some(parent) = file.parent() { std::fs::create_dir_all(parent).map_err(|error| error.to_string())?; }
     std::fs::write(file, value.to_string()).map_err(|error| error.to_string())?;
     match_score().store(value.to_bits(), Ordering::Relaxed);
+    Ok(())
+}
+
+static PROFILE_LIMIT: OnceLock<std::sync::atomic::AtomicUsize> = OnceLock::new();
+fn read_profile_limit(path: &Path) -> usize {
+    std::fs::read_to_string(path).ok().and_then(|text| text.trim().parse().ok()).unwrap_or(DEFAULT_PROFILE_LIMIT)
+}
+fn profile_limit() -> &'static std::sync::atomic::AtomicUsize {
+    PROFILE_LIMIT.get_or_init(|| std::sync::atomic::AtomicUsize::new(read_profile_limit(
+        &crate::paths::install_data_root().join("voice_profiles_limit.txt"))))
+}
+fn capacity_reached(count: usize, limit: usize) -> bool { limit != 0 && count >= limit }
+#[tauri::command]
+pub fn get_voice_profiles_limit() -> usize { profile_limit().load(Ordering::Relaxed) }
+#[tauri::command]
+pub fn set_voice_profiles_limit(value: usize) -> Result<(), String> {
+    // Share enrollment's lock so a limit change cannot race its capacity check.
+    let _guard = PROFILE_WRITE.lock().map_err(|_| "Voice profile lock poisoned")?;
+    let file = crate::paths::install_data_root().join("voice_profiles_limit.txt");
+    if let Some(parent) = file.parent() { std::fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
+    std::fs::write(file, value.to_string()).map_err(|e| e.to_string())?;
+    profile_limit().store(value, Ordering::Relaxed);
     Ok(())
 }
 
@@ -780,8 +802,9 @@ fn store_shares(person_id: &str, name: &str, shares: Vec<VoiceSource>, replace: 
     };
     let profile = build_profile(person_id.to_string(), name.to_string(), merge_shares(earlier, shares))
         .map_err(|error| Meeting(error.to_string()))?;
-    if existing.is_none() && profiles.len() >= MAX_PROFILES {
-        return Err(Unavailable(format!("Meetily keeps up to {MAX_PROFILES} voices. Forget one to learn another.")));
+    let limit = get_voice_profiles_limit();
+    if existing.is_none() && capacity_reached(profiles.len(), limit) {
+        return Err(Unavailable(format!("Saved voice profile limit ({limit}) reached. Increase it or set 0 for unlimited in Settings > Voice Profiles.")));
     }
     let info = profile.info();
     match existing {
@@ -874,7 +897,7 @@ pub async fn queue_voice_profile_learning(
         Some(id) => vec![id],
         None => {
             let _guard = PROFILE_WRITE.lock().map_err(|_| "Voice profile lock poisoned")?;
-            load().map_err(|error| error.to_string())?.into_iter().take(MAX_PROFILES).map(|profile| profile.person_id).collect()
+            load().map_err(|error| error.to_string())?.into_iter().map(|profile| profile.person_id).collect()
         }
     };
     if ids.is_empty() { return Err("No saved voice profiles to learn.".into()); }
@@ -1016,6 +1039,24 @@ pub fn contact_deleted(person_id: &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn profile_capacity_supports_default_custom_and_unlimited_limits() {
+        assert!(!super::capacity_reached(49, 50));
+        assert!(super::capacity_reached(50, 50));
+        assert!(!super::capacity_reached(50, 100));
+        assert!(super::capacity_reached(50, 10));
+        assert!(!super::capacity_reached(usize::MAX, 0));
+    }
+    #[test]
+    fn profile_limit_loads_persisted_zero_and_falls_back_for_invalid_data() {
+        let dir = tempfile::tempdir().unwrap(); let file = dir.path().join("limit.txt");
+        assert_eq!(super::read_profile_limit(&file), 50);
+        for (text, expected) in [("0", 0), ("125", 125), ("-1", 50), ("bad", 50)] {
+            std::fs::write(&file, text).unwrap();
+            assert_eq!(super::read_profile_limit(&file), expected);
+        }
+    }
+
     use super::*;
     fn row(label: &str, start: f64, end: f64) -> (String, Option<f64>, Option<f64>) {
         (label.into(), Some(start), Some(end))

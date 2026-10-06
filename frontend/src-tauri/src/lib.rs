@@ -662,6 +662,8 @@ pub fn run() {
             diarization::voice_profiles::get_voice_profiles_match_threshold,
             diarization::voice_profiles::get_possible_voice_match,
             diarization::voice_profiles::detach_live_voice_match,
+            diarization::voice_profiles::get_voice_profiles_limit,
+            diarization::voice_profiles::set_voice_profiles_limit,
             diarization::voice_profiles::get_voice_profiles_auto_samples,
             diarization::voice_profiles::set_voice_profiles_auto_samples,
             diarization::voice_profiles::set_voice_profiles_match_threshold,
