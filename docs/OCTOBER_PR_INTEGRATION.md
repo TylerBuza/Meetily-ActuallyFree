@@ -19,8 +19,6 @@ Core Audio inactivity and stream-end errors now have distinct user-visible error
 messages, separate from closed pipeline delivery. This improves diagnosis; it
 does not establish or claim a fix for the reporter's new failure.
 
-## Pending review
-
 ## Linux capture #22 — blocked
 
 The rebased branch removes Windows `NATIVE_CLEANUPS` bounded teardown, leaves
@@ -98,3 +96,25 @@ post-call Parakeet as well as Whisper. Parakeet uses token boosts followed by
 edit-distance canonicalization against explicitly configured glossary terms;
 this can alter recognized words and is not an accuracy guarantee. Empty glossary
 retains the original argmax path. Model-dependent accuracy remains unqualified.
+
+## Verification of the integrated source
+
+- Final Windows CPU native suite: **379 passed, 10 ignored**. No model/audio-dependent
+  ignored tests ran during this review. Includes seven vocabulary regressions and
+  the new meeting-scoped cancellation test.
+- **32/32 isolated frontend test files passed**. Five post-call tests exercise
+  navigation, reattachment, completion isolation, skip, Escape, and cancellation.
+  Markdown integration tests distinguish `.md` from TXT/clipboard output.
+- Next production build and its type validation passed after integration.
+- llama-helper CPU build/tests: **2 passed**. Four ROCm parser tests passed using
+  the actual parser/test source extracted into a std-only Rust test executable;
+  this is not a HIP/ROCm dependency build. Node script syntax and LF-normalized
+  Bash syntax checks passed. `.sh` checkout line endings are now pinned to LF.
+- Browser preview with synthetic Acme fixture rendered the post-call prompt with
+  a Close control; “Keep live transcript” dismissed it. The export dialog showed
+  the Markdown link-style selector and all six output choices. This is mocked IPC,
+  not an installed-native recording test.
+- No new installer, release, physical Mac reproduction, AMD GPU execution, or
+  speech-model accuracy qualification is claimed. Existing published v0.2.20 is
+  unchanged. PR #22 and the remaining #38 bundle have change requests; #12 is
+  closed per the author's withdrawal/supersession recommendation.

@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { invoke } from '@tauri-apps/api/core';
 import { useDiarizationEngine } from '@/hooks/useDiarizationEngine';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
@@ -178,11 +179,13 @@ async function runRetranscription({
       timedOut = true;
       void (async () => {
         await invoke('cancel_retranscription_command', { meetingId }).catch(() => undefined);
-        for (let attempt = 0; attempt < 60; attempt++) {
-          const active = await invoke<boolean>('is_retranscription_in_progress_command')
-            .catch(() => false);
+        // Keep ownership if inference outlives the timeout or status IPC fails.
+        // A timer cannot prove that native resources have been released.
+        while (true) {
+          const active = await invoke<boolean>('is_retranscription_in_progress_command', { meetingId })
+            .catch(() => true);
           if (!active) break;
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          await new Promise((resolve) => setTimeout(resolve, 2000));
         }
         finish(new Error('Enhancement timed out and was cancelled.'));
       })();
@@ -362,7 +365,7 @@ export function PostCallProcessingWorker({
       setStage('idle');
       onComplete();
       toast.info('Using the live transcript', {
-        description: 'No enhanced audio pass was applied; the saved live text remains available.',
+        description: 'Keeping the currently saved transcript without further processing.',
       });
     } catch (cause) {
       const nextError = cause instanceof Error ? cause.message : String(cause);
@@ -373,17 +376,6 @@ export function PostCallProcessingWorker({
   };
 
   const isWorking = stage === 'enhancing' || stage === 'diarizing' || stage === 'refreshing';
-  useEffect(() => {
-    if (stage !== 'prompt' && stage !== 'error') return;
-    const dismiss = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        void continueWithLiveTranscript();
-      }
-    };
-    window.addEventListener('keydown', dismiss);
-    return () => window.removeEventListener('keydown', dismiss);
-  });
   const visibleProgress = Math.max(4, Math.min(100, progress));
 
   if (stage === 'idle') return null;
@@ -400,6 +392,7 @@ export function PostCallProcessingWorker({
     <PostCallHandoffCard
       centered
       busy={isWorking}
+      onDismiss={!isWorking ? () => { void continueWithLiveTranscript(); } : undefined}
       title={
         isWorking
           ? 'Improving the transcript'
@@ -419,6 +412,7 @@ export function PostCallProcessingWorker({
     >
       {isWorking ? (
         <div className="space-y-2">
+        <Link href={`/meeting-details?id=${encodeURIComponent(meetingId)}`} className="text-xs text-af-accent underline">Open this meeting</Link>
         <div className="h-1.5 overflow-hidden rounded-full bg-af-border">
           <div
             className="h-full rounded-full bg-af-accent transition-[width] duration-300"

@@ -14,8 +14,9 @@ export function PostCallProcessingDialog(props: PostCallView) {
     meetingId: props.meetingId,
     meetingFolderPath: props.meetingFolderPath,
     enabled: props.enabled,
-    onComplete: () => latest.current.onComplete(),
-    onRefetchTranscripts: () => latest.current.onRefetchTranscripts?.() ?? Promise.resolve(),
+    onComplete: () => { if (latest.current.meetingId === props.meetingId) latest.current.onComplete(); },
+    onRefetchTranscripts: () => latest.current.meetingId === props.meetingId
+      ? latest.current.onRefetchTranscripts?.() ?? Promise.resolve() : Promise.resolve(),
   }), [attach, props.meetingId, props.meetingFolderPath, props.enabled]);
   // Standalone embeddings/tests retain the same component contract.
   return jobs ? null : <PostCallProcessingWorker {...props} />;

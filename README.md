@@ -63,7 +63,7 @@ Screenshots use demo meetings and simulated recording.
 
 ## What you can do
 
-Markdown exports include YAML frontmatter and an optional Obsidian link style
+Current source builds add YAML frontmatter and an optional Obsidian link style
 for named speakers. Other export formats keep their existing formatting.
 
 Local transcription, live speaker editing, organized meeting notes, flexible AI

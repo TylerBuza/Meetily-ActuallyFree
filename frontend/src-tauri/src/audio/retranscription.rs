@@ -1072,8 +1072,11 @@ pub async fn cancel_retranscription_command(meeting_id: Option<String>) -> Resul
 }
 
 #[tauri::command]
-pub async fn is_retranscription_in_progress_command() -> bool {
-    is_retranscription_in_progress()
+pub async fn is_retranscription_in_progress_command(meeting_id: Option<String>) -> bool {
+    match meeting_id {
+        Some(expected) => RETRANSCRIPTION_MEETING.lock().unwrap().as_deref() == Some(expected.as_str()),
+        None => is_retranscription_in_progress(),
+    }
 }
 
 #[cfg(test)]

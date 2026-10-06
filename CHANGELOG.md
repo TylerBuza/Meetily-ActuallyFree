@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Preserve combined speaker labels in display, export, and component-level renames (#44/#45; from #38).
+- Own post-call processing above navigation, skip enhancement/diarization when
+  keeping the live transcript, and scope cancellation to the active meeting (#31/#35).
+- Add Markdown frontmatter and optional Obsidian speaker links (#27).
+- Apply configured vocabulary hints to Parakeet live/import/post-call transcription (#10).
+- Add opt-in Linux source-build ROCm helper mapping and SDK discovery (#8; AMD hardware validation pending).
+- Distinguish macOS system-tap inactivity/end errors from a closed processing channel (#42 diagnostics).
+
 ## v0.2.20 — Windows recording reliability and setup improvements
 
 See [release notes](docs/RELEASE_V0220.md) for the complete update and test limits.

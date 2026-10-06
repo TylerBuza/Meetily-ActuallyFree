@@ -1,4 +1,5 @@
 #!/bin/bash
+# Linux HIP uses the helper's ROCm backend; keep this script LF-terminated.
 # GPU-accelerated build script for Meetily
 # Automatically detects and builds with optimal GPU features
 

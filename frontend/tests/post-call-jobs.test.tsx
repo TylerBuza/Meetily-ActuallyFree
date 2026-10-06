@@ -24,7 +24,7 @@ mock.module('@/contexts/ConfigContext', () => ({ useConfig: () => ({ selectedLan
 mock.module('@/lib/parakeet', () => ({ isVisibleParakeetModel: () => true }));
 mock.module('@/lib/workspace-api', () => ({ announceChange: () => {} }));
 mock.module('sonner', () => ({ toast: { success() {}, error() {}, info() {} } }));
-mock.module('@/components/PostCallHandoffCard', () => ({ PostCallHandoffCard: ({ children, detail }: any) => <section>{detail}{children}</section> }));
+mock.module('@/components/PostCallHandoffCard', () => ({ PostCallHandoffCard: ({ children, detail, onDismiss }: any) => <section onKeyDown={(event: any) => { if (event.key === 'Escape') onDismiss?.(); }}>{detail}{children}</section> }));
 mock.module('@/components/ui/button', () => ({ Button: (props: any) => <button {...props} /> }));
 const { PostCallJobsProvider } = await import('../src/contexts/PostCallJobsContext');
 const { PostCallProcessingDialog } = await import('../src/components/MeetingDetails/PostCallProcessingDialog');
@@ -35,7 +35,7 @@ const completeA = mock(() => {});
 const completeB = mock(() => {});
 function App({ page = 'a', enabled = true }: { page?: string; enabled?: boolean }) {
   return <PostCallJobsProvider>{page !== 'settings' && <PostCallProcessingDialog
-    key={page} enabled={enabled} meetingId={page} meetingFolderPath={`/${page}`}
+    enabled={enabled} meetingId={page} meetingFolderPath={`/${page}`}
     onRefetchTranscripts={page === 'a' ? refreshA : refreshB}
     onComplete={page === 'a' ? completeA : completeB} />}</PostCallJobsProvider>;
 }
@@ -63,6 +63,24 @@ test('keep-live dismisses without enhancement or diarization', async () => {
   await act(async () => { root = create(<App />); });
   await act(async () => button('Keep live transcript').props.onClick());
   expect(calls).toHaveLength(0);
+  expect(completeA).toHaveBeenCalledTimes(1);
+});
+
+test('Escape dismisses the prompt without starting work', async () => {
+  await act(async () => { root = create(<App />); });
+  await act(async () => root.root.findByType('section').props.onKeyDown({ key: 'Escape' }));
+  expect(calls).toHaveLength(0);
+  expect(completeA).toHaveBeenCalledTimes(1);
+});
+
+test('returning to an active meeting does not reopen or duplicate its job', async () => {
+  await act(async () => { root = create(<App />); });
+  await act(async () => button('Auto-detect & continue').props.onClick());
+  await act(async () => root.update(<App page="settings" />));
+  await act(async () => root.update(<App />));
+  expect(button('Auto-detect & continue')).toBeUndefined();
+  expect(calls.filter(([name]) => name === 'start_retranscription_command')).toHaveLength(1);
+  await act(async () => events.get('retranscription-complete')!({ payload: { meeting_id: 'a' } }));
   expect(completeA).toHaveBeenCalledTimes(1);
 });
 
