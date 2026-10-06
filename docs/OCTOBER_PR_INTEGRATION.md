@@ -118,3 +118,25 @@ retains the original argmax path. Model-dependent accuracy remains unqualified.
   speech-model accuracy qualification is claimed. Existing published v0.2.20 is
   unchanged. PR #22 and the remaining #38 bundle have change requests; #12 is
   closed per the author's withdrawal/supersession recommendation.
+
+## PR38 contributor follow-up (October 6)
+
+Current main `9d19667` is merged into PR38, preserving its app-owned post-call
+worker, skip semantics and native-completion cancellation ownership. Feature
+history is retained rather than replaying the already ported speaker fixes.
+Separate commits address canonical meeting-folder ownership/database-before-file
+cleanup, explicit opt-in beta matching, and remote-first mic/system centroid
+separation. This is contributor implementation and qualification, not maintainer
+approval or a published release.
+
+- 42/42 isolated frontend files, TypeScript checks and final Next production build
+  passed, including upstream post-call navigation/skip/cancellation regressions.
+- Final Windows CPU native suite: 419 passed, 13 ignored. Deletion fixtures use
+  temporary folders/in-memory SQLite, including Windows junction/case aliases and
+  injected database/cleanup failures. Capture regressions use synthetic identical
+  signals and embeddings; bundled ONNX smoke tests use generated waveform data.
+- Ignored audio/model accuracy tests and real Teams/headset reproduction did not
+  run. No private recording was deleted or added to Git, no installer was produced,
+  and no identity-accuracy or physical headset fix is claimed. See
+  `MIC_PLAYBACK_SUPPRESSION.md` for the device reproduction procedure and
+  `MEETING_FILE_DELETION.md` for crash/external-filesystem limits.

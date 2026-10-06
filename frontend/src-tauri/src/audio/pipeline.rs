@@ -2140,6 +2140,25 @@ mod ring_buffer_tests {
     }
 
     #[test]
+    fn joining_during_speech_preserves_source_when_mic_copies_remote_audio() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let mut id = 0;
+        let remote: Vec<f32> = (0..1600).map(|i| (i as f32 * 0.07).sin() * 0.1).collect();
+        for (source, start) in [(DeviceType::System, 0.0), (DeviceType::Microphone, 20.0), (DeviceType::System, 100.0)] {
+            AudioPipeline::enqueue_source_speech(vec![SpeechSegment {
+                samples: remote.clone(), start_timestamp_ms: start,
+                end_timestamp_ms: start + 100.0, confidence: 0.9,
+            }], source, &sender, &mut id);
+        }
+        for (source, start) in [(DeviceType::System, 0.0), (DeviceType::Microphone, 0.02), (DeviceType::System, 0.1)] {
+            let chunk = receiver.try_recv().unwrap();
+            assert_eq!(chunk.device_type, source);
+            assert_eq!(chunk.timestamp, start);
+            assert_eq!(chunk.data, remote);
+        }
+    }
+
+    #[test]
     fn completed_vad_segments_are_queued() {
         let (sender, mut receiver) = mpsc::unbounded_channel();
         let mut chunk_id = 0;

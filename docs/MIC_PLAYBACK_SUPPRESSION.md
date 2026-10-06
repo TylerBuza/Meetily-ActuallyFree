@@ -68,3 +68,38 @@ both local and remote words can remove some local speech. The
 setting is experimental and should be compared against a test call with the
 microphone left open, including a period where the user talks over playback.
 Existing recordings and transcripts are not changed.
+
+## Headset input copies and joining during speech
+
+Suppression uses signal correlation, not an assumption that leakage traveled
+through air. A zero-delay, gain-scaled electronic copy on the selected mic input
+is also removed by the existing opt-in filter. Native `electronic_headset_copy`
+coverage exercises that case with synthetic audio; nonlinear processing or an
+unavailable/misaligned system reference can still escape suppression. The input
+meter displays captured microphone samples before this filter, so its movement
+alone does not establish that filtered mic speech was transcribed.
+
+A separate online-clustering bug is addressed in `diarization/online.rs`:
+when remote speech arrived first, an identical microphone copy could update
+that remote centroid and mark it as the microphone cluster. Later remote speech
+would avoid that cluster and change identities. Matching now compares only
+centroids from the same immutable capture source. Short/failed embeddings use
+only the last cluster on their own source; no opposite-source fallback is allowed,
+and a full speaker budget without a same-source centroid returns no assignment.
+Remote channel zero is still a remote channel. `is_user` is the capture-source
+flag, never a verdict from a model channel or voice match. `capture_source` and
+`speaker_channel` survive independently of displayed names and corrections.
+
+Synthetic regressions check remote-first/identical-mic-copy clustering, enrolled
+mic exclusion and pipeline enqueue order/timestamps/source with identical signals.
+The existing delayed-playback and independent-local-speech tests remain in the
+suite. These establish source separation and a narrow filter case, not a physical
+headset fix, meeting-platform routing diagnosis, or recognition accuracy.
+
+For a device reproduction, enable the Lab before recording, select the actual
+headset mic and the meeting's system/per-app output, and join while remote speech
+is already ongoing. Stay silent, then speak while remote playback continues.
+Compare source-tagged transcript rows, the separate mic/system recordings, and
+retained local speech with the Lab off/on. Do not infer identity from Speaker 1
+or from the unfiltered mic meter. No Teams/headset hardware reproduction has been
+performed for this change, so the reporter's device case still needs confirmation.

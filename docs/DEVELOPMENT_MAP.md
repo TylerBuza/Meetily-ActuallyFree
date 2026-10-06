@@ -590,3 +590,13 @@ English. The existing translation command receives the selected language name;
 no transcript storage or translation-provider interface changes are needed.
 Production frontend compilation verifies the menu change; actual translation
 quality depends on the configured LLM and was not requalified for this addition.
+
+### Maintainer capture-source qualification
+
+Online Pyannote clustering now keeps microphone and system centroids separate,
+including remote-first joins, identical mic copies and short-turn fallbacks.
+Model speaker numbers cannot confer microphone provenance. See
+[MIC_PLAYBACK_SUPPRESSION.md](MIC_PLAYBACK_SUPPRESSION.md) for the synthetic
+source-order and electronic-copy checks, retained limits and hardware reproduction.
+Voice Profiles remains opt-in beta after promotion; see its qualification in
+[LABS_MACWHISPER_FEATURES.md](LABS_MACWHISPER_FEATURES.md).

@@ -254,6 +254,18 @@ mod tests {
     }
 
     #[test]
+    fn electronic_headset_copy_is_removed_without_acoustic_delay() {
+        let mut guard = EchoGuard::new(48_000);
+        let system: Vec<f32> = (0..2_400).map(signal).collect();
+        let mic: Vec<f32> = system.iter().map(|sample| sample * 0.4).collect();
+        let filtered = guard.filter_window(&mic, &system);
+        assert!(filtered.iter().map(|sample| sample * sample).sum::<f32>() < 1e-5);
+        // Playback stays available as the reference; suppression changes only
+        // the microphone transcription residual, not the captured remote track.
+        assert_eq!(system, (0..2_400).map(signal).collect::<Vec<_>>());
+    }
+
+    #[test]
     fn unrelated_mic_audio_is_not_removed() {
         let mut guard = EchoGuard::new(48_000);
         let mic: Vec<f32> = (0..2_400).map(|i| (i as f32 * 0.071).sin() * 0.1).collect();
