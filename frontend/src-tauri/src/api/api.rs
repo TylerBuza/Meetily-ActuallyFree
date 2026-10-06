@@ -1052,30 +1052,14 @@ pub async fn api_delete_meeting<R: Runtime>(
     let pool = state.db_manager.pool();
 
     if delete_local_files.unwrap_or(false) {
-        // The folder comes from this meeting's database row, never a WebView
-        // path. The existing native guard rejects paths outside known recording
-        // roots and refuses to remove a root itself.
-        let folder: Option<Option<String>> = sqlx::query_scalar(
-            "SELECT folder_path FROM meetings WHERE id = ?",
-        )
-        .bind(&meeting_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|error| error.to_string())?;
-        if let Some(Some(folder)) = folder {
-            let other_meetings: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM meetings WHERE folder_path = ? AND id != ?",
-            )
-            .bind(&folder)
-            .bind(&meeting_id)
-            .fetch_one(pool)
-            .await
-            .map_err(|error| error.to_string())?;
-            if other_meetings > 0 {
-                return Err("Recording folder is shared by another meeting; files were kept".into());
-            }
-            crate::audio::recording_preferences::discard_recording_folder(app, folder).await?;
-        }
+        let preferences = crate::audio::recording_preferences::load_recording_preferences(&app)
+            .await.map_err(|e| format!("Failed to load recording preferences: {e}"))?;
+        let roots = vec![preferences.save_folder,
+            crate::audio::recording_preferences::get_default_recordings_folder(),
+            crate::paths::install_data_root()];
+        let warning = super::meeting_deletion::delete_with_files(pool, &meeting_id, roots).await?;
+        return Ok(serde_json::json!({"status": "success", "warning": warning,
+            "message": "Meeting removed from Meetily"}));
     }
 
     match MeetingsRepository::delete_meeting(pool, &meeting_id).await {

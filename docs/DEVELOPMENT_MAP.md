@@ -197,12 +197,13 @@ images in exports.
 Deleting a meeting now offers separate choices in `DeleteMeetingsDialog.tsx`.
 `meeting-actions.ts` passes `deleteLocalFiles` to `api_delete_meeting`: the
 default removes Meetily's database rows while keeping the recording folder;
-the destructive choice deletes the database-owned folder through the native
-recordings-root guard before removing database rows. A folder referenced by
-another meeting is retained and the operation fails. This removes files in
-that folder, including audio, transcript exports, and images, but does not
-remove unrelated files elsewhere or restore a meeting after a later database
-failure. The Notes screen capture uses the macOS system picker through
+the destructive choice validates canonical identities and parent/child containment
+against every other meeting folder before committing the database deletion.
+`api/meeting_deletion.rs` owns the check and cleanup; file removal runs on a
+blocking worker only after the database commit succeeds. Cleanup failures return
+a visible warning rather than claiming all files were deleted. Read
+[MEETING_FILE_DELETION.md](MEETING_FILE_DELETION.md) for tests and filesystem limits.
+The Notes screen capture uses the macOS system picker through
 `getDisplayMedia`; Meetily can clarify how to select a window but cannot
 restyle the picker’s outline or Share This Window button.
 

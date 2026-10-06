@@ -23,7 +23,6 @@ use log::{info, warn};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-#[cfg(any(target_os = "macos", test))]
 use std::path::{Component, Path};
 use std::sync::atomic::{AtomicU32, Ordering};
 use tauri::{AppHandle, Runtime};
@@ -216,8 +215,7 @@ pub fn ensure_recordings_directory(path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-#[cfg(any(target_os = "macos", test))]
-fn resolve_path_for_containment(path: &Path) -> Result<PathBuf> {
+pub(crate) fn resolve_path_for_containment(path: &Path) -> Result<PathBuf> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -238,7 +236,7 @@ fn resolve_path_for_containment(path: &Path) -> Result<PathBuf> {
             }
             Component::Normal(_) => {
                 resolved.push(component.as_os_str());
-                if resolved.exists() {
+                if resolved.try_exists().with_context(|| format!("Failed to inspect path {}", resolved.display()))? {
                     resolved = resolved.canonicalize().with_context(|| {
                         format!("Failed to resolve path {}", resolved.display())
                     })?;

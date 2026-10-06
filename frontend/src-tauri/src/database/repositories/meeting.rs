@@ -545,7 +545,7 @@ mod tests {
     }
 }
 
-async fn delete_meeting_with_transaction(
+pub(crate) async fn delete_meeting_with_transaction(
     transaction: &mut SqliteConnection,
     meeting_id: &str,
 ) -> Result<bool, SqlxError> {

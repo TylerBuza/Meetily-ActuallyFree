@@ -46,20 +46,23 @@ export async function moveMeetingsToGroup(
 
 export async function deleteMeetings(meetingIds: string[], deleteLocalFiles = false): Promise<number> {
   let deleted = 0;
+  let cleanupFailed = false;
   for (const meetingId of meetingIds) {
     try {
-      await invoke('api_delete_meeting', { meetingId, deleteLocalFiles });
+      const result = await invoke<{warning?: string | null}>('api_delete_meeting', { meetingId, deleteLocalFiles });
+      if (result?.warning) { cleanupFailed = true; toast.warning(result.warning); }
       Analytics.trackMeetingDeleted(meetingId);
       deleted += 1;
     } catch (error) {
       console.error('Failed to delete meeting', meetingId, error);
+      toast.error(String(error));
     }
   }
   if (deleted > 0) {
     announceChange('meetings', { meetingIds });
     announceChange('groups');
     announceChange('actions');
-    toast.success(deleteLocalFiles
+    toast.success(cleanupFailed ? 'Meeting removed; review the file cleanup warning' : deleteLocalFiles
       ? (deleted === 1 ? 'Meeting and local files deleted' : `${deleted} meetings and local files deleted`)
       : (deleted === 1 ? 'Meeting removed from Meetily; files kept' : `${deleted} meetings removed from Meetily; files kept`));
   }
