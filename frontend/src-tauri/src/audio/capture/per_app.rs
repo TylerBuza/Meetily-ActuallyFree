@@ -13,6 +13,9 @@ pub struct RecordableApp {
 
 #[cfg(target_os = "macos")]
 unsafe fn ns_string_to_string(ns_str: *mut objc::runtime::Object) -> Option<String> {
+    // objc 0.2 expands msg_send! through selector macros in the caller scope.
+    use objc::{sel, sel_impl};
+
     if ns_str.is_null() {
         return None;
     }
