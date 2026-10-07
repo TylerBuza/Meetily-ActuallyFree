@@ -1287,6 +1287,53 @@ async fn stop_recording_inner<R: Runtime>(
 }
 
 #[cfg(test)]
+mod reconnect_serialization_tests {
+    use super::with_manager_in_place;
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn stop_during_reconnect_waits_for_the_same_manager() {
+        let slot = Arc::new(Mutex::new(Some(0u32)));
+        let (entered, wait_entered) = mpsc::channel();
+        let reconnect_slot = slot.clone();
+        let reconnect = thread::spawn(move || {
+            with_manager_in_place(&reconnect_slot, |manager| {
+                entered.send(()).unwrap();
+                // Stand-in for the bounded stream stop/restart inside reconnect.
+                thread::sleep(Duration::from_millis(100));
+                *manager += 1;
+            })
+        });
+        wait_entered.recv().unwrap();
+
+        // Status and Stop issued mid-reconnect must observe the active manager
+        // after the reconnect, never an empty slot.
+        let status_slot = slot.clone();
+        let status = thread::spawn(move || *status_slot.lock().unwrap());
+        assert_eq!(status.join().unwrap(), Some(1));
+        let stopped = slot.lock().unwrap().take();
+
+        assert_eq!(reconnect.join().unwrap(), Some(()));
+        assert_eq!(stopped, Some(1));
+        assert!(slot.lock().unwrap().is_none(), "reconnect must not restore a stopped manager");
+    }
+
+    #[test]
+    fn reconnect_after_stop_reports_inactive_and_does_not_resurrect() {
+        let slot: Mutex<Option<u32>> = Mutex::new(None);
+        assert_eq!(with_manager_in_place(&slot, |_| ()), None);
+        assert!(slot.lock().unwrap().is_none());
+
+        // A Start that installs a new manager is reconnected in place, not replaced.
+        *slot.lock().unwrap() = Some(7);
+        assert_eq!(with_manager_in_place(&slot, |manager| *manager), Some(7));
+        assert_eq!(*slot.lock().unwrap(), Some(7));
+    }
+}
+
+#[cfg(test)]
 mod compact_mode_tests {
     use super::compact_mode_allowed;
 
@@ -1628,6 +1675,18 @@ pub async fn get_active_audio_output() -> Result<super::playback_monitor::AudioO
         .map_err(|e| format!("Failed to get audio output info: {}", e))
 }
 
+/// Run `f` on the manager while it stays in `slot` with the lock held.
+///
+/// Reconnect must not take() the manager out: Stop would then see an empty slot
+/// and report "not recording" (or race the restore), and a concurrent Start
+/// could install a new manager that the restore overwrites. Holding the lock
+/// serializes Stop/Start/status behind the reconnect instead. The hold is
+/// bounded because stop_streams() is synchronous with a per-stream cleanup
+/// deadline (NATIVE_CLEANUPS in stream.rs).
+fn with_manager_in_place<T, R>(slot: &Mutex<Option<T>>, f: impl FnOnce(&mut T) -> R) -> Option<R> {
+    slot.lock().unwrap().as_mut().map(f)
+}
+
 /// Manually trigger device reconnection attempt
 /// Useful for UI "Retry" button
 #[tauri::command]
@@ -1642,24 +1701,24 @@ pub async fn attempt_device_reconnect(
         _ => return Err(format!("Invalid device type: {}", device_type)),
     };
 
-    // Take the manager out of the global mutex before the reconnection work,
-    // instead of holding the lock across the .await below. Since TECH-01,
-    // stream shutdown inside attempt_device_reconnect() is async and can take
-    // up to a few seconds (bounded join of the capture thread) instead of the
-    // near-instant sync call it used to be — holding a std::sync::Mutex across
-    // that would block every other command that locks RECORDING_MANAGER
-    // (stop_recording, status queries, ...) for the same duration. Same
-    // take()/put-back pattern as stop_recording() above.
-    let mut manager = match RECORDING_MANAGER.lock().unwrap().take() {
-        Some(m) => m,
-        None => return Err("Recording not active".to_string()),
-    };
+    // Check if recording is active
+    {
+        let manager_guard = RECORDING_MANAGER.lock().unwrap();
+        if manager_guard.is_none() {
+            return Err("Recording not active".to_string());
+        }
+    } // Release lock
 
-    let result = manager.attempt_device_reconnect(&device_name, monitor_type).await;
-
-    // Put it back regardless of outcome — a failed reconnect attempt doesn't
-    // mean recording stopped.
-    *RECORDING_MANAGER.lock().unwrap() = Some(manager);
+    // Spawn blocking task to handle the async reconnection
+    let result = tokio::task::spawn_blocking(move || {
+        let runtime = tokio::runtime::Handle::current();
+        with_manager_in_place(&RECORDING_MANAGER, |manager| {
+            runtime.block_on(manager.attempt_device_reconnect(&device_name, monitor_type))
+        })
+        .unwrap_or_else(|| Err(anyhow::anyhow!("Recording not active")))
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?;
 
     match result {
         Ok(success) => {

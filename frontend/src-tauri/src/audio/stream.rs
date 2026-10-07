@@ -16,10 +16,11 @@ use super::pipeline::AudioCapture;
 use super::recording_state::{RecordingState, DeviceType};
 use super::capture::{AudioCaptureBackend, get_current_backend};
 
-// A timed-out WASAPI teardown retains native ownership on its cleanup thread.
-// Block new CPAL capture until it finishes rather than accumulating orphaned
-// streams each time the user retries Start.
-#[cfg(target_os = "windows")]
+// A timed-out WASAPI teardown, or a Linux PulseAudio capture thread still
+// blocked in read(), retains native ownership on its cleanup thread. Block new
+// capture until it finishes rather than accumulating orphaned streams each time
+// the user retries Start.
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 static NATIVE_CLEANUPS: once_cell::sync::Lazy<super::capture_worker::NativeCleanup> =
     once_cell::sync::Lazy::new(super::capture_worker::NativeCleanup::default);
 
@@ -31,7 +32,63 @@ use super::recording_state::AudioError;
 #[cfg(target_os = "linux")]
 use super::capture::{find_monitor_source_by_description, find_source_by_description, PulseCapture};
 #[cfg(target_os = "linux")]
-use std::sync::atomic::AtomicBool;
+use super::capture_worker::NativeCleanup;
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Owns a Linux capture thread that blocks in libpulse-simple's `read()`.
+/// The stop flag is only observed between reads, so the thread can outlive any
+/// caller deadline; whoever holds this value (the stream, then the native
+/// cleanup thread) owns that thread until it has actually been joined.
+#[cfg(target_os = "linux")]
+pub struct PulseCaptureThread {
+    should_stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(target_os = "linux")]
+impl PulseCaptureThread {
+    fn spawn(name: String, should_stop: Arc<AtomicBool>, run: impl FnOnce() + Send + 'static) -> Result<Self> {
+        let thread = std::thread::Builder::new()
+            .name(name)
+            .spawn(run)
+            .map_err(|e| anyhow::anyhow!("Failed to spawn audio capture thread: {}", e))?;
+        Ok(Self { should_stop, thread: Some(thread) })
+    }
+
+    /// Signal stop and join with a caller deadline. On timeout the join (and
+    /// the thread's PulseAudio stream) stays owned by `cleanup`, which keeps
+    /// `is_pending()` true so Start is rejected until the thread exits.
+    fn stop(mut self, cleanup: &NativeCleanup, timeout: std::time::Duration) -> Result<()> {
+        self.should_stop.store(true, Ordering::Release);
+        let thread = self.thread.take();
+        cleanup
+            .run(
+                move || match thread.map(|thread| thread.join()) {
+                    Some(Err(_)) => Err("PulseAudio capture thread panicked".to_string()),
+                    _ => Ok(()),
+                },
+                timeout,
+            )
+            .map_err(anyhow::Error::msg)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for PulseCaptureThread {
+    // Early-drop paths (a stream dropped without stop()) still hand the
+    // unjoined thread to the cleanup owner instead of detaching it.
+    fn drop(&mut self) {
+        if let Some(thread) = self.thread.take() {
+            self.should_stop.store(true, Ordering::Release);
+            warn!("PulseAudio capture stream dropped without stop(); joining in background");
+            let _ = NATIVE_CLEANUPS.run(
+                move || thread.join().map_err(|_| "PulseAudio capture thread panicked".to_string()),
+                std::time::Duration::ZERO,
+            );
+        }
+    }
+}
 
 /// Stream backend implementation
 pub enum StreamBackend {
@@ -52,10 +109,7 @@ pub enum StreamBackend {
     },
     /// Native PipeWire/PulseAudio implementation (Linux only)
     #[cfg(target_os = "linux")]
-    Pulse {
-        should_stop: Arc<AtomicBool>,
-        task: Option<tokio::task::JoinHandle<()>>,
-    },
+    Pulse(PulseCaptureThread),
     /// Windows Process Loopback stream (per-app)
     #[cfg(windows)]
     ProcessLoopback {
@@ -544,6 +598,9 @@ impl AudioStream {
         // The picker shows "<sink description> (System Audio) (output)" (see
         // devices/platform/linux.rs); strip those suffixes to recover the sink
         // description and resolve it to its real monitor source name.
+        anyhow::ensure!(!NATIVE_CLEANUPS.is_pending(),
+            "Previous PulseAudio capture cleanup is still running; retry recording shortly");
+
         let mut description = device
             .name
             .strip_suffix(" (System Audio)")
@@ -571,28 +628,17 @@ impl AudioStream {
         );
 
         let device_name = device.name.clone();
-        let task = std::thread::Builder::new()
-            .name(format!("audio-capture-{}", device.name))
-            .spawn(move || {
-                info!("✅ Stream: PulseAudio capture thread started for {}", device_name);
-                capture_impl.run(|samples| capture.process_audio_data(samples));
-                info!("⚠️ Stream: PulseAudio capture thread ended for {}", device_name);
-            })
-            .map_err(|e| anyhow::anyhow!("Failed to spawn audio capture thread: {}", e))?;
-
-        // Wrap the thread handle in a tokio JoinHandle-like structure
-        let task = tokio::task::spawn_blocking(move || {
-            let _ = task.join();
-        });
+        let thread = PulseCaptureThread::spawn(format!("audio-capture-{}", device.name), should_stop, move || {
+            info!("✅ Stream: PulseAudio capture thread started for {}", device_name);
+            capture_impl.run(|samples| capture.process_audio_data(samples));
+            info!("⚠️ Stream: PulseAudio capture thread ended for {}", device_name);
+        })?;
 
         info!("✅ Stream: PulseAudio stream fully initialized for device: {}", device.name);
 
         Ok(Self {
             device: device.clone(),
-            backend: StreamBackend::Pulse {
-                should_stop,
-                task: Some(task),
-            },
+            backend: StreamBackend::Pulse(thread),
         })
     }
 
@@ -613,6 +659,9 @@ impl AudioStream {
         // from_name() has already stripped the "(input)" suffix. If the
         // description isn't known (stale saved preference or degraded-mode
         // entry), this errors out and the caller falls back to CPAL.
+        anyhow::ensure!(!NATIVE_CLEANUPS.is_pending(),
+            "Previous PulseAudio capture cleanup is still running; retry recording shortly");
+
         let source_name = find_source_by_description(&device.name)
             .map_err(|e| anyhow::anyhow!("Failed to resolve PulseAudio source '{}': {}", device.name, e))?;
 
@@ -634,7 +683,7 @@ impl AudioStream {
         );
 
         let device_name = device.name.clone();
-        let task = tokio::task::spawn_blocking(move || {
+        let thread = PulseCaptureThread::spawn(format!("audio-capture-{}", device.name), should_stop, move || {
             info!(
                 "✅ Stream: PulseAudio microphone capture thread started for {}",
                 device_name
@@ -644,7 +693,7 @@ impl AudioStream {
                 "⚠️ Stream: PulseAudio microphone capture thread ended for {}",
                 device_name
             );
-        });
+        })?;
 
         info!(
             "✅ Stream: PulseAudio microphone stream fully initialized for device: {}",
@@ -653,10 +702,7 @@ impl AudioStream {
 
         Ok(Self {
             device: device.clone(),
-            backend: StreamBackend::Pulse {
-                should_stop,
-                task: Some(task),
-            },
+            backend: StreamBackend::Pulse(thread),
         })
     }
 
@@ -744,29 +790,25 @@ impl AudioStream {
         &self.device
     }
 
-    /// Signal the capture thread to stop, without waiting for it to exit.
-    ///
-    /// Used only by `AudioStreamManager::Drop`, which cannot be async. Every
-    /// normal shutdown path must use `stop().await` instead.
-    pub fn signal_stop_only(&self) {
-        match &self.backend {
-            #[cfg(target_os = "linux")]
-            StreamBackend::Pulse { should_stop, .. } => {
-                should_stop.store(true, std::sync::atomic::Ordering::Release);
-            }
-            _ => {
-                // CPAL/CoreAudio backends clean themselves up through their own
-                // Drop implementations; no explicit signal is needed here.
-            }
-        }
-    }
-
-    /// Stop the stream and wait for its capture thread/task to finish.
-    pub async fn stop(self) -> Result<()> {
+    /// Stop the stream
+    pub fn stop(self) -> Result<()> {
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         if let StreamBackend::CpalWorker { accepting, .. } = &self.backend {
             accepting.store(false, Ordering::Release);
         }
+        #[cfg(target_os = "windows")]
+        {
+            // WASAPI's public Stream drop joins its native thread without a
+            // timeout. Own that drop off the caller, with explicit completion
+            // and a guard that keeps new capture blocked while cleanup lives.
+            return NATIVE_CLEANUPS.run(move || self.stop_inner().map_err(|error| error.to_string()),
+                std::time::Duration::from_secs(3)).map_err(anyhow::Error::msg);
+        }
+        #[cfg(not(target_os = "windows"))]
+        self.stop_inner()
+    }
+
+    fn stop_inner(self) -> Result<()> {
         info!("Stopping audio stream for device: {}", self.device.name);
 
         match self.backend {
@@ -806,28 +848,13 @@ impl AudioStream {
                 }
             }
             #[cfg(target_os = "linux")]
-            StreamBackend::Pulse { should_stop, task } => {
-                // Signal the blocking capture thread to stop after its current
-                // read() call returns, then await its JoinHandle with a bounded
-                // timeout. abort() on a spawn_blocking task that has already
-                // started is a no-op, so waiting is the only reliable way to
-                // know the thread has actually exited.
+            StreamBackend::Pulse(thread) => {
+                // read() only observes the stop flag between ~21 ms chunks, but a
+                // stalled source can block it indefinitely. Bound the caller wait
+                // and report failure; NATIVE_CLEANUPS keeps owning the join.
                 info!("Signalling PulseAudio capture thread to stop...");
-                should_stop.store(true, std::sync::atomic::Ordering::Release);
-                if let Some(task_handle) = task {
-                    match tokio::time::timeout(
-                        std::time::Duration::from_secs(2),
-                        task_handle,
-                    )
-                    .await
-                    {
-                        Ok(Ok(())) => info!("PulseAudio capture thread joined cleanly"),
-                        Ok(Err(e)) => warn!("PulseAudio capture thread panicked: {}", e),
-                        Err(_) => warn!(
-                            "PulseAudio capture thread did not stop within 2s, abandoning join (thread may still be running)"
-                        ),
-                    }
-                }
+                thread.stop(&NATIVE_CLEANUPS, std::time::Duration::from_secs(3))?;
+                info!("PulseAudio capture thread joined cleanly");
             }
             #[cfg(windows)]
             StreamBackend::ProcessLoopback { stop_flag, thread_handles } => {
@@ -957,15 +984,15 @@ impl AudioStreamManager {
         self.start_streams_with_per_app(microphone_device, system_device, None, recording_sender).await
     }
 
-    /// Stop all audio streams and wait for each capture thread to finish.
-    pub async fn stop_streams(&mut self) -> Result<()> {
+    /// Stop all audio streams
+    pub fn stop_streams(&mut self) -> Result<()> {
         info!("Stopping all audio streams");
 
         let mut errors = Vec::new();
 
         // Stop microphone stream
         if let Some(mic_stream) = self.microphone_stream.take() {
-            if let Err(e) = mic_stream.stop().await {
+            if let Err(e) = mic_stream.stop() {
                 error!("Failed to stop microphone stream: {}", e);
                 errors.push(e);
             }
@@ -973,7 +1000,7 @@ impl AudioStreamManager {
 
         // Stop system stream
         if let Some(sys_stream) = self.system_stream.take() {
-            if let Err(e) = sys_stream.stop().await {
+            if let Err(e) = sys_stream.stop() {
                 error!("Failed to stop system stream: {}", e);
                 errors.push(e);
             }
@@ -1007,16 +1034,90 @@ impl AudioStreamManager {
 
 impl Drop for AudioStreamManager {
     fn drop(&mut self) {
-        // Drop can't be async, so this is a best-effort signal-only shutdown —
-        // it does not wait for capture threads to actually exit. The real,
-        // awaited shutdown always happens via an explicit stop_streams().await
-        // earlier in every control-flow path (recording_manager.rs); this is
-        // only a safety net for paths that drop the manager without calling it.
-        if let Some(mic_stream) = self.microphone_stream.take() {
-            mic_stream.signal_stop_only();
+        if let Err(e) = self.stop_streams() {
+            error!("Error stopping streams during drop: {}", e);
         }
-        if let Some(sys_stream) = self.system_stream.take() {
-            sys_stream.signal_stop_only();
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod pulse_shutdown_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn wait_until_idle(cleanup: &NativeCleanup) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while cleanup.is_pending() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    #[test]
+    fn stalled_read_fails_stop_and_blocks_restart_until_thread_exits() {
+        let cleanup = NativeCleanup::default();
+        let should_stop = Arc::new(AtomicBool::new(false));
+        let (release, stalled_read) = std::sync::mpsc::channel::<()>();
+        // Models a read() that ignores the stop flag until the source delivers.
+        let thread = PulseCaptureThread::spawn("pulse-test-stalled".into(), should_stop.clone(), move || {
+            let _ = stalled_read.recv();
+        })
+        .unwrap();
+
+        let error = thread.stop(&cleanup, Duration::from_millis(20)).unwrap_err();
+        assert!(error.to_string().contains("timed out"));
+        assert!(should_stop.load(Ordering::Acquire));
+        assert!(cleanup.is_pending(), "timed-out join must keep restart blocked");
+
+        release.send(()).unwrap();
+        wait_until_idle(&cleanup);
+        assert!(!cleanup.is_pending());
+    }
+
+    #[test]
+    fn capture_thread_panic_is_reported_as_stop_failure() {
+        let cleanup = NativeCleanup::default();
+        let thread = PulseCaptureThread::spawn("pulse-test-panic".into(), Arc::new(AtomicBool::new(false)), || {
+            panic!("simulated capture failure")
+        })
+        .unwrap();
+
+        let error = thread.stop(&cleanup, Duration::from_secs(1)).unwrap_err();
+        assert!(error.to_string().contains("panicked"));
+        assert!(!cleanup.is_pending());
+    }
+
+    #[test]
+    fn stop_joins_a_loop_that_observes_the_flag() {
+        let cleanup = NativeCleanup::default();
+        let should_stop = Arc::new(AtomicBool::new(false));
+        let loop_flag = should_stop.clone();
+        let thread = PulseCaptureThread::spawn("pulse-test-loop".into(), should_stop, move || {
+            while !loop_flag.load(Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        })
+        .unwrap();
+
+        thread.stop(&cleanup, Duration::from_secs(1)).unwrap();
+        assert!(!cleanup.is_pending());
+    }
+
+    #[test]
+    fn dropping_without_stop_signals_and_hands_join_to_cleanup_owner() {
+        let should_stop = Arc::new(AtomicBool::new(false));
+        let loop_flag = should_stop.clone();
+        let (exited, wait_exited) = std::sync::mpsc::channel();
+        let thread = PulseCaptureThread::spawn("pulse-test-drop".into(), should_stop.clone(), move || {
+            while !loop_flag.load(Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            exited.send(()).unwrap();
+        })
+        .unwrap();
+
+        drop(thread);
+        assert!(should_stop.load(Ordering::Acquire));
+        wait_exited.recv_timeout(Duration::from_secs(1)).expect("dropped capture thread kept running");
+        wait_until_idle(&NATIVE_CLEANUPS);
     }
 }
