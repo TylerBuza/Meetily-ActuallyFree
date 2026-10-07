@@ -93,7 +93,8 @@ export function speakerColorValue(speaker?: string | null, colorIndex?: number):
   if (isUserSpeaker(speaker)) return 'var(--af-accent)';
   const named = namedSpeakerColor(speaker);
   if (named) return `var(--af-c-${named})`;
-  const slot = colorIndex !== undefined ? colorIndex : /^guest\b/i.test(speaker) ? 0 : speakerPaletteIndex(speaker);
+  if (colorIndex !== undefined) return SLOT_COLOR_VALUES[colorIndex % SLOT_COLOR_VALUES.length];
+  const slot = /^guest\b/i.test(speaker) ? 0 : speakerPaletteIndex(speaker);
   return SLOT_COLOR_VALUES[slot % SLOT_COLOR_VALUES.length];
 }
 
@@ -148,15 +149,38 @@ export function speakerPaletteIndex(speaker: string): number {
   return hash % speakerDotPalette.length;
 }
 
-/** Assign one palette slot per meeting speaker in first-spoken order. This
- * preserves the slot when a displayed label is renamed in place. Named people
- * use their avatar colour instead; the slots keep unnamed voices apart. */
-export function speakerColorIndexMap(labels: Iterable<string>): Map<string, number> {
+function getShuffledPaletteOrder(seedString: string): number[] {
+  let hash = 0;
+  for (let i = 0; i < seedString.length; i++) {
+    hash = (hash * 31 + seedString.charCodeAt(i)) >>> 0;
+  }
+  const order = [0, 1, 2, 3, 4, 5, 6, 7];
+  let state = hash || 1337;
+  const rand = () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  return order;
+}
+
+/** Assign one palette slot per meeting speaker in first-spoken order.
+ * Shuffles the palette so colors are random across meetings, but guarantees
+ * no two speakers in the same meeting get the same color until all 8 palette colors are used. */
+export function speakerColorIndexMap(labels: Iterable<string>, seed?: string): Map<string, number> {
+  const labelList = Array.from(labels).map((l) => l.trim()).filter((l) => !isUserSpeaker(l) && Boolean(l));
+  const paletteOrder = seed ? getShuffledPaletteOrder(seed) : [0, 1, 2, 3, 4, 5, 6, 7];
+
   const indices = new Map<string, number>();
-  for (const label of labels) {
-    if (isUserSpeaker(label)) continue;
+  for (const label of labelList) {
     const key = speakerKey(label);
-    if (!indices.has(key)) indices.set(key, indices.size % speakerDotPalette.length);
+    if (!indices.has(key)) {
+      const slotIndex = indices.size % paletteOrder.length;
+      indices.set(key, paletteOrder[slotIndex]);
+    }
   }
   return indices;
 }

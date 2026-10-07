@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from 'bun:test';
-import { editedSpeaker, persistSpeakerRename, persistTurnSpeaker } from '../../src/lib/live-speaker-edits';
+import { editedSpeaker, persistSpeakerRename, persistTurnSpeaker, persistForwardSpeaker } from '../../src/lib/live-speaker-edits';
 
 beforeEach(() => {
   const values = new Map<string, string>();
@@ -47,4 +47,27 @@ test('overlap names survive live history, reload and per-turn overrides', () => 
   persistSpeakerRename('one', 'Speaker 6', 'Guest name');
   expect(editedSpeaker('one', 1, 'Speaker 3')).toBe('You + Host + Guest name');
   expect(editedSpeaker('two', 0, 'Speaker 3 + Speaker 6')).toBe('Speaker 3 + Speaker 6');
+});
+
+test('forward separation keeps earlier matches and other channels through history replay', () => {
+  persistSpeakerRename('one', 'Speaker 1', 'Alice');
+  persistForwardSpeaker('one', 'Speaker 1', 20, 'Bob');
+  expect(editedSpeaker('one', 19, 'Alice', 'Speaker 1')).toBe('Alice');
+  expect(editedSpeaker('one', 20, 'Alice', 'Speaker 1')).toBe('Bob');
+  expect(editedSpeaker('one', 40, 'Speaker 1', 'Speaker 1')).toBe('Bob');
+  expect(editedSpeaker('one', 40, 'Alice', 'Speaker 2')).toBe('Alice');
+  expect(editedSpeaker('two', 40, 'Alice', 'Speaker 1')).toBe('Alice');
+  persistTurnSpeaker('one', 25, 'Carol');
+  expect(editedSpeaker('one', 25, 'Alice', 'Speaker 1')).toBe('Carol');
+  persistForwardSpeaker('one', 'Speaker 1', 30, 'Dave');
+  expect(editedSpeaker('one', 29, 'Speaker 1', 'Speaker 1')).toBe('Bob');
+  expect(editedSpeaker('one', 30, 'Speaker 1', 'Speaker 1')).toBe('Dave');
+});
+
+test('forward separation replaces an existing assignment on the selected boundary line', () => {
+  persistTurnSpeaker('one', 12, 'Wrong name');
+  persistForwardSpeaker('one', 'Speaker 2', 12, 'Correct name');
+  expect(editedSpeaker('one', 12, 'Wrong name', 'Speaker 2')).toBe('Correct name');
+  expect(editedSpeaker('one', 13, 'Speaker 2', 'Speaker 2')).toBe('Correct name');
+  expect(editedSpeaker('one', 11, 'Earlier name', 'Speaker 2')).toBe('Earlier name');
 });

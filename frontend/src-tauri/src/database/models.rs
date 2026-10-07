@@ -21,6 +21,17 @@ impl From<NaiveDateTime> for DateTimeUtc {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WordTiming {
+    #[serde(rename = "wordID")]
+    pub word_id: String,
+    pub text: String,
+    #[serde(rename = "startTime")]
+    pub start_time: i64, // ms
+    #[serde(rename = "endTime")]
+    pub end_time: i64,   // ms
+}
+
 // Renamed from TranscriptSegment to Transcript to match the table name
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct Transcript {
@@ -37,6 +48,9 @@ pub struct Transcript {
     pub duration: Option<f64>,
     /// Speaker label: capture source ("You"/"Guest") or diarization ("Speaker N")
     pub speaker: Option<String>,
+    /// Word-level timing JSON array: [{"wordID": "...", "text": "...", "startTime": 12340, "endTime": 12680}]
+    #[sqlx(default)]
+    pub words: Option<String>,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]

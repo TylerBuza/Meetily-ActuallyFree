@@ -11,7 +11,9 @@ import { cn } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Hint } from '@/components/ui/tooltip';
 import { NotesEditor, type NotesContent } from '@/components/editor/NotesEditor';
+import { MeetingImages } from '@/components/meeting/MeetingImages';
 import { ChatThread } from '@/components/chat/ChatThread';
+import { PossibleVoiceMatch } from '@/components/people/PossibleVoiceMatch';
 import { useUserName } from '@/hooks/useUserName';
 import { displaySpeaker, isUserSpeaker, speakerDot, speakerKey } from '@/utils/speakerUtils';
 import { buildLiveContext, lineAt, type LiveLine } from '@/lib/live-context';
@@ -26,8 +28,10 @@ function SpeakersTab({
   speakers,
   onIdentify,
   onMarkMe,
+  speakerChannels,
 }: {
   speakers: DetectedSpeaker[];
+  speakerChannels?: Map<string, string>;
   onIdentify: (speaker: string) => void;
   onMarkMe: (speaker: string) => void;
 }) {
@@ -69,10 +73,11 @@ function SpeakersTab({
           const share = total > 0 ? Math.round((speaker.segmentCount / total) * 100) : 0;
           return (
             <li key={speaker.id} className="group/speaker relative">
+              <div className="flex items-start gap-1">
               <button
                 type="button"
                 onClick={() => onIdentify(speaker.name)}
-                className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-af-hover"
+                className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-af-hover"
               >
                 <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', speakerDot(speaker.name, speaker.colorIndex))} />
                 <span className="min-w-0 flex-1">
@@ -88,18 +93,20 @@ function SpeakersTab({
                   </span>
                 </span>
               </button>
+              {!you && <PossibleVoiceMatch speaker={speaker.name} speakerChannel={speakerChannels?.get(speaker.name)} review inline onAccept={() => onIdentify(speaker.name)} />}
               {!you && (
                 <Hint label="This is me">
                   <button
                     type="button"
                     onClick={() => onMarkMe(speaker.name)}
                     aria-label={`${speaker.name} is me`}
-                    className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg bg-af-panel text-af-text-3 opacity-0 shadow-sm ring-1 ring-af-border transition-[opacity,color] hover:text-af-accent focus-visible:opacity-100 group-hover/speaker:opacity-100"
+                    className="mt-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-af-panel text-af-text-3 opacity-0 shadow-sm ring-1 ring-af-border transition-[opacity,color] hover:text-af-accent focus-visible:opacity-100 group-hover/speaker:opacity-100"
                   >
                     <UserCheck className="h-3.5 w-3.5" />
                   </button>
                 </Hint>
               )}
+              </div>
             </li>
           );
         })}
@@ -127,7 +134,7 @@ function NotesTab() {
 
   return (
     <div className="h-full overflow-y-auto px-5 py-4 pl-11">
-      <NotesEditor
+      <MeetingImages live><NotesEditor
         initialBlocks={initial?.json ?? null}
         initialMarkdown={initial?.json ? null : initial?.markdown ?? null}
         placeholder="Type notes as the call goes. They are saved to this meeting when you stop."
@@ -136,7 +143,7 @@ function NotesTab() {
           if (timer.current !== null) window.clearTimeout(timer.current);
           timer.current = window.setTimeout(flush, NOTES_SAVE_DELAY);
         }}
-      />
+      /></MeetingImages>
     </div>
   );
 }
@@ -149,11 +156,13 @@ export function LivePanel({
   sessionKey,
   onIdentify,
   onMarkMe,
+  speakerChannels,
   onJumpTo,
 }: {
   tab: LivePanelTab;
   onTabChange: (tab: LivePanelTab) => void;
   speakers: DetectedSpeaker[];
+  speakerChannels?: Map<string, string>;
   lines: LiveLine[];
   /** Changes per recording, so each call gets its own Ask AI thread. */
   sessionKey: string;
@@ -211,7 +220,7 @@ export function LivePanel({
       </div>
       {/* Notes stay mounted so switching tabs never drops a keystroke. */}
       <TabsContent value="speakers" className="mt-0 min-h-0 flex-1 data-[state=inactive]:hidden">
-        <SpeakersTab speakers={speakers} onIdentify={onIdentify} onMarkMe={onMarkMe} />
+        <SpeakersTab speakerChannels={speakerChannels} speakers={speakers} onIdentify={onIdentify} onMarkMe={onMarkMe} />
       </TabsContent>
       <TabsContent value="notes" forceMount className="mt-0 min-h-0 flex-1 data-[state=inactive]:hidden">
         <NotesTab key={sessionKey} />

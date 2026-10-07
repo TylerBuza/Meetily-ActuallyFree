@@ -62,12 +62,39 @@ function ModeSwitch({ choice, disabled }: { choice: AppAudioChoice; disabled?: b
   );
 }
 
+const isNoiseProcess = (name: string, executable: string) => {
+  const lowerName = (name || '').toLowerCase();
+  const lowerExe = (executable || '').toLowerCase();
+  const combined = `${lowerName} ${lowerExe}`;
+
+  return (
+    combined.includes('com.apple.') ||
+    combined.includes('helper') ||
+    combined.includes('cef') ||
+    combined.includes('crashpad') ||
+    combined.includes('renderer') ||
+    combined.includes('gpu') ||
+    combined.includes('plugin') ||
+    combined.includes('daemon') ||
+    combined.includes('accessibilityuiserver') ||
+    combined.includes('accessibilityvisualsagent') ||
+    combined.includes('accountsd') ||
+    combined.includes('accountsubscriber') ||
+    combined.includes('adid') ||
+    combined.includes('agy') ||
+    lowerExe.endsWith('agent') ||
+    lowerExe.endsWith('service')
+  );
+};
+
 function AddAppButton({ choice, disabled }: { choice: AppAudioChoice; disabled?: boolean }) {
   const [open, setOpen] = useState(false);
   const available = useMemo(
     () =>
       choice.running.filter(
-        (app) => !choice.targets.some((target) => target.executable.toLowerCase() === app.executable.toLowerCase()),
+        (app) =>
+          !isNoiseProcess(app.name, app.executable) &&
+          !choice.targets.some((target) => target.executable.toLowerCase() === app.executable.toLowerCase()),
       ),
     [choice.running, choice.targets],
   );

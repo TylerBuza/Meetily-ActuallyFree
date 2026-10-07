@@ -512,6 +512,97 @@ impl ParakeetEngine {
         Ok(result.text)
     }
 
+    /// Transcribe audio samples using the loaded Parakeet model, returning text and word timings
+    pub async fn transcribe_audio_with_words(
+        &self,
+        audio_data: Vec<f32>,
+        chunk_start_sec: f64,
+        vocabulary: Option<&str>,
+    ) -> Result<(String, Vec<crate::database::models::WordTiming>)> {
+        let mut model_guard = self.current_model.write().await;
+        let model = model_guard
+            .as_mut()
+            .ok_or_else(|| anyhow!("No Parakeet model loaded. Please load a model first."))?;
+
+        let result = model
+            .transcribe_samples(audio_data, vocabulary)
+            .map_err(|e| anyhow!("Parakeet transcription failed: {}", e))?;
+
+        let words = Self::extract_words_from_parakeet(&result.tokens, &result.timestamps, chunk_start_sec);
+        Ok((result.text, words))
+    }
+
+    pub fn extract_words_from_parakeet(
+        tokens: &[String],
+        timestamps: &[f32],
+        chunk_start_sec: f64,
+    ) -> Vec<crate::database::models::WordTiming> {
+        let mut words: Vec<crate::database::models::WordTiming> = Vec::new();
+        let mut current_word = String::new();
+        let mut word_start_sec: f64 = 0.0;
+        let mut word_end_sec: f64 = 0.0;
+        let frame_stride_sec: f64 = 0.08; // 8 * 0.01s
+
+        for (token, &ts) in tokens.iter().zip(timestamps.iter()) {
+            let abs_ts = chunk_start_sec + ts as f64;
+            let token_end_ts = abs_ts + frame_stride_sec;
+            let is_new_word = token.starts_with(' ') || token.starts_with(' ');
+            let clean_token = token.replace(' ', " ");
+
+            if is_new_word {
+                if !current_word.is_empty() {
+                    let start_ms = (word_start_sec * 1000.0).round() as i64;
+                    let end_ms = (word_end_sec * 1000.0).max((word_start_sec * 1000.0) + 1.0).round() as i64;
+                    words.push(crate::database::models::WordTiming {
+                        word_id: uuid::Uuid::new_v4().to_string(),
+                        text: current_word.clone(),
+                        start_time: start_ms,
+                        end_time: end_ms,
+                    });
+                }
+                current_word = clean_token;
+                word_start_sec = abs_ts;
+                word_end_sec = token_end_ts;
+            } else {
+                if current_word.is_empty() {
+                    current_word = clean_token;
+                    word_start_sec = abs_ts;
+                    word_end_sec = token_end_ts;
+                } else {
+                    current_word.push_str(&clean_token);
+                    word_end_sec = token_end_ts;
+                }
+            }
+        }
+
+        if !current_word.is_empty() {
+            let start_ms = (word_start_sec * 1000.0).round() as i64;
+            let end_ms = (word_end_sec * 1000.0).max((word_start_sec * 1000.0) + 1.0).round() as i64;
+            words.push(crate::database::models::WordTiming {
+                word_id: uuid::Uuid::new_v4().to_string(),
+                text: current_word,
+                start_time: start_ms,
+                end_time: end_ms,
+            });
+        }
+
+        if words.len() > 1 {
+            for w in 1..words.len() {
+                if words[w].start_time < words[w - 1].start_time {
+                    words[w].start_time = words[w - 1].start_time;
+                }
+                if words[w].end_time < words[w].start_time + 80 {
+                    words[w].end_time = words[w].start_time + 80;
+                }
+                if words[w - 1].end_time < words[w].start_time && words[w].start_time - words[w - 1].end_time <= 120 {
+                    words[w - 1].end_time = words[w].start_time;
+                }
+            }
+        }
+
+        words
+    }
+
     /// Get the models directory path
     pub async fn get_models_directory(&self) -> PathBuf {
         self.models_dir.clone()

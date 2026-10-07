@@ -1,6 +1,38 @@
+import { useEffect, useState } from 'react';
+
 /** Date wording shared by lists, headers, and search. */
 
 const DAY_MS = 86_400_000;
+
+/** Returns a stable key for the current calendar day (e.g. "2026-10-01"),
+ * updating automatically when midnight passes or the window regains focus. */
+export function useCurrentDayKey(): string {
+  const getTodayKey = () => {
+    const now = new Date();
+    return `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+  };
+
+  const [todayKey, setTodayKey] = useState(getTodayKey);
+
+  useEffect(() => {
+    const checkDay = () => {
+      const current = getTodayKey();
+      setTodayKey((prev) => (prev !== current ? current : prev));
+    };
+
+    const interval = setInterval(checkDay, 30_000);
+    window.addEventListener('focus', checkDay);
+    document.addEventListener('visibilitychange', checkDay);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', checkDay);
+      document.removeEventListener('visibilitychange', checkDay);
+    };
+  }, []);
+
+  return todayKey;
+}
 
 function startOfDay(date: Date): number {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();

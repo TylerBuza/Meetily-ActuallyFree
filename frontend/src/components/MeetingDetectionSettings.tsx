@@ -19,7 +19,7 @@ interface MeetingDetectionSettings {
 
 /**
  * Meeting Detection settings panel. Watches running processes for meeting apps
- * (Zoom / Teams / Slack / Webex / Discord / …) and prompts to start recording.
+ * (Zoom / Teams / Slack / Webex / …) and prompts to start recording.
  * Fully on-device. Persisted install-locally via Rust.
  */
 export function MeetingDetectionSettings() {
@@ -75,8 +75,9 @@ export function MeetingDetectionSettings() {
               Meeting Detection
             </h3>
             <p className="text-sm text-af-text-2">
-              Watch for meeting apps (Zoom, Teams, Slack, Webex, Discord…) and prompt you to start
-              recording when one starts. Runs entirely on-device — no network, no telemetry.
+              Watch for meeting apps (Zoom, Teams, Slack, Webex…) and prompt you to start
+              recording when one opens. On macOS and Linux, an open app does not confirm an active call.
+              Runs entirely on-device — no network, no telemetry.
             </p>
           </div>
           <Switch checked={md.enabled} onCheckedChange={(v) => saveMd({ ...md, enabled: v })} />

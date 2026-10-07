@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import { ModelConfig, ModelSettingsModal } from '@/components/ModelSettingsModal';
+import { SummarySpeakerNamesSetting } from '@/components/SummarySpeakerNamesSetting';
 import { SummaryLanguageSettings } from '@/components/SummaryLanguageSettings';
 import { Switch } from './ui/switch';
 import { useConfig } from '@/contexts/ConfigContext';
@@ -136,6 +137,7 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
         </div>
       </div>
 
+      <SummarySpeakerNamesSetting />
       <SummaryLanguageSettings />
 
       <div className="rounded-2xl border border-af-border bg-af-panel-2/40 p-5">

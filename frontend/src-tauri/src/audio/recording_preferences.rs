@@ -23,16 +23,15 @@ use log::{info, warn};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-#[cfg(any(target_os = "macos", test))]
 use std::path::{Component, Path};
 use std::sync::atomic::{AtomicU32, Ordering};
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_store::StoreExt;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 #[cfg(any(target_os = "macos", test))]
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 
 static MIC_GAIN_BITS: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(1.0f32.to_bits()));
 static SYSTEM_GAIN_BITS: Lazy<AtomicU32> = Lazy::new(|| AtomicU32::new(1.0f32.to_bits()));
@@ -216,8 +215,7 @@ pub fn ensure_recordings_directory(path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-#[cfg(any(target_os = "macos", test))]
-fn resolve_path_for_containment(path: &Path) -> Result<PathBuf> {
+pub(crate) fn resolve_path_for_containment(path: &Path) -> Result<PathBuf> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -238,7 +236,7 @@ fn resolve_path_for_containment(path: &Path) -> Result<PathBuf> {
             }
             Component::Normal(_) => {
                 resolved.push(component.as_os_str());
-                if resolved.exists() {
+                if resolved.try_exists().with_context(|| format!("Failed to inspect path {}", resolved.display()))? {
                     resolved = resolved.canonicalize().with_context(|| {
                         format!("Failed to resolve path {}", resolved.display())
                     })?;
@@ -510,26 +508,63 @@ pub async fn select_custom_app_executable<R: Runtime>(
         #[cfg(not(any(target_os = "windows", target_os = "macos")))]
         let file_filter: [&str; 0] = [];
 
-        let file_path = app
+        let mut builder = app
             .dialog()
             .file()
             .set_title("Select Application or Executable")
-            .add_filter("Application", &file_filter)
-            .blocking_pick_file();
+            .add_filter("Application", &file_filter);
+
+        #[cfg(target_os = "macos")]
+        {
+            builder = builder.set_directory(std::path::PathBuf::from("/Applications"));
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(prog_files) = std::env::var("ProgramFiles") {
+                builder = builder.set_directory(std::path::PathBuf::from(prog_files));
+            }
+        }
+
+        let file_path = builder.blocking_pick_file();
 
         if let Some(path) = file_path {
             let path_str = path.to_string();
             let p = std::path::Path::new(&path_str);
-            let exe_name = p.file_name()
+            let raw_name = p.file_name()
                 .and_then(|f| f.to_str())
-                .unwrap_or(&path_str)
-                .to_string();
+                .unwrap_or(&path_str);
+
+            let stem = p.file_stem()
+                .and_then(|f| f.to_str())
+                .unwrap_or(raw_name);
+
+            // On macOS, if a .app bundle is selected, find the internal executable name
+            let mut resolved_exe = raw_name.to_string();
+            if path_str.ends_with(".app") || p.is_dir() {
+                let macos_dir = p.join("Contents").join("MacOS");
+                if let Ok(entries) = std::fs::read_dir(&macos_dir) {
+                    for entry in entries.flatten() {
+                        let ep = entry.path();
+                        if ep.is_file() {
+                            if let Some(bin_name) = ep.file_name().and_then(|n| n.to_str()) {
+                                resolved_exe = bin_name.to_string();
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let friendly_name = crate::audio::capture::per_app::get_friendly_name(stem);
+            let pid = crate::audio::capture::per_app::find_pid_for_app(&resolved_exe)
+                .or_else(|| crate::audio::capture::per_app::find_pid_for_app(stem))
+                .or_else(|| crate::audio::capture::per_app::find_pid_for_app(raw_name));
 
             Ok(Some(crate::audio::capture::per_app::RecordableApp {
-                id: exe_name.clone(),
-                name: exe_name.clone(),
-                executable: exe_name.clone(),
-                pid: crate::audio::capture::per_app::find_pid_for_app(&exe_name),
+                id: resolved_exe.clone(),
+                name: friendly_name,
+                executable: resolved_exe,
+                pid,
                 has_audio: false,
                 icon: None,
             }))

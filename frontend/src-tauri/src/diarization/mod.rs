@@ -726,6 +726,7 @@ pub struct MeetingSpeakerRenameResult {
 
 #[tauri::command]
 pub async fn rename_meeting_speaker(
+    app: tauri::AppHandle,
     state: tauri::State<'_, crate::state::AppState>,
     meeting_id: String,
     from: String,
@@ -745,6 +746,7 @@ pub async fn rename_meeting_speaker(
         "🧑‍🤝‍🧑 Renamed speaker '{}' → '{}' across {} segments of meeting {}",
         from, outcome.speaker, outcome.count, meeting_id
     );
+    voice_profiles::auto_save_named_voices(app, state.db_manager.pool().clone(), meeting_id, Some(outcome.speaker.clone()));
     Ok(MeetingSpeakerRenameResult {
         speaker: outcome.speaker,
         count: outcome.count,
@@ -755,6 +757,7 @@ pub async fn rename_meeting_speaker(
 /// Move a single transcript line to another speaker. The rest of that label stays put.
 #[tauri::command]
 pub async fn reassign_transcript_speaker(
+    app: tauri::AppHandle,
     state: tauri::State<'_, crate::state::AppState>,
     meeting_id: String,
     transcript_id: String,
@@ -771,6 +774,7 @@ pub async fn reassign_transcript_speaker(
     )
     .await
     .map_err(|e| format!("Failed to move this line: {}", e))?;
+    voice_profiles::auto_save_named_voices(app, state.db_manager.pool().clone(), meeting_id, Some(outcome.speaker.clone()));
     Ok(MeetingSpeakerRenameResult {
         speaker: outcome.speaker,
         count: outcome.count,
@@ -810,7 +814,7 @@ pub struct MeetingDiarizationResult {
 
 /// Audio container extensions a meeting recording may use. Recordings are
 /// normally written as `audio.mp4`; `.wav` covers imports and older saves.
-const AUDIO_EXTS: [&str; 5] = ["mp4", "m4a", "wav", "mp3", "webm"];
+const AUDIO_EXTS: [&str; 9] = ["mp4", "m4a", "wav", "mp3", "webm", "mov", "mkv", "flac", "ogg"];
 
 fn is_audio_file(path: &Path) -> bool {
     path.extension()
@@ -823,7 +827,7 @@ fn is_audio_file(path: &Path) -> bool {
 fn newest_audio_in(dir: &Path) -> Option<PathBuf> {
     // Always use the mixed playback file as the meeting anchor. Dedicated
     // mic/system siblings are discovered from its parent by diarize_meeting.
-    for name in ["audio.mp4", "audio.m4a", "audio.wav", "audio.mp3", "audio.webm"] {
+    for name in ["audio.mp4", "audio.m4a", "audio.wav", "audio.mp3", "audio.webm", "video.mp4", "video.webm"] {
         let preferred = dir.join(name);
         if preferred.is_file() {
             return Some(preferred);
@@ -985,7 +989,8 @@ fn ensure_wav(path: &Path) -> Result<(PathBuf, bool)> {
 
 /// Diarize a meeting's recording and assign "Speaker N" labels to its transcript segments.
 #[tauri::command]
-pub async fn diarize_meeting(
+pub async fn diarize_meeting<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: tauri::State<'_, crate::state::AppState>,
     meeting_id: String,
     audio_path: Option<String>,
@@ -995,8 +1000,18 @@ pub async fn diarize_meeting(
 ) -> Result<MeetingDiarizationResult, String> {
     let _operation_guard = operation_guard().await;
     let pool = state.db_manager.pool();
-    let selected_engine = engine.unwrap_or_else(get_active_engine);
+    let mut selected_engine = engine.unwrap_or_else(get_active_engine);
     if !matches!(selected_engine.as_str(), "pyannote" | "nemotron") { return Err("Unknown diarization engine".into()); }
+    // If the selected engine is missing models, try to fallback to the other if available
+    if !models_available_for_engine(&selected_engine) {
+        if selected_engine == "nemotron" && pyannote_models_available() {
+            log::info!("Nemotron-3 model not found, falling back to Pyannote for diarization");
+            selected_engine = "pyannote".to_string();
+        } else if selected_engine == "pyannote" && nemotron_models_available() {
+            log::info!("Pyannote models not found, falling back to Nemotron-3 for diarization");
+            selected_engine = "nemotron".to_string();
+        }
+    }
     // Counts saved by older UI versions must not silently switch the engine.
     let num_speakers = if selected_engine == "nemotron" { None } else { num_speakers };
 
@@ -1374,7 +1389,14 @@ pub async fn diarize_meeting(
     let mut updates: Vec<(String, Option<String>)> = Vec::new();
     let mut preserved = 0u32;
 
+    let suppress_mic_playback = used_source_tracks && crate::audio::echo_guard::enabled();
     for (id, start, end, existing, _, _) in rows {
+        let confirmed_user_overlap = match (start, end) {
+            (Some(s), Some(e)) if e > s => user_ranges.iter().any(|(us, ue)|
+                (e as f32).min(*ue) - (s as f32).max(*us) >= 0.5),
+            _ => false,
+        };
+        let existing = crate::audio::echo_guard::strip_unconfirmed_user_label(existing, suppress_mic_playback, confirmed_user_overlap);
         if let Some(ref live) = existing {
             let live_trim = live.trim();
             if !live_trim.is_empty() {
@@ -1448,6 +1470,9 @@ pub async fn diarize_meeting(
                 speakers.sort_unstable();
                 let mut labels: Vec<_> = speakers.into_iter().map(&speaker_label).collect();
                 apply_source_track_hint(existing.as_deref(), used_source_tracks, num_speakers != Some(1), &mut labels);
+                if suppress_mic_playback && !confirmed_user_overlap && !existing.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("you")) {
+                    labels.retain(|label| !label.eq_ignore_ascii_case("you"));
+                }
                 labels.dedup();
                 labels.truncate(3);
                 let final_label = labels.join(" + ");
@@ -1458,13 +1483,15 @@ pub async fn diarize_meeting(
                 // label it already had, rather than clearing it.
                 let mut labels = Vec::new();
                 apply_source_track_hint(existing.as_deref(), used_source_tracks, num_speakers != Some(1), &mut labels);
+                if suppress_mic_playback && !confirmed_user_overlap {
+                    labels.retain(|label| !label.eq_ignore_ascii_case("you"));
+                }
                 let fallback = (!labels.is_empty()).then(|| labels.join(" + ")).or_else(|| {
-                    existing
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|label| !label.is_empty())
-                        .map(str::to_string)
+                    existing.as_deref().map(str::trim).filter(|label| !label.is_empty()).map(str::to_string)
                 });
+                let fallback = crate::audio::echo_guard::strip_unconfirmed_user_label(
+                    fallback, suppress_mic_playback, confirmed_user_overlap,
+                );
                 if let Some(label) = &fallback {
                     preserved += 1;
                     assignments.push((id.clone(), label.clone()));
@@ -1522,8 +1549,8 @@ pub async fn diarize_meeting(
     if let Some(ref folder) = folder_path {
         let p = PathBuf::from(folder);
         if p.is_dir() {
-            if let Ok(db_transcripts) = sqlx::query_as::<_, (String, String, String, Option<f64>, Option<f64>, Option<f64>, Option<String>)>(
-                "SELECT id, transcript, timestamp, audio_start_time, audio_end_time, duration, speaker FROM transcripts WHERE meeting_id = ? ORDER BY audio_start_time ASC"
+            if let Ok(db_transcripts) = sqlx::query_as::<_, (String, String, String, Option<f64>, Option<f64>, Option<f64>, Option<String>, Option<String>)>(
+                "SELECT id, transcript, timestamp, audio_start_time, audio_end_time, duration, speaker, words FROM transcripts WHERE meeting_id = ? ORDER BY audio_start_time ASC"
             )
             .bind(&meeting_id)
             .fetch_all(pool)
@@ -1531,14 +1558,18 @@ pub async fn diarize_meeting(
             {
                 let segments_to_write: Vec<crate::api::TranscriptSegment> = db_transcripts
                     .into_iter()
-                    .map(|(tid, text, ts, s, e, d, spk)| crate::api::TranscriptSegment {
-                        id: tid,
-                        text,
-                        timestamp: ts,
-                        audio_start_time: s,
-                        audio_end_time: e,
-                        duration: d,
-                        speaker: spk,
+                    .map(|(tid, text, ts, s, e, d, spk, w)| {
+                        let words = w.as_deref().and_then(|str_val| serde_json::from_str(str_val).ok());
+                        crate::api::TranscriptSegment {
+                            id: tid,
+                            text,
+                            timestamp: ts,
+                            audio_start_time: s,
+                            audio_end_time: e,
+                            duration: d,
+                            speaker: spk,
+                            words,
+                        }
                     })
                     .collect();
                 let _ = crate::audio::common::write_transcripts_json(&p, &segments_to_write);
@@ -1559,6 +1590,7 @@ pub async fn diarize_meeting(
         assignments.len()
     );
 
+    voice_profiles::auto_save_named_voices(app, pool.clone(), meeting_id.clone(), None);
     Ok(MeetingDiarizationResult {
         num_speakers: result.num_speakers,
         labeled: assignments.len(),
@@ -1576,6 +1608,7 @@ async fn persist_speaker_labels(
         sqlx::query("UPDATE transcripts SET speaker = ? WHERE id = ? AND meeting_id = ?")
             .bind(label).bind(id).bind(meeting_id).execute(&mut *tx).await?;
     }
+    crate::database::repositories::person::PeopleRepository::link_named_speakers(&mut tx, meeting_id).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -1718,14 +1751,26 @@ fn apply_source_track_hint(
 mod tests {
     use super::*;
 
+    #[test]
+    fn playback_lab_removes_unconfirmed_you_from_remote_overlap() {
+        let strip = crate::audio::echo_guard::strip_unconfirmed_user_label;
+        assert_eq!(strip(Some("You + Chris".into()), true, false), Some("Chris".into()));
+        assert_eq!(strip(Some("You + Chris".into()), true, true), Some("You + Chris".into()));
+        assert_eq!(strip(Some("You".into()), true, false), Some("You".into()));
+        assert_eq!(strip(Some("You + Chris".into()), false, false), Some("You + Chris".into()));
+    }
+
     #[tokio::test]
     async fn label_reruns_preserve_text_timing_and_rollback_as_a_unit() {
         let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
         sqlx::query("CREATE TABLE transcripts(id TEXT PRIMARY KEY, meeting_id TEXT, transcript TEXT, audio_start_time REAL, audio_end_time REAL, speaker TEXT CHECK(speaker != 'invalid'))").execute(&pool).await.unwrap();
+        sqlx::raw_sql("CREATE TABLE people (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, normalized_name TEXT UNIQUE, notes TEXT, created_at TEXT, updated_at TEXT); CREATE TABLE person_speakers (person_id TEXT, meeting_id TEXT, speaker_label TEXT, UNIQUE(meeting_id,speaker_label));").execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO transcripts VALUES ('a','m','Hello. 世界! Second turn.',1.25,9.5,'Guest'),('a-split-1','m','Retain this old row too.',9.5,12.0,'Guest'),('other','other','Private other meeting',0,1,'Named')").execute(&pool).await.unwrap();
-        for label in ["Speaker 1", "You + Speaker 2"] {
+        for label in ["Speaker 1", "You + Speaker 2", "Alice"] {
             persist_speaker_labels(&pool,"m",vec![("a".into(),Some(label.into())),("other".into(),Some(label.into()))]).await.unwrap();
         }
+        let linked: Vec<String> = sqlx::query_scalar("SELECT speaker_label FROM person_speakers WHERE meeting_id='m'").fetch_all(&pool).await.unwrap();
+        assert_eq!(linked, vec!["Alice"]);
         let rows: Vec<(String,String,f64,f64)> = sqlx::query_as("SELECT id,transcript,audio_start_time,audio_end_time FROM transcripts ORDER BY id").fetch_all(&pool).await.unwrap();
         assert_eq!(rows.len(),3);
         assert_eq!(rows[0],("a".into(),"Hello. 世界! Second turn.".into(),1.25,9.5));
@@ -1733,7 +1778,7 @@ mod tests {
         let failed = persist_speaker_labels(&pool,"m",vec![("a".into(),Some("Speaker 3".into())),("a-split-1".into(),Some("invalid".into()))]).await;
         assert!(failed.is_err());
         let labels: Vec<String> = sqlx::query_scalar("SELECT speaker FROM transcripts ORDER BY id").fetch_all(&pool).await.unwrap();
-        assert_eq!(labels,vec!["You + Speaker 2","Guest","Named"]);
+        assert_eq!(labels,vec!["Alice","Guest","Named"]);
     }
 
     #[test]

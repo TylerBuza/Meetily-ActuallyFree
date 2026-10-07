@@ -1,5 +1,5 @@
 /**
- * Labs voice profiles: a contact's voice, learned from the call audio of a
+ * Voice profiles: a contact's voice, learned from the call audio of a
  * meeting they spoke in. Later meetings name a matching speaker after them
  * when speakers are identified. Rust keeps each voice under its contact's
  * current name and forgets it when the contact is deleted.
@@ -56,4 +56,9 @@ export async function forgetVoice(personId: string): Promise<void> {
 
 export function describeVoiceError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Native job owns the entire individual or bulk operation after navigation. */
+export async function queueVoiceLearning(personId?: string): Promise<void> {
+  await invoke('queue_voice_profile_learning', { personId: personId ?? null });
 }

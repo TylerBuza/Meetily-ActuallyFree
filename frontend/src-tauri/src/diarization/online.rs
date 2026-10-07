@@ -54,7 +54,7 @@ struct OnlineDiarizer {
     centroids: Vec<Vec<f32>>,
     /// How many segments contributed to each centroid.
     counts: Vec<f32>,
-    /// Of those, how many arrived while the microphone was dominant.
+    /// Of those, how many arrived on the microphone capture source.
     mic_counts: Vec<f32>,
     /// Last speaker assigned on any path (legacy fallback).
     last_speaker: usize,
@@ -64,8 +64,10 @@ struct OnlineDiarizer {
     /// Last speaker heard on the mic path.
     last_mic_speaker: Option<usize>,
     profiles: Vec<super::voice_profiles::VoiceProfile>,
-    /// Set from a verified vector match, never from a meeting-local channel number.
+    /// Set from a tentative vector match, never from a meeting-local channel number.
     names: Vec<Option<String>>,
+    profile_evidence: Vec<Vec<Vec<f32>>>,
+    blocked_profiles: std::collections::HashSet<usize>,
 }
 
 impl OnlineDiarizer {
@@ -95,6 +97,25 @@ impl OnlineDiarizer {
 static ONLINE: Mutex<Option<OnlineDiarizer>> = Mutex::new(None);
 
 /// Whether live speaker identification is currently active.
+pub fn detach_voice_match(label: &str) {
+    let Some(index) = label.strip_prefix("Speaker ").and_then(|number| number.parse::<usize>().ok()).and_then(|value| value.checked_sub(1)) else { return; };
+    if let Ok(mut guard) = ONLINE.lock() {
+        if let Some(diarizer) = guard.as_mut() {
+            diarizer.blocked_profiles.insert(index);
+            if let Some(name) = diarizer.names.get_mut(index) { *name = None; }
+            if let Some(evidence) = diarizer.profile_evidence.get_mut(index) { evidence.clear(); }
+        }
+    }
+}
+
+pub fn possible_voice_match(label: &str) -> Option<super::voice_profiles::PossibleVoiceMatch> {
+    let index = label.strip_prefix("Speaker ")?.parse::<usize>().ok()?.checked_sub(1)?;
+    let guard = ONLINE.try_lock().ok()?;
+    let diarizer = guard.as_ref()?;
+    if diarizer.user_speaker() == Some(index) || diarizer.blocked_profiles.contains(&index) { return None; }
+    super::voice_profiles::possible_match(diarizer.profile_evidence.get(index)?, &diarizer.profiles)
+}
+
 pub fn is_active() -> bool {
     super::live_nemotron::active() || ONLINE.lock().map(|g| g.is_some()).unwrap_or(false)
 }
@@ -144,6 +165,8 @@ pub fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<()> {
         last_system_speaker: None,
         last_mic_speaker: has_enrolled.then_some(0),
         profiles,
+        blocked_profiles: Default::default(),
+        profile_evidence: if has_enrolled { vec![Vec::new()] } else { Vec::new() },
         names: if has_enrolled { vec![None] } else { Vec::new() },
     });
     log::info!(
@@ -171,16 +194,15 @@ pub fn stop() {
 pub struct LiveSpeaker {
     /// Speaker index (0-based) within this recording session.
     pub index: usize,
-    /// Whether this speaker appears to be the local user (see `user_speaker`).
+    /// Whether this chunk came from the microphone; not verified identity.
     pub is_user: bool,
     pub profile_name: Option<String>,
 }
 
 /// Assign a 16 kHz mono speech segment to a live speaker.
 ///
-/// `mic_dominant` says whether the microphone was the louder source for the
-/// audio this segment came from; aggregated across segments it identifies which
-/// speaker is the local user.
+/// `mic_dominant` is the immutable capture-source flag, not a volume comparison.
+/// Microphone and system clusters never learn from one another.
 ///
 /// Returns `None` when live diarization isn't running or the segment can't be
 /// embedded, so callers can fall back to their existing labelling.
@@ -192,11 +214,11 @@ pub fn assign_speaker(samples: &[f32], mic_dominant: bool) -> Option<LiveSpeaker
     // *same* source path so a brief remote clip doesn't inherit "You".
     if samples.len() < MIN_SEGMENT_SAMPLES {
         let index = if mic_dominant {
-            d.last_mic_speaker.unwrap_or(d.last_speaker)
+            d.last_mic_speaker?
         } else {
-            d.last_system_speaker.unwrap_or(d.last_speaker)
+            d.last_system_speaker?
         };
-        let is_user = mic_dominant || d.user_speaker() == Some(index);
+        let is_user = mic_dominant;
         return Some(LiveSpeaker {
             index,
             is_user: mic_dominant || is_user,
@@ -209,9 +231,9 @@ pub fn assign_speaker(samples: &[f32], mic_dominant: bool) -> Option<LiveSpeaker
         Err(e) => {
             log::debug!("Live diarization: embedding failed ({})", e);
             let index = if mic_dominant {
-                d.last_mic_speaker.unwrap_or(d.last_speaker)
+                d.last_mic_speaker?
             } else {
-                d.last_system_speaker.unwrap_or(d.last_speaker)
+                d.last_system_speaker?
             };
             return Some(LiveSpeaker {
                 index,
@@ -221,36 +243,14 @@ pub fn assign_speaker(samples: &[f32], mic_dominant: bool) -> Option<LiveSpeaker
         }
     };
 
-    // Closest known speaker by cosine similarity (embeddings are unit-length).
-    // Prefer matching remote segments to non-user centroids first so the local
-    // voice cluster doesn't absorb everyone else.
-    let user_idx = d.user_speaker();
-    let mut best = 0usize;
-    let mut best_sim = f32::NEG_INFINITY;
-    for (i, c) in d.centroids.iter().enumerate() {
-        // On the system path, de-prioritize the known "You" cluster so remote
-        // voices don't get folded into the user.
-        if !mic_dominant && user_idx == Some(i) {
-            continue;
-        }
-        let sim: f32 = embedding.iter().zip(c).map(|(a, b)| a * b).sum();
-        if sim > best_sim {
-            best_sim = sim;
-            best = i;
-        }
-    }
-    // Mic may match the enrolled user. If system audio skipped the only user
-    // centroid, deliberately create a remote cluster instead of contaminating
-    // the user voiceprint centroid.
-    if best_sim == f32::NEG_INFINITY && mic_dominant {
-        for (i, c) in d.centroids.iter().enumerate() {
-            let sim: f32 = embedding.iter().zip(c).map(|(a, b)| a * b).sum();
-            if sim > best_sim {
-                best_sim = sim;
-                best = i;
-            }
-        }
-    }
+    let profile_embedding = (!mic_dominant && samples.len() >= 32_000).then(|| embedding.clone());
+
+    // A microphone copy of remote playback must not claim or update that
+    // remote cluster, even when it arrives while joining during speech. Source
+    // membership is fixed by the first sample, independently of voice similarity.
+    let (best, best_sim) = closest_on_source(&d.centroids, &d.mic_counts, &embedding, mic_dominant)
+        .unwrap_or((0, f32::NEG_INFINITY));
+    if !best_sim.is_finite() && d.centroids.len() >= MAX_LIVE_SPEAKERS { return None; }
 
     let threshold = if mic_dominant {
         ONLINE_THRESHOLD_MIC
@@ -263,6 +263,7 @@ pub fn assign_speaker(samples: &[f32], mic_dominant: bool) -> Option<LiveSpeaker
         d.counts.push(1.0);
         d.mic_counts.push(0.0);
         d.names.push(None);
+        d.profile_evidence.push(Vec::new());
         0
     } else if (1.0 - best_sim) <= threshold || d.centroids.len() >= MAX_LIVE_SPEAKERS {
         // Fold into the matched speaker as an incremental mean, then restore
@@ -284,6 +285,7 @@ pub fn assign_speaker(samples: &[f32], mic_dominant: bool) -> Option<LiveSpeaker
         d.counts.push(1.0);
         d.mic_counts.push(0.0);
         d.names.push(None);
+        d.profile_evidence.push(Vec::new());
         log::info!(
             "🧑‍🤝‍🧑 Live diarization: new speaker {} detected (path={})",
             d.centroids.len(),
@@ -301,13 +303,14 @@ pub fn assign_speaker(samples: &[f32], mic_dominant: bool) -> Option<LiveSpeaker
     }
 
     d.last_speaker = speaker;
-    if !mic_dominant {
-        d.names[speaker] = super::voice_profiles::best_match(&d.centroids[speaker], &d.profiles)
+    if let Some(vector) = profile_embedding.filter(|_| !d.blocked_profiles.contains(&speaker)) {
+        super::voice_profiles::push_match_evidence(&mut d.profile_evidence[speaker], vector);
+        d.names[speaker] = super::voice_profiles::confirmed_match(&d.profile_evidence[speaker], &d.profiles)
             .map(|profile| profile.name.clone());
     }
     let user = d.user_speaker();
     // Mic path is always the local user for dual-path STT; system path never is.
-    let is_user = mic_dominant || user == Some(speaker);
+    let is_user = mic_dominant;
 
     // Log the evidence: if the wrong person (or nobody) ends up labelled "You",
     // these ratios are what's needed to tell whether the mic-activity signal or
@@ -326,4 +329,36 @@ pub fn assign_speaker(samples: &[f32], mic_dominant: bool) -> Option<LiveSpeaker
         is_user,
         profile_name: if mic_dominant { None } else { d.names[speaker].clone() },
     })
+}
+
+/// Only compare within immutable capture-source membership. Synthetic embeddings
+/// reproduce identical electrical loopback without requiring a speech model.
+fn closest_on_source(centroids: &[Vec<f32>], mic_counts: &[f32], embedding: &[f32], microphone: bool) -> Option<(usize, f32)> {
+    centroids.iter().enumerate().filter(|(i, _)| (mic_counts[*i] > 0.0) == microphone)
+        .map(|(i, c)| (i, embedding.iter().zip(c).map(|(a,b)| a*b).sum::<f32>()))
+        .filter(|(_, score)| score.is_finite())
+        .max_by(|a,b| a.1.total_cmp(&b.1))
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+    #[test]
+    fn joining_during_remote_speech_does_not_claim_remote_cluster_as_user() {
+        let remote = vec![1.0, 0.0];
+        let mut centroids = vec![remote.clone()]; let mut mic_counts = vec![0.0];
+        assert_eq!(closest_on_source(&centroids, &mic_counts, &remote, false), Some((0, 1.0)));
+        // The headset delivers an identical electronic copy on the mic input.
+        assert_eq!(closest_on_source(&centroids, &mic_counts, &remote, true), None);
+        centroids.push(remote.clone()); mic_counts.push(1.0);
+        assert_eq!(closest_on_source(&centroids, &mic_counts, &remote, true), Some((1, 1.0)));
+        assert_eq!(closest_on_source(&centroids, &mic_counts, &remote, false), Some((0, 1.0)));
+        assert_eq!(mic_counts[0], 0.0);
+    }
+    #[test]
+    fn enrolled_user_and_short_first_remote_turn_do_not_share_a_fallback() {
+        let user = vec![1.0, 0.0];
+        assert_eq!(closest_on_source(&[user.clone()], &[1.0], &user, false), None);
+        assert_eq!(closest_on_source(&[user.clone()], &[1.0], &user, true), Some((0, 1.0)));
+    }
 }

@@ -4,13 +4,14 @@
  * The card that opens when you click a speaker. For a known contact: who they
  * are, how often you meet, their groups and open action items, and a link to
  * their profile. For an unidentified voice: identify, "this is me", or merge.
- * With Labs voice profiles on, a contact's voice can be learned from here.
+ * With Voice profiles on, a contact's voice can be learned from here.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowUpRight, CheckCircle2, Circle, Fingerprint, GitMerge, UserCheck, UserRoundSearch } from 'lucide-react';
 import { toast } from 'sonner';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
+import { PossibleVoiceMatch } from '@/components/people/PossibleVoiceMatch';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { GroupChip } from '@/components/groups/GroupBits';
@@ -142,6 +143,8 @@ export function PersonCard({
               </div>
             </div>
 
+            {!contact && !isYou && <PossibleVoiceMatch speaker={speaker} meetingId={meetingId} review onAccept={() => { onClose(); onIdentify(speaker, target.segmentId); }} />}
+
             {canLearnVoice && voice && (
               <p className="flex items-center gap-1.5 px-4 pb-3 text-[11px] text-af-text-3">
                 <Fingerprint className="h-3.5 w-3.5 text-af-accent" />
@@ -224,7 +227,7 @@ export function PersonCard({
               {canLearnVoice && (
                 <Button size="sm" variant="ghost" onClick={() => void learnVoice()} loading={learning}>
                   <Fingerprint />
-                  {voice ? 'Update voice' : 'Remember voice'}
+                  {voice ? 'Learn more turns' : 'Remember voice'}
                 </Button>
               )}
             </div>

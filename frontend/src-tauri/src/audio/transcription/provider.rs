@@ -43,6 +43,7 @@ pub struct TranscriptResult {
     pub text: String,
     pub confidence: Option<f32>, // None if provider doesn't support confidence scores
     pub is_partial: bool,
+    pub words: Option<Vec<crate::database::models::WordTiming>>,
 }
 
 /// Trait for transcription providers (Whisper, Parakeet, future providers)

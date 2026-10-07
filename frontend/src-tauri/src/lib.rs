@@ -58,6 +58,7 @@ pub mod groq;
 pub mod openrouter;
 pub mod live_assistant;
 pub mod meeting_detection;
+pub mod meeting_images;
 pub mod minibar;
 pub mod parakeet_engine;
 pub mod paths;
@@ -278,7 +279,10 @@ async fn get_meeting_playback_audio<R: Runtime>(
         .fetch_optional(state.db_manager.pool())
         .await.map_err(|error| error.to_string())?.flatten();
     let Some(folder) = folder else { return Ok(None); };
-    for name in ["audio.mp4", "audio.m4a", "audio.wav", "audio.mp3", "audio.webm"] {
+    for name in [
+        "audio.mp4", "audio.m4a", "audio.wav", "audio.mp3", "audio.webm",
+        "video.mp4", "video.webm", "video.mov", "video.mkv",
+    ] {
         let file = std::path::Path::new(&folder).join(name);
         if file.is_file() {
             app.asset_protocol_scope().allow_file(&file).map_err(|error| error.to_string())?;
@@ -537,6 +541,9 @@ pub fn run() {
             // Free Whisper/Parakeet VRAM a couple minutes after last STT use.
             audio::common::start_stt_idle_unloader();
 
+            // Watch folders: initialize background watcher
+            audio::watch_folders::init_watch_folder_worker(_app.handle().clone());
+
             // Hydrate mic gain (and other recording prefs) into runtime atomics.
             let app_for_prefs = _app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -642,11 +649,30 @@ pub fn run() {
             get_transcription_status,
             read_audio_file,
             get_meeting_playback_audio,
+            meeting_images::save_meeting_image,
+            meeting_images::list_meeting_images,
+            meeting_images::delete_meeting_image,
             audio::waveform::get_waveform_peaks,
             whisper_engine::labs::get_whisper_strict_silence,
             whisper_engine::labs::set_whisper_strict_silence,
             diarization::voice_profiles::get_voice_profiles_enabled,
             diarization::voice_profiles::set_voice_profiles_enabled,
+            diarization::voice_profiles::get_voice_profiles_auto_save,
+            diarization::voice_profiles::get_voice_profiles_consensus,
+            diarization::voice_profiles::get_voice_profiles_match_threshold,
+            diarization::voice_profiles::get_possible_voice_match,
+            diarization::voice_profiles::detach_live_voice_match,
+            summary::speaker_names::get_summary_speaker_names_enabled,
+            summary::speaker_names::set_summary_speaker_names_enabled,
+            diarization::voice_profiles::get_voice_profiles_limit,
+            diarization::voice_profiles::set_voice_profiles_limit,
+            diarization::voice_profiles::get_voice_profiles_auto_samples,
+            diarization::voice_profiles::set_voice_profiles_auto_samples,
+            diarization::voice_profiles::set_voice_profiles_match_threshold,
+            diarization::voice_profiles::set_voice_profiles_consensus,
+            diarization::voice_profiles::queue_voice_profile_learning,
+            diarization::voice_profiles::get_voice_profile_learning_busy,
+            diarization::voice_profiles::set_voice_profiles_auto_save,
             diarization::voice_profiles::enroll_voice_profile,
             diarization::voice_profiles::enroll_person_voice,
             diarization::voice_profiles::list_voice_profiles,
@@ -888,6 +914,12 @@ pub fn run() {
             summary::summary_engine::commands::builtin_ai_get_recommended_model,
             openrouter::get_openrouter_models,
             audio::recording_preferences::get_recording_preferences,
+            audio::near_live::get_near_live_captions_enabled,
+            audio::near_live::set_near_live_captions_enabled,
+            audio::echo_guard::get_mic_playback_suppression_enabled,
+            audio::echo_guard::set_mic_playback_suppression_enabled,
+            audio::word_timestamps::get_word_timestamps_enabled,
+            audio::word_timestamps::set_word_timestamps_enabled,
             audio::recording_preferences::set_recording_preferences,
             audio::recording_preferences::get_default_recordings_folder_path,
             audio::recording_preferences::open_recordings_folder,
@@ -958,6 +990,18 @@ pub fn run() {
             audio::import::start_import_audio_command,
             audio::import::cancel_import_command,
             audio::import::is_import_in_progress_command,
+            // YouTube download and transcription
+            audio::youtube::fetch_youtube_info_command,
+            audio::youtube::transcribe_youtube_url_command,
+            // Watch folders
+            audio::watch_folders::api_get_watch_folders,
+            audio::watch_folders::api_set_watch_folders,
+            audio::watch_folders::api_add_watch_folder,
+            audio::watch_folders::api_remove_watch_folder,
+            audio::watch_folders::api_pick_watch_folder,
+            // Transcript translation
+            summary::transcript_translation::api_get_meeting_translations,
+            summary::transcript_translation::api_translate_meeting_transcript,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

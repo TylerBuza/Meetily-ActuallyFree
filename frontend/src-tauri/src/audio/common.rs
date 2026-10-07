@@ -235,15 +235,15 @@ pub(crate) async fn unload_engine_after_batch(use_parakeet: bool) {
     STT_LAST_ACTIVITY_SECS.store(0, Ordering::Relaxed);
 }
 
-/// Create transcript segments from transcription results.
-/// Each tuple is (text, start_ms, end_ms) from VAD timestamps.
-pub(crate) fn create_transcript_segments(
-    transcripts: &[(String, f64, f64)],
+/// Create transcript segments from transcription results with optional word timings.
+/// Each tuple is (text, start_ms, end_ms, words) from VAD and ASR.
+pub(crate) fn create_transcript_segments_with_words(
+    transcripts: &[(String, f64, f64, Option<Vec<crate::database::models::WordTiming>>)],
     recording_started_at: DateTime<Utc>,
 ) -> Result<Vec<TranscriptSegment>> {
     transcripts
         .iter()
-        .map(|(text, start_ms, end_ms)| {
+        .map(|(text, start_ms, end_ms, words)| {
             let start_seconds = start_ms / 1000.0;
             let end_seconds = end_ms / 1000.0;
             let duration = end_seconds - start_seconds;
@@ -261,9 +261,24 @@ pub(crate) fn create_transcript_segments(
                 // Import/retranscribe path: no live capture, so no speaker
                 // hint exists; offline diarization can label these later.
                 speaker: None,
+                words: words.as_ref().and_then(|w| serde_json::to_value(w).ok()),
             })
         })
         .collect()
+}
+
+/// Create transcript segments from transcription results.
+/// Each tuple is (text, start_ms, end_ms) from VAD timestamps.
+#[allow(dead_code)]
+pub(crate) fn create_transcript_segments(
+    transcripts: &[(String, f64, f64)],
+    recording_started_at: DateTime<Utc>,
+) -> Result<Vec<TranscriptSegment>> {
+    let with_words: Vec<_> = transcripts
+        .iter()
+        .map(|(t, s, e)| (t.clone(), *s, *e, None))
+        .collect();
+    create_transcript_segments_with_words(&with_words, recording_started_at)
 }
 
 /// Write transcripts.json to a meeting folder (atomic write with temp file)
@@ -284,6 +299,7 @@ pub(crate) fn write_transcripts_json(folder: &Path, segments: &[TranscriptSegmen
                 "audio_end_time": s.audio_end_time,
                 "duration": s.duration,
                 "speaker": s.speaker,
+                "words": s.words,
                 "sequence_id": i
             })
         }).collect::<Vec<_>>()
@@ -470,6 +486,7 @@ mod tests {
             audio_end_time: Some(18.88),
             duration: Some(3.91),
             speaker: Some("You".to_string()),
+            words: None,
         }];
 
         write_transcripts_json(dir.path(), &segments).unwrap();

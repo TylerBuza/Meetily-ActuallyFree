@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
 import { Hint } from '@/components/ui/tooltip';
 import { formatClock } from '@/lib/dates';
+import { RecordingScreenshotButton } from './RecordingScreenshotButton';
 import { requestRecordingStop } from '@/lib/recording-launch';
 
 /** Elapsed recording time, excluding pauses (matches the floating bar). */
@@ -80,6 +81,7 @@ export function RecordingPill() {
             {isPaused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
           </button>
         </Hint>
+        <RecordingScreenshotButton disabled={isStopping} className="flex h-8 w-8 items-center justify-center rounded-full text-af-text-2 hover:bg-af-hover disabled:opacity-40" />
         <Hint label="Stop and save" side="bottom">
           <button
             type="button"

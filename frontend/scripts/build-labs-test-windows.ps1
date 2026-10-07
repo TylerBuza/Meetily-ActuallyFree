@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 $frontend = Split-Path $PSScriptRoot -Parent
 $repo = Split-Path $frontend -Parent
 $tauri = Join-Path $frontend 'src-tauri'
+$appVersion = (Get-Content (Join-Path $tauri 'tauri.conf.json') -Raw | ConvertFrom-Json).version
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path -LiteralPath $vswhere)) { throw 'Visual Studio Build Tools locator is missing' }
 $vsInstall = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim()
@@ -34,6 +35,29 @@ foreach ($required in @((Join-Path $env:ORT_LIB_LOCATION 'onnxruntime.dll'), (Jo
   if (-not (Test-Path -LiteralPath $required)) { throw "Build dependency is missing: $required" }
 }
 
+$runtimeDeps = Join-Path $tauri 'runtime-deps'
+New-Item -ItemType Directory -Force -Path $runtimeDeps | Out-Null
+foreach ($dll in @('onnxruntime.dll', 'onnxruntime_providers_shared.dll', 'DirectML.dll')) {
+  $src = Join-Path $env:ORT_LIB_LOCATION $dll
+  if (Test-Path -LiteralPath $src) {
+    Copy-Item -LiteralPath $src -Destination (Join-Path $runtimeDeps $dll) -Force
+  }
+}
+if ($Cuda) {
+  $cudaBinX64 = Join-Path $env:CUDA_PATH 'bin\x64'
+  foreach ($dll in @('cudart64_13.dll', 'cublas64_13.dll', 'cublasLt64_13.dll')) {
+    $src = Join-Path $cudaBinX64 $dll
+    if (-not (Test-Path -LiteralPath $src)) {
+      $src = Join-Path (Join-Path $env:CUDA_PATH 'bin') $dll
+    }
+    if (Test-Path -LiteralPath $src) {
+      Copy-Item -LiteralPath $src -Destination (Join-Path $runtimeDeps $dll) -Force
+    } else {
+      Write-Warning "Could not find CUDA DLL: $dll"
+    }
+  }
+}
+
 Push-Location $frontend
 try {
   # Keep the Labs install identity so the CUDA upgrade sees existing profiles,
@@ -44,11 +68,18 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Tauri local-test bundle failed' }
 } finally { Pop-Location }
 
-$installer = Join-Path $repo 'target\release\bundle\nsis\Meetily Labs Local Test_0.2.17_x64-setup.exe'
+$targetRelease = Join-Path $repo 'target\release'
+if (Test-Path -LiteralPath $targetRelease) {
+  Get-ChildItem -Path $runtimeDeps -Filter '*.dll' | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $targetRelease $_.Name) -Force
+  }
+}
+
+$installer = Join-Path $repo "target\release\bundle\nsis\Meetily Labs Local Test_${appVersion}_x64-setup.exe"
 if (-not (Test-Path -LiteralPath $installer)) { throw "Installer was not produced: $installer" }
 $dist = Join-Path $repo $(if ($Cuda) { 'dist-labs-cuda-test' } else { 'dist-labs-test' })
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
-$outputName = if ($Cuda) { 'Meetily Labs CUDA Test_0.2.17_x64-setup.exe' } else { 'Meetily Labs Local Test_0.2.17_x64-setup.exe' }
+$outputName = if ($Cuda) { "Meetily Labs CUDA Test_${appVersion}_x64-setup.exe" } else { "Meetily Labs Local Test_${appVersion}_x64-setup.exe" }
 $output = Join-Path $dist $outputName
 Copy-Item -LiteralPath $installer -Destination $output -Force
 $hash = (Get-FileHash -LiteralPath $output -Algorithm SHA256).Hash.ToLowerInvariant()

@@ -27,6 +27,11 @@ pub struct TranscriptSegment {
     /// offline diarize both depend on it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speaker: Option<String>,
+    /// Raw meeting-local channel, retained independently of voice matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker_channel: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub words: Option<Vec<crate::database::models::WordTiming>>,
 }
 
 /// Meeting metadata structure
@@ -168,6 +173,8 @@ impl RecordingSaver {
             confidence: 1.0,
             sequence_id: 0,
             speaker: None,
+            speaker_channel: None,
+            words: None,
         };
         self.add_transcript_segment(segment);
     }
@@ -553,6 +560,19 @@ impl Default for RecordingSaver {
 mod tests {
     use super::*;
 
+    #[test]
+    fn raw_speaker_channel_survives_history_serialization_independently_of_name() {
+        let mut turn = segment("unchanged words");
+        turn.speaker = Some("Alice".into()); turn.speaker_channel = Some("Speaker 2".into());
+        let json = serde_json::to_value(&turn).unwrap();
+        let restored: TranscriptSegment = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(restored.speaker.as_deref(), Some("Alice"));
+        assert_eq!(restored.speaker_channel.as_deref(), Some("Speaker 2"));
+        assert_eq!(restored.text, turn.text); assert_eq!(restored.audio_start_time, turn.audio_start_time);
+        let mut legacy = json; legacy.as_object_mut().unwrap().remove("speaker_channel");
+        assert!(serde_json::from_value::<TranscriptSegment>(legacy).unwrap().speaker_channel.is_none());
+    }
+
     fn segment(text: &str) -> TranscriptSegment {
         TranscriptSegment {
             id: "seg_1".to_string(),
@@ -564,6 +584,8 @@ mod tests {
             confidence: 0.9,
             sequence_id: 1,
             speaker: Some("You".to_string()),
+            speaker_channel: None,
+            words: None,
         }
     }
 

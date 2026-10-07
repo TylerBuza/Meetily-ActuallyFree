@@ -56,13 +56,14 @@ impl TranscriptsRepository {
                 Some(offset) => timestamp_from_offset(recording_started_at, offset)?,
                 None => segment.timestamp.clone(),
             };
+            let words_json = segment.words.as_ref().map(|w| w.to_string());
             let result = sqlx::query(
                 // `speaker` must be persisted: the offline diarization pass
                 // finds the local user by matching the live "You" ranges, so
                 // omitting it here erased the user's identity from every
                 // meeting the moment it was saved.
-                "INSERT INTO transcripts (id, meeting_id, transcript, timestamp, audio_start_time, audio_end_time, duration, speaker)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                "INSERT INTO transcripts (id, meeting_id, transcript, timestamp, audio_start_time, audio_end_time, duration, speaker, words)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
             )
             .bind(&transcript_id)
             .bind(&meeting_id)
@@ -72,6 +73,7 @@ impl TranscriptsRepository {
             .bind(segment.audio_end_time)
             .bind(segment.duration)
             .bind(&segment.speaker)
+            .bind(words_json)
             .execute(&mut *transaction)
             .await;
 
@@ -306,7 +308,7 @@ mod tests {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
         sqlx::raw_sql(
             "CREATE TABLE meetings (id TEXT PRIMARY KEY, title TEXT, created_at TEXT, updated_at TEXT, folder_path TEXT, title_is_manual INTEGER); \
-             CREATE TABLE transcripts (id TEXT PRIMARY KEY, meeting_id TEXT, transcript TEXT, timestamp TEXT, audio_start_time REAL, audio_end_time REAL, duration REAL, speaker TEXT); \
+             CREATE TABLE transcripts (id TEXT PRIMARY KEY, meeting_id TEXT, transcript TEXT, timestamp TEXT, audio_start_time REAL, audio_end_time REAL, duration REAL, speaker TEXT, words TEXT); \
              CREATE TABLE people (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, normalized_name TEXT NOT NULL UNIQUE, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL); \
              CREATE TABLE person_speakers (person_id TEXT NOT NULL, meeting_id TEXT NOT NULL, speaker_label TEXT NOT NULL, UNIQUE(meeting_id, speaker_label));"
         ).execute(&pool).await.unwrap();
@@ -314,6 +316,7 @@ mod tests {
             id: "unused".into(), text: "Hello".into(), timestamp: "2026-09-27T00:00:00Z".into(),
             audio_start_time: Some(0.0), audio_end_time: Some(2.0), duration: Some(2.0),
             speaker: Some(speaker.into()),
+            words: None,
         };
         let meeting = TranscriptsRepository::save_transcript(&pool, "Test", &[make_turn("Alice"), make_turn("Speaker 2")], None, None)
             .await.unwrap();

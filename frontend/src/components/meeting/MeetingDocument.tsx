@@ -34,6 +34,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { VisuallyHidden } from '@/components/ui/visually-hidden';
 import { NotesEditor, type NotesContent } from '@/components/editor/NotesEditor';
+import { MeetingImages } from '@/components/meeting/MeetingImages';
 import { ActionItemsList } from '@/components/actions/ActionItemsList';
 import { ChatThread } from '@/components/chat/ChatThread';
 import { LanguagePickerPopover } from '@/components/LanguagePickerPopover';
@@ -69,6 +70,7 @@ export interface MeetingDocumentProps {
   hasTranscript: boolean;
   transcript: TranscriptLine[];
   onSeek: (seconds: number) => void;
+  currentTime: number;
   modelConfig: ModelConfig;
   setModelConfig: (config: ModelConfig | ((prev: ModelConfig) => ModelConfig)) => void;
   onSaveModelConfig: (config?: ModelConfig) => Promise<void>;
@@ -150,6 +152,7 @@ function NotesTab({
   hasTranscript,
   transcript,
   onSeek,
+  currentTime,
   modelConfig,
   setModelConfig,
   onSaveModelConfig,
@@ -313,13 +316,13 @@ function NotesTab({
             Your notes
           </SectionTitle>
           {notes.loaded ? (
-            <NotesEditor
+            <MeetingImages meetingId={meetingId} currentTime={currentTime} onSeek={onSeek}><NotesEditor
               key={`notes-${meetingId}`}
               initialBlocks={notes.json}
               initialMarkdown={notes.markdown}
               placeholder="Write your own notes. They stay yours: summaries never overwrite them."
               onChange={notesSaver.schedule}
-            />
+            /></MeetingImages>
           ) : (
             <Skeleton className="h-16 w-full" />
           )}

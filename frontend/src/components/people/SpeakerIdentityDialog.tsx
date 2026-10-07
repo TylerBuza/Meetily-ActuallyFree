@@ -6,13 +6,15 @@
  * a typed name, and the other speakers in the meeting to merge with. Works for
  * saved meetings (Rust relabels and links the contact) and live recordings.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import { GitMerge, Unlink, UserPlus, UserRound } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
+import { PossibleVoiceMatch } from '@/components/people/PossibleVoiceMatch';
+import type { AISpeakerNames } from '@/lib/summary-speaker-names';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
@@ -39,8 +41,11 @@ export interface SpeakerIdentityDialogProps {
   /** Other speaker labels in this meeting, offered for merging. */
   speakers?: string[];
   onRenamed?: (rename: SpeakerRenameResult) => Promise<void> | void;
-  onRenameLive?: (from: string, to: string, scope: 'all' | 'line') => Promise<void> | void;
+  onRenameLive?: (from: string, to: string, scope: 'all' | 'line' | 'future') => Promise<void> | void;
   onMerge?: (source: string, target: string) => Promise<void> | void;
+  canSeparateLive?: boolean;
+  speakerChannel?: string;
+  aiSpeakerNames?: AISpeakerNames;
   /** Colour slot of a speaker in this meeting. */
   colorIndexOf?: (speaker: string) => number | undefined;
 }
@@ -58,11 +63,15 @@ export function SpeakerIdentityDialog({
   onRenameLive,
   onMerge,
   colorIndexOf,
+  canSeparateLive = false,
+  speakerChannel,
+  aiSpeakerNames = {},
 }: SpeakerIdentityDialogProps) {
   const { people } = useWorkspace();
   const userName = useUserName();
+  const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
-  const [scope, setScope] = useState<'all' | 'line'>('all');
+  const [scope, setScope] = useState<'all' | 'line' | 'future'>('all');
   const [selectedSpeaker, setSelectedSpeaker] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -70,11 +79,14 @@ export function SpeakerIdentityDialog({
     if (!open) return;
     setQuery('');
     setScope('all');
-    setSelectedSpeaker(splitSpeakerLabel(speaker ?? '')[0] ?? '');
+    const parts = splitSpeakerLabel(speaker ?? '');
+    setSelectedSpeaker(parts.find(part => isGenerated(part) && typeof aiSpeakerNames[part] === 'string') ?? parts[0] ?? '');
   }, [open, transcriptId, speaker]);
 
   const components = splitSpeakerLabel(speaker ?? '');
   const current = components.length > 1 ? selectedSpeaker : (speaker ?? '');
+  const suggestedName = isGenerated(current) && typeof aiSpeakerNames[current] === 'string' ? aiSpeakerNames[current] : undefined;
+  // A suggestion is offered for explicit acceptance; it never invokes rename.
   const canRemove = !!current && !isGenerated(current) && !isUserSpeaker(current);
   const trimmed = query.trim();
   const exact = people.some((person) => person.displayName.toLowerCase() === trimmed.toLowerCase());
@@ -133,7 +145,7 @@ export function SpeakerIdentityDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}>
-      <DialogContent className="max-w-md gap-0 overflow-hidden p-0">
+      <DialogContent onOpenAutoFocus={event => { event.preventDefault(); inputRef.current?.focus(); }} className="max-w-md gap-0 overflow-hidden p-0">
         <div className="space-y-1 px-5 pb-3 pt-5 pr-12">
           <DialogTitle className="flex items-center gap-2">
             <span aria-hidden className={cn('h-2.5 w-2.5 rounded-full', speakerDot(current, colorIndexOf?.(current)))} />
@@ -141,6 +153,13 @@ export function SpeakerIdentityDialog({
           </DialogTitle>
           <DialogDescription>Pick a contact, type a new name, or merge with another voice.</DialogDescription>
         </div>
+
+        {suggestedName && <div className="mx-5 mb-3 rounded-lg border border-af-border p-3 text-xs">
+          <p className="mb-2 text-af-text-3">AI summary suggestion: {suggestedName} ({current}). Unverified and not saved as a contact or voice match.</p>
+          <Button disabled={saving} onClick={() => void apply(suggestedName)}>Save AI name</Button>
+        </div>}
+
+        {open && <PossibleVoiceMatch speaker={current} speakerChannel={speakerChannel} meetingId={meetingId} disabled={saving} onAccept={name => void apply(name)} />}
 
         {components.length > 1 && (
           <div className="px-5 pb-3">
@@ -157,7 +176,7 @@ export function SpeakerIdentityDialog({
         {transcriptId && (
           <div className="px-5 pb-3">
             <div className="inline-flex w-full rounded-lg border border-af-border bg-af-panel-2 p-[3px]">
-              {(['all', 'line'] as const).map((value) => (
+              {(['all', 'line', ...(canSeparateLive ? ['future' as const] : [])] as const).map((value) => (
                 <button
                   key={value}
                   type="button"
@@ -167,23 +186,28 @@ export function SpeakerIdentityDialog({
                     scope === value ? 'bg-af-raised text-af-text shadow-sm' : 'text-af-text-3 hover:text-af-text',
                   )}
                 >
-                  {value === 'all' ? `Every line from ${displaySpeaker(current, userName)}` : 'Just this line'}
+                  {value === 'all' ? `Every line from ${displaySpeaker(current, userName)}` : value === 'line' ? 'Just this line' : 'From this line onward'}
                 </button>
               ))}
             </div>
           </div>
         )}
 
+        {scope === 'future' && <p className="px-5 pb-3 text-xs text-af-text-3">Earlier lines stay unchanged. This channel will stop matching saved voices for the rest of this recording.</p>}
         <Command className="border-t border-af-border" loop>
           <CommandInput
+            ref={inputRef}
+            autoFocus
             value={query}
             onValueChange={setQuery}
             placeholder="Search contacts or type a name"
             onKeyDown={(event) => {
-              // Enter with no highlighted match adds the typed name.
-              if (event.key === 'Enter' && trimmed && !exact && !document.querySelector('[cmdk-item][data-selected="true"]')) {
-                event.preventDefault();
-                void apply(trimmed);
+              // Typed Enter always chooses an exact name, or creates the typed contact.
+              // Stop cmdk's highlighted partial match from consuming the same keystroke.
+              if (event.key === 'Enter' && trimmed && !event.nativeEvent.isComposing) {
+                event.preventDefault(); event.stopPropagation();
+                const contact = people.find(person => person.displayName.toLowerCase() === trimmed.toLowerCase());
+                void apply(contact?.displayName ?? trimmed);
               }
             }}
           />

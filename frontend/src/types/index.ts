@@ -5,6 +5,13 @@ export interface Message {
   timestamp: string;
 }
 
+export interface WordTiming {
+  wordID: string;
+  text: string;
+  startTime: number; // in milliseconds from recording start
+  endTime: number;   // in milliseconds from recording start
+}
+
 export interface Transcript {
   id: string;
   text: string;
@@ -18,6 +25,8 @@ export interface Transcript {
   audio_end_time?: number;   // Seconds from recording start (e.g., 128.6)
   duration?: number;          // Segment duration in seconds (e.g., 3.3)
   speaker?: string;           // Speaker label: "You" (mic) or "Guest" (system audio)
+  speaker_channel?: string; // Raw meeting-local channel, independent of a matched name.
+  words?: WordTiming[];
 }
 
 export interface TranscriptUpdate {
@@ -32,6 +41,8 @@ export interface TranscriptUpdate {
   audio_start_time: number; // Seconds from recording start
   audio_end_time: number;   // Seconds from recording start
   duration: number;          // Segment duration in seconds
+  speaker_channel?: string; // Raw meeting-local channel, independent of a matched name.
+  words?: WordTiming[];
 }
 
 export interface Block {
@@ -94,6 +105,7 @@ export interface MeetingMetadata {
   created_at: string;
   updated_at: string;
   folder_path?: string;
+  speakers?: string[];
 }
 
 export interface PaginatedTranscriptsResponse {
@@ -125,6 +137,10 @@ export interface TranscriptSegmentData {
    * capture-source fallback "You". Undefined renders no label.
    */
   speaker?: string;
+  /** Ephemeral live ASR hypothesis; never saved as a transcript turn. */
+  provisional?: boolean;
+  /** Word-level timestamps for click-to-seek and synchronized audio playback. */
+  words?: WordTiming[];
 }
 
 export type GlobalSearchResultKind = 'person' | 'meeting' | 'transcript' | 'summary';

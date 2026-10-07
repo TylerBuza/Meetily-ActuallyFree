@@ -51,7 +51,10 @@ export interface UseImportAudioReturn {
     title: string,
     language?: string | null,
     model?: string | null,
-    provider?: string | null
+    provider?: string | null,
+    diarize?: boolean | null,
+    diarizationEngine?: string | null,
+    numSpeakers?: number | null,
   ) => Promise<void>;
   cancelImport: () => Promise<void>;
   reset: () => void;
@@ -208,7 +211,10 @@ export function useImportAudio({
       title: string,
       language?: string | null,
       model?: string | null,
-      provider?: string | null
+      provider?: string | null,
+      diarize?: boolean | null,
+      diarizationEngine?: string | null,
+      numSpeakers?: number | null,
     ) => {
       isCancelledRef.current = false;
       setStatus('processing');
@@ -222,7 +228,8 @@ export function useImportAudio({
             duration_seconds: fileInfo.duration_seconds.toString(),
             language: language || 'auto',
             model_provider: provider || '',
-            model_name: model || ''
+            model_name: model || '',
+            diarize: String(diarize ?? true),
           });
         }
 
@@ -232,6 +239,9 @@ export function useImportAudio({
           language: language || null,
           model: model || null,
           provider: provider || null,
+          diarize: diarize ?? true,
+          diarizationEngine: diarizationEngine || null,
+          numSpeakers: numSpeakers || null,
         });
       } catch (err: any) {
         setStatus('error');

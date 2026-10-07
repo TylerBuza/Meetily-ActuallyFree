@@ -20,7 +20,7 @@ use tauri_plugin_dialog::DialogExt;
 use uuid::Uuid;
 
 use super::audio_processing::create_meeting_folder;
-use super::common::{create_transcript_segments, split_segment_at_silence, write_transcripts_json};
+use super::common::{create_transcript_segments_with_words, split_segment_at_silence, write_transcripts_json};
 use super::constants::AUDIO_EXTENSIONS;
 use super::recording_preferences::get_default_recordings_folder;
 
@@ -260,6 +260,9 @@ pub async fn start_import<R: Runtime>(
     language: Option<String>,
     model: Option<String>,
     provider: Option<String>,
+    diarize: Option<bool>,
+    diarization_engine: Option<String>,
+    num_speakers: Option<usize>,
 ) -> Result<ImportResult> {
     // Acquire guard - ensures flag is cleared even on panic/early return
     let _guard = ImportGuard::acquire().map_err(|e| anyhow!(e))?;
@@ -276,6 +279,9 @@ pub async fn start_import<R: Runtime>(
         language,
         model,
         provider,
+        diarize,
+        diarization_engine,
+        num_speakers,
     )
     .await;
     drop(batch_lease);
@@ -319,6 +325,9 @@ async fn run_import<R: Runtime>(
     language: Option<String>,
     model: Option<String>,
     provider: Option<String>,
+    diarize: Option<bool>,
+    diarization_engine: Option<String>,
+    num_speakers: Option<usize>,
 ) -> Result<ImportResult> {
     let source = PathBuf::from(&source_path);
     let title_is_manual = is_import_title_manual(&title, &source);
@@ -333,12 +342,25 @@ async fn run_import<R: Runtime>(
         title, source_path, language, model, provider
     );
 
-    // Both local engines use the saved glossary: Whisper as an initial prompt,
-    // Parakeet as token-level contextual biasing.
-    let use_parakeet = provider.as_deref() == Some("parakeet");
-    let state = app
-        .try_state::<AppState>()
-        .ok_or_else(|| anyhow!("Database not initialized"))?;
+    // Determine which provider to use (default to configured provider, or whisper if not set)
+    let effective_provider = match provider.as_deref() {
+        Some(p) => p.to_string(),
+        None => {
+            let state = app.try_state::<AppState>();
+            if let Some(state) = state {
+                sqlx::query_scalar::<_, String>("SELECT provider FROM transcript_settings WHERE id = '1'")
+                    .fetch_optional(state.db_manager.pool())
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "whisper".to_string())
+            } else {
+                "whisper".to_string()
+            }
+        }
+    };
+    let use_parakeet = effective_provider == "parakeet";
+    let state = app.try_state::<AppState>().ok_or_else(|| anyhow!("Database not initialized"))?;
     let vocabulary = VocabularyRepository::get_effective(state.db_manager.pool(), None).await?;
 
     emit_progress(&app, "copying", 5, "Creating meeting folder...");
@@ -352,16 +374,23 @@ async fn run_import<R: Runtime>(
     let base_folder = get_default_recordings_folder();
     let meeting_folder = create_meeting_folder(&base_folder, &title, false)?;
 
-    // Copy audio file to meeting folder
-    emit_progress(&app, "copying", 10, "Copying audio file...");
+    // Copy media file to meeting folder
+    emit_progress(&app, "copying", 10, "Copying media file...");
 
-    let dest_filename = format!(
-        "audio.{}",
-        source
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("mp4")
-    );
+    let ext_lower = source
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_else(|| "mp4".to_string());
+
+    // If source is a video container (mp4, webm, mov, mkv), store once as video.<ext>.
+    // Otherwise store as audio.<ext>. Never duplicate the same file into both.
+    let is_video = ["mp4", "webm", "mov", "mkv"].contains(&ext_lower.as_str());
+    let dest_filename = if is_video {
+        format!("video.{}", ext_lower)
+    } else {
+        format!("audio.{}", ext_lower)
+    };
     let dest_path = meeting_folder.join(&dest_filename);
 
     let src = source.clone();
@@ -369,9 +398,9 @@ async fn run_import<R: Runtime>(
     tokio::task::spawn_blocking(move || std::fs::copy(&src, &dst))
         .await
         .map_err(|e| anyhow!("Copy task join error: {}", e))?
-        .map_err(|e| anyhow!("Failed to copy audio file: {}", e))?;
+        .map_err(|e| anyhow!("Failed to copy media file: {}", e))?;
 
-    info!("Copied audio to: {}", dest_path.display());
+    info!("Saved imported media to: {}", dest_path.display());
 
     // Check for cancellation
     if IMPORT_CANCELLED.load(Ordering::SeqCst) {
@@ -555,7 +584,7 @@ async fn run_import<R: Runtime>(
     info!("Processing {} segments (after splitting)", processable_count);
 
     // Process each speech segment
-    let mut all_transcripts: Vec<(String, f64, f64)> = Vec::new();
+    let mut all_transcripts: Vec<(String, f64, f64, Option<Vec<crate::database::models::WordTiming>>)> = Vec::new();
     let mut total_confidence = 0.0f32;
 
     for (i, segment) in processable_segments.iter().enumerate() {
@@ -589,24 +618,34 @@ async fn run_import<R: Runtime>(
         }
 
         // Transcribe
-        let (text, conf) = if use_parakeet {
+        let chunk_start_sec = segment.start_timestamp_ms / 1000.0;
+        let (text, conf, words) = if use_parakeet {
             let engine = parakeet_engine.as_ref().unwrap();
-            let text = engine
-                .transcribe_audio(segment.samples.clone(), vocabulary.as_deref())
-                .await
-                .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
-            (text, 0.9f32)
+            if crate::audio::word_timestamps::enabled() {
+                let (text, words) = engine
+                    .transcribe_audio_with_words(segment.samples.clone(), chunk_start_sec, vocabulary.as_deref())
+                    .await
+                    .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
+                (text, 0.9f32, Some(words))
+            } else {
+                let text = engine
+                    .transcribe_audio(segment.samples.clone(), vocabulary.as_deref())
+                    .await
+                    .map_err(|e| anyhow!("Parakeet transcription failed on segment {}: {}", i, e))?;
+                (text, 0.9f32, None)
+            }
         } else {
             let engine = whisper_engine.as_ref().unwrap();
-            let (text, conf, _) = engine
-                .transcribe_audio_with_confidence(
+            let (text, conf, _, words) = engine
+                .transcribe_audio_with_words(
                     segment.samples.clone(),
                     language.clone(),
                     vocabulary.as_deref(),
+                    chunk_start_sec,
                 )
                 .await
                 .map_err(|e| anyhow!("Whisper transcription failed on segment {}: {}", i, e))?;
-            (text, conf)
+            (text, conf, words)
         };
 
         let trimmed = text.trim();
@@ -616,7 +655,7 @@ async fn run_import<R: Runtime>(
                 i + 1, processable_count, segment_duration_sec, conf,
                 if trimmed.len() > 80 { let mut end = 80; while !trimmed.is_char_boundary(end) { end -= 1; } &trimmed[..end] } else { trimmed }
             );
-            all_transcripts.push((text, segment.start_timestamp_ms, segment.end_timestamp_ms));
+            all_transcripts.push((text, segment.start_timestamp_ms, segment.end_timestamp_ms, words));
             total_confidence += conf;
         } else {
             debug!("Segment {}/{}: {:.1}s — empty transcription", i + 1, processable_count, segment_duration_sec);
@@ -645,7 +684,7 @@ async fn run_import<R: Runtime>(
 
     // Create transcript segments
     let recording_started_at = Utc::now();
-    let segments = create_transcript_segments(&all_transcripts, recording_started_at)?;
+    let segments = create_transcript_segments_with_words(&all_transcripts, recording_started_at)?;
 
     // Save to database
     let app_state = app
@@ -679,6 +718,61 @@ async fn run_import<R: Runtime>(
         recording_started_at,
     ) {
         warn!("Failed to write metadata.json: {}", e);
+    }
+
+    // Optional post-import speaker diarization
+    let should_diarize = diarize.unwrap_or(true);
+    let engine_to_use = match diarization_engine.as_deref() {
+        Some("nemotron") if crate::diarization::nemotron_models_available() => "nemotron".to_string(),
+        Some("pyannote") if crate::diarization::pyannote_models_available() => "pyannote".to_string(),
+        _ => {
+            let active = crate::diarization::get_active_engine();
+            if crate::diarization::models_available_for_engine(&active) {
+                active
+            } else if crate::diarization::pyannote_models_available() {
+                "pyannote".to_string()
+            } else if crate::diarization::nemotron_models_available() {
+                "nemotron".to_string()
+            } else {
+                active
+            }
+        }
+    };
+
+    if should_diarize && crate::diarization::models_available_for_engine(&engine_to_use) {
+        let display_engine = if engine_to_use.eq_ignore_ascii_case("nemotron") {
+            "NVIDIA Nemotron-3"
+        } else {
+            "Pyannote"
+        };
+        emit_progress(&app, "diarizing", 94, &format!("Separating speakers ({display_engine})..."));
+        info!(
+            "🧑‍🤝‍🧑 Running speaker diarization on imported media: {} using {}",
+            dest_path.display(),
+            engine_to_use
+        );
+
+        match crate::diarization::diarize_meeting(
+            app.clone(),
+            app_state.clone(),
+            meeting_id.clone(),
+            Some(dest_path.to_string_lossy().to_string()),
+            num_speakers,
+            None,
+            Some(engine_to_use.clone()),
+        )
+        .await
+        {
+            Ok(d_res) => {
+                info!(
+                    "✅ Post-import diarization completed for {}: {} speakers, {} turns labeled",
+                    meeting_id, d_res.num_speakers, d_res.labeled
+                );
+            }
+            Err(e) => {
+                warn!("Post-import diarization skipped or failed non-fatally: {}", e);
+            }
+        }
     }
 
     emit_progress(&app, "complete", 100, "Import complete");
@@ -740,9 +834,10 @@ async fn create_meeting_with_transcripts(
 
     // Insert transcripts
     for segment in segments {
+        let words_json = segment.words.as_ref().map(|w| serde_json::to_string(w).unwrap_or_default());
         sqlx::query(
-            "INSERT INTO transcripts (id, meeting_id, transcript, timestamp, audio_start_time, audio_end_time, duration)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO transcripts (id, meeting_id, transcript, timestamp, audio_start_time, audio_end_time, duration, speaker, words)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&segment.id)
         .bind(&meeting_id)
@@ -751,6 +846,8 @@ async fn create_meeting_with_transcripts(
         .bind(segment.audio_start_time)
         .bind(segment.audio_end_time)
         .bind(segment.duration)
+        .bind(&segment.speaker)
+        .bind(words_json)
         .execute(&mut *tx)
         .await
         .map_err(|e| anyhow!("Failed to insert transcript: {}", e))?;
@@ -812,9 +909,23 @@ async fn get_or_init_whisper<R: Runtime>(
                     warn!("Model discovery error (continuing): {}", e);
                 }
 
-                e.load_model(&target_model)
-                    .await
-                    .map_err(|e| anyhow!("Failed to load model '{}': {}", target_model, e))?;
+                if let Err(load_err) = e.load_model(&target_model).await {
+                    let available = e.discover_models().await.unwrap_or_default();
+                    if let Some(fallback) = available
+                        .iter()
+                        .find(|m| matches!(m.status, crate::whisper_engine::ModelStatus::Available))
+                    {
+                        info!(
+                            "Whisper model '{}' unavailable ({}), falling back to available model '{}'",
+                            target_model, load_err, fallback.name
+                        );
+                        e.load_model(&fallback.name)
+                            .await
+                            .map_err(|e| anyhow!("Failed to load fallback model '{}': {}", fallback.name, e))?;
+                    } else {
+                        return Err(anyhow!("Failed to load model '{}': {}", target_model, load_err));
+                    }
+                }
             }
 
             Ok(e)
@@ -858,9 +969,23 @@ async fn get_or_init_parakeet<R: Runtime>(
                     warn!("Model discovery error (continuing): {}", e);
                 }
 
-                e.load_model(&target_model)
-                    .await
-                    .map_err(|e| anyhow!("Failed to load model '{}': {}", target_model, e))?;
+                if let Err(load_err) = e.load_model(&target_model).await {
+                    let available = e.discover_models().await.unwrap_or_default();
+                    if let Some(fallback) = available
+                        .iter()
+                        .find(|m| matches!(m.status, crate::parakeet_engine::ModelStatus::Available))
+                    {
+                        info!(
+                            "Parakeet model '{}' unavailable ({}), falling back to available model '{}'",
+                            target_model, load_err, fallback.name
+                        );
+                        e.load_model(&fallback.name)
+                            .await
+                            .map_err(|e| anyhow!("Failed to load fallback model '{}': {}", fallback.name, e))?;
+                    } else {
+                        return Err(anyhow!("Failed to load model '{}': {}", target_model, load_err));
+                    }
+                }
             }
 
             Ok(e)
@@ -999,6 +1124,9 @@ pub async fn start_import_audio_command<R: Runtime>(
     language: Option<String>,
     model: Option<String>,
     provider: Option<String>,
+    diarize: Option<bool>,
+    diarization_engine: Option<String>,
+    num_speakers: Option<usize>,
 ) -> Result<ImportStarted, String> {
     // Check if import is already in progress (guard will be acquired in start_import)
     if IMPORT_IN_PROGRESS.load(Ordering::SeqCst) {
@@ -1007,7 +1135,18 @@ pub async fn start_import_audio_command<R: Runtime>(
 
     // Spawn import in background
     tauri::async_runtime::spawn(async move {
-        let result = start_import(app, source_path, title, language, model, provider).await;
+        let result = start_import(
+            app,
+            source_path,
+            title,
+            language,
+            model,
+            provider,
+            diarize,
+            diarization_engine,
+            num_speakers,
+        )
+        .await;
 
         if let Err(e) = result {
             error!("Import failed: {}", e);
@@ -1038,6 +1177,7 @@ pub async fn is_import_in_progress_command() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::common::create_transcript_segments;
 
     fn test_recording_start() -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2026-08-30T12:00:00Z")
@@ -1227,6 +1367,7 @@ mod tests {
                 audio_end_time: Some(1.5),
                 duration: Some(1.5),
                 speaker: None,
+                words: None,
             },
             TranscriptSegment {
                 id: "t-2".to_string(),
@@ -1236,6 +1377,7 @@ mod tests {
                 audio_end_time: Some(3.5),
                 duration: Some(1.5),
                 speaker: None,
+                words: None,
             },
         ];
 

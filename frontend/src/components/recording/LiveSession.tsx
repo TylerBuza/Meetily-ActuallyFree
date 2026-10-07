@@ -6,6 +6,7 @@
  * | Ask AI panel. The record card floats over the transcript column.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { Copy, Globe, PanelRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTranscripts } from '@/contexts/TranscriptContext';
@@ -26,6 +27,8 @@ import { LivePanel, type LivePanelTab } from '@/components/recording/LivePanel';
 import { automaticTitle, onLiveSessionChange, readLiveTitle, writeLiveTitle, type LiveTitle } from '@/lib/live-session';
 import { formatClock } from '@/lib/dates';
 import type { LiveLine } from '@/lib/live-context';
+import { useLabs } from '@/hooks/useLabs';
+import { isDuplicatedMicCaption, previewHasFinalTurn } from '@/lib/nearLiveCaptions';
 import { speakerKey, replaceSpeakerComponent } from '@/utils/speakerUtils';
 
 const PANEL_KEY = 'af-live-panel-open';
@@ -33,8 +36,10 @@ const PANEL_WIDTH = 340;
 /** Narrower than this and the panel opens over the transcript instead of beside it. */
 const MIN_TRANSCRIPT_WIDTH = 480;
 /** Room under the last line for the floating record card. */
-const RECORD_CARD_CLEARANCE = 150;
+const RECORD_CARD_CLEARANCE = 128;
 const isGeneric = (name: string) => /^speaker \d+$/i.test(name.trim());
+type PreviewCaption = { source: 'microphone' | 'system'; start_time: number; end_time: number; text: string };
+type PreviewFinalized = { source: PreviewCaption['source']; end_time: number };
 
 export function LiveSession({
   isProcessingStop,
@@ -47,9 +52,11 @@ export function LiveSession({
 }) {
   const {
     transcripts,
+    colorIndices,
     detectedSpeakers,
     renameSpeaker,
     reassignSegment,
+    separateSpeaker,
     mergeSpeakers,
     copyTranscript,
     meetingTitle,
@@ -61,6 +68,65 @@ export function LiveSession({
   const { meetings } = useSidebar();
   const [pendingGroup, chooseGroup] = usePendingGroup();
   const elapsed = useRecordingClock();
+  const { labs } = useLabs();
+  const [previews, setPreviews] = useState<Partial<Record<PreviewCaption['source'], PreviewCaption>>>({});
+  const finalizedUntil = useRef({ microphone: -Infinity, system: -Infinity });
+  const previewExpiry = useRef<Partial<Record<PreviewCaption['source'], ReturnType<typeof setTimeout>>>>({});
+
+  useEffect(() => {
+    if (!isRecording || !labs.nearLiveCaptions || isPaused) { setPreviews({}); return; }
+    finalizedUntil.current = { microphone: -Infinity, system: -Infinity };
+    let disposed = false;
+    const stops: Array<() => void> = [];
+    const attach = async () => {
+      const captionStop = await listen<PreviewCaption>('near-live-caption', ({ payload }) => {
+        if (disposed || payload.end_time <= finalizedUntil.current[payload.source]) return;
+        if (previewExpiry.current[payload.source]) clearTimeout(previewExpiry.current[payload.source]);
+        setPreviews((current) => ({ ...current, [payload.source]: payload }));
+      });
+      stops.push(captionStop);
+      const finalStop = await listen<PreviewFinalized>('near-live-finalized', ({ payload }) => {
+        if (disposed) return;
+        finalizedUntil.current[payload.source] = Math.max(finalizedUntil.current[payload.source], payload.end_time);
+        // Native emits the final line first, but React may not have committed
+        // TranscriptContext's update yet. Keep the preview until that line
+        // arrives so a whole live bubble never vanishes between the two events.
+        if (previewExpiry.current[payload.source]) clearTimeout(previewExpiry.current[payload.source]);
+        previewExpiry.current[payload.source] = setTimeout(() => {
+          setPreviews((current) => {
+            const preview = current[payload.source];
+            if (!preview || preview.end_time > payload.end_time + 0.05) return current;
+            const next = { ...current };
+            delete next[payload.source];
+            return next;
+          });
+        }, 1500);
+      });
+      stops.push(finalStop);
+      if (disposed) stops.forEach((stop) => stop());
+    };
+    void attach().catch(console.error);
+    return () => {
+      disposed = true;
+      stops.forEach((stop) => stop());
+      Object.values(previewExpiry.current).forEach((timer) => { if (timer) clearTimeout(timer); });
+      previewExpiry.current = {};
+    };
+  }, [isRecording, isPaused, labs.nearLiveCaptions]);
+
+  useEffect(() => {
+    setPreviews((current) => {
+      let next: typeof current | null = null;
+      for (const source of ['microphone', 'system'] as const) {
+        const preview = current[source];
+        if (!preview || finalizedUntil.current[source] < preview.end_time - 0.05) continue;
+        if (!previewHasFinalTurn({ ...preview, source }, transcripts)) continue;
+        next ??= { ...current };
+        delete next[source];
+      }
+      return next ?? current;
+    });
+  }, [transcripts]);
 
   const [live, setLive] = useState<LiveTitle | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
@@ -148,18 +214,21 @@ export function LiveSession({
     setMeetingTitle(next);
   };
 
-  const segments = useMemo(
-    () =>
-      transcripts.map((t) => ({
-        id: t.id,
-        timestamp: t.audio_start_time ?? 0,
-        endTime: t.audio_end_time,
-        text: t.text,
-        confidence: t.confidence,
-        speaker: t.speaker,
-      })),
-    [transcripts],
-  );
+  const segments = useMemo(() => {
+    const saved = transcripts.map((t) => ({
+      id: t.id,
+      timestamp: t.audio_start_time ?? 0,
+      endTime: t.audio_end_time,
+      text: t.text,
+      confidence: t.confidence,
+      speaker: t.speaker,
+      words: t.words,
+    }));
+    return saved;
+  }, [transcripts]);
+  const activePreviews = Object.values(previews).filter((preview): preview is PreviewCaption => !!preview)
+    .filter((preview) => !(labs.micPlaybackSuppression && preview.source === 'microphone' && previews.system
+      && isDuplicatedMicCaption(preview, previews.system)));
   const lines = useMemo<LiveLine[]>(
     () => transcripts.map((t) => ({ id: t.id, time: t.audio_start_time ?? 0, speaker: t.speaker, text: t.text })),
     [transcripts],
@@ -248,20 +317,48 @@ export function LiveSession({
           </div>
         </header>
 
-        <div className="min-h-0 flex-1">
+        <div className="relative min-h-0 flex-1">
           <VirtualizedTranscriptView
             segments={segments}
+            nearLiveCaptions={labs.nearLiveCaptions}
             isRecording={isRecording}
             isPaused={isPaused}
             isProcessing={isProcessingStop}
             isStopping={isStopping}
-            enableStreaming={isRecording && !isPaused}
+            enableStreaming={isRecording && !isPaused && !labs.nearLiveCaptions}
             showConfidence
+            colorIndices={colorIndices}
             onRenameSpeaker={(speaker, segmentId) => setIdentity({ speaker, transcriptId: segmentId || null })}
             onMergeSpeaker={(speaker) => setIdentity({ speaker, transcriptId: null })}
             highlightSegmentId={highlight}
-            bottomInset={RECORD_CARD_CLEARANCE}
+            bottomInset={RECORD_CARD_CLEARANCE + (labs.nearLiveCaptions ? 60 : 0)}
           />
+          {isRecording && labs.nearLiveCaptions && (
+            <div
+              aria-label="Live Captions"
+              className="absolute inset-x-4 mx-auto max-w-[42rem] z-30 flex items-center gap-2.5 rounded-lg border border-af-border/80 bg-af-panel/95 px-3.5 py-2 shadow-sm backdrop-blur-sm"
+              style={{ bottom: 144 }}
+            >
+              <div className="flex shrink-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-af-text-3">
+                <span className="h-1.5 w-1.5 rounded-full bg-af-accent animate-pulse" />
+                <span>Live</span>
+              </div>
+              <div className="min-w-0 flex-1 truncate text-xs text-af-text" aria-live="off">
+                {isPaused ? (
+                  <span className="text-af-text-4 italic">Paused</span>
+                ) : activePreviews.length === 0 ? (
+                  <span className="text-af-text-4">Listening…</span>
+                ) : (
+                  activePreviews.map((preview) => (
+                    <span key={preview.source} className="mr-2">
+                      {preview.source === 'microphone' && <span className="mr-1 font-semibold text-af-accent">You:</span>}
+                      <span>{preview.text} …</span>
+                    </span>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -295,9 +392,10 @@ export function LiveSession({
             tab={tab}
             onTabChange={setTab}
             speakers={detectedSpeakers}
+            speakerChannels={new Map(transcripts.filter(turn => turn.speaker && turn.speaker_channel).map(turn => [turn.speaker!, turn.speaker_channel!]))}
             lines={lines}
             sessionKey={String(live?.startedAt ?? 'current')}
-            onIdentify={(speaker) => setIdentity({ speaker, transcriptId: null })}
+            onIdentify={(speaker) => setIdentity({ speaker, transcriptId: [...transcripts].reverse().find(turn => turn.speaker === speaker)?.id ?? null })}
             onMarkMe={(speaker) => renameSpeaker(speaker, 'You')}
             onJumpTo={jumpTo}
           />
@@ -310,13 +408,16 @@ export function LiveSession({
         speaker={identity?.speaker ?? null}
         transcriptId={identity?.transcriptId}
         speakers={detectedSpeakers.map((speaker) => speaker.name)}
-        onRenameLive={(from, to, scope) => {
+        speakerChannel={transcripts.find(turn => turn.id === identity?.transcriptId)?.speaker_channel}
+        canSeparateLive={/^Speaker \d+$/.test(transcripts.find(turn => turn.id === identity?.transcriptId)?.speaker_channel ?? '')}
+        onRenameLive={async (from, to, scope) => {
           const target = to.trim() || genericLabel();
-          if (scope === 'line' && identity?.transcriptId) reassignSegment(identity.transcriptId, replaceSpeakerComponent(identity.speaker, from, target));
+          if (scope === 'future' && identity?.transcriptId) await separateSpeaker(identity.transcriptId, target);
+          else if (scope === 'line' && identity?.transcriptId) reassignSegment(identity.transcriptId, replaceSpeakerComponent(identity.speaker, from, target));
           else renameSpeaker(from, target);
         }}
         onMerge={(source, target) => mergeSpeakers(source, target)}
-        colorIndexOf={(label) => detectedSpeakers.find((speaker) => speaker.name === label)?.colorIndex}
+        colorIndexOf={(label) => colorIndices.get(speakerKey(label))}
       />
 
     </div>

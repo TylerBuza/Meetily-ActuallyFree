@@ -35,10 +35,12 @@ pub(crate) mod language_detection;
 pub mod llm_client;
 pub(crate) mod metadata;
 pub mod processor;
+pub mod speaker_names;
 pub mod service;
 pub mod summary_engine;
 pub mod template_commands;
 pub mod templates;
+pub mod transcript_translation;
 
 // Re-export Tauri commands (with their generated __cmd__ variants)
 pub use commands::{

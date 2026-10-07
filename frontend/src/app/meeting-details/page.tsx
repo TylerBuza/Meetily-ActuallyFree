@@ -19,6 +19,7 @@ interface MeetingDetailsResponse {
   updated_at: string;
   transcripts: Transcript[];
   folder_path?: string;
+  speakers?: string[];
 }
 
 function MeetingDetailsContent() {
@@ -150,6 +151,7 @@ function MeetingDetailsContent() {
       updated_at: metadata.updated_at,
       transcripts: current?.id === metadata.id ? current.transcripts : [],
       folder_path: metadata.folder_path,
+      speakers: metadata.speakers ?? current?.speakers,
     }));
     setCurrentMeeting({ id: metadata.id, title: metadata.title });
   }, [metadata, meetingId, setCurrentMeeting]);

@@ -6,8 +6,9 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { motion } from 'framer-motion';
-import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
+import { Check, ChevronDown, Languages, Video } from 'lucide-react';
 import type { Summary, Transcript, TranscriptSegmentData } from '@/types';
 import Analytics from '@/lib/analytics';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
@@ -23,6 +24,14 @@ import { MeetingDocument } from '@/components/meeting/MeetingDocument';
 import { AudioPlayerBar } from '@/components/meeting/AudioPlayerBar';
 import { PersonCard, type PersonCardTarget } from '@/components/people/PersonCard';
 import { SpeakerIdentityDialog } from '@/components/people/SpeakerIdentityDialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useMeetingData } from '@/hooks/meeting-details/useMeetingData';
 import { useSummaryGeneration } from '@/hooks/meeting-details/useSummaryGeneration';
 import { useTemplates } from '@/hooks/meeting-details/useTemplates';
@@ -33,11 +42,36 @@ import { useWaveform } from '@/hooks/useWaveform';
 import { useLabs } from '@/hooks/useLabs';
 import { cleanTranscriptText } from '@/lib/labs';
 import { useUserName } from '@/hooks/useUserName';
-import { announceChange, getMeetingGroup, setMeetingGroup } from '@/lib/workspace-api';
+import {
+  announceChange,
+  getMeetingGroup,
+  getMeetingTranslations,
+  setMeetingGroup,
+  translateMeetingTranscript,
+  type MeetingTranslation,
+} from '@/lib/workspace-api';
 import { deleteMeetings, renameMeeting } from '@/lib/meeting-actions';
 import { displayTitle } from '@/lib/meeting-titles';
+import { MEETING_IMAGES_CHANGED, type MeetingImage } from '@/lib/meeting-images';
+import { summarySpeakerNames, useSummarySpeakerNames } from '@/lib/summary-speaker-names';
 import { cn } from '@/lib/utils';
 import { displaySpeaker, speakerColorIndexMap, speakerKey } from '@/utils/speakerUtils';
+
+const TRANSLATION_LANGUAGES = [
+  'English',
+  'Spanish',
+  'French',
+  'German',
+  'Italian',
+  'Portuguese',
+  'Japanese',
+  'Chinese (Simplified)',
+  'Korean',
+  'Russian',
+  'Arabic',
+  'Hindi',
+  'Dutch',
+];
 
 // Page remounts join the same backend-start attempt. Only accepted attempts are
 // persisted in sessionStorage below; failed preflight attempts remain retryable.
@@ -108,9 +142,85 @@ export default function PageContent({
   const [regenerateRequest, setRegenerateRequest] = useState<{ open: boolean; context: string; reason?: string } | null>(null);
 
   const meetingData = useMeetingData({ meeting, summaryData });
+  const {enabled: summaryNamingEnabled} = useSummarySpeakerNames();
+  const aiSpeakerNames = useMemo(() => summaryNamingEnabled ? summarySpeakerNames(meetingData.aiSummary, summaryUserEdited) : {}, [summaryNamingEnabled, meetingData.aiSummary, summaryUserEdited]);
   const templates = useTemplates();
   const meetingOperations = useMeetingOperations({ meeting });
   const audio = useMeetingAudio(meeting.id);
+  const [showVideo, setShowVideo] = useState(true);
+  const [translations, setTranslations] = useState<MeetingTranslation[]>([]);
+  const [currentTranslationLang, setCurrentTranslationLang] = useState<string | null>(null);
+  const [translationMode, setTranslationMode] = useState<'original' | 'translated' | 'bilingual'>('bilingual');
+  const [isTranslating, setIsTranslating] = useState(false);
+
+  // Load existing translations on meeting change
+  useEffect(() => {
+    let cancelled = false;
+    getMeetingTranslations(meeting.id)
+      .then((list) => {
+        if (cancelled) return;
+        setTranslations(list);
+        if (list.length > 0 && !currentTranslationLang) {
+          setCurrentTranslationLang(list[0].targetLanguage);
+        }
+      })
+      .catch((err) => console.error('Failed to load translations:', err));
+    return () => {
+      cancelled = true;
+    };
+  }, [meeting.id, currentTranslationLang]);
+
+  const activeTranslationSegments = useMemo(() => {
+    if (!currentTranslationLang) return undefined;
+    const match = translations.find(
+      (t) => t.targetLanguage.toLowerCase() === currentTranslationLang.toLowerCase()
+    );
+    return match?.segments;
+  }, [translations, currentTranslationLang]);
+
+  const handleTranslate = async (lang: string) => {
+    const existing = translations.find(
+      (t) => t.targetLanguage.toLowerCase() === lang.toLowerCase()
+    );
+    if (existing) {
+      setCurrentTranslationLang(existing.targetLanguage);
+      setTranslationMode((m) => (m === 'original' ? 'bilingual' : m));
+      toast.success(`Switched to ${existing.targetLanguage} translation`);
+      return;
+    }
+    setIsTranslating(true);
+    try {
+      toast.info(`Translating transcript to ${lang} with AI...`);
+      const res = await translateMeetingTranscript(meeting.id, lang);
+      setTranslations((prev) => [
+        ...prev.filter((t) => t.targetLanguage.toLowerCase() !== lang.toLowerCase()),
+        res,
+      ]);
+      setCurrentTranslationLang(res.targetLanguage);
+      setTranslationMode('bilingual');
+      toast.success(`Translated to ${lang}!`);
+    } catch (err: any) {
+      toast.error('Translation failed', {
+        description: err?.message || String(err),
+      });
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
+  const [meetingImages, setMeetingImages] = useState<MeetingImage[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    setMeetingImages([]);
+    const refresh = () => {
+      void invoke<MeetingImage[]>('list_meeting_images', { meetingId: meeting.id, live: false })
+        .then((images) => { if (!cancelled) setMeetingImages(images); })
+        .catch((error) => console.error('Could not load meeting images', error));
+    };
+    refresh();
+    window.addEventListener(MEETING_IMAGES_CHANGED, refresh);
+    return () => { cancelled = true; window.removeEventListener(MEETING_IMAGES_CHANGED, refresh); };
+  }, [meeting.id]);
   // Labs: waveform and slower speeds in the player, Clean/Verbatim transcript.
   const { labs, ready: labsReady } = useLabs();
   const waveform = useWaveform(audio.path, labs.transcriptScrubbing);
@@ -293,6 +403,7 @@ export default function PageContent({
         text: t.text,
         confidence: t.confidence,
         speaker: t.speaker,
+        words: t.words,
       })),
     [segments, meetingData.transcripts],
   );
@@ -303,14 +414,26 @@ export default function PageContent({
       const label = segment.speaker?.trim();
       if (label) counts.set(label, (counts.get(label) ?? 0) + 1);
     }
+    // Also include all distinct meeting speakers from metadata even before scrolling through paginated transcripts
+    if (meetingData.speakers) {
+      for (const spk of meetingData.speakers) {
+        const label = spk.trim();
+        if (label && !counts.has(label)) {
+          counts.set(label, 0);
+        }
+      }
+    }
     return [...counts.entries()].map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count);
-  }, [transcriptSegments]);
+  }, [transcriptSegments, meetingData.speakers]);
 
   // One colour per speaker, in the order they first spoke, shared by the
   // transcript, the person card and the identify dialog.
   const colorIndices = useMemo(
-    () => speakerColorIndexMap(transcriptSegments.map((segment) => segment.speaker ?? '').filter(Boolean)),
-    [transcriptSegments],
+    () => speakerColorIndexMap([
+      ...(meetingData.speakers ?? []),
+      ...transcriptSegments.map((segment) => segment.speaker ?? ''),
+    ].filter(Boolean), String(meeting?.id || 'meeting-details')),
+    [transcriptSegments, meetingData.speakers, meeting?.id],
   );
   const colorIndexOf = useCallback((label: string) => colorIndices.get(speakerKey(label)), [colorIndices]);
 
@@ -349,6 +472,7 @@ export default function PageContent({
   const refreshAfterSpeakerChange = useCallback(
     async (rename?: { from: string; to: string; removedName: boolean }) => {
       await onRefetchTranscripts?.();
+      await onMeetingUpdated?.();
       announceChange('people');
       if (rename && meetingData.aiSummary) {
         setRegenerateRequest({
@@ -360,7 +484,7 @@ export default function PageContent({
         });
       }
     },
-    [onRefetchTranscripts, meetingData.aiSummary],
+    [onRefetchTranscripts, onMeetingUpdated, meetingData.aiSummary],
   );
 
   const mergeSpeakers = async (source: string, target: string) => {
@@ -421,14 +545,13 @@ export default function PageContent({
         }}
         people={speakers.map((speaker) => speaker.label)}
         onPersonClick={(label, anchor) => setCardTarget({ speaker: label, segmentId: '', rect: anchor.getBoundingClientRect() })}
+        onQuickIdentify={(label) => setIdentity({ speaker: label, transcriptId: null })}
         onExport={() => setExportOpen(true)}
         onCopyTranscript={copyOperations.handleCopyTranscript}
         onCopySummary={copyOperations.handleCopySummary}
         hasSummary={!!meetingData.aiSummary}
         onOpenFolder={meetingOperations.handleOpenMeetingFolder}
-        onDelete={async () => {
-          await deleteMeetings([meeting.id]);
-        }}
+        onDelete={async (deleteLocalFiles) => (await deleteMeetings([meeting.id], deleteLocalFiles)) === 1}
         onTranscriptChanged={() => refreshAfterSpeakerChange()}
       />
 
@@ -437,9 +560,142 @@ export default function PageContent({
         className={cn('flex min-h-0 min-w-0 flex-1 overflow-hidden', stacked ? 'flex-col' : 'flex-row', draggingSplit && 'select-none')}
       >
         <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label="Transcript">
+          {/* Video Player (if videoPath exists) */}
+          {audio.videoPath && (
+            <div className="mx-4 mt-3 mb-2 shrink-0 rounded-2xl border border-af-border bg-black/90 p-2.5 shadow-lg">
+              <div className="flex items-center justify-between px-2 pb-2 text-xs text-af-text-3">
+                <div className="flex items-center gap-2 font-medium text-af-text">
+                  <Video className="h-4 w-4 text-af-accent" />
+                  <span>Video Playback</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowVideo((v) => !v)}
+                  className="rounded px-2 py-0.5 text-[11px] font-medium text-af-text-3 hover:text-af-text hover:bg-af-panel-2 transition-colors"
+                >
+                  {showVideo ? 'Hide Video' : 'Show Video'}
+                </button>
+              </div>
+              {showVideo && (
+                <video
+                  ref={audio.bindVideoElement}
+                  src={convertFileSrc(audio.videoPath)}
+                  controls
+                  playsInline
+                  className="aspect-video max-h-[320px] w-full rounded-xl bg-black object-contain"
+                />
+              )}
+            </div>
+          )}
+
+          {/* Transcript Toolbar (Translation & Quick Controls) */}
+          <div className="flex items-center justify-between border-b border-af-border/60 px-4 py-2 text-xs">
+            <div className="flex items-center gap-2 text-af-text-3 font-medium">
+              <span>Transcript</span>
+              {audio.videoPath && !showVideo && (
+                <button
+                  type="button"
+                  onClick={() => setShowVideo(true)}
+                  className="flex items-center gap-1 rounded bg-af-accent/10 px-2 py-0.5 text-[11px] text-af-accent hover:bg-af-accent/20 transition-colors"
+                >
+                  <Video className="h-3 w-3" />
+                  <span>Show Video</span>
+                </button>
+              )}
+            </div>
+
+            {/* Translation Dropdown */}
+            <div className="flex items-center gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    disabled={isTranslating}
+                    className={cn(
+                      'flex items-center gap-1.5 rounded-lg border border-af-border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-af-hover',
+                      currentTranslationLang ? 'bg-af-accent/[0.08] border-af-accent/40 text-af-accent' : 'text-af-text-3'
+                    )}
+                  >
+                    {isTranslating ? (
+                      <span className="flex items-center gap-1.5">
+                        <span className="h-2 w-2 animate-af-breathe rounded-full bg-af-accent" />
+                        Translating...
+                      </span>
+                    ) : (
+                      <>
+                        <Languages className="h-3.5 w-3.5" />
+                        <span>
+                          {currentTranslationLang
+                            ? `${currentTranslationLang} (${translationMode === 'bilingual' ? 'Bilingual' : translationMode === 'translated' ? 'Translated' : 'Original'})`
+                            : 'Translate'}
+                        </span>
+                        <ChevronDown className="h-3 w-3 opacity-60" />
+                      </>
+                    )}
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  {currentTranslationLang && (
+                    <>
+                      <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-af-text-4">
+                        View Mode ({currentTranslationLang})
+                      </DropdownMenuLabel>
+                      <DropdownMenuItem onClick={() => setTranslationMode('bilingual')} className="gap-2">
+                        {translationMode === 'bilingual' && <Check className="h-3.5 w-3.5 text-af-accent" />}
+                        <span className={translationMode === 'bilingual' ? 'font-semibold text-af-accent' : ''}>
+                          Bilingual (Side-by-side)
+                        </span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setTranslationMode('translated')} className="gap-2">
+                        {translationMode === 'translated' && <Check className="h-3.5 w-3.5 text-af-accent" />}
+                        <span className={translationMode === 'translated' ? 'font-semibold text-af-accent' : ''}>
+                          Translated Only
+                        </span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setTranslationMode('original')} className="gap-2">
+                        {translationMode === 'original' && <Check className="h-3.5 w-3.5 text-af-accent" />}
+                        <span className={translationMode === 'original' ? 'font-semibold text-af-accent' : ''}>
+                          Original Only
+                        </span>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
+
+                  <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-af-text-4">
+                    {translations.length > 0 ? 'Select or Translate Language' : 'Translate to Language'}
+                  </DropdownMenuLabel>
+                  {TRANSLATION_LANGUAGES.map((lang) => {
+                    const isTranslated = translations.some(
+                      (t) => t.targetLanguage.toLowerCase() === lang.toLowerCase()
+                    );
+                    const isActive = currentTranslationLang?.toLowerCase() === lang.toLowerCase();
+                    return (
+                      <DropdownMenuItem
+                        key={lang}
+                        onClick={() => void handleTranslate(lang)}
+                        className="flex items-center justify-between text-xs"
+                      >
+                        <span className={isActive ? 'font-semibold text-af-accent' : ''}>{lang}</span>
+                        {isActive ? (
+                          <Check className="h-3.5 w-3.5 text-af-accent" />
+                        ) : isTranslated ? (
+                          <span className="text-[10px] text-af-accent/70 font-mono">Saved</span>
+                        ) : null}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+
           <div className="min-h-0 flex-1">
             <VirtualizedTranscriptView
               segments={transcriptSegments}
+              meetingImages={meetingImages}
+              aiSpeakerNames={aiSpeakerNames}
+              onReviewAISpeakerName={(speaker, transcriptId) => setIdentity({speaker, transcriptId})}
               disableAutoScroll
               hasMore={hasMore}
               isLoadingMore={isLoadingMore}
@@ -454,6 +710,8 @@ export default function PageContent({
               emptyState={<p className="mt-16 text-center text-sm text-af-text-3">This meeting has no transcript.</p>}
               textMode={labs.cleanTranscript ? textMode : 'tidy'}
               colorIndices={colorIndices}
+              translations={activeTranslationSegments}
+              translationMode={translationMode}
             />
           </div>
           <AudioPlayerBar
@@ -515,6 +773,7 @@ export default function PageContent({
             hasTranscript={hasTranscript}
             transcript={transcriptSegments}
             onSeek={(seconds) => audio.seek(seconds, true)}
+            currentTime={audio.currentTime}
             modelConfig={modelConfig}
             setModelConfig={setModelConfig}
             onSaveModelConfig={handleSaveModelConfig}
@@ -542,6 +801,7 @@ export default function PageContent({
         open={identity !== null}
         onOpenChange={(open) => !open && setIdentity(null)}
         speaker={identity?.speaker ?? null}
+        aiSpeakerNames={aiSpeakerNames}
         transcriptId={identity?.transcriptId}
         meetingId={meeting.id}
         speakers={speakers.map((speaker) => speaker.label)}

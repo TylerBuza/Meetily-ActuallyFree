@@ -1,4 +1,5 @@
 'use client';
+import { invoke } from '@tauri-apps/api/core';
 import { replaceSpeakerComponent } from '@/utils/speakerUtils';
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode, MutableRefObject, useMemo } from 'react';
@@ -9,7 +10,7 @@ import { transcriptService } from '@/services/transcriptService';
 import { recordingService } from '@/services/recordingService';
 import { indexedDBService } from '@/services/indexedDBService';
 import { isUserSpeaker, speakerColorIndexMap, speakerKey } from '@/utils/speakerUtils';
-import { activeSpeakerMeeting, editedSpeaker, persistSpeakerRename, persistTurnSpeaker } from '@/lib/live-speaker-edits';
+import { activeSpeakerMeeting, editedSpeaker, persistSpeakerRename, persistTurnSpeaker, persistForwardSpeaker } from '@/lib/live-speaker-edits';
 
 interface TranscriptContextType {
   transcripts: Transcript[];
@@ -22,9 +23,11 @@ interface TranscriptContextType {
   clearTranscripts: () => void;
   currentMeetingId: string | null;
   markMeetingAsSaved: () => Promise<void>;
+  colorIndices: Map<string, number>;
   detectedSpeakers: DetectedSpeaker[];
   speakerMap: Record<string, string>;
   renameSpeaker: (oldName: string, newName: string) => void;
+  separateSpeaker: (segmentId: string, newSpeaker: string) => Promise<void>;
   reassignSegment: (segmentId: string, newSpeaker: string) => void;
   mergeSpeakers: (sourceSpeaker: string, targetSpeaker: string) => void;
 }
@@ -35,6 +38,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
   const [meetingTitle, setMeetingTitle] = useState('+ New Call');
   const [currentMeetingId, setCurrentMeetingId] = useState<string | null>(null);
+  const sessionSeedRef = useRef<string>(`session-${Date.now()}`);
   const [speakerMap, setSpeakerMap] = useState<Record<string, string>>({});
   const speakerMapRef = useRef<Record<string, string>>({});
 
@@ -280,7 +284,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
 
           // Create transcript for buffer with NEW timestamp fields and real-time speaker resolution
           const rawSpeaker = (update as any).source || 'Speaker 1';
-          const effectiveSpeaker = editedSpeaker(activeSpeakerMeeting(), update.sequence_id, rawSpeaker);
+          const effectiveSpeaker = editedSpeaker(activeSpeakerMeeting(), update.sequence_id, rawSpeaker, update.speaker_channel);
 
           const newTranscript: Transcript = {
             id: `${Date.now()}-${transcriptCounter++}`,
@@ -294,7 +298,9 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
             audio_start_time: update.audio_start_time,
             audio_end_time: update.audio_end_time,
             duration: update.duration,
+            speaker_channel: update.speaker_channel,
             speaker: effectiveSpeaker,
+            words: update.words,
           };
 
           // Add to buffer
@@ -364,7 +370,9 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
             audio_start_time: segment.audio_start_time,
             audio_end_time: segment.audio_end_time,
             duration: segment.duration,
-            speaker: editedSpeaker(activeSpeakerMeeting(), segment.sequence_id, segment.speaker ?? undefined),
+            speaker: editedSpeaker(activeSpeakerMeeting(), segment.sequence_id, segment.speaker ?? undefined, segment.speaker_channel),
+            speaker_channel: segment.speaker_channel,
+            words: segment.words,
           }));
 
           setTranscripts(formattedTranscripts);
@@ -396,7 +404,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
     });
 
     const rawSpeaker = (update as any).source || 'Speaker 1';
-    const effectiveSpeaker = editedSpeaker(activeSpeakerMeeting(), update.sequence_id, rawSpeaker);
+    const effectiveSpeaker = editedSpeaker(activeSpeakerMeeting(), update.sequence_id, rawSpeaker, update.speaker_channel);
 
     const newTranscript: Transcript = {
       id: update.sequence_id ? update.sequence_id.toString() : Date.now().toString(),
@@ -409,7 +417,9 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
       audio_start_time: update.audio_start_time,
       audio_end_time: update.audio_end_time,
       duration: update.duration,
+      speaker_channel: update.speaker_channel,
       speaker: effectiveSpeaker,
+      words: update.words,
     };
 
     setTranscripts(prev => {
@@ -505,6 +515,19 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const separateSpeaker = useCallback(async (segmentId: string, newSpeaker: string) => {
+    const id = activeSpeakerMeeting();
+    const turn = transcriptsRef.current.find(item => item.id === segmentId);
+    if (!id || !turn?.speaker_channel || turn.sequence_id === undefined || !newSpeaker.trim()) throw new Error('This line has no saved speaker channel. Use Just this line.');
+    await invoke('detach_live_voice_match', { speakerChannel: turn.speaker_channel });
+    persistForwardSpeaker(id, turn.speaker_channel, turn.sequence_id, newSpeaker);
+    const apply = (item: Transcript): Transcript => item.speaker_channel === turn.speaker_channel && (item.sequence_id ?? -1) >= turn.sequence_id!
+      ? { ...item, speaker: editedSpeaker(id, item.sequence_id!, item.speaker, item.speaker_channel) } : item;
+    transcriptsRef.current = transcriptsRef.current.map(apply);
+    setTranscripts(current => current.map(apply));
+    for (const [sequence, item] of transcriptBufferRef.current ?? []) transcriptBufferRef.current?.set(sequence, apply(item));
+  }, []);
+
   const reassignSegment = useCallback((segmentId: string, newSpeaker: string) => {
     const nextSpeaker = newSpeaker.trim();
     if (!segmentId) return;
@@ -568,6 +591,14 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Dynamic list of detected speakers in this meeting
+  const seed = currentMeetingId || sessionSeedRef.current;
+  const colorIndices = useMemo(() => {
+    return speakerColorIndexMap(
+      transcripts.map((t) => t.speaker?.trim() || 'Speaker 1'),
+      seed,
+    );
+  }, [transcripts, seed]);
+
   const detectedSpeakers = useMemo<DetectedSpeaker[]>(() => {
     const map = new Map<string, { count: number; lastTime?: number }>();
     for (const t of transcripts) {
@@ -586,7 +617,6 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    const colorIndices = speakerColorIndexMap(map.keys());
     return Array.from(map.entries()).map(([name, data]) => ({
       id: name,
       name,
@@ -595,13 +625,14 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
       lastSpokeAt: data.lastTime,
       colorIndex: colorIndices.get(speakerKey(name)) ?? 0,
     }));
-  }, [transcripts]);
+  }, [transcripts, colorIndices]);
 
   // Clear transcripts (used when starting new recording)
   const clearTranscripts = useCallback(() => {
     setTranscripts([]);
     setSpeakerMap({});
     speakerMapRef.current = {};
+    sessionSeedRef.current = `session-${Date.now()}`;
   }, []);
 
   // Mark current meeting as saved in IndexedDB
@@ -633,10 +664,12 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
     clearTranscripts,
     currentMeetingId,
     markMeetingAsSaved,
+    colorIndices,
     detectedSpeakers,
     speakerMap,
     renameSpeaker,
     reassignSegment,
+    separateSpeaker,
     mergeSpeakers,
   };
 

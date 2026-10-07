@@ -71,7 +71,7 @@ const state = {
     ignored_apps: [] as string[],
     notify: true,
   },
-  labs: { whisperStrictSilence: false, voiceProfiles: false, parakeetGpu: false },
+  labs: { whisperStrictSilence: false, voiceProfiles: false, autoSaveVoiceProfiles: false, voiceConsensus: false, nearLiveCaptions: false, micPlaybackSuppression: false, parakeetGpu: false },
   voices: [{ person_id: 'person-tom', samples: 6, meetings: 1, from: ['meeting-acme-kickoff'] }] as Array<{
     person_id: string;
     samples: number;
@@ -428,6 +428,33 @@ function handle(cmd: string, args: Args): unknown {
     case 'set_whisper_strict_silence':
       state.labs.whisperStrictSilence = !!args.enabled;
       return null;
+    case 'list_meeting_images': return [];
+    case 'detach_live_voice_match': return;
+    case 'get_summary_speaker_names_enabled':
+      return localStorage.getItem('preview-summary-speaker-names') === 'true';
+    case 'set_summary_speaker_names_enabled':
+      localStorage.setItem('preview-summary-speaker-names', String(args.value));
+      return null;
+    case 'get_voice_profiles_limit':
+      return Number(localStorage.getItem('preview-voice-profile-limit') ?? 50);
+    case 'set_voice_profiles_limit':
+      localStorage.setItem('preview-voice-profile-limit', String(args.value));
+      return null;
+    case 'get_voice_profiles_auto_samples': return Number(localStorage.getItem('preview-voice-auto-samples') ?? '12');
+    case 'set_voice_profiles_auto_samples': localStorage.setItem('preview-voice-auto-samples', String(args.value)); return;
+    case 'get_possible_voice_match': return null;
+    case 'get_voice_profiles_match_threshold': return Number(localStorage.getItem('preview-voice-match-threshold') ?? '0.55');
+    case 'set_voice_profiles_match_threshold': localStorage.setItem('preview-voice-match-threshold', String(args.value)); return;
+    case 'get_voice_profiles_consensus': return state.labs.voiceConsensus;
+    case 'set_voice_profiles_consensus': state.labs.voiceConsensus = !!args.value; return null;
+    case 'get_voice_profile_learning_busy': return false;
+    case 'queue_voice_profile_learning': return null;
+    case 'get_voice_profiles_auto_save': return state.labs.autoSaveVoiceProfiles;
+    case 'set_voice_profiles_auto_save': state.labs.autoSaveVoiceProfiles = !!args.value; return null;
+    case 'get_near_live_captions_enabled': return state.labs.nearLiveCaptions;
+    case 'set_near_live_captions_enabled': state.labs.nearLiveCaptions = !!args.value; return null;
+    case 'get_mic_playback_suppression_enabled': return state.labs.micPlaybackSuppression;
+    case 'set_mic_playback_suppression_enabled': state.labs.micPlaybackSuppression = !!args.value; return null;
     case 'get_voice_profiles_enabled':
       return state.labs.voiceProfiles;
     case 'set_voice_profiles_enabled':

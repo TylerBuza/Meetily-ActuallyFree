@@ -36,6 +36,7 @@ import { WorkspaceProvider } from '@/contexts/WorkspaceContext'
 import { RouteWarmup } from '@/components/RouteWarmup'
 import { CHROME_BOOT_SCRIPT } from '@/lib/window-chrome'
 import { RecordingPill } from '@/components/recording/RecordingPill'
+import { VoiceProfileNotifications } from '@/components/VoiceProfileNotifications'
 import { GroupEditorHost } from '@/components/groups/GroupEditor'
 import { RecordingNotice } from '@/components/RecordingNotice'
 
@@ -330,17 +331,22 @@ export default function RootLayout({
           return;
         }
 
+        // Process-only detection means the app is open, not that a call began.
+        const promptTitle = active_media ? `${app} meeting detected` : `${app} is open`;
+        const promptBody = active_media
+          ? 'Start recording this meeting now?'
+          : 'Start recording if you are in a call?';
         // OS toast with a Start recording button (Windows native path).
         if (notify) {
           invoke('show_simple_notification', {
-            title: `${app} meeting detected`,
-            body: 'Start recording this meeting now?',
+            title: promptTitle,
+            body: promptBody,
           }).catch(() => {});
         }
 
         // In-app prompt with a one-click start action.
-        toast(`${app} meeting detected`, {
-          description: 'Capture mic + system audio in Meetily.',
+        toast(promptTitle, {
+          description: active_media ? 'Capture mic + system audio in Meetily.' : promptBody,
           duration: 20000,
           action: {
             label: 'Start recording',
@@ -537,6 +543,7 @@ export default function RootLayout({
                                   <div className="flex min-h-0 min-w-0 h-screen overflow-hidden">
                                     <Sidebar />
                                     <MainContent>{children}</MainContent>
+                                    <VoiceProfileNotifications />
                                     <RecordingPill />
                                     <GroupEditorHost />
                                     <RecordingNotice onAcknowledged={acknowledgeRecordingNotice} />

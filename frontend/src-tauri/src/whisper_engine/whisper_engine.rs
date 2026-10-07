@@ -537,6 +537,20 @@ impl WhisperEngine {
         language: Option<String>,
         initial_prompt: Option<&str>,
     ) -> Result<(String, f32, bool)> {
+        let (text, conf, partial, _) = self
+            .transcribe_audio_with_words(audio_data, language, initial_prompt, 0.0)
+            .await?;
+        Ok((text, conf, partial))
+    }
+
+    /// Transcribe audio and extract word-level timings when word_timestamps is enabled
+    pub async fn transcribe_audio_with_words(
+        &self,
+        audio_data: Vec<f32>,
+        language: Option<String>,
+        initial_prompt: Option<&str>,
+        chunk_start_sec: f64,
+    ) -> Result<(String, f32, bool, Option<Vec<crate::database::models::WordTiming>>)> {
         let ctx_lock = self.current_context.read().await;
         let ctx = ctx_lock.as_ref()
             .ok_or_else(|| anyhow!("No model loaded. Please load a model first."))?;
@@ -568,11 +582,17 @@ impl WhisperEngine {
         params.set_language(language_code);
         params.set_translate(should_translate);
 
-        // CRITICAL: Disable timestamp tokens to prevent whisper.cpp chunking heuristics
-        // The "single timestamp ending - skip entire chunk" optimization incorrectly discards
-        // complete, valid transcriptions. Disabling timestamps forces whisper to return ALL text.
-        params.set_no_timestamps(true);     // Prevent timestamp-based segment skipping
+        let word_timestamps_active = crate::audio::word_timestamps::enabled();
+        // If word_timestamps is enabled, we MUST enable timestamp tokens (no_timestamps = false)
+        // so Whisper predicts timestamp tokens (<|0.00|>, etc.) and accurately places tokens.
+        // When disabled, no_timestamps = true disables timestamp heuristics.
+        params.set_no_timestamps(!word_timestamps_active);
         params.set_token_timestamps(true);  // Keep for any timestamp-aware features
+        if word_timestamps_active {
+            params.set_split_on_word(true);
+            params.set_thold_pt(0.01);
+            params.set_thold_ptsum(0.01);
+        }
 
         // PERFORMANCE: Disable ALL whisper.cpp internal printing
         // This reduces C library log spam significantly
@@ -646,6 +666,133 @@ impl WhisperEngine {
             }
         }
 
+        let mut words_opt: Option<Vec<crate::database::models::WordTiming>> = None;
+        if crate::audio::word_timestamps::enabled() {
+            let mut words = Vec::new();
+            let offset_ms = (chunk_start_sec * 1000.0).round() as i64;
+            let chunk_duration_ms = (duration_seconds * 1000.0).round() as i64;
+            let chunk_end_ms = offset_ms + chunk_duration_ms;
+
+            for i in 0..num_segments {
+                if let Ok(n_tokens) = state.full_n_tokens(i) {
+                    let seg_t0 = state.full_get_segment_t0(i).unwrap_or(0);
+                    let seg_t1 = state.full_get_segment_t1(i).unwrap_or((duration_seconds * 100.0) as i64);
+
+                    // First pass: detect if Whisper timestamps were unanchored and fell back to 30.0s window
+                    let mut max_token_t1: i64 = 0;
+                    for t in 0..n_tokens {
+                        if let Ok(token_data) = state.full_get_token_data(i, t) {
+                            if token_data.t1 > max_token_t1 {
+                                max_token_t1 = token_data.t1;
+                            }
+                        }
+                    }
+
+                    // In whisper.cpp, t0/t1 are in centiseconds (10ms units).
+                    // If Whisper stretched timestamps up to 30s while the audio chunk is much shorter, scale them down proportionally.
+                    let max_t1_ms = max_token_t1 * 10;
+                    let scale: f64 = if max_t1_ms > chunk_duration_ms * 5 / 4 && max_t1_ms > 0 && chunk_duration_ms > 0 {
+                        chunk_duration_ms as f64 / max_t1_ms as f64
+                    } else {
+                        1.0
+                    };
+
+                    let mut current_word = String::new();
+                    let mut word_t0: Option<i64> = None;
+                    let mut word_t1: Option<i64> = None;
+
+                    for t in 0..n_tokens {
+                        let token_text = match state.full_get_token_text_lossy(i, t) {
+                            Ok(text) => text,
+                            Err(_) => continue,
+                        };
+                        let token_data = match state.full_get_token_data(i, t) {
+                            Ok(data) => data,
+                            Err(_) => continue,
+                        };
+
+                        if token_text.starts_with("[_") || token_text.starts_with("<|") {
+                            continue;
+                        }
+
+                        // Calculate token start and end in ms relative to recording
+                        let raw_t0_cs = if token_data.t0 >= 0 { token_data.t0 } else { seg_t0.max(0) };
+                        let raw_t1_cs = if token_data.t1 >= 0 { token_data.t1 } else { raw_t0_cs + 8 };
+
+                        let rel_t0_ms = ((raw_t0_cs as f64 * 10.0) * scale).round() as i64;
+                        let rel_t1_ms = ((raw_t1_cs as f64 * 10.0) * scale).round() as i64;
+
+                        let t0_ms = (offset_ms + rel_t0_ms).clamp(offset_ms, chunk_end_ms);
+                        let t1_ms = (offset_ms + rel_t1_ms).clamp(t0_ms + 1, chunk_end_ms);
+
+                        let is_new_word = token_text.starts_with(' ') || token_text.starts_with(' ');
+
+                        if is_new_word {
+                            if !current_word.is_empty() {
+                                if let (Some(s), Some(e)) = (word_t0, word_t1) {
+                                    let clean_text = current_word.replace(' ', " ");
+                                    if !clean_text.trim().is_empty() {
+                                        words.push(crate::database::models::WordTiming {
+                                            word_id: uuid::Uuid::new_v4().to_string(),
+                                            text: clean_text,
+                                            start_time: s,
+                                            end_time: e.max(s + 80).min(chunk_end_ms),
+                                        });
+                                    }
+                                }
+                            }
+                            current_word = token_text.clone();
+                            word_t0 = Some(t0_ms);
+                            word_t1 = Some(t1_ms);
+                        } else {
+                            if current_word.is_empty() {
+                                current_word = token_text.clone();
+                                word_t0 = Some(t0_ms);
+                                word_t1 = Some(t1_ms);
+                            } else {
+                                current_word.push_str(&token_text);
+                                word_t1 = Some(t1_ms);
+                            }
+                        }
+                    }
+
+                    if !current_word.is_empty() {
+                        if let (Some(s), Some(e)) = (word_t0, word_t1) {
+                            let clean_text = current_word.replace(' ', " ");
+                            if !clean_text.trim().is_empty() {
+                                words.push(crate::database::models::WordTiming {
+                                    word_id: uuid::Uuid::new_v4().to_string(),
+                                    text: clean_text,
+                                    start_time: s,
+                                    end_time: e.max(s + 80).min(chunk_end_ms),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Post-process words to enforce monotonic order, minimum durations, and bridge small gaps
+            if words.len() > 1 {
+                for w in 1..words.len() {
+                    if words[w].start_time < words[w - 1].start_time {
+                        words[w].start_time = words[w - 1].start_time;
+                    }
+                    if words[w].end_time < words[w].start_time + 80 {
+                        words[w].end_time = (words[w].start_time + 80).min(chunk_end_ms);
+                    }
+                    // If gap between consecutive words is small (<= 120ms), bridge it for smooth highlighting
+                    if words[w - 1].end_time < words[w].start_time && words[w].start_time - words[w - 1].end_time <= 120 {
+                        words[w - 1].end_time = words[w].start_time;
+                    }
+                }
+            }
+
+            if !words.is_empty() {
+                words_opt = Some(words);
+            }
+        }
+
         let final_result = result.trim().to_string();
         let cleaned_result = Self::clean_repetitive_text(&final_result);
 
@@ -655,7 +802,7 @@ impl WhisperEngine {
             0.0
         };
 
-        Ok((cleaned_result, avg_confidence, is_partial))
+        Ok((cleaned_result, avg_confidence, is_partial, words_opt))
     }
 
     pub async fn transcribe_audio(
