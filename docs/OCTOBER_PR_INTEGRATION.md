@@ -30,6 +30,30 @@ Core Audio inactivity and stream-end errors now have distinct user-visible error
 messages, separate from closed pipeline delivery. This improves diagnosis; it
 does not establish or claim a fix for the reporter's new failure.
 
+Physical macOS cause, found on an M5 Pro with macOS 26.6.2 (25G83): the system
+tap's aggregate device was created with `tapautostart` on. Per the SDK, that makes
+`AudioDeviceStart` wait until a tapped process receives audio, so it returns
+`noErr` while the IO proc never runs. A meeting started in silence therefore had
+zero callbacks and hit the five-second inactivity check, ending the whole
+recording. `coreaudiod` logged `HALS_MultiTap::register_autostart_context` for
+the aggregate's IO context and no start for it during a 37-second take.
+A standalone Swift probe with the same mono global tap and private aggregate
+showed the split (silence 3 s → 440 Hz tone 3 s → silence 2 s):
+
+| Aggregate | Silence | Tone | Silence after |
+|---|---|---|---|
+| tap only, auto-start on (old) | no callbacks, not running | audio | keeps running |
+| tap only, auto-start off | callbacks of zeros | audio | running |
+| output sub-device + tap, auto-start on | no callbacks | audio | running |
+| output sub-device + tap, auto-start off | callbacks of zeros | audio | running |
+
+`core_audio.rs` now keeps auto-start off. A local unsigned build on the same Mac
+recorded 47 s starting in silence: callbacks began within the first 5 s with
+zero peak, speech played through the speakers reached `system.mp4` and the
+transcript, and no inactivity warning fired. That is one Mac with built-in
+speakers. A Multi-Output Device as the default output and the reporter's own
+device remain unqualified.
+
 ## Linux capture #22 — blocked
 
 The rebased branch removes Windows `NATIVE_CLEANUPS` bounded teardown, leaves

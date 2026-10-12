@@ -144,6 +144,12 @@ impl CoreAudioCapture {
         // Previous configuration included both sub_device_list (output device) and tap_list (tap of same device)
         // This caused duplicate audio capture, resulting in echo (YouTube audio appeared twice)
         // The tap alone provides all the system audio we need
+        //
+        // Tap auto-start must stay off (issue #42). With it on, AudioDeviceStart
+        // returns noErr but the HAL defers all IO until a tapped process plays
+        // audio, so a meeting that starts in silence delivers no callbacks and
+        // trips the stream's five-second inactivity check. Off, the tap runs
+        // immediately and delivers zeros during silence.
         let agg_desc = cf::DictionaryOf::with_keys_values(
             &[
                 ca::aggregate_device_keys::is_private(),
@@ -158,7 +164,7 @@ impl CoreAudioCapture {
             &[
                 cf::Boolean::value_true().as_type_ref(),
                 cf::Boolean::value_false(),
-                cf::Boolean::value_true(),
+                cf::Boolean::value_false(), // tap auto-start; see above
                 cf::str!(c"meetily-audio-tap").as_type_ref(),
                 &output_uid,
                 &cf::Uuid::new().to_cf_string(),
