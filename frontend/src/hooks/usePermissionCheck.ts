@@ -49,10 +49,10 @@ export function usePermissionCheck() {
       const hasMicrophone = inputDevices.length > 0;
 
       // Output availability is separate from macOS Audio Capture authorization.
-      // A granted TCC record needs no audible proof on each launch. TCC answers
-      // from a per-process cache, so a grant made from this session's prompt
-      // only shows after a restart; until then, or when the status is
-      // unreadable, this session's audible probe (requestPermissions) decides.
+      // A granted TCC record needs no audible proof on each launch (the native
+      // side re-asks a fresh process past TCC's per-process cache). When the
+      // status is unreadable or still lags, this session's audible probe
+      // (requestPermissions) also counts.
       const outputDevices = devices.filter(d => d.device_type === 'Output');
       const systemAudioPermission: SystemAudioPermission =
         platform === 'macos'

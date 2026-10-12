@@ -173,6 +173,10 @@ impl SystemAudioPermission {
     }
 }
 
+/// Argument that makes the app binary print its Audio Capture preflight code
+/// and exit before Tauri starts; see `fresh_process_status`.
+pub const AUDIO_CAPTURE_STATUS_ARG: &str = "--audio-capture-status";
+
 /// Reads the Audio Capture permission without touching audio hardware.
 ///
 /// Apple publishes no query for `kTCCServiceAudioCapture`, and a running tap
@@ -182,10 +186,26 @@ impl SystemAudioPermission {
 /// `Unknown` instead of failing to launch.
 ///
 /// TCC answers from a per-process cache: on macOS 26 a grant made from this
-/// process's own prompt still reads `NotDetermined` until the app restarts.
-/// The frontend therefore also accepts this session's audible probe.
+/// process's own prompt still reads `NotDetermined` here until the app
+/// restarts. Anything short of granted is therefore asked again in a fresh,
+/// short-lived copy of this binary.
 #[cfg(target_os = "macos")]
 pub fn system_audio_permission_status() -> SystemAudioPermission {
+    let in_process = preflight_code()
+        .map(SystemAudioPermission::from_preflight)
+        .unwrap_or(SystemAudioPermission::Unknown);
+    let status = match in_process {
+        SystemAudioPermission::Granted | SystemAudioPermission::Unknown => in_process,
+        _ => fresh_process_status().unwrap_or(in_process),
+    };
+    info!("Audio Capture permission status: {:?} (this process: {:?})", status, in_process);
+    status
+}
+
+/// `TCCAccessPreflight("kTCCServiceAudioCapture")` in this process, or `None`
+/// when the private symbol is unavailable.
+#[cfg(target_os = "macos")]
+fn preflight_code() -> Option<i32> {
     use std::ffi::{c_char, c_int, c_void};
     use std::sync::OnceLock;
 
@@ -213,16 +233,58 @@ pub fn system_audio_permission_status() -> SystemAudioPermission {
         }
         Some(std::mem::transmute::<*mut c_void, Preflight>(symbol))
     });
-    let Some(preflight) = preflight else {
-        return SystemAudioPermission::Unknown;
-    };
-
+    let preflight = (*preflight)?;
     let service = cidre::cf::String::from_str("kTCCServiceAudioCapture");
     let service_ref = &*service as *const cidre::cf::String as *const c_void;
-    let code = unsafe { preflight(service_ref, std::ptr::null()) };
-    let status = SystemAudioPermission::from_preflight(code);
-    info!("Audio Capture permission status: {:?} (preflight {})", status, code);
-    status
+    Some(unsafe { preflight(service_ref, std::ptr::null()) })
+}
+
+/// Entry for `AUDIO_CAPTURE_STATUS_ARG`: prints this fresh process's preflight
+/// code and exits. Called from `main` before logging or Tauri start, so no
+/// second app instance or window appears.
+#[cfg(target_os = "macos")]
+pub fn print_audio_capture_status_and_exit() -> ! {
+    if let Some(code) = preflight_code() {
+        println!("{code}");
+    }
+    std::process::exit(0);
+}
+
+/// The preflight answer from a fresh copy of this binary, which has no stale
+/// TCC cache. Its TCC identity is this app's: same code, and this process is
+/// responsible for it. `None` if it cannot run or answer within two seconds.
+#[cfg(target_os = "macos")]
+fn fresh_process_status() -> Option<SystemAudioPermission> {
+    if cfg!(test) {
+        return None; // The test harness binary is not the app.
+    }
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new(std::env::current_exe().ok()?)
+        .arg(AUDIO_CAPTURE_STATUS_ARG)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                warn!("Fresh Audio Capture status check did not finish");
+                return None;
+            }
+        }
+    }
+    let mut output = String::new();
+    child.stdout.take()?.read_to_string(&mut output).ok()?;
+    output.trim().parse().ok().map(SystemAudioPermission::from_preflight)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -233,7 +295,10 @@ pub fn system_audio_permission_status() -> SystemAudioPermission {
 /// Tauri command: Audio Capture permission without probing or prompting.
 #[tauri::command]
 pub async fn get_system_audio_permission_status() -> SystemAudioPermission {
-    system_audio_permission_status()
+    // The fresh-process check spawns and waits; keep it off the async runtime.
+    tokio::task::spawn_blocking(system_audio_permission_status)
+        .await
+        .unwrap_or(SystemAudioPermission::Unknown)
 }
 
 #[cfg(test)]
