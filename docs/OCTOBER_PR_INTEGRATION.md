@@ -54,6 +54,16 @@ transcript, and no inactivity warning fired. That is one Mac with built-in
 speakers. A Multi-Output Device as the default output and the reporter's own
 device remain unqualified.
 
+A later stall no longer ends the meeting. `stream.rs` keeps polling after a
+five-second gap and reports `SystemCaptureStalled` once per stall through
+`RecordingState::report_warning`. That path does not count toward the stop
+thresholds, and `recording_commands.rs` turns it into the existing
+`recording-audio-route-warning` toast and notification for the main window,
+the same channel the Windows loopback warning uses. The microphone keeps
+recording, and the log notes when callbacks resume. An ended Core Audio stream
+(`SystemCaptureEnded`) and a sample-rate change stay terminal. The unit test
+`system_capture_stall_warning_keeps_recording` covers the state contract.
+
 ## Linux capture #22 — blocked
 
 The rebased branch removes Windows `NATIVE_CLEANUPS` bounded teardown, leaves

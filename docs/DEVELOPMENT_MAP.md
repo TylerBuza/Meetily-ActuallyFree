@@ -60,6 +60,8 @@ has a physical macOS reproduction/qualification yet. Its aggregate device keeps
 `tapautostart` off: with it on, the HAL ran no IO until something played, so a
 meeting started in silence stopped after five seconds (issue #42; physical
 reproduction and local fix check in [OCTOBER_PR_INTEGRATION.md](OCTOBER_PR_INTEGRATION.md)).
+A later tap stall warns the user (`RecordingState::report_warning` →
+`recording-audio-route-warning`) and keeps the microphone recording.
 `frontend/src/app/layout.tsx` now loads packaged Inter font files from
 `@fontsource-variable/inter` rather than fetching Google CSS during a Next
 production build. `globals.css` owns `--font-sans`, and `frontend/pnpm-lock.yaml`

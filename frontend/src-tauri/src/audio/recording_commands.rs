@@ -133,6 +133,28 @@ fn install_fatal_error_callback<R: Runtime>(
     });
 }
 
+/// Surfaces a degraded source through the same toast and notification as the
+/// Windows route warning, so the user knows the meeting is only partly captured.
+fn install_capture_warning_callback<R: Runtime>(
+    manager: &mut RecordingManager,
+    app: &AppHandle<R>,
+) {
+    let app_for_warning = app.clone();
+    manager.set_warning_callback(move |error| {
+        // Main window only, as for the Windows warning: every window's layout
+        // listens, so a broadcast would toast and notify once per window.
+        if let Some(window) = app_for_warning.get_webview_window("main") {
+            let _ = window.emit(
+                "recording-audio-route-warning",
+                serde_json::json!({
+                    "title": "Computer audio is not being captured",
+                    "message": error.user_message(),
+                }),
+            );
+        }
+    });
+}
+
 fn map_recording_start_error<R: Runtime>(app: &AppHandle<R>, error: anyhow::Error) -> String {
     crate::tray::update_tray_menu(app);
     if error.downcast_ref::<crate::onnx_runtime::InitializationError>().is_some() {
@@ -427,6 +449,7 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     manager.set_meeting_name(Some(effective_meeting_name));
 
     install_fatal_error_callback(&mut manager, &app);
+    install_capture_warning_callback(&mut manager, &app);
 
     // Live audio-level meter: forward per-source (mic + system) levels to the UI visualizer
     let level_sender = spawn_level_forwarder(&app);
@@ -685,6 +708,7 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     manager.set_meeting_name(Some(effective_meeting_name));
 
     install_fatal_error_callback(&mut manager, &app);
+    install_capture_warning_callback(&mut manager, &app);
 
     // Live audio-level meter: forward per-source (mic + system) levels to the UI visualizer
     let level_sender = spawn_level_forwarder(&app);

@@ -328,6 +328,7 @@ impl AudioStream {
                 let mut frame_count = 0;
                 let frames_per_chunk = 1024; // Process in chunks of 1024 samples
                 let mut terminal_error_reported = false;
+                let mut stalled = false;
 
                 info!("✅ Stream: Core Audio processing task started for {}", device_name);
 
@@ -339,16 +340,30 @@ impl AudioStream {
                     )
                     .await
                     {
-                        Ok(Some(sample)) => sample,
+                        Ok(Some(sample)) => {
+                            if stalled {
+                                info!("Core Audio callbacks resumed for {}", device_name);
+                                stalled = false;
+                            }
+                            sample
+                        }
                         Ok(None) => break,
                         Err(_) => {
-                            error!(
-                                "Core Audio stopped delivering callbacks for {}",
-                                device_name
-                            );
-                            state_for_stream.report_error(AudioError::SystemCaptureStalled);
-                            terminal_error_reported = true;
-                            break;
+                            if !state_for_stream.is_recording() {
+                                break;
+                            }
+                            // A stalled system tap must not end the meeting: the
+                            // microphone keeps recording, the user is warned once
+                            // per stall, and samples resume if the tap recovers.
+                            if !stalled {
+                                warn!(
+                                    "Core Audio delivered no samples for 5 s on {}; continuing with the microphone",
+                                    device_name
+                                );
+                                state_for_stream.report_warning(AudioError::SystemCaptureStalled);
+                                stalled = true;
+                            }
+                            continue;
                         }
                     };
                     let current_sample_rate = stream.sample_rate();

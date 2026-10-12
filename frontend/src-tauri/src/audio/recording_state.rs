@@ -81,7 +81,7 @@ impl AudioError {
             AudioError::ProcessingFailed => "Audio processing failed",
             AudioError::TranscriptionFailed => "Speech transcription failed",
             AudioError::ChannelClosed => "Audio channel was closed unexpectedly",
-            AudioError::SystemCaptureStalled => "Computer audio delivered no samples for 5 seconds; recording stopped. Check the selected output or app and the recording log.",
+            AudioError::SystemCaptureStalled => "Computer audio delivered no samples for 5 seconds. Your microphone is still recording, and computer audio resumes if capture recovers. Check the selected output or app and the recording log.",
             AudioError::SystemCaptureEnded => "Computer audio capture ended unexpectedly; recording stopped. Check the selected output or app and the recording log.",
             AudioError::InitializationFailed => "Failed to initialize audio system",
             AudioError::ConfigurationError => "Audio configuration error",
@@ -126,6 +126,7 @@ pub struct RecordingState {
     recoverable_error_count: AtomicU32,
     last_error: Mutex<Option<AudioError>>,
     error_callback: Mutex<Option<Box<dyn Fn(&AudioError) + Send + Sync>>>,
+    warning_callback: Mutex<Option<Box<dyn Fn(&AudioError) + Send + Sync>>>,
 
     // Statistics
     stats: Mutex<RecordingStats>,
@@ -157,6 +158,7 @@ impl RecordingState {
             recoverable_error_count: AtomicU32::new(0),
             last_error: Mutex::new(None),
             error_callback: Mutex::new(None),
+            warning_callback: Mutex::new(None),
             stats: Mutex::new(RecordingStats::default()),
             recording_start: Mutex::new(None),
             pause_start: Mutex::new(None),
@@ -401,6 +403,23 @@ impl RecordingState {
         }
     }
 
+    pub fn set_warning_callback<F>(&self, callback: F)
+    where
+        F: Fn(&AudioError) + Send + Sync + 'static,
+    {
+        *self.warning_callback.lock().unwrap() = Some(Box::new(callback));
+    }
+
+    /// Tell the user about a degraded source while recording continues.
+    /// Unlike `report_error`, this neither counts toward the stop thresholds
+    /// nor stops recording; the caller decides how often to report.
+    pub fn report_warning(&self, error: AudioError) {
+        log::warn!("Audio warning, recording continues: {:?}", error);
+        if let Some(callback) = self.warning_callback.lock().unwrap().as_ref() {
+            callback(&error);
+        }
+    }
+
     pub fn get_error_count(&self) -> u32 {
         self.error_count.load(Ordering::SeqCst)
     }
@@ -480,6 +499,7 @@ impl RecordingState {
         *self.audio_sender.lock().unwrap() = None;
         *self.last_error.lock().unwrap() = None;
         *self.error_callback.lock().unwrap() = None;
+        *self.warning_callback.lock().unwrap() = None;
         *self.stats.lock().unwrap() = RecordingStats::default();
         *self.recording_start.lock().unwrap() = None;
         *self.pause_start.lock().unwrap() = None;
@@ -509,6 +529,7 @@ impl Default for RecordingState {
             recoverable_error_count: AtomicU32::new(0),
             last_error: Mutex::new(None),
             error_callback: Mutex::new(None),
+            warning_callback: Mutex::new(None),
             stats: Mutex::new(RecordingStats::default()),
             recording_start: Mutex::new(None),
             pause_start: Mutex::new(None),
@@ -528,5 +549,39 @@ impl Clone for RecordingStats {
             total_duration: self.total_duration,
             last_activity: self.last_activity,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn system_capture_stall_warning_keeps_recording() {
+        let state = RecordingState::new();
+        state.start_recording().unwrap();
+        let errors = Arc::new(AtomicUsize::new(0));
+        let warnings = Arc::new(AtomicUsize::new(0));
+        let errors_seen = errors.clone();
+        state.set_error_callback(move |_| {
+            errors_seen.fetch_add(1, Ordering::SeqCst);
+        });
+        let warnings_seen = warnings.clone();
+        state.set_warning_callback(move |error| {
+            assert!(matches!(error, AudioError::SystemCaptureStalled));
+            warnings_seen.fetch_add(1, Ordering::SeqCst);
+        });
+
+        // More reports than either stop threshold in report_error.
+        for _ in 0..20 {
+            state.report_warning(AudioError::SystemCaptureStalled);
+        }
+
+        assert!(state.is_recording());
+        assert_eq!(state.get_error_count(), 0);
+        assert!(!state.has_fatal_error());
+        assert_eq!(warnings.load(Ordering::SeqCst), 20);
+        assert_eq!(errors.load(Ordering::SeqCst), 0);
     }
 }

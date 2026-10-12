@@ -443,6 +443,14 @@ impl RecordingManager {
         self.state.set_error_callback(callback);
     }
 
+    /// Set callback for warnings that leave recording running
+    pub fn set_warning_callback<F>(&self, callback: F)
+    where
+        F: Fn(&super::recording_state::AudioError) + Send + Sync + 'static,
+    {
+        self.state.set_warning_callback(callback);
+    }
+
     /// Check if there's a fatal error
     pub fn has_fatal_error(&self) -> bool {
         self.state.has_fatal_error()
