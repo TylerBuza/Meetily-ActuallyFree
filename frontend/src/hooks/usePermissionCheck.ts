@@ -2,20 +2,28 @@ import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { usePlatform } from './usePlatform';
 
+// macOS Audio Capture authorization as TCC records it (native
+// `get_system_audio_permission_status`). 'unknown' means it could not be read.
+export type SystemAudioPermission = 'granted' | 'denied' | 'not_determined' | 'unknown';
+
 export interface PermissionStatus {
   hasMicrophone: boolean;
   hasSystemAudio: boolean;
+  systemAudioPermission: SystemAudioPermission;
   isChecking: boolean;
   error: string | null;
 }
 
-// Audible samples are the only reliable proof that the tap works. Keep this
-// session-scoped so a permission revoked between app launches is not trusted.
+// Audible samples from the tap prove Audio Capture is granted (a denied tap
+// returns zeros). Keep the proof session-scoped so a permission revoked between
+// app launches is not trusted.
 export const MACOS_SYSTEM_AUDIO_VERIFIED_KEY = 'macos_system_audio_verified';
+
+type Availability = Omit<PermissionStatus, 'isChecking' | 'error'>;
 
 // The last result in this window, so a page that mounts again (the recorder)
 // shows the record card at once while the device check re-runs behind it.
-let lastKnown: { hasMicrophone: boolean; hasSystemAudio: boolean } | null = null;
+let lastKnown: Availability | null = null;
 
 export function usePermissionCheck() {
   const platform = usePlatform();
@@ -23,11 +31,12 @@ export function usePermissionCheck() {
   const [status, setStatus] = useState<PermissionStatus>(() => ({
     hasMicrophone: lastKnown?.hasMicrophone ?? false,
     hasSystemAudio: lastKnown?.hasSystemAudio ?? false,
+    systemAudioPermission: lastKnown?.systemAudioPermission ?? 'unknown',
     isChecking: lastKnown === null,
     error: null,
   }));
 
-  const checkPermissions = async () => {
+  const checkPermissions = async (): Promise<Availability> => {
     // A known result stays on screen during a background re-check.
     if (lastKnown === null) setStatus(prev => ({ ...prev, isChecking: true, error: null }));
 
@@ -39,39 +48,48 @@ export function usePermissionCheck() {
       const inputDevices = devices.filter(d => d.device_type === 'Input');
       const hasMicrophone = inputDevices.length > 0;
 
-      // Output availability is separate from macOS Audio Capture authorization;
-      // requestPermissions runs the native tap probe when the user asks.
+      // Output availability is separate from macOS Audio Capture authorization.
+      // A granted TCC record needs no audible proof on each launch. TCC answers
+      // from a per-process cache, so a grant made from this session's prompt
+      // only shows after a restart; until then, or when the status is
+      // unreadable, this session's audible probe (requestPermissions) decides.
       const outputDevices = devices.filter(d => d.device_type === 'Output');
-      const systemAudioVerified =
-        platform !== 'macos' ||
+      const systemAudioPermission: SystemAudioPermission =
+        platform === 'macos'
+          ? await invoke<SystemAudioPermission>('get_system_audio_permission_status').catch(
+              () => 'unknown' as const,
+            )
+          : 'granted';
+      const systemAudioAllowed =
+        systemAudioPermission === 'granted' ||
         window.sessionStorage.getItem(MACOS_SYSTEM_AUDIO_VERIFIED_KEY) === 'true';
-      const hasSystemAudio = outputDevices.length > 0 && systemAudioVerified;
+      const hasSystemAudio = outputDevices.length > 0 && systemAudioAllowed;
 
       console.log('Permission check:', {
         hasMicrophone,
         hasSystemAudio,
+        systemAudioPermission,
         inputDevices: inputDevices.length,
         outputDevices: outputDevices.length
       });
 
-      lastKnown = { hasMicrophone, hasSystemAudio };
-      setStatus({
-        hasMicrophone,
-        hasSystemAudio,
-        isChecking: false,
-        error: null,
-      });
+      lastKnown = { hasMicrophone, hasSystemAudio, systemAudioPermission };
+      setStatus({ ...lastKnown, isChecking: false, error: null });
 
-      return { hasMicrophone, hasSystemAudio };
+      return lastKnown;
     } catch (error) {
       console.error('Failed to check audio permissions:', error);
-      setStatus({
+      const unavailable: Availability = {
         hasMicrophone: false,
         hasSystemAudio: false,
+        systemAudioPermission: 'unknown',
+      };
+      setStatus({
+        ...unavailable,
         isChecking: false,
         error: error instanceof Error ? error.message : 'Failed to check permissions',
       });
-      return { hasMicrophone: false, hasSystemAudio: false };
+      return unavailable;
     }
   };
 
@@ -84,9 +102,10 @@ export function usePermissionCheck() {
       setStatus(prev => ({ ...prev, isChecking: true, error: null }));
       try {
         await invoke('trigger_microphone_permission');
-        let systemAudioDetected: boolean | null = null;
         if (platform === 'macos') {
-          systemAudioDetected = await invoke<boolean>('trigger_system_audio_permission_command');
+          // Starting the tap also shows the macOS prompt when not yet asked.
+          // Audible samples prove the grant before TCC's cached status catches up.
+          const systemAudioDetected = await invoke<boolean>('trigger_system_audio_permission_command');
           window.sessionStorage.setItem(
             MACOS_SYSTEM_AUDIO_VERIFIED_KEY,
             String(systemAudioDetected),
@@ -94,13 +113,7 @@ export function usePermissionCheck() {
         }
 
         await new Promise(resolve => setTimeout(resolve, 1000));
-        const availability = await checkPermissions();
-        if (systemAudioDetected !== null) {
-          setStatus(prev => ({
-            ...prev,
-            hasSystemAudio: availability.hasSystemAudio && systemAudioDetected,
-          }));
-        }
+        await checkPermissions();
       } catch (error) {
         console.error('Failed to request permissions:', error);
         if (platform === 'macos') {

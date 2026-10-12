@@ -149,9 +149,113 @@ pub async fn trigger_system_audio_permission_command() -> Result<bool, String> {
     .map_err(|e| e.to_string())
 }
 
+/// macOS Audio Capture authorization as TCC records it, read without starting a
+/// tap or prompting. `Unknown` means the status could not be read; callers then
+/// fall back to the audible probe above.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemAudioPermission {
+    Granted,
+    Denied,
+    NotDetermined,
+    Unknown,
+}
+
+impl SystemAudioPermission {
+    /// Maps a `TCCAccessPreflight` result: 0 granted, 1 denied, 2 not yet asked.
+    fn from_preflight(code: i32) -> Self {
+        match code {
+            0 => Self::Granted,
+            1 => Self::Denied,
+            2 => Self::NotDetermined,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// Reads the Audio Capture permission without touching audio hardware.
+///
+/// Apple publishes no query for `kTCCServiceAudioCapture`, and a running tap
+/// returns zeros both when permission is denied and when nothing plays. This
+/// uses the private `TCCAccessPreflight` from TCC.framework (as the AudioCap
+/// sample does), resolved at runtime so a macOS release without it degrades to
+/// `Unknown` instead of failing to launch.
+///
+/// TCC answers from a per-process cache: on macOS 26 a grant made from this
+/// process's own prompt still reads `NotDetermined` until the app restarts.
+/// The frontend therefore also accepts this session's audible probe.
+#[cfg(target_os = "macos")]
+pub fn system_audio_permission_status() -> SystemAudioPermission {
+    use std::ffi::{c_char, c_int, c_void};
+    use std::sync::OnceLock;
+
+    type Preflight = unsafe extern "C" fn(service: *const c_void, options: *const c_void) -> c_int;
+    extern "C" {
+        fn dlopen(path: *const c_char, mode: c_int) -> *mut c_void;
+        fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    }
+    const RTLD_LAZY: c_int = 0x1;
+
+    static PREFLIGHT: OnceLock<Option<Preflight>> = OnceLock::new();
+    let preflight = PREFLIGHT.get_or_init(|| unsafe {
+        let handle = dlopen(
+            c"/System/Library/PrivateFrameworks/TCC.framework/Versions/A/TCC".as_ptr(),
+            RTLD_LAZY,
+        );
+        if handle.is_null() {
+            warn!("TCC.framework unavailable; Audio Capture status unknown");
+            return None;
+        }
+        let symbol = dlsym(handle, c"TCCAccessPreflight".as_ptr());
+        if symbol.is_null() {
+            warn!("TCCAccessPreflight unavailable; Audio Capture status unknown");
+            return None;
+        }
+        Some(std::mem::transmute::<*mut c_void, Preflight>(symbol))
+    });
+    let Some(preflight) = preflight else {
+        return SystemAudioPermission::Unknown;
+    };
+
+    let service = cidre::cf::String::from_str("kTCCServiceAudioCapture");
+    let service_ref = &*service as *const cidre::cf::String as *const c_void;
+    let code = unsafe { preflight(service_ref, std::ptr::null()) };
+    let status = SystemAudioPermission::from_preflight(code);
+    info!("Audio Capture permission status: {:?} (preflight {})", status, code);
+    status
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn system_audio_permission_status() -> SystemAudioPermission {
+    SystemAudioPermission::Granted // No Audio Capture permission on other platforms
+}
+
+/// Tauri command: Audio Capture permission without probing or prompting.
+#[tauri::command]
+pub async fn get_system_audio_permission_status() -> SystemAudioPermission {
+    system_audio_permission_status()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preflight_codes_map_to_permission_states() {
+        assert_eq!(SystemAudioPermission::from_preflight(0), SystemAudioPermission::Granted);
+        assert_eq!(SystemAudioPermission::from_preflight(1), SystemAudioPermission::Denied);
+        assert_eq!(SystemAudioPermission::from_preflight(2), SystemAudioPermission::NotDetermined);
+        assert_eq!(SystemAudioPermission::from_preflight(-1), SystemAudioPermission::Unknown);
+        assert_eq!(SystemAudioPermission::from_preflight(3), SystemAudioPermission::Unknown);
+    }
+
+    /// Fails if a macOS release drops or changes the private symbol, which
+    /// would silently send every user back to the audible probe.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn tcc_preflight_resolves_on_macos() {
+        assert_ne!(system_audio_permission_status(), SystemAudioPermission::Unknown);
+    }
 
     #[test]
     fn test_check_permission() {

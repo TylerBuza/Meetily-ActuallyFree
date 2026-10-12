@@ -4,10 +4,12 @@ import { invoke } from '@tauri-apps/api/core';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { useIsLinux } from '@/hooks/usePlatform';
+import type { SystemAudioPermission } from '@/hooks/usePermissionCheck';
 
 interface PermissionWarningProps {
   hasMicrophone: boolean;
   hasSystemAudio: boolean;
+  systemAudioPermission?: SystemAudioPermission;
   onRecheck: () => void;
   isRechecking?: boolean;
   className?: string;
@@ -17,6 +19,7 @@ interface PermissionWarningProps {
 export function PermissionWarning({
   hasMicrophone,
   hasSystemAudio,
+  systemAudioPermission = 'unknown',
   onRecheck,
   isRechecking = false,
   className,
@@ -38,6 +41,15 @@ export function PermissionWarning({
       ? 'Meetily can’t hear your microphone'
       : 'Meetily can’t record computer audio';
 
+  // What to do on macOS depends on what TCC reports; 'granted' with no output
+  // device needs no permission advice.
+  const macOSSystemAudioHint = {
+    denied: ' Audio Capture is turned off for Meetily. Turn it on in System Settings, then check again.',
+    not_determined: ' macOS hasn’t confirmed access yet. Click Check again and allow Meetily to record system audio. If you already allowed it, restart Meetily or play some audio and check again.',
+    granted: '',
+    unknown: ' On macOS, allow Audio Capture for Meetily, play some audio, then check again. Restart Meetily if it stays silent.',
+  }[systemAudioPermission];
+
   return (
     <Alert variant="warning" className={className}>
       <AlertTriangle className="h-4 w-4" />
@@ -54,7 +66,7 @@ export function PermissionWarning({
             {hasMicrophone
               ? 'You can still record your microphone, but the other side of the call won’t be captured.'
               : 'Computer audio capture is unavailable too.'}
-            {isMacOS && ' On macOS, allow Audio Capture for Meetily, play some audio, then check again. Restart Meetily if it stays silent.'}
+            {isMacOS && macOSSystemAudioHint}
           </p>
         )}
         <div className="flex flex-wrap gap-2 pt-1">

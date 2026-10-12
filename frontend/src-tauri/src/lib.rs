@@ -928,6 +928,7 @@ pub fn run() {
             audio::permissions::check_screen_recording_permission_command,
             audio::permissions::request_screen_recording_permission_command,
             audio::permissions::trigger_system_audio_permission_command,
+            audio::permissions::get_system_audio_permission_status,
             // Database import commands
             database::commands::check_first_launch,
             database::commands::select_legacy_database_path,

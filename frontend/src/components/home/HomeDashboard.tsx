@@ -71,7 +71,7 @@ export function HomeDashboard() {
   const { groups } = useWorkspace();
   const { meetings } = useSidebar();
   const openItems = useOpenItems();
-  const { hasMicrophone, hasSystemAudio, isChecking, requestPermissions } = usePermissionCheck();
+  const { hasMicrophone, hasSystemAudio, systemAudioPermission, isChecking, requestPermissions } = usePermissionCheck();
 
   const upcoming = useMemo(
     () =>
@@ -98,6 +98,7 @@ export function HomeDashboard() {
           <PermissionWarning
             hasMicrophone={hasMicrophone}
             hasSystemAudio={hasSystemAudio}
+            systemAudioPermission={systemAudioPermission}
             onRecheck={requestPermissions}
             isRechecking={isChecking}
             className="mb-10"
