@@ -507,13 +507,15 @@ async fn run_retranscription<R: Runtime>(
         // Skip empty transcripts
         let trimmed = text.trim();
         if !trimmed.is_empty() {
-            // Filter out known Whisper silence hallucinations if energy is low
-            let lower = trimmed.to_lowercase();
-            let is_hallucination = (lower == "you" || lower == "you." || lower == "thank you." || lower == "thank you" || lower == "thanks." || lower == "bye." || lower == "bye") && rms < 0.02;
-            if is_hallucination {
-                warn!("Dropping suspected silence hallucination on segment {}: '{}' (rms={:.5}, conf={:.2})", i + 1, trimmed, rms, conf);
+            let Some(kept) = strip_whisper_hallucination(trimmed, rms) else {
+                warn!("Dropping suspected Whisper hallucination on segment {}: '{}' (rms={:.5}, conf={:.2})", i + 1, trimmed, rms, conf);
                 continue;
+            };
+            if kept != trimmed {
+                warn!("Removed a subtitle credit from segment {}: '{}' -> '{}'", i + 1, trimmed, kept);
             }
+            let text = kept;
+            let trimmed = text.as_str();
 
             debug!(
                 "Segment {}/{}: {:.1}s, conf={:.2}, text='{}'",
@@ -1076,6 +1078,110 @@ pub async fn is_retranscription_in_progress_command(meeting_id: Option<String>) 
     match meeting_id {
         Some(expected) => RETRANSCRIPTION_MEETING.lock().unwrap().as_deref() == Some(expected.as_str()),
         None => is_retranscription_in_progress(),
+    }
+}
+
+/// Credit lines Whisper copies from its subtitle training data instead of
+/// transcribing. Russian ones dominate with large-v3, on quiet call audio and on
+/// short cross-talk alike. They never belong in a meeting transcript.
+const SUBTITLE_CREDIT_MARKERS: [&str; 7] = [
+    "dimatorzok",
+    "субтитры создавал",
+    "субтитры сделал",
+    "субтитры делал",
+    "субтитры подготовил",
+    "редактор субтитров",
+    "subtitles by the amara.org community",
+];
+/// Whole-segment phrases that are Whisper filler, never a meeting utterance.
+const ALWAYS_HALLUCINATED: [&str; 1] = ["продолжение следует"];
+/// Whole-segment phrases people do say, so they are dropped only from quiet
+/// audio (RMS below `QUIET_HALLUCINATION_RMS`).
+const QUIET_HALLUCINATED: [&str; 7] = [
+    "you",
+    "thank you",
+    "thanks",
+    "bye",
+    "спасибо",
+    "спасибо за просмотр",
+    "подписывайтесь на канал",
+];
+const QUIET_HALLUCINATION_RMS: f32 = 0.02;
+
+/// Removes known Whisper hallucinations from one segment's text. A subtitle
+/// credit is cut together with everything after it, keeping real speech before
+/// it. Returns `None` when nothing real is left.
+fn strip_whisper_hallucination(text: &str, rms: f32) -> Option<String> {
+    // Lowercase char by char so char positions line up with the original.
+    let original: Vec<char> = text.chars().collect();
+    let lower: Vec<char> = original
+        .iter()
+        .map(|c| c.to_lowercase().next().unwrap_or(*c))
+        .collect();
+    let credit_at = SUBTITLE_CREDIT_MARKERS
+        .iter()
+        .filter_map(|marker| {
+            let marker: Vec<char> = marker.chars().collect();
+            lower.windows(marker.len()).position(|window| window == marker.as_slice())
+        })
+        .min();
+    let kept: String = match credit_at {
+        Some(at) => original[..at].iter().collect(),
+        None => text.to_string(),
+    };
+    let kept = kept.trim().to_string();
+    if !kept.chars().any(char::is_alphanumeric) {
+        return None;
+    }
+    let phrase = kept
+        .to_lowercase()
+        .trim_matches(|c: char| c.is_whitespace() || matches!(c, '.' | '!' | '?' | '…' | ','))
+        .to_string();
+    if ALWAYS_HALLUCINATED.contains(&phrase.as_str())
+        || (rms < QUIET_HALLUCINATION_RMS && QUIET_HALLUCINATED.contains(&phrase.as_str()))
+    {
+        return None;
+    }
+    Some(kept)
+}
+
+#[cfg(test)]
+mod hallucination_tests {
+    use super::strip_whisper_hallucination;
+
+    #[test]
+    fn subtitle_credits_and_filler_are_removed() {
+        // Seen in real post-call transcripts (Whisper large-v3, Russian).
+        for text in [
+            "Субтитры создавал DimaTorzok",
+            "Субтитры сделал DimaTorzok",
+            "Редактор субтитров А.Семкин Корректор А.Егорова",
+            "Продолжение следует...",
+            "Продолжение следует.",
+            "Subtitles by the Amara.org community",
+        ] {
+            assert_eq!(strip_whisper_hallucination(text, 0.2), None, "{text}");
+        }
+        assert_eq!(
+            strip_whisper_hallucination("Хорошо, давайте закончим. Субтитры создавал DimaTorzok", 0.2),
+            Some("Хорошо, давайте закончим.".into())
+        );
+    }
+
+    #[test]
+    fn phrases_people_say_survive_unless_the_audio_is_quiet() {
+        assert_eq!(strip_whisper_hallucination("Спасибо за просмотр!", 0.001), None);
+        assert_eq!(strip_whisper_hallucination("Thank you.", 0.001), None);
+        // 29 such lines in one call, all on a call track below -40 dBFS.
+        assert_eq!(strip_whisper_hallucination("Спасибо.", 0.005), None);
+        assert_eq!(strip_whisper_hallucination("Спасибо.", 0.08), Some("Спасибо.".into()));
+        assert_eq!(strip_whisper_hallucination("Спасибо, Андрей.", 0.005), Some("Спасибо, Андрей.".into()));
+        assert_eq!(strip_whisper_hallucination("Спасибо за просмотр!", 0.1), Some("Спасибо за просмотр!".into()));
+        assert_eq!(strip_whisper_hallucination("Thank you.", 0.1), Some("Thank you.".into()));
+        // Talk about subtitles or sequels is kept.
+        for text in ["Давай добавим субтитры к видео.", "Продолжение следует в четверг, обсудим бюджет."] {
+            assert_eq!(strip_whisper_hallucination(text, 0.001), Some(text.into()));
+        }
     }
 }
 
