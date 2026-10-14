@@ -125,6 +125,14 @@ Paths below are relative to `frontend/src-tauri/src/` unless marked frontend.
   recording. Changing settings during a call affects the next live session.
 - One transcript turn currently gets one greatest-overlap label. Do not split
   text or fabricate word timestamps to represent within-turn speaker changes.
+- `metadata.json` `duration_seconds` is `RecordingState`'s active duration
+  (start to stop, minus pauses; paused audio is never captured, so it tracks
+  the saved tracks). `stop_recording()` freezes the end instant and folds any
+  open pause; `cleanup()` keeps timing because the command stop path cleans up
+  (`stop_streams_and_force_flush`) before `save_recording_only` reads it. The
+  last-transcript-segment fallback only applies if no start was recorded; it
+  previously fired on every stop and under-reported trailing silence.
+  Covered by `recording_state::tests`.
 
 ### Worker and shutdown ownership
 
