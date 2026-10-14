@@ -180,7 +180,12 @@ fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, 
         .into_iter()
         .filter(|e| !is_self_process(e))
         .collect();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    let media_in_use: std::collections::HashSet<String> = macos_mic_in_use_names(&sys)
+        .into_iter()
+        .filter(|e| !is_self_process(e))
+        .collect();
+    #[cfg(not(any(windows, target_os = "macos")))]
     let media_in_use: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     #[cfg(windows)]
@@ -223,7 +228,10 @@ fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, 
         return None;
     }
 
-    // 2) No CAM signal: process-name match only (macOS/Linux / older Windows).
+    // 2) No CAM signal: process-name match only (Linux / older Windows). macOS
+    // always has the Core Audio microphone signal, so a running app that is not
+    // using the mic (idle Zoom, its `zoomupdater`) is not a meeting.
+    #[cfg(not(target_os = "macos"))]
     for process in sys.processes().values() {
         let name = process.name().to_string_lossy().to_lowercase();
         if is_skipped(&name) {
@@ -240,6 +248,24 @@ fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, 
         }
     }
     None
+}
+
+/// macOS: lowercase names of processes currently capturing from a microphone,
+/// per Core Audio. Meeting apps' helpers carry the app name ("Slack Helper").
+#[cfg(target_os = "macos")]
+fn macos_mic_in_use_names(sys: &sysinfo::System) -> std::collections::HashSet<String> {
+    let Ok(processes) = cidre::core_audio::Process::list() else {
+        return Default::default();
+    };
+    processes
+        .into_iter()
+        .filter(|p| p.is_running_input().unwrap_or(false))
+        .filter_map(|p| {
+            let pid = u32::try_from(p.pid().ok()?).ok()?;
+            let process = sys.process(sysinfo::Pid::from_u32(pid))?;
+            Some(process.name().to_string_lossy().to_lowercase())
+        })
+        .collect()
 }
 
 /// Windows: executables currently holding microphone or webcam via
@@ -374,6 +400,13 @@ mod tests {
         assert!(!process_matches_keyword("steamservice.exe", "teams"));
         assert!(!process_matches_keyword("steam.exe", "teams"));
         assert!(!process_matches_keyword("steamwebhelper.exe", "teams"));
+    }
+
+    #[test]
+    fn zoom_keyword_also_matches_its_updater_so_macos_needs_the_mic_signal() {
+        // Name matching alone cannot tell Zoom's updater from a call; on macOS
+        // the scan therefore requires a process that is using the microphone.
+        assert!(process_matches_keyword("zoomupdater", "zoom"));
     }
 
     #[cfg(windows)]
