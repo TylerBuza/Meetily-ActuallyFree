@@ -239,6 +239,13 @@ stack UI; its previous Parakeet CPU pill was fixed text. An ignored test with
 the installed v3 INT8 model and synthetic silence confirms encoder nodes run
 on both DirectML and CPU; real speech performance remains unqualified.
 
+Linux packages come from `frontend/build-gpu.sh`, which picks the Whisper GPU
+feature, builds the llama-helper sidecar, and runs `tauri build`. The base config
+bundles only `nsis`, which Tauri skips on Linux, so `tauri.linux.conf.json` sets
+the AppImage and deb targets. The AppImage carries its own WebKitGTK without
+media plugins, so it bundles GStreamer (`bundleMediaFramework`); the deb relies
+on the system's GStreamer.
+
 The universal Windows build script is
 `frontend/scripts/build-universal-windows.ps1`. It packages CPU/Vulkan/CUDA app
 variants; the runtime payload must match the one validated in tests. Validate with
