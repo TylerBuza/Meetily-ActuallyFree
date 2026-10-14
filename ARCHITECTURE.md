@@ -202,9 +202,9 @@ signature.
 | What | Where |
 |---|---|
 | Database, templates, models, file-backed settings | Windows/Linux: `<exe dir>/data/…`; macOS: `~/Library/Application Support/Meetily/…` |
-| Tauri plugin stores (recording preferences/onboarding) | macOS: `~/Library/Application Support/com.meetily.ai/…` |
+| Tauri plugin stores (recording preferences/onboarding) | macOS: `~/Library/Application Support/com.meetily.ai/…`; Linux: `~/.local/share/com.meetily.ai/…` |
 | Bundled diarization models | The platform app bundle's `resources/diarization/` directory |
-| **Audio recordings** | Windows: `%USERPROFILE%\Music\meetily-recordings\<meeting>`; macOS: `~/Movies/meetily-recordings/<meeting>` |
+| **Audio recordings** | Windows: `%USERPROFILE%\Music\meetily-recordings\<meeting>`; macOS: `~/Movies/meetily-recordings/<meeting>`; Linux: `~/Documents/meetily-recordings/<meeting>` |
 
 Two gotchas:
 
@@ -215,7 +215,9 @@ Two gotchas:
    (remote/computer audio). Code that looks for playback must prefer
    `audio.mp4` — see `diarization::find_meeting_audio`.
 2. `paths.rs` always uses the OS data directory on macOS. Windows and Linux fall
-   back there if the install directory isn't writable.
+   back there if the install directory isn't writable. A Linux AppImage always
+   does: it runs from a read-only mount, so its data lives in
+   `~/.local/share/Meetily`.
 
 Recording-folder creation is intentionally collision-safe. Sanitized titles are
 not unique, so `audio_processing.rs` creates the directory atomically and adds a

@@ -8,7 +8,7 @@
 //! |---------|---------------------------------------------------|
 //! | Windows | `%USERPROFILE%\Music\meetily-recordings`           |
 //! | macOS   | `~/Movies/meetily-recordings`                      |
-//! | Linux   | `~/Videos/meetily-recordings` (or Documents)       |
+//! | Linux   | `~/Documents/meetily-recordings`                   |
 //!
 //! Layout is `<folder>/<sanitized meeting name>/audio.mp4`, alongside
 //! `metadata.json` and `transcripts.json`.
