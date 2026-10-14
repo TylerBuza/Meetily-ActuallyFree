@@ -898,7 +898,7 @@ Responsibility map:
 
 | File | macOS responsibility |
 |---|---|
-| `audio/capture/core_audio.rs` | Create the global process tap, aggregate device, stream, and audible probe |
+| `audio/capture/core_audio.rs` | Create the global or per-app process tap, aggregate device, stream, and audible probe; map chosen apps to Core Audio process objects |
 | `audio/permissions.rs` | Preserve legacy IPC names while routing verification to the Core Audio probe |
 | `audio/capture/backend_config.rs` | Expose only implemented backends for the current platform |
 | `components/onboarding/steps/AudioTestStep.tsx` | Serialize the native singleton monitor and guide audible testing |
@@ -919,6 +919,22 @@ name proves that an output exists; it does not prove Audio Capture authorization
 and a non-default output name cannot retarget the global tap. The macOS UI keeps
 this route read-only and directs users to Sound settings. Do not restore a
 selectable output list unless capture actually binds to that route.
+
+"Only chosen apps" (per-app capture) uses the same tap with an include list.
+`CATapDescription` takes Core Audio *process object* IDs, never PIDs.
+`audio_process_objects_for_apps` lists `kAudioHardwarePropertyProcessObjectList`
+and keeps every audio process whose executable, or whose responsible process
+(`responsibility_get_pid_responsible_for_pid`), is a chosen app or lives inside
+its `.app` bundle. Browsers and WebKit play audio from helpers (Chrome renderer,
+WebContent), so matching only the main PID would capture nothing. All chosen apps
+go into one mono mixdown tap; Windows keeps its per-PID process loopback.
+Limits: only processes that have already used audio exist as process objects,
+and the include list is fixed when the recording starts, so an app must be
+playing (or have played) before Start. A per-app tap failure is an error, not a
+silent fallback to the global tap, because recording every app would contradict
+the user's choice. `app_matching_tests` covers the bundle/helper path matching;
+real capture was qualified manually (a Chrome tone was captured while another
+process's tone was excluded).
 
 Creating the process tap triggers the OS Audio Capture prompt. A successful tap
 creation is still not enough because a denied tap can produce an all-zero stream.
