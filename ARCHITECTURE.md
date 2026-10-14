@@ -899,7 +899,8 @@ Responsibility map:
 | File | macOS responsibility |
 |---|---|
 | `audio/capture/core_audio.rs` | Create the global process tap, aggregate device, stream, and audible probe |
-| `audio/echo_cancellation.rs` | Remove speaker playback from the mic (WebRTC AEC3, system audio as reference) |
+| `audio/echo_cancellation.rs` | Remove speaker playback from the mic (neural DTLN-aec, AEC3 fallback; system audio as reference) |
+| `audio/neural_echo.rs` | DTLN-aec model streaming (ONNX, 16 kHz) |
 | `audio/permissions.rs` | Preserve legacy IPC names while routing verification to the Core Audio probe |
 | `audio/capture/backend_config.rs` | Expose only implemented backends for the current platform |
 | `components/onboarding/steps/AudioTestStep.tsx` | Serialize the native singleton monitor and guide audible testing |
@@ -925,25 +926,41 @@ With built-in speakers the microphone also hears the call, so the far side
 would be recorded twice (mic and system tracks, slightly offset, which sounds
 like an echo) and transcribed as "You". `audio/pipeline.rs` therefore runs each
 time-aligned mixer window through `MicEchoCanceller` before any consumer (VAD,
-saved tracks, mixed audio): WebRTC AEC3 from the pure-Rust `sonora` crate, with
-the system window as the render reference, as Granola does. The microphone
-itself stays raw: Apple voice processing was measured to duck other apps by
-about 8 dB even at its minimum setting, and the older switch that disabled
-ducking is rejected on macOS 27.
+saved tracks, mixed audio), with the system window as the reference, as Granola
+and Hyprnote do. The microphone itself stays raw: Apple voice processing was
+measured to duck other apps by about 8 dB even at its minimum setting.
 
-AEC3 only cancels echo that arrives after its reference (about 52 dB removed
-with the reference 30-250 ms ahead, about 3 dB when simultaneous or late), and
-system chunks are stamped when processed, so they can trail the microphone. The
-canceller feeds the reference immediately but processes the microphone 100 ms
-later, and delays the system window by the same 100 ms, so both saved tracks
-stay aligned; the lead is released at every flush, including timeline resets,
-and the learned echo path is kept for the whole recording. Cancellation is off
-when the output is headphones at recording start (built-in headphone jack or
-Bluetooth); USB outputs keep it because conference speakerphones are USB. About
-every 10 s of audio the log reports mic energy before and after cancellation
-while computer audio plays, with AEC3's delay and ERLE. `echo_cancellation`
-tests cover the delay line and 20+ dB removal; the ignored
-`reference_lag_report` prints the timing tolerance.
+Two engines, measured through this code on real built-in mic/speaker takes
+(the user's voice and the speaker echo recorded separately and mixed, so the
+clean voice is known): the default neural engine (`audio/neural_echo.rs`,
+DTLN-aec ported from Hyprnote, MIT, models in `resources/dtln-aec/`) removed about
+45 dB of echo with a double-talk SI-SDR of about 12.8 dB; WebRTC AEC3 (`sonora`)
+removed about 36 dB at 7.7 dB. AEC3 is the fallback when the model cannot load
+and is selected with `MEETILY_AEC=aec3`; `MEETILY_AEC=off` disables both.
+
+Both cancel only echo that arrives after its reference, and system chunks are
+stamped when processed. `MicEchoCanceller` therefore emits both tracks exactly
+160 ms (`LEAD_MS`) after they enter, so the reference can be fed ahead of its
+echo while the saved tracks stay aligned (a test asserts both engines within
+2 samples). The neural path decimates mic and reference to 16 kHz with a
+linear-phase FIR, holds the mic 100 ms, feeds the reference 20 ms ahead of the
+echo (the measured 5-40 ms plateau), runs the model in 8 ms hops, and
+interpolates the result back to 48 kHz, so the mic track above 7 kHz is
+filtered out while cancellation is on. The echo lag (107 ms on a MacBook Pro's
+built-in speakers) is estimated online by GCC-PHAT over 2 s of playback and
+locked when two consecutive confident estimates agree; until then 100 ms is
+assumed. AEC3 runs at 48 kHz with its own delay estimation and its redundant
+high-pass filter off (the mic is already high-passed at capture; the filter
+alone dropped clean-voice correlation to 0.67); its 9 ms internal delay is
+compensated.
+
+Cancellation is off when the output is headphones at recording start (built-in
+headphone jack or Bluetooth); USB outputs keep it because conference
+speakerphones are USB. About every 10 s of audio the log reports mic energy
+before and after cancellation while computer audio plays, with the echo lag.
+`echo_cancellation` tests cover the resampler delay, lag locking, track
+alignment for both engines and AEC3 removal; the ignored
+`real_recordings_report` scores both engines on recorded takes.
 
 Creating the process tap triggers the OS Audio Capture prompt. A successful tap
 creation is still not enough because a denied tap can produce an all-zero stream.

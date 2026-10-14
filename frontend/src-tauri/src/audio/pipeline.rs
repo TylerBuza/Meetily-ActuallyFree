@@ -1135,7 +1135,6 @@ impl AudioPipeline {
             info!("🔇 Mic echo cancellation off: output is headphones");
             None
         } else {
-            info!("🔇 Mic echo cancellation on (WebRTC AEC3, computer audio as reference)");
             Some(super::echo_cancellation::MicEchoCanceller::new(sample_rate))
         };
 

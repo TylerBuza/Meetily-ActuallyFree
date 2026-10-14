@@ -20,6 +20,8 @@ pub mod recording_state;
 pub mod pipeline;
 #[cfg(target_os = "macos")]
 pub mod echo_cancellation;
+#[cfg(target_os = "macos")]
+pub mod neural_echo;
 pub mod stream;
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
 pub mod capture_worker;
