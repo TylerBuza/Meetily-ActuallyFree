@@ -188,7 +188,7 @@ export function AppAudioSource({
     : choice.onlyApps && choice.targets.length === 0
       ? 'Until you add an app, all computer audio is recorded.'
       : choice.onlyApps && platform === 'macos'
-        ? 'Only these apps are recorded. Start their call or playback before you record, so macOS can find their audio.'
+        ? 'Only these apps are recorded. Each is picked up once it starts playing, so you can start recording before joining the call.'
         : choice.onlyApps
           ? "Only these apps are recorded. If none is open when you start, the recording can't start."
           : null;

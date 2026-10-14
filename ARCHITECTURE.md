@@ -928,13 +928,26 @@ and keeps every audio process whose executable, or whose responsible process
 its `.app` bundle. Browsers and WebKit play audio from helpers (Chrome renderer,
 WebContent), so matching only the main PID would capture nothing. All chosen apps
 go into one mono mixdown tap; Windows keeps its per-PID process loopback.
-Limits: only processes that have already used audio exist as process objects,
-and the include list is fixed when the recording starts, so an app must be
-playing (or have played) before Start. A per-app tap failure is an error, not a
-silent fallback to the global tap, because recording every app would contradict
-the user's choice. `app_matching_tests` covers the bundle/helper path matching;
-real capture was qualified manually (a Chrome tone was captured while another
-process's tone was excluded).
+Only processes that have already used audio exist as process objects, so the
+include list cannot be fixed at Start: a call joined later, a new tab, or
+Chrome restarting its audio service creates new objects. `CoreAudioCapture::new_for_apps`
+creates the tap with whatever matches (possibly nothing; an empty mixdown tap
+is valid and delivers silent buffers, which keeps the five-second
+no-samples stall check quiet), and the stream owns a `ProcessFollower` thread
+that re-scans every 1.5 s (`APP_RESCAN_INTERVAL`). When the matching set
+changes, `set_tap_processes` edits the live tap's `kAudioTapPropertyDescription`
+in place (same UUID, so the aggregate device's tap UID is unchanged) instead of
+rebuilding the tap and aggregate device. The follower is joined before the
+device stops and the tap is destroyed. Starting with only the chosen-apps list
+empty is an error (the recording manager routes that case to the global tap).
+Limits: up to one rescan interval of an app's first audio can be missed, and a
+per-app tap failure is an error, not a silent fallback to the global tap,
+because recording every app would contradict the user's choice.
+`app_matching_tests` covers the bundle/helper path matching and `follow_tests`
+the rescan diffing/retry loop with a scripted scanner. Real capture was qualified
+manually for the fixed-at-start list (a Chrome tone was captured while another
+process's tone was excluded); updating a live tap's process list has not yet
+been qualified against a running app.
 
 Creating the process tap triggers the OS Audio Capture prompt. A successful tap
 creation is still not enough because a denied tap can produce an all-zero stream.

@@ -28,28 +28,148 @@ extern "C" {
 /// Core Audio process objects that belong to the chosen apps: the apps' own
 /// processes plus helpers they are responsible for, which is where browsers
 /// and WebKit actually play audio. Only processes that have used audio exist
-/// as Core Audio process objects, so apps not yet playing may be missing.
+/// as Core Audio process objects, so apps not yet playing are missing until
+/// they start; a per-app stream re-scans while recording (`follow_process_objects`).
 #[cfg(target_os = "macos")]
 pub fn audio_process_objects_for_apps(apps: &[String]) -> Vec<u32> {
+    let Ok(processes) = ca::Process::list() else { return Vec::new() };
+    let candidates: Vec<(u32, [i32; 2])> = processes
+        .into_iter()
+        .filter_map(|process| {
+            let pid = process.pid().ok()?;
+            let responsible = unsafe { responsibility_get_pid_responsible_for_pid(pid) };
+            Some((process.0 .0, [pid, responsible]))
+        })
+        .collect();
+    // Refresh only the audio processes and their responsible apps: this runs
+    // every rescan interval while recording, so a full process table is waste.
+    let pids: Vec<sysinfo::Pid> = candidates
+        .iter()
+        .flat_map(|(_, pids)| pids.iter())
+        .filter_map(|&pid| u32::try_from(pid).ok().map(sysinfo::Pid::from_u32))
+        .collect();
     let mut sys = sysinfo::System::new();
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    sys.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&pids),
+        true,
+        sysinfo::ProcessRefreshKind::new().with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
+    );
     let exe_path = |pid: i32| -> Option<String> {
         let path = sys.process(sysinfo::Pid::from_u32(u32::try_from(pid).ok()?))?.exe()?;
         Some(path.to_string_lossy().into_owned())
     };
-    let Ok(processes) = ca::Process::list() else { return Vec::new() };
-    processes
+    let mut objects: Vec<u32> = candidates
         .into_iter()
-        .filter(|process| {
-            let Ok(pid) = process.pid() else { return false };
-            let responsible = unsafe { responsibility_get_pid_responsible_for_pid(pid) };
-            [pid, responsible]
-                .into_iter()
-                .filter_map(|p| exe_path(p))
+        .filter(|(_, pids)| {
+            pids.iter()
+                .filter_map(|&p| exe_path(p))
                 .any(|path| apps.iter().any(|app| app_owns_exe_path(app, &path)))
         })
-        .map(|process| process.0 .0)
-        .collect()
+        .map(|(object, _)| object)
+        .collect();
+    objects.sort_unstable();
+    objects.dedup();
+    objects
+}
+
+/// How often a per-app tap looks for newly started audio processes of the
+/// chosen apps (joining a call, a browser restarting its audio service).
+#[cfg(target_os = "macos")]
+const APP_RESCAN_INTERVAL: Duration = std::time::Duration::from_millis(1500);
+
+/// Re-scan loop behind a per-app tap. `applied` is the process list the tap
+/// currently has; every `interval` the matching processes are scanned again
+/// and, only when the set differs, handed to `apply`. A failed apply keeps the
+/// old set so the next tick retries. Returns when `stop`'s sender is dropped.
+#[cfg(any(target_os = "macos", test))]
+fn follow_process_objects(
+    mut applied: Vec<u32>,
+    stop: &std::sync::mpsc::Receiver<()>,
+    interval: std::time::Duration,
+    mut scan: impl FnMut() -> Vec<u32>,
+    mut apply: impl FnMut(&[u32]) -> Result<()>,
+) {
+    use std::sync::mpsc::RecvTimeoutError;
+    applied.sort_unstable();
+    applied.dedup();
+    let mut last_failed: Option<Vec<u32>> = None;
+    while let Err(RecvTimeoutError::Timeout) = stop.recv_timeout(interval) {
+        let mut scanned = scan();
+        scanned.sort_unstable();
+        scanned.dedup();
+        if scanned == applied {
+            continue;
+        }
+        match apply(&scanned) {
+            Ok(()) => {
+                info!("🎯 CoreAudio: per-app tap now follows process objects {:?} (was {:?})", scanned, applied);
+                applied = scanned;
+                last_failed = None;
+            }
+            Err(e) => {
+                // Warn once per target set instead of every tick.
+                if last_failed.as_ref() != Some(&scanned) {
+                    warn!("⚠️ CoreAudio: could not update per-app tap to {:?}: {}", scanned, e);
+                }
+                last_failed = Some(scanned);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn process_object_array(objects: &[u32]) -> arc::R<cidre::ns::Array<cidre::ns::Number>> {
+    let nums: Vec<_> = objects.iter().map(|&id| cidre::ns::Number::with_u32(id)).collect();
+    let refs: Vec<&cidre::ns::Number> = nums.iter().map(|n| &**n).collect();
+    cidre::ns::Array::from_slice(&refs)
+}
+
+/// Replace a live tap's include list in place (`kAudioTapPropertyDescription`
+/// is settable). The current description is edited so its UUID, and with it
+/// the tap UID the aggregate device refers to, stays the same.
+#[cfg(target_os = "macos")]
+fn set_tap_processes(tap: &mut ca::TapGuard, objects: &[u32]) -> Result<()> {
+    let mut desc = tap.desc().map_err(|e| anyhow::anyhow!("read tap description: {:?}", e))?;
+    desc.set_processes(&process_object_array(objects));
+    tap.set_desc(desc).map_err(|e| anyhow::anyhow!("set tap description: {:?}", e))
+}
+
+/// Background re-scan thread owned by a per-app `CoreAudioStream`. Dropping
+/// it stops and joins the thread, so the tap is never touched after the
+/// stream releases it.
+#[cfg(target_os = "macos")]
+struct ProcessFollower {
+    stop: Option<std::sync::mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(target_os = "macos")]
+impl ProcessFollower {
+    fn spawn(tap: Arc<Mutex<ca::TapGuard>>, apps: Vec<String>, initial: Vec<u32>) -> Result<Self> {
+        let (stop, stop_rx) = std::sync::mpsc::channel();
+        let thread = std::thread::Builder::new()
+            .name("core-audio-app-rescan".into())
+            .spawn(move || {
+                follow_process_objects(
+                    initial,
+                    &stop_rx,
+                    APP_RESCAN_INTERVAL,
+                    || audio_process_objects_for_apps(&apps),
+                    |objects| set_tap_processes(&mut tap.lock().unwrap(), objects),
+                )
+            })?;
+        Ok(Self { stop: Some(stop), thread: Some(thread) })
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for ProcessFollower {
+    fn drop(&mut self) {
+        drop(self.stop.take());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 /// Whether `exe_path` is the app's executable or lives inside its bundle.
@@ -73,15 +193,21 @@ struct WakerState {
 pub struct CoreAudioCapture {
     tap: ca::TapGuard,
     agg_desc: arc::Retained<cf::DictionaryOf<cf::String, cf::Type>>,
+    /// Per-app capture: the chosen apps and the process objects the tap was
+    /// created with, so `stream()` can keep the include list current.
+    follow_apps: Option<(Vec<String>, Vec<u32>)>,
 }
 
 /// Core Audio stream that produces audio samples
 #[cfg(target_os = "macos")]
 pub struct CoreAudioStream {
+    // Field order is drop order: stop the re-scan thread before the device
+    // stops and the tap is destroyed.
+    _follower: Option<ProcessFollower>,
     consumer: HeapCons<f32>,
     _device: ca::hardware::StartedDevice<ca::AggregateDevice>,
     _ctx: Box<AudioContext>,
-    _tap: ca::TapGuard,
+    _tap: Arc<Mutex<ca::TapGuard>>,
     waker_state: Arc<Mutex<WakerState>>,
     current_sample_rate: Arc<AtomicU32>,
     last_drop_log: Instant,
@@ -105,9 +231,24 @@ impl CoreAudioCapture {
         Self::new_with_processes(None)
     }
 
+    /// Create a Core Audio capture of only the chosen apps' audio. Apps that
+    /// have no audio process yet (call not joined, nothing played) start out
+    /// silent; the stream re-scans and adds their processes once they appear.
+    pub fn new_for_apps(apps: Vec<String>) -> Result<Self> {
+        anyhow::ensure!(!apps.is_empty(), "No apps chosen for per-app recording");
+        let objects = audio_process_objects_for_apps(&apps);
+        if objects.is_empty() {
+            info!("🎯 CoreAudio: none of {:?} has an audio process yet; starting silent until one plays", apps);
+        }
+        let mut capture = Self::new_with_processes(Some(objects.clone()))?;
+        capture.follow_apps = Some((apps, objects));
+        Ok(capture)
+    }
+
     /// Create a Core Audio capture of the given Core Audio process objects
     /// (see `audio_process_objects_for_apps`), or of all audio when `None`.
-    pub fn new_with_processes(process_objects: Option<Vec<u32>>) -> Result<Self> {
+    /// An empty list is a valid tap that delivers silence.
+    fn new_with_processes(process_objects: Option<Vec<u32>>) -> Result<Self> {
         info!("🎙️ CoreAudio: Starting Core Audio capture initialization (process objects: {:?})...", process_objects);
 
         // Audio Capture permission (NSAudioCaptureUsageDescription) is required.
@@ -140,9 +281,7 @@ impl CoreAudioCapture {
 
         let tap_desc = if let Some(objects) = &process_objects {
             info!("🎙️ CoreAudio: Creating process tap for process objects {:?}...", objects);
-            let nums: Vec<_> = objects.iter().map(|&id| cidre::ns::Number::with_u32(id)).collect();
-            let refs: Vec<&cidre::ns::Number> = nums.iter().map(|n| &**n).collect();
-            ca::TapDesc::with_mono_mixdown_of_processes(&cidre::ns::Array::from_slice(&refs))
+            ca::TapDesc::with_mono_mixdown_of_processes(&process_object_array(objects))
         } else {
             info!("🎙️ CoreAudio: Creating process tap (global mono tap)...");
             ca::TapDesc::with_mono_global_tap_excluding_processes(&cidre::ns::Array::new())
@@ -208,7 +347,7 @@ impl CoreAudioCapture {
         info!("✅ CoreAudio: Aggregate device descriptor created");
         info!("✅ CoreAudio: Core Audio capture initialized successfully!");
 
-        Ok(Self { tap, agg_desc })
+        Ok(Self { tap, agg_desc, follow_apps: None })
     }
 
     /// Start the audio device and create a stream
@@ -343,13 +482,28 @@ impl CoreAudioCapture {
         info!("🎙️ CoreAudio: Starting audio device...");
         let device = self.start_device(&mut ctx)?;
 
+        let tap = Arc::new(Mutex::new(self.tap));
+        let follower = match self.follow_apps {
+            Some((apps, objects)) => match ProcessFollower::spawn(tap.clone(), apps, objects) {
+                Ok(follower) => Some(follower),
+                Err(e) => {
+                    // Without re-scans the include list stays as found, which
+                    // may be empty. Stop the device before the tap goes away.
+                    drop(device);
+                    return Err(anyhow::anyhow!("Failed to start per-app re-scan: {}", e));
+                }
+            },
+            None => None,
+        };
+
         info!("✅ CoreAudio: CoreAudioStream created successfully!");
 
         Ok(CoreAudioStream {
+            _follower: follower,
             consumer,
             _device: device,
             _ctx: ctx,
-            _tap: self.tap,
+            _tap: tap,
             waker_state,
             current_sample_rate,
             last_drop_log: Instant::now(),
@@ -564,5 +718,66 @@ mod app_matching_tests {
         assert!(!app_owns_exe_path("Safari.app", chrome));
         assert!(!app_owns_exe_path("Chrome.app", chrome));
         assert!(!app_owns_exe_path("zoom.us.app", "/Applications/zoom.us.app.bak/zoom"));
+    }
+}
+
+#[cfg(test)]
+mod follow_tests {
+    use super::follow_process_objects;
+    use std::collections::VecDeque;
+    use std::time::Duration;
+
+    /// Run the loop over scripted scans; the stop sender is dropped once the
+    /// script is used up, so the loop ends after one more (unchanged) scan.
+    fn run(initial: Vec<u32>, scans: Vec<Vec<u32>>, fail_first: usize) -> Vec<Vec<u32>> {
+        let (stop, stop_rx) = std::sync::mpsc::channel::<()>();
+        let mut stop = Some(stop);
+        let mut scans: VecDeque<_> = scans.into();
+        let mut last = initial.clone();
+        let mut applied = Vec::new();
+        let mut failures = 0;
+        follow_process_objects(
+            initial,
+            &stop_rx,
+            Duration::from_millis(1),
+            || match scans.pop_front() {
+                Some(scan) => {
+                    last = scan.clone();
+                    scan
+                }
+                None => {
+                    stop.take();
+                    last.clone()
+                }
+            },
+            |objects| {
+                applied.push(objects.to_vec());
+                if failures < fail_first {
+                    failures += 1;
+                    anyhow::bail!("tap busy");
+                }
+                Ok(())
+            },
+        );
+        applied
+    }
+
+    #[test]
+    fn unchanged_or_reordered_scans_do_not_touch_the_tap() {
+        assert!(run(vec![7, 3], vec![vec![3, 7], vec![7, 3, 3]], 0).is_empty());
+    }
+
+    #[test]
+    fn helpers_appearing_or_leaving_update_the_tap() {
+        // Start with nothing (call not joined yet), then a renderer, then
+        // Chrome restarts its audio service under a new object.
+        let applied = run(vec![], vec![vec![], vec![42], vec![42], vec![51, 42], vec![51]], 0);
+        assert_eq!(applied, vec![vec![42], vec![42, 51], vec![51]]);
+    }
+
+    #[test]
+    fn failed_update_is_retried_on_the_next_scan() {
+        let applied = run(vec![1], vec![vec![1, 2], vec![1, 2]], 1);
+        assert_eq!(applied, vec![vec![1, 2], vec![1, 2]]);
     }
 }

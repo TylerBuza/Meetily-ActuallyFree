@@ -269,27 +269,29 @@ impl AudioStream {
         device_type: DeviceType,
         recording_sender: Option<mpsc::UnboundedSender<super::recording_state::AudioChunk>>,
     ) -> Result<Self> {
-        Self::create_core_audio_stream_with_process(device, state, device_type, recording_sender, None).await
+        Self::create_core_audio_stream_for_apps(device, state, device_type, recording_sender, None).await
     }
 
-    /// Create a Core Audio stream, optionally limited to Core Audio process objects (macOS only)
+    /// Create a Core Audio stream of all audio, or of only the chosen apps (macOS only)
     #[cfg(target_os = "macos")]
-    async fn create_core_audio_stream_with_process(
+    async fn create_core_audio_stream_for_apps(
         device: Arc<AudioDevice>,
         state: Arc<RecordingState>,
         device_type: DeviceType,
         recording_sender: Option<mpsc::UnboundedSender<super::recording_state::AudioChunk>>,
-        process_objects: Option<Vec<u32>>,
+        apps: Option<Vec<String>>,
     ) -> Result<Self> {
-        info!("🔊 Stream: Creating Core Audio stream (process objects: {:?}) for device: {}", process_objects, device.name);
+        info!("🔊 Stream: Creating Core Audio stream (apps: {:?}) for device: {}", apps, device.name);
 
         // Create Core Audio capture
-        info!("🔊 Stream: Calling CoreAudioCapture::new_with_processes()...");
-        let capture_impl = CoreAudioCapture::new_with_processes(process_objects)
-            .map_err(|e| {
-                error!("❌ Stream: CoreAudioCapture::new_with_processes failed: {}", e);
-                anyhow::anyhow!("Failed to create Core Audio capture: {}", e)
-            })?;
+        let capture_impl = match apps {
+            Some(apps) => CoreAudioCapture::new_for_apps(apps),
+            None => CoreAudioCapture::new(),
+        }
+        .map_err(|e| {
+            error!("❌ Stream: CoreAudioCapture creation failed: {}", e);
+            anyhow::anyhow!("Failed to create Core Audio capture: {}", e)
+        })?;
 
         info!("✅ Stream: CoreAudioCapture created, calling stream()...");
         let core_stream = capture_impl.stream()
@@ -415,29 +417,23 @@ impl AudioStream {
             "Previous Windows audio cleanup is still running; retry recording shortly");
 
         // macOS: one tap over every chosen app's audio processes, helpers included.
+        // Apps need not be playing yet: the tap may start empty (silent) and the
+        // stream re-scans while recording, adding processes as they appear.
         #[cfg(target_os = "macos")]
         {
             let apps: Vec<String> = targets.iter().map(|t| t.executable.clone()).collect();
-            let objects = crate::audio::capture::core_audio::audio_process_objects_for_apps(&apps);
-            if objects.is_empty() {
-                let names: Vec<String> = targets.iter().map(|t| t.name.clone()).collect();
-                anyhow::bail!(
-                    "None of the target applications are running with audio: {}. Open one and start its call or playback, or record all computer audio.",
-                    names.join(", ")
-                );
-            }
-            info!("🎯 Recording {} Core Audio process(es) for: {}", objects.len(), apps.join(", "));
+            info!("🎯 Recording only the audio of: {}", apps.join(", "));
             let names: Vec<String> = targets.iter().map(|t| t.name.clone()).collect();
             let device = Arc::new(AudioDevice {
                 name: format!("App Audio: {}", names.join(", ")),
                 device_type: super::devices::DeviceType::Output,
             });
-            return Self::create_core_audio_stream_with_process(
+            return Self::create_core_audio_stream_for_apps(
                 device,
                 state,
                 _device_type,
                 recording_sender,
-                Some(objects),
+                Some(apps),
             ).await;
         }
 
