@@ -201,7 +201,7 @@ Analytics transmission is disabled, and Windows update checks are opt-in.
 | Database, templates, and models | Windows/Linux: `<app folder>/data` when writable, with an OS data-directory fallback; macOS: `~/Library/Application Support/Meetily` |
 | Recording/onboarding preferences | Tauri's application-data store; macOS: `~/Library/Application Support/com.meetily.ai` |
 | Default recordings folder | Windows: `Music/meetily-recordings`; macOS: `Movies/meetily-recordings` |
-| Saved audio tracks | `audio.mp4` (mixed playback), `mic.mp4`, and `system.mp4` |
+| Saved audio tracks | `audio.mp4` (mixed playback), `mic.mp4`, and `system.mp4`; each is encoded once at stop, so it stays aligned with transcript times |
 
 Change the recordings folder in **Settings → Recording → Save Location**.
 The meeting database, models, and preferences are distinct from the audio folder;

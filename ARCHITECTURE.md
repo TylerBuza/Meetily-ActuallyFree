@@ -212,7 +212,8 @@ Two gotchas:
    recordings folder (`audio/recording_preferences.rs`), *not* the data root,
    and they are **`.mp4`, not `.wav`**. New recordings retain aligned
    `audio.mp4` (mixed playback), `mic.mp4` (local user), and `system.mp4`
-   (remote/computer audio). Code that looks for playback must prefer
+   (remote/computer audio), each encoded once from lossless checkpoints (see
+   below). Code that looks for playback must prefer
    `audio.mp4` — see `diarization::find_meeting_audio`.
 2. `paths.rs` always uses the OS data directory on macOS. Windows and Linux fall
    back there if the install directory isn't writable.
@@ -241,6 +242,40 @@ omitted because either source may remain silent for a whole meeting. Concat
 demuxer list entries use `ffconcat_file_line`; raw absolute paths are unsafe
 because an apostrophe in a custom root or user name terminates FFmpeg's quoted
 path.
+
+Each track (`IncrementalAudioSaver::new_track`; any name) writes 30 s
+checkpoints to `.checkpoints/<track>/<track>_chunk_NNN.flac` as lossless 16-bit
+FLAC. At stop, `finalize` encodes the checkpoints once to AAC-LC 192 kbps
+(`encode::AAC_OUTPUT_ARGS`) on a blocking thread, and `RecordingSaver` finalizes
+all tracks concurrently. The encode costs about 0.35 s per minute of audio per
+track (bundled FFmpeg 8.0, M1 Max). Each `<track>.mp4` therefore holds one AAC
+stream that starts with the encoder's 1024-sample priming and then stays
+sample-continuous with transcript times. Older versions wrote AAC checkpoints and
+joined them with `-c copy`: each checkpoint added about 1800 samples (37 ms), so
+saved audio drifted about 2.2 s behind transcript times at 30 minutes.
+`metadata.json` gets `"audio_layout": "single_stream"` when the meeting folder is
+created; recordings without this field use the old joined layout.
+
+Crash recovery (`recover_audio_from_checkpoints`) finds every
+`.checkpoints/<track>/` folder on disk. It recovers `audio` first, then the
+other tracks concurrently, truncated to the mixed track's checkpoint count.
+FLAC checkpoints are encoded the same way as at stop. Legacy `.mp4` checkpoints
+(per-track or the old flat `.checkpoints/` layout) are still joined with
+`-c copy`; recovery passes `-f mp4` because it writes to a temporary
+`<track>.mp4.recovering` name. Checkpoints are ordered by their numeric index,
+not by file name. `cleanup_checkpoints` removes any recovered track's folder.
+
+Tests in `incremental_saver.rs` cover these paths with synthetic signals and the
+FFmpeg found on the build machine. One test saves four checkpoints of impulses
+and checks that the decoded length and every impulse stay within one AAC frame
+of the input; the old `-c copy` join fails it (+6656 samples). Other tests cover
+four named tracks, FLAC recovery with the layout mark and cleanup, legacy AAC
+recovery (per-track and flat), and checkpoint ordering. Limits: FLAC
+checkpoints use more temporary disk than AAC ones (about 4 MB per minute per
+track for noise, less for speech and silence) until the stop or recovery encode
+completes. No reader uses `audio_layout` yet, and readers do not remove the
+21 ms encoder priming. The whole stop save must still finish within the
+5-minute timeout in `recording_commands.rs`.
 
 A one-time migration (`paths::migrate_legacy_data`) copies data from the old
 Tauri app-data location on first run so upgrading users keep their history.

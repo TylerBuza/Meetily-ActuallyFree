@@ -15,10 +15,53 @@ pub struct AudioInput {
     pub device: Arc<AudioDevice>,
 }
 
+/// Output options for every saved recording file: AAC-LC 192 kbps in a faststart MP4.
+pub(crate) const AAC_OUTPUT_ARGS: &[&str] = &[
+    "-c:a",
+    "aac",
+    "-b:a",
+    "192k", // Increased from 64k for better audio quality (especially for speech)
+    "-profile:a",
+    "aac_low", // Use AAC-LC profile for better compatibility
+    "-movflags",
+    "+faststart", // Optimize for web streaming
+    "-f",
+    "mp4",
+];
+
 pub fn encode_single_audio(
     data: &[u8],
     sample_rate: u32,
     channels: u16,
+    output_path: &PathBuf,
+) -> anyhow::Result<()> {
+    encode_with_ffmpeg(data, sample_rate, channels, AAC_OUTPUT_ARGS, output_path)
+}
+
+/// Encode a recording checkpoint losslessly (16-bit FLAC). The finished track is
+/// encoded to AAC once, so it carries one encoder priming instead of one per
+/// checkpoint and stays aligned with transcript times.
+pub fn encode_lossless_checkpoint(
+    data: &[u8],
+    sample_rate: u32,
+    channels: u16,
+    output_path: &PathBuf,
+) -> anyhow::Result<()> {
+    encode_with_ffmpeg(
+        data,
+        sample_rate,
+        channels,
+        &["-c:a", "flac", "-sample_fmt", "s16", "-f", "flac"],
+        output_path,
+    )
+}
+
+/// Pipe interleaved f32 samples into FFmpeg and encode them with `codec_args`.
+fn encode_with_ffmpeg(
+    data: &[u8],
+    sample_rate: u32,
+    channels: u16,
+    codec_args: &[&str],
     output_path: &PathBuf,
 ) -> anyhow::Result<()> {
     debug!("Starting FFmpeg process for {} bytes of audio data", data.len());
@@ -47,18 +90,9 @@ pub fn encode_single_audio(
             &channels.to_string(),
             "-i",
             "pipe:0",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k", // Increased from 64k for better audio quality (especially for speech)
-            "-profile:a",
-            "aac_low", // Use AAC-LC profile for better compatibility
-            "-movflags",
-            "+faststart", // Optimize for web streaming
-            "-f",
-            "mp4",
-            output_path,
         ])
+        .args(codec_args)
+        .arg(output_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
