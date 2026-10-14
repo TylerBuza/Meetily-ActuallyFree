@@ -18,6 +18,16 @@ use log::{error, info, warn};
 #[cfg(target_os = "macos")]
 use cidre::{arc, av, cat, cf, core_audio as ca, os};
 
+/// Whether anything is currently playing through the default output device.
+/// A tap-only aggregate device gets no callbacks while the output is idle, so
+/// silence must not be mistaken for a stalled capture. Unknown counts as running.
+#[cfg(target_os = "macos")]
+pub fn default_output_is_running() -> bool {
+    ca::System::default_output_device()
+        .and_then(|d| d.bool_prop(&ca::PropSelector::DEVICE_IS_RUNNING_SOMEWHERE.global_addr()))
+        .unwrap_or(true)
+}
+
 /// Waker state for async polling
 struct WakerState {
     waker: Option<Waker>,

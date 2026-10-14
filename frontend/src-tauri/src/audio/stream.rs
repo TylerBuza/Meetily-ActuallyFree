@@ -341,6 +341,8 @@ impl AudioStream {
                     {
                         Ok(Some(sample)) => sample,
                         Ok(None) => break,
+                        // Nothing is playing: no callbacks is expected silence, keep waiting.
+                        Err(_) if !super::capture::core_audio::default_output_is_running() => continue,
                         Err(_) => {
                             error!(
                                 "Core Audio stopped delivering callbacks for {}",
