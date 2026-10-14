@@ -43,6 +43,21 @@ sudo pacman -S --needed \
 
 These cover: the build toolchain, `bindgen` (`clang` / `libclang-dev`), the ALSA audio backend (`libasound2-dev`), D-Bus (`libdbus-1-dev`, linked by the Tauri runtime), the Tauri 2 runtime (`webkit2gtk-4.1`, `javascriptcoregtk-4.1`, `libsoup-3.0`, `gtk-3`), the `tray-icon` feature (`libayatana-appindicator3-dev`), and AppImage bundling (`librsvg2-dev`).
 
+#### Runtime packages
+
+Recording playback in the `.deb` and in development builds uses the system GStreamer, which needs the MP4 demuxer and an AAC decoder. The AppImage bundles its own GStreamer.
+
+```bash
+# Ubuntu/Debian
+sudo apt install -y gstreamer1.0-plugins-good gstreamer1.0-libav
+
+# Fedora/RHEL
+sudo dnf install -y gstreamer1-plugins-good gstreamer1-plugin-libav
+
+# Arch Linux
+sudo pacman -S --needed gst-plugins-good gst-libav
+```
+
 #### Rust toolchain
 
 ```bash
