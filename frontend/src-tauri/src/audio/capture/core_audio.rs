@@ -23,6 +23,17 @@ extern "C" {
     /// libSystem: the app a helper process acts for (browser renderer → browser,
     /// WebKit WebContent → Safari). Returns the pid itself for ordinary processes.
     fn responsibility_get_pid_responsible_for_pid(pid: i32) -> i32;
+    /// libproc: the executable path of a process.
+    fn proc_pidpath(pid: i32, buffer: *mut std::ffi::c_void, size: u32) -> i32;
+}
+
+/// Executable path of `pid`. `proc_pidpath` also works for Apple's own apps
+/// (Safari, QuickTime Player), for which sysinfo returns no executable.
+#[cfg(target_os = "macos")]
+fn exe_path(pid: i32) -> Option<String> {
+    let mut buffer = [0u8; 4096];
+    let len = unsafe { proc_pidpath(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    (len > 0).then(|| String::from_utf8_lossy(&buffer[..len as usize]).into_owned())
 }
 
 /// Core Audio process objects that belong to the chosen apps: the apps' own
@@ -41,23 +52,6 @@ pub fn audio_process_objects_for_apps(apps: &[String]) -> Vec<u32> {
             Some((process.0 .0, [pid, responsible]))
         })
         .collect();
-    // Refresh only the audio processes and their responsible apps: this runs
-    // every rescan interval while recording, so a full process table is waste.
-    let pids: Vec<sysinfo::Pid> = candidates
-        .iter()
-        .flat_map(|(_, pids)| pids.iter())
-        .filter_map(|&pid| u32::try_from(pid).ok().map(sysinfo::Pid::from_u32))
-        .collect();
-    let mut sys = sysinfo::System::new();
-    sys.refresh_processes_specifics(
-        sysinfo::ProcessesToUpdate::Some(&pids),
-        true,
-        sysinfo::ProcessRefreshKind::new().with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
-    );
-    let exe_path = |pid: i32| -> Option<String> {
-        let path = sys.process(sysinfo::Pid::from_u32(u32::try_from(pid).ok()?))?.exe()?;
-        Some(path.to_string_lossy().into_owned())
-    };
     let mut objects: Vec<u32> = candidates
         .into_iter()
         .filter(|(_, pids)| {
@@ -705,6 +699,21 @@ mod tests {
 
 #[cfg(test)]
 mod app_matching_tests {
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn exe_path_reads_a_process_executable() {
+        let own = super::exe_path(std::process::id() as i32).expect("own executable");
+        assert_eq!(std::path::Path::new(&own), std::env::current_exe().unwrap().canonicalize().unwrap());
+    }
+
+    /// Needs QuickTime Player to have played audio since it opened.
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore]
+    fn finds_apple_apps_audio_processes() {
+        assert!(!super::audio_process_objects_for_apps(&["QuickTime Player".into()]).is_empty());
+    }
+
     use super::app_owns_exe_path;
 
     #[test]

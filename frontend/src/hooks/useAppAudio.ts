@@ -12,8 +12,10 @@ import type { PerAppTarget, RecordableApp, RecordingPreferences } from '@/compon
 
 const APP_AUDIO_CHANGED_EVENT = 'meetily-app-audio-changed';
 
+// A browsed macOS app is stored as "Safari.app"; the running list says "Safari".
+const appKey = (executable: string) => executable.toLowerCase().replace(/\.app$/, '');
 const sameApp = (a: { executable: string }, b: { executable: string }) =>
-  a.executable.toLowerCase() === b.executable.toLowerCase();
+  appKey(a.executable) === appKey(b.executable);
 
 export interface AppAudioChoice {
   loaded: boolean;

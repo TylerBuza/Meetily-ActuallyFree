@@ -926,7 +926,9 @@ selectable output list unless capture actually binds to that route.
 and keeps every audio process whose executable, or whose responsible process
 (`responsibility_get_pid_responsible_for_pid`), is a chosen app or lives inside
 its `.app` bundle. Browsers and WebKit play audio from helpers (Chrome renderer,
-WebContent), so matching only the main PID would capture nothing. All chosen apps
+WebContent), so matching only the main PID would capture nothing. Executable
+paths come from `proc_pidpath`: sysinfo returns none for Apple's own apps
+(Safari, QuickTime Player), which then never matched. All chosen apps
 go into one mono mixdown tap; Windows keeps its per-PID process loopback.
 Only processes that have already used audio exist as process objects, so the
 include list cannot be fixed at Start: a call joined later, a new tab, or
