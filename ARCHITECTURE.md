@@ -974,6 +974,10 @@ consecutive confident estimates (1 s windows, every 0.5 s) agree and differ
 from the lag in use by at least 1 ms; until then 100 ms is assumed. A change
 over 15 ms resets the model's state.
 
+With "only chosen apps", the reference holds only those apps: other sounds
+the speakers play (notifications, music) are not cancelled and can be
+transcribed as "You" (seen live with a text-to-speech app that was not chosen).
+
 Cancellation stays on with headphones: with no echo in the mic the model leaves
 the voice nearly untouched (above), and the output route can change mid-call.
 WebRTC AEC3 was evaluated and dropped: it removed about 36 dB but cut the voice
