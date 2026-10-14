@@ -394,6 +394,16 @@ impl AudioMixerRingBuffer {
     }
 }
 
+/// Below -46 dBFS RMS: no speech worth transcribing (normalized speech is
+/// around -20 to -30 dBFS). Speech recognition turns such segments into
+/// invented words. No peak check: in a live podcast test, single clicks in
+/// the cancelled mic pushed the peak of near-silent segments (RMS -52 to
+/// -68 dBFS) over any peak limit, and they still came out as "You" text.
+pub(crate) fn near_silent(samples: &[f32]) -> bool {
+    let rms = (samples.iter().map(|&x| x * x).sum::<f32>() / samples.len().max(1) as f32).sqrt();
+    rms < 0.005
+}
+
 /// Mixes mic + system for the *recording file only*.
 ///
 /// Transcription no longer hears this mix — each source is VAD'd and sent to
@@ -1217,6 +1227,12 @@ impl AudioPipeline {
                 );
                 continue;
             }
+            // Speech recognition invents words ("Yeah.", "Okay.") from
+            // near-silence, such as the faint echo left after cancellation.
+            if near_silent(&segment.samples) {
+                debug!("⏭️ Dropping near-silent {:?} VAD segment: {:.1}ms", device_type, duration_ms);
+                continue;
+            }
             info!(
                 "📤 Sending {:?} VAD segment: {:.1}ms, {} samples @ {:.2}s",
                 device_type,
@@ -1784,6 +1800,21 @@ impl Default for AudioPipelineManager {
 #[cfg(all(test, target_os = "windows"))]
 #[path = "hardware_qualification.rs"]
 mod hardware_qualification;
+
+#[cfg(test)]
+mod near_silence_tests {
+    #[test]
+    fn faint_echo_is_near_silent_and_speech_is_not() {
+        // Measured live: false "You" lines from the cancelled mic had RMS
+        // 0.00017-0.0026, some with click peaks up to 0.03.
+        let mut faint: Vec<f32> = (0..16_000).map(|i| 0.0003 * ((i as f32) * 0.07).sin()).collect();
+        faint[8_000] = 0.03; // a click
+        assert!(super::near_silent(&faint));
+        let quiet_speech: Vec<f32> = (0..16_000).map(|i| 0.02 * ((i as f32) * 0.07).sin()).collect();
+        assert!(!super::near_silent(&quiet_speech));
+        assert!(super::near_silent(&[]));
+    }
+}
 
 #[cfg(test)]
 mod ring_buffer_tests {

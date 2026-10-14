@@ -961,8 +961,9 @@ The model only removes echo that arrives after its reference, and system
 chunks are stamped when processed. `MicEchoCanceller` therefore emits both
 tracks exactly 750 ms (`LEAD_MS`) after they enter (a test asserts exact
 alignment), so the saved tracks stay aligned while the mic waits 700 ms before
-the model sees it (`MIC_HOLD_MS`). The reference for any echo lag from -80 ms
-to 500 ms has then arrived (tested), and the lag estimator, which runs on the
+the model sees it (`MIC_HOLD_MS`). The reference for any echo lag from 5 ms
+to 500 ms has then arrived (tested; lags near 0 only ever came from edges both
+streams share, such as the start of a recording), and the lag estimator, which runs on the
 incoming audio, sees a delay change before the model reaches it (below). The path decimates mic and reference to 16 kHz with a linear-phase FIR,
 feeds the reference 20 ms ahead of the echo (the measured 5-40 ms plateau), runs
 the model in 8 ms hops, and interpolates back to 48 kHz. Above 7 kHz, which the
@@ -985,6 +986,13 @@ leaked for 0.5-2 s after each change and speech recognition turned the leak
 into sentences attributed to "You". With it, a 50 ms jump either way still has
 36-42 dB removed in the first half-second (`real_recordings_report`). The cost
 is 0.6 s more delay before live transcription; saved tracks are unaffected.
+
+Speech recognition invents short words ("Yeah.", "Okay.", "Thank you.") from
+near-silence. In a live 7.5-minute podcast test with the user silent, the
+cancelled mic (-65 to -80 dBFS while the raw mic carried the echo at -33 dBFS)
+still produced 21 such "You" lines. Live VAD segments below -46 dBFS RMS
+(`pipeline::near_silent`) are therefore not sent to speech recognition; that
+drops all 21, while normalized speech is around -20 to -30 dBFS.
 
 With "only chosen apps", the reference holds only those apps: other sounds
 the speakers play (notifications, music) are not cancelled and can be
