@@ -202,7 +202,8 @@ signature.
 | What | Where |
 |---|---|
 | Database, templates, models, file-backed settings | Windows/Linux: `<exe dir>/data/…`; macOS: `~/Library/Application Support/Meetily/…` |
-| Tauri plugin stores (recording preferences/onboarding) | macOS: `~/Library/Application Support/io.github.tylerbuza.meetily-actuallyfree/…` (copied once from the legacy `com.meetily.ai` folder by `paths::migrate_plugin_stores`) |
+| Tauri plugin stores (recording preferences/onboarding) | macOS: `~/Library/Application Support/io.github.tylerbuza.meetily-actuallyfree/…` (copied once from the legacy `com.meetily.ai` folder by `paths::migrate_from_legacy_identifier`) |
+| WebView storage (localStorage: Labs, name, theme, languages, provider/model map; IndexedDB transcript recovery) | macOS: `~/Library/WebKit/io.github.tylerbuza.meetily-actuallyfree/WebsiteData` (copied once from `~/Library/WebKit/com.meetily.ai` while the new store holds no origin data) |
 | Bundled diarization models | The platform app bundle's `resources/diarization/` directory |
 | **Audio recordings** | Windows: `%USERPROFILE%\Music\meetily-recordings\<meeting>`; macOS: `~/Movies/meetily-recordings/<meeting>` |
 
@@ -874,6 +875,33 @@ On macOS, `tauri.macos.conf.json` overrides the identifier with
 `io.github.tylerbuza.meetily-actuallyfree`, so this fork no longer shares a
 bundle identity (LaunchServices, privacy permissions, WebView storage) with an
 installed upstream Meetily.
+
+`paths::migrate_from_legacy_identifier` carries existing users over. `run()`
+calls it before `tauri::Builder` builds, because Tauri creates the config
+window (and so the WKWebView data store) before the `setup` hook. It:
+
+- copies top-level plugin-store `*.json` files missing from the new
+  Application Support folder, each via a temporary name, and writes
+  `.migrated_plugin_stores` only after a complete copy, so a failed copy is
+  retried on the next launch;
+- on a bundled build, copies `~/Library/WebKit/com.meetily.ai/WebsiteData`
+  when the new identifier's `WebsiteData` has no origin storage (an origin
+  folder under `Default/`, or the older flat `LocalStorage`/`IndexedDB`
+  entries). WebKit names origin folders by hashing the origin with
+  `Default/salt`, so the tree is copied whole (salt included) into a staging
+  folder and renamed over the fresh store, never merged. The origin
+  (`tauri://localhost`) is unchanged, so the data applies as is. A store the
+  new identifier has already written to is never replaced;
+- reports whether `onboarding-status.json` was carried over. Onboarding is then
+  skipped, but Microphone and Audio Capture grants are per bundle identifier,
+  so `setup` requests both once in the background (the same native calls the
+  onboarding audio test makes) instead of leaving the first recording to start
+  without them. Re-entering onboarding instead would rerun
+  `complete_onboarding`, which overwrites the user's model configuration.
+
+The legacy folders are left in place. Old and new builds can run side by side
+against the same `~/Library/Application Support/Meetily` database; their
+settings and WebView storage diverge after the one-time copy.
 
 On Windows, `com.meetily.ai` is also the single shell identity: it is Tauri's
 bundle identifier, the installer shortcut AUMID, and the explicit process AUMID

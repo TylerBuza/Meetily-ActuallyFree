@@ -457,6 +457,11 @@ pub fn run() {
     #[cfg(windows)]
     notifications::native_windows::ensure_app_identity();
 
+    let context = tauri::generate_context!();
+    // Before the builder runs: Tauri creates the config window, and with it the
+    // macOS WebView's storage, before the `setup` hook.
+    let onboarding_migrated = paths::migrate_from_legacy_identifier(&context.config().identifier);
+
     let mut builder = tauri::Builder::default();
 
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
@@ -486,10 +491,7 @@ pub fn run() {
         )) as NotificationManagerState<tauri::Wry>)
         .manage(audio::init_system_audio_state())
         .manage(summary::summary_engine::ModelManagerState(Arc::new(tokio::sync::Mutex::new(None))))
-        .setup(|_app| {
-            // Before any plugin store is opened: carry settings over from the
-            // legacy bundle identifier (macOS only; a no-op elsewhere).
-            crate::paths::migrate_plugin_stores(&_app.handle());
+        .setup(move |_app| {
             if let Err(error) = crash_report::start_session() {
                 log::error!("Failed to initialize crash reporting: {error}");
             }
@@ -501,6 +503,24 @@ pub fn run() {
             if let Err(e) = tray::create_tray(_app.handle()) {
                 log::error!("Failed to create system tray: {}", e);
             }
+
+            // Settings carried over from `com.meetily.ai` skip onboarding, whose
+            // audio test is where macOS asks for Microphone and Audio Capture.
+            // Those grants belong to the old bundle identifier, so ask once now
+            // rather than letting the first recording start without them.
+            #[cfg(target_os = "macos")]
+            if onboarding_migrated {
+                std::thread::spawn(|| {
+                    if let Err(e) = trigger_audio_permission() {
+                        log::warn!("Microphone permission request failed: {}", e);
+                    }
+                    if let Err(e) = audio::permissions::trigger_system_audio_permission() {
+                        log::warn!("Audio Capture permission request failed: {}", e);
+                    }
+                });
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = onboarding_migrated;
 
             // Initialize notification system with proper defaults
             log::info!("Initializing notification system...");
@@ -962,7 +982,7 @@ pub fn run() {
             audio::import::cancel_import_command,
             audio::import::is_import_in_progress_command,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(|_app_handle, event| {
             match event {
