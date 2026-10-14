@@ -49,7 +49,12 @@ export function describeStartError(error: unknown): { title: string; message: st
       message: 'Allow microphone access (and Audio Capture on macOS) in your system settings, then restart Meetily.',
     };
   }
-  return { title: 'Could not start recording', message: 'Check your audio devices in the recording card and try again.' };
+  // Unrecognised: show the backend's own reason rather than hiding it.
+  const reason = (error instanceof Error ? error.message : String(error)).replace(/^Failed to start recording:\s*/i, '').trim();
+  return {
+    title: 'Could not start recording',
+    message: reason || 'Check your audio devices in the recording card and try again.',
+  };
 }
 
 /**
