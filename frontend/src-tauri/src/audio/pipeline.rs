@@ -1128,6 +1128,9 @@ impl AudioPipeline {
         #[cfg(target_os = "macos")]
         let echo_canceller = if !(mic_enabled && system_enabled) {
             None
+        } else if std::env::var("MEETILY_AEC").as_deref() == Ok("off") {
+            info!("🔇 Mic echo cancellation off: MEETILY_AEC=off");
+            None
         } else if super::echo_cancellation::output_is_headphones() {
             info!("🔇 Mic echo cancellation off: output is headphones");
             None
