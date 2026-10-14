@@ -67,9 +67,11 @@ pub fn audio_process_objects_for_apps(apps: &[String]) -> Vec<u32> {
 }
 
 /// How often a per-app tap looks for newly started audio processes of the
-/// chosen apps (joining a call, a browser restarting its audio service).
+/// chosen apps (joining a call, a browser restarting its audio service). A
+/// scan is one process-object list plus a path lookup per process, so it is
+/// cheap; at 1.5 s an app's first sentence was measured going missing.
 #[cfg(target_os = "macos")]
-const APP_RESCAN_INTERVAL: Duration = std::time::Duration::from_millis(1500);
+const APP_RESCAN_INTERVAL: Duration = std::time::Duration::from_millis(500);
 
 /// Re-scan loop behind a per-app tap. `applied` is the process list the tap
 /// currently has; every `interval` the matching processes are scanned again
