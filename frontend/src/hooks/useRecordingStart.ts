@@ -21,10 +21,27 @@ interface UseRecordingStartReturn {
 
 type StartSource = 'home_page' | 'sidebar_auto' | 'sidebar_direct';
 
+/** The text of a rejected `invoke`: usually a string, but may be an Error or a serialized object. */
+function errorText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (error == null) return '';
+  const message = (error as { message?: unknown }).message;
+  if (typeof message === 'string') return message;
+  try {
+    return JSON.stringify(error) ?? String(error);
+  } catch {
+    return String(error);
+  }
+}
+
 /** A readable reason for a failed start, from the backend's error text. */
 export function describeStartError(error: unknown): { title: string; message: string } {
-  const text = (error instanceof Error ? error.message : String(error)).toLowerCase();
-  if (text.includes('target application')) {
+  const raw = errorText(error);
+  const text = raw.toLowerCase();
+  // Only "not currently running" means opening an app helps; other per-app
+  // failures fall through to the backend's own reason below.
+  if (text.includes('target application') && text.includes('currently running')) {
     return {
       title: 'None of your chosen apps is open',
       message: 'Computer audio is set to record only chosen apps. Open one of them, or switch the record card back to all computer audio.',
@@ -50,7 +67,7 @@ export function describeStartError(error: unknown): { title: string; message: st
     };
   }
   // Unrecognised: show the backend's own reason rather than hiding it.
-  const reason = (error instanceof Error ? error.message : String(error)).replace(/^Failed to start recording:\s*/i, '').trim();
+  const reason = raw.replace(/^Failed to start recording:\s*/i, '').trim();
   return {
     title: 'Could not start recording',
     message: reason || 'Check your audio devices in the recording card and try again.',
