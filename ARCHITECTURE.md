@@ -50,13 +50,14 @@ Capture, recording, and transcription deliberately split into parallel paths in
 `src-tauri/src/audio/`:
 
 ```
-mic ─▶ normalize/limit ─┬─▶ mic VAD ─────▶ transcription worker
-                       ├─▶ mic.mp4
-                       └─┐
-                         ├─▶ professional mix ─▶ audio.mp4 (playback)
-sys ───────────────────┬─┘
-                      ├─▶ system VAD ───▶ transcription worker
-                      └─▶ system.mp4
+mic ─▶ high-pass ─▶ echo cancel* ─▶ normalize/limit ─┬─▶ mic VAD ─────▶ transcription worker
+                         ▲     └─▶ mic_raw.mp4*      ├─▶ mic.mp4
+                         │                           └─┐
+                         │                             ├─▶ professional mix ─▶ audio.mp4 (playback)
+sys ─────────────────────┴───────────────────────────┬─┘
+                                                     ├─▶ system VAD ───▶ transcription worker
+                                                     └─▶ system.mp4
+* macOS, when both sources record (reference: the system window)
 ```
 
 ### The mixed-audio trap ⚠️
@@ -212,7 +213,8 @@ Two gotchas:
    recordings folder (`audio/recording_preferences.rs`), *not* the data root,
    and they are **`.mp4`, not `.wav`**. New recordings retain aligned
    `audio.mp4` (mixed playback), `mic.mp4` (local user), and `system.mp4`
-   (remote/computer audio). Code that looks for playback must prefer
+   (remote/computer audio); on macOS also `mic_raw.mp4`, the mic before echo
+   cancellation. Code that looks for playback must prefer
    `audio.mp4` — see `diarization::find_meeting_audio`.
 2. `paths.rs` always uses the OS data directory on macOS. Windows and Linux fall
    back there if the install directory isn't writable.
@@ -899,7 +901,7 @@ Responsibility map:
 | File | macOS responsibility |
 |---|---|
 | `audio/capture/core_audio.rs` | Create the global process tap, aggregate device, stream, and audible probe |
-| `audio/echo_cancellation.rs` | Remove speaker playback from the mic (neural DTLN-aec, AEC3 fallback; system audio as reference) |
+| `audio/echo_cancellation.rs` | Remove speaker playback from the mic (neural DTLN-aec, system audio as reference) |
 | `audio/neural_echo.rs` | DTLN-aec model streaming (ONNX, 16 kHz) |
 | `audio/permissions.rs` | Preserve legacy IPC names while routing verification to the Core Audio probe |
 | `audio/capture/backend_config.rs` | Expose only implemented backends for the current platform |
@@ -930,38 +932,57 @@ saved tracks, mixed audio), with the system window as the reference, as Granola
 and Hyprnote do. The microphone itself stays raw: Apple voice processing was
 measured to duck other apps by about 8 dB even at its minimum setting.
 
-Two engines, measured through this code on real built-in mic/speaker takes
-(the user's voice and the speaker echo recorded separately and mixed, so the
-clean voice is known): the default neural engine (`audio/neural_echo.rs`,
-DTLN-aec ported from Hyprnote, MIT, models in `resources/dtln-aec/`) removed about
-45 dB of echo with a double-talk SI-SDR of about 12.8 dB; WebRTC AEC3 (`sonora`)
-removed about 36 dB at 7.7 dB. AEC3 is the fallback when the model cannot load
-and is selected with `MEETILY_AEC=aec3`; `MEETILY_AEC=off` disables both.
+The engine is DTLN-aec (`audio/neural_echo.rs`, ported from Hyprnote, MIT;
+models in `resources/dtln-aec/`). `MEETILY_AEC=off` turns it off. Mic loudness
+normalization (EBU R128 and the user's mic gain) runs in the pipeline *after*
+cancellation, not at capture: a canceller has to see the mic before any
+time-varying gain or limiting. The mic level meter is emitted from the same
+processed window, so it shows what is recorded.
 
-Both cancel only echo that arrives after its reference, and system chunks are
-stamped when processed. `MicEchoCanceller` therefore emits both tracks exactly
-160 ms (`LEAD_MS`) after they enter, so the reference can be fed ahead of its
-echo while the saved tracks stay aligned (a test asserts both engines within
-2 samples). The neural path decimates mic and reference to 16 kHz with a
-linear-phase FIR, holds the mic 100 ms, feeds the reference 20 ms ahead of the
-echo (the measured 5-40 ms plateau), runs the model in 8 ms hops, and
-interpolates the result back to 48 kHz, so the mic track above 7 kHz is
-filtered out while cancellation is on. The echo lag (107 ms on a MacBook Pro's
-built-in speakers) is estimated online by GCC-PHAT over 2 s of playback and
-locked when two consecutive confident estimates (1 s windows, every 0.5 s)
-agree; until then 100 ms is
-assumed. AEC3 runs at 48 kHz with its own delay estimation and its redundant
-high-pass filter off (the mic is already high-passed at capture; the filter
-alone dropped clean-voice correlation to 0.67); its 9 ms internal delay is
-compensated.
+Measured through this code on one set of real built-in mic/speaker takes on a
+MacBook Pro (the user's voice and the speaker echo recorded separately and
+mixed, so the clean voice is known; `real_recordings_report`):
 
-Cancellation is off when the output is headphones at recording start (built-in
-headphone jack or Bluetooth); USB outputs keep it because conference
-speakerphones are USB. About every 10 s of audio the log reports mic energy
-before and after cancellation while computer audio plays, with the echo lag.
-`echo_cancellation` tests cover the resampler delay, lag locking, track
-alignment for both engines and AEC3 removal; the ignored
-`real_recordings_report` scores both engines on recorded takes.
+| case | result |
+|------|--------|
+| echo only, after the first 4 s | 45.9 dB removed (8 dB in the first second, 31-47 dB after) |
+| user talking over the far end | voice SI-SDR 10.1 dB |
+| voice, silent speakers | SI-SDR 28.0 dB, 85% of the energy above 7 kHz kept |
+| voice, playback but no echo (headphones) | SI-SDR 25.4 dB |
+
+With Whisper large-v3-turbo on the same takes: without cancellation, the
+double-talk mic was transcribed as the far end's words and most of the user's
+sentence was lost; with it, the user's sentence came back with about 1 word in
+5 wrong. The cancelled echo-only take still produced a short hallucinated phrase
+from the first second's residual (model warm-up). One machine, one room, one
+voice: treat the numbers as indicative.
+
+The model only removes echo that arrives after its reference, and system
+chunks are stamped when processed. `MicEchoCanceller` therefore emits both
+tracks exactly 160 ms (`LEAD_MS`) after they enter (a test asserts exact
+alignment), so the saved tracks stay aligned while the mic waits 100 ms for its
+reference: echo lags from -80 ms to 500 ms get the reference in time (also
+tested). The path decimates mic and reference to 16 kHz with a linear-phase FIR,
+feeds the reference 20 ms ahead of the echo (the measured 5-40 ms plateau), runs
+the model in 8 ms hops, and interpolates back to 48 kHz. Above 7 kHz, which the
+16 kHz model cannot see, the raw mic is kept, scaled per 8 ms by the power ratio
+the model left below 7 kHz: echo-only moments stay silent, the voice keeps its
+bandwidth, and some echo above 7 kHz passes while the user talks over it (ASR
+runs at 16 kHz and never hears it). The echo lag (107 ms on a MacBook Pro's
+built-in speakers) is estimated online by GCC-PHAT and changed when two
+consecutive confident estimates (1 s windows, every 0.5 s) agree and differ
+from the lag in use by at least 1 ms; until then 100 ms is assumed. A change
+over 15 ms resets the model's state.
+
+Cancellation stays on with headphones: with no echo in the mic the model leaves
+the voice nearly untouched (above), and the output route can change mid-call.
+WebRTC AEC3 was evaluated and dropped: it removed about 36 dB but cut the voice
+to 7.7 dB SI-SDR in double talk and to 10.5 dB with headphones. Because the
+canceller rewrites the mic, the uncancelled mic is also saved as `mic_raw.mp4`
+(normalized the same way; created only when cancellation ran). The final flush
+releases the held 160 ms once; repeated flush signals add nothing. About every
+10 s of audio the log reports mic energy before and after cancellation while
+computer audio plays, with the echo lag.
 
 Creating the process tap triggers the OS Audio Capture prompt. A successful tap
 creation is still not enough because a denied tap can produce an all-zero stream.

@@ -12,7 +12,6 @@ use ort::value::TensorRef;
 use realfft::{num_complex::Complex, ComplexToReal, RealFftPlanner, RealToComplex};
 use std::sync::Arc;
 
-pub const SAMPLE_RATE: u32 = 16_000;
 /// DTLN-aec "128" models (MIT, see resources/dtln-aec/LICENSE).
 pub const MODEL_1: &[u8] = include_bytes!("../../resources/dtln-aec/model_128_1.onnx");
 pub const MODEL_2: &[u8] = include_bytes!("../../resources/dtln-aec/model_128_2.onnx");
@@ -36,6 +35,7 @@ pub struct NeuralEcho {
     out_block: Vec<f32>,
     pending_mic: Vec<f32>,
     pending_ref: Vec<f32>,
+    failed_hops: u64,
     // scratch
     spec: Vec<Complex<f32>>,
     ref_spec: Vec<Complex<f32>>,
@@ -70,6 +70,7 @@ impl NeuralEcho {
             out_block: vec![0.0; BLOCK],
             pending_mic: Vec::new(),
             pending_ref: Vec::new(),
+            failed_hops: 0,
             spec: vec![Complex::default(); BLOCK / 2 + 1],
             ref_spec: vec![Complex::default(); BLOCK / 2 + 1],
             fft_in: vec![0.0; BLOCK],
@@ -77,19 +78,18 @@ impl NeuralEcho {
         })
     }
 
-    /// Forget the LSTM state and buffered audio (after the echo path changes).
+    /// Forget the LSTM state (after the echo path changes). The audio blocks
+    /// stay, so the output continues without a gap.
     pub fn reset(&mut self) {
         self.states_1.fill(0.0);
         self.states_2.fill(0.0);
-        self.mic_block.fill(0.0);
-        self.ref_block.fill(0.0);
-        self.out_block.fill(0.0);
     }
 
     /// Feed aligned 16 kHz mic and reference of equal length; returns one
     /// output sample per input sample once a full hop is available (the
-    /// remainder waits for the next call).
-    pub fn process(&mut self, mic: &[f32], reference: &[f32]) -> ort::Result<Vec<f32>> {
+    /// remainder waits for the next call). A hop the model fails on passes the
+    /// mic through, on the same timeline.
+    pub fn process(&mut self, mic: &[f32], reference: &[f32]) -> Vec<f32> {
         let n = mic.len().min(reference.len());
         self.pending_mic.extend_from_slice(&mic[..n]);
         self.pending_ref.extend_from_slice(&reference[..n]);
@@ -101,12 +101,23 @@ impl NeuralEcho {
             self.mic_block[BLOCK - SHIFT..].copy_from_slice(&self.pending_mic[r.clone()]);
             self.ref_block.copy_within(SHIFT.., 0);
             self.ref_block[BLOCK - SHIFT..].copy_from_slice(&self.pending_ref[r]);
-            self.hop()?;
-            out.extend_from_slice(&self.out_block[..SHIFT]);
+            match self.hop() {
+                Ok(()) => out.extend_from_slice(&self.out_block[..SHIFT]),
+                Err(e) => {
+                    self.failed_hops += 1;
+                    if self.failed_hops == 1 || self.failed_hops % 1000 == 0 {
+                        log::warn!("Neural echo cancellation failed for {} hops: {e}", self.failed_hops);
+                    }
+                    // The mic `LATENCY` samples ago lines up with the output.
+                    out.extend_from_slice(&self.mic_block[..SHIFT]);
+                    self.out_block.copy_within(SHIFT.., 0);
+                    self.out_block[BLOCK - SHIFT..].fill(0.0);
+                }
+            }
         }
         self.pending_mic.drain(..hops * SHIFT);
         self.pending_ref.drain(..hops * SHIFT);
-        Ok(out)
+        out
     }
 
     fn hop(&mut self) -> ort::Result<()> {
