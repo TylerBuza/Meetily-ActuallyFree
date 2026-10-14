@@ -1058,6 +1058,10 @@ pub struct AudioPipeline {
     system_limiter_hit_since_emit: bool,
     last_mic_input: std::time::Instant,
     last_system_input: std::time::Instant,
+    /// Removes speaker playback from the mic using the system window as the
+    /// reference, before any consumer sees either window (macOS).
+    #[cfg(target_os = "macos")]
+    echo_canceller: Option<super::echo_cancellation::MicEchoCanceller>,
 }
 
 impl AudioPipeline {
@@ -1119,6 +1123,19 @@ impl AudioPipeline {
         let ring_buffer = AudioMixerRingBuffer::new(sample_rate, mic_enabled, system_enabled);
         let mixer = ProfessionalAudioMixer::new(sample_rate);
 
+        // ponytail: output route is checked once per recording; switching to
+        // headphones mid-call keeps cancellation on, which is harmless.
+        #[cfg(target_os = "macos")]
+        let echo_canceller = if !(mic_enabled && system_enabled) {
+            None
+        } else if super::echo_cancellation::output_is_headphones() {
+            info!("🔇 Mic echo cancellation off: output is headphones");
+            None
+        } else {
+            info!("🔇 Mic echo cancellation on (WebRTC AEC3, computer audio as reference)");
+            Some(super::echo_cancellation::MicEchoCanceller::new(sample_rate))
+        };
+
         // Note: target_chunk_duration_ms is ignored - VAD controls segmentation now
         let _ = target_chunk_duration_ms;
 
@@ -1146,6 +1163,8 @@ impl AudioPipeline {
             system_limiter_hit_since_emit: false,
             last_mic_input: std::time::Instant::now(),
             last_system_input: std::time::Instant::now(),
+            #[cfg(target_os = "macos")]
+            echo_canceller,
         })
     }
 
@@ -1395,7 +1414,11 @@ impl AudioPipeline {
 
                     // STEP 2: Mix audio in fixed windows when both streams have sufficient data
                     while self.ring_buffer.can_mix() {
-            if let Some((mic_window, sys_window)) = self.ring_buffer.extract_window() {
+            if let Some((mut mic_window, mut sys_window)) = self.ring_buffer.extract_window() {
+                            #[cfg(target_os = "macos")]
+                            if let Some(aec) = self.echo_canceller.as_mut() {
+                                aec.process(&mut mic_window, &mut sys_window);
+                            }
                             // STEP 3: Transcribe each source independently.
                             // Same wall-clock windows (aligned by the ring buffer),
                             // separate sample streams + VAD state — so when both
@@ -1475,47 +1498,63 @@ impl AudioPipeline {
         Ok(())
     }
 
+    /// Transcribe and persist one window during the final flush.
+    fn emit_final_window(&mut self, mic_window: Vec<f32>, sys_window: Vec<f32>) {
+        Self::emit_source_speech(
+            &mut self.mic_vad,
+            &mic_window,
+            DeviceType::Microphone,
+            &self.transcription_sender,
+            &mut self.chunk_id_counter,
+        );
+        Self::emit_source_speech(
+            &mut self.system_vad,
+            &sys_window,
+            DeviceType::System,
+            &self.transcription_sender,
+            &mut self.chunk_id_counter,
+        );
+
+        if let Some(sender) = &self.recording_sender_for_mixed {
+            let chunk_id = self.chunk_id_counter;
+            for (data, device_type) in [
+                (mic_window.clone(), DeviceType::Microphone),
+                (sys_window.clone(), DeviceType::System),
+                (
+                    self.mixer.mix_window(&mic_window, &sys_window),
+                    DeviceType::Mixed,
+                ),
+            ] {
+                let _ = sender.send(AudioChunk {
+                    data,
+                    sample_rate: self.sample_rate,
+                    timestamp: 0.0,
+                    chunk_id,
+                    device_type,
+                });
+            }
+        }
+    }
+
     fn flush_remaining_audio(&mut self) -> Result<()> {
         info!(
             "Flushing remaining audio from pipeline (processed {} chunks)",
             self.processed_chunks
         );
 
-        while let Some((mic_window, sys_window)) = self.ring_buffer.extract_remaining() {
-            Self::emit_source_speech(
-                &mut self.mic_vad,
-                &mic_window,
-                DeviceType::Microphone,
-                &self.transcription_sender,
-                &mut self.chunk_id_counter,
-            );
-            Self::emit_source_speech(
-                &mut self.system_vad,
-                &sys_window,
-                DeviceType::System,
-                &self.transcription_sender,
-                &mut self.chunk_id_counter,
-            );
-
-            if let Some(sender) = &self.recording_sender_for_mixed {
-                let chunk_id = self.chunk_id_counter;
-                for (data, device_type) in [
-                    (mic_window.clone(), DeviceType::Microphone),
-                    (sys_window.clone(), DeviceType::System),
-                    (
-                        self.mixer.mix_window(&mic_window, &sys_window),
-                        DeviceType::Mixed,
-                    ),
-                ] {
-                    let _ = sender.send(AudioChunk {
-                        data,
-                        sample_rate: self.sample_rate,
-                        timestamp: 0.0,
-                        chunk_id,
-                        device_type,
-                    });
-                }
+        while let Some((mut mic_window, mut sys_window)) = self.ring_buffer.extract_remaining() {
+            #[cfg(target_os = "macos")]
+            if let Some(aec) = self.echo_canceller.as_mut() {
+                aec.process(&mut mic_window, &mut sys_window);
             }
+            self.emit_final_window(mic_window, sys_window);
+        }
+        // The canceller holds back its lead; release it before the VADs flush.
+        // Also runs on timeline resets, so keep the canceller (and its learned
+        // echo path) for the rest of the recording.
+        #[cfg(target_os = "macos")]
+        if let Some((mic_window, sys_window)) = self.echo_canceller.as_mut().map(|aec| aec.drain()) {
+            self.emit_final_window(mic_window, sys_window);
         }
 
         crate::diarization::live_nemotron::finish();
@@ -1733,6 +1772,9 @@ mod ring_buffer_tests {
             "mic".into(), super::super::device_detection::InputDeviceKind::Unknown,
             "system".into(), super::super::device_detection::InputDeviceKind::Unknown).unwrap();
         pipeline.recording_sender_for_mixed = Some(tracks);
+        // Exact sample bookkeeping; echo cancellation would change and delay the mic.
+        #[cfg(target_os = "macos")]
+        { pipeline.echo_canceller = None; }
         for (index, (source, value, timestamp)) in [
             (DeviceType::Microphone, 0.1, 0.02),
             (DeviceType::System, 0.2, 0.02),

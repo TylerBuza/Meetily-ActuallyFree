@@ -899,6 +899,7 @@ Responsibility map:
 | File | macOS responsibility |
 |---|---|
 | `audio/capture/core_audio.rs` | Create the global process tap, aggregate device, stream, and audible probe |
+| `audio/echo_cancellation.rs` | Remove speaker playback from the mic (WebRTC AEC3, system audio as reference) |
 | `audio/permissions.rs` | Preserve legacy IPC names while routing verification to the Core Audio probe |
 | `audio/capture/backend_config.rs` | Expose only implemented backends for the current platform |
 | `components/onboarding/steps/AudioTestStep.tsx` | Serialize the native singleton monitor and guide audible testing |
@@ -919,6 +920,30 @@ name proves that an output exists; it does not prove Audio Capture authorization
 and a non-default output name cannot retarget the global tap. The macOS UI keeps
 this route read-only and directs users to Sound settings. Do not restore a
 selectable output list unless capture actually binds to that route.
+
+With built-in speakers the microphone also hears the call, so the far side
+would be recorded twice (mic and system tracks, slightly offset, which sounds
+like an echo) and transcribed as "You". `audio/pipeline.rs` therefore runs each
+time-aligned mixer window through `MicEchoCanceller` before any consumer (VAD,
+saved tracks, mixed audio): WebRTC AEC3 from the pure-Rust `sonora` crate, with
+the system window as the render reference, as Granola does. The microphone
+itself stays raw: Apple voice processing was measured to duck other apps by
+about 8 dB even at its minimum setting, and the older switch that disabled
+ducking is rejected on macOS 27.
+
+AEC3 only cancels echo that arrives after its reference (about 52 dB removed
+with the reference 30-250 ms ahead, about 3 dB when simultaneous or late), and
+system chunks are stamped when processed, so they can trail the microphone. The
+canceller feeds the reference immediately but processes the microphone 100 ms
+later, and delays the system window by the same 100 ms, so both saved tracks
+stay aligned; the lead is released at every flush, including timeline resets,
+and the learned echo path is kept for the whole recording. Cancellation is off
+when the output is headphones at recording start (built-in headphone jack or
+Bluetooth); USB outputs keep it because conference speakerphones are USB. About
+every 10 s of audio the log reports mic energy before and after cancellation
+while computer audio plays, with AEC3's delay and ERLE. `echo_cancellation`
+tests cover the delay line and 20+ dB removal; the ignored
+`reference_lag_report` prints the timing tolerance.
 
 Creating the process tap triggers the OS Audio Capture prompt. A successful tap
 creation is still not enough because a denied tap can produce an all-zero stream.
