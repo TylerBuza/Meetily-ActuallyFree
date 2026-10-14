@@ -959,10 +959,11 @@ voice: treat the numbers as indicative.
 
 The model only removes echo that arrives after its reference, and system
 chunks are stamped when processed. `MicEchoCanceller` therefore emits both
-tracks exactly 160 ms (`LEAD_MS`) after they enter (a test asserts exact
-alignment), so the saved tracks stay aligned while the mic waits 100 ms for its
-reference: echo lags from -80 ms to 500 ms get the reference in time (also
-tested). The path decimates mic and reference to 16 kHz with a linear-phase FIR,
+tracks exactly 750 ms (`LEAD_MS`) after they enter (a test asserts exact
+alignment), so the saved tracks stay aligned while the mic waits 700 ms before
+the model sees it (`MIC_HOLD_MS`). The reference for any echo lag from -80 ms
+to 500 ms has then arrived (tested), and the lag estimator, which runs on the
+incoming audio, sees a delay change before the model reaches it (below). The path decimates mic and reference to 16 kHz with a linear-phase FIR,
 feeds the reference 20 ms ahead of the echo (the measured 5-40 ms plateau), runs
 the model in 8 ms hops, and interpolates back to 48 kHz. Above 7 kHz, which the
 16 kHz model cannot see, the raw mic is kept, scaled per 8 ms by the power ratio
@@ -972,14 +973,18 @@ runs at 16 kHz and never hears it). The echo lag (107 ms on a MacBook Pro's
 built-in speakers) is estimated online by GCC-PHAT and changed when two
 consecutive confident estimates (0.5 s windows, every 0.25 s, whatever the
 caller's window size) agree and differ from the lag in use by at least 1 ms;
-until then 100 ms is assumed. The model keeps its state across a lag change:
+until then 100 ms is assumed. A new lag is applied from where it most likely
+started (0.375 s before the first estimate that saw it, about 0.63 s before
+the lock), which the model has not reached yet thanks to the mic hold. The model keeps its state across a lag change:
 resetting it leaked more echo after a jump and hurt the voice after a false
 lock (`real_recordings_report`).
 The lag is not fixed for a recording: each new playback stream can reach the
 speakers with a different delay (seen live: 48, 100 and 151 ms in one
-recording, as playback stopped and started). After a 50 ms jump, cancellation
-is mostly back within 0.5-1 s (`real_recordings_report`); with 1 s windows it
-took 1.5-2 s, and the leaked words were transcribed as "You".
+recording, as playback stopped and started). Before the look-ahead, echo
+leaked for 0.5-2 s after each change and speech recognition turned the leak
+into sentences attributed to "You". With it, a 50 ms jump either way still has
+36-42 dB removed in the first half-second (`real_recordings_report`). The cost
+is 0.6 s more delay before live transcription; saved tracks are unaffected.
 
 With "only chosen apps", the reference holds only those apps: other sounds
 the speakers play (notifications, music) are not cancelled and can be
@@ -991,7 +996,7 @@ WebRTC AEC3 was evaluated and dropped: it removed about 36 dB but cut the voice
 to 7.7 dB SI-SDR in double talk and to 10.5 dB with headphones. Because the
 canceller rewrites the mic, the uncancelled mic is also saved as `mic_raw.mp4`
 (normalized the same way; created only when cancellation ran). The final flush
-releases the held 160 ms once; repeated flush signals add nothing. About every
+releases the held 750 ms once; repeated flush signals add nothing. About every
 10 s of audio the log reports mic energy before and after cancellation while
 computer audio plays, with the echo lag.
 
