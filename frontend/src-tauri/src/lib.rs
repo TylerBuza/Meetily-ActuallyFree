@@ -487,6 +487,9 @@ pub fn run() {
         .manage(audio::init_system_audio_state())
         .manage(summary::summary_engine::ModelManagerState(Arc::new(tokio::sync::Mutex::new(None))))
         .setup(|_app| {
+            // Before any plugin store is opened: carry settings over from the
+            // legacy bundle identifier (macOS only; a no-op elsewhere).
+            crate::paths::migrate_plugin_stores(&_app.handle());
             if let Err(error) = crash_report::start_session() {
                 log::error!("Failed to initialize crash reporting: {error}");
             }

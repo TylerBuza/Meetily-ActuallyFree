@@ -199,7 +199,7 @@ Analytics transmission is disabled, and Windows update checks are opt-in.
 | Data | Location |
 | --- | --- |
 | Database, templates, and models | Windows/Linux: `<app folder>/data` when writable, with an OS data-directory fallback; macOS: `~/Library/Application Support/Meetily` |
-| Recording/onboarding preferences | Tauri's application-data store; macOS: `~/Library/Application Support/com.meetily.ai` |
+| Recording/onboarding preferences | Tauri's application-data store; macOS: `~/Library/Application Support/io.github.tylerbuza.meetily-actuallyfree` (settings from the earlier `com.meetily.ai` folder are copied over once) |
 | Default recordings folder | Windows: `Music/meetily-recordings`; macOS: `Movies/meetily-recordings` |
 | Saved audio tracks | `audio.mp4` (mixed playback), `mic.mp4`, and `system.mp4` |
 

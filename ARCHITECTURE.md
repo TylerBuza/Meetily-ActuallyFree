@@ -193,7 +193,7 @@ its duration is unconfirmed and no completed multi-hour soak is claimed.
 
 This fork is install-local on Windows and Linux. On macOS, core writable data is
 under `~/Library/Application Support/Meetily`; Tauri plugin stores use the app
-identifier directory `~/Library/Application Support/com.meetily.ai`. Both are
+identifier directory `~/Library/Application Support/io.github.tylerbuza.meetily-actuallyfree`. Both are
 outside the signed `.app`, because writing inside that bundle invalidates its
 signature.
 
@@ -202,7 +202,7 @@ signature.
 | What | Where |
 |---|---|
 | Database, templates, models, file-backed settings | Windows/Linux: `<exe dir>/data/…`; macOS: `~/Library/Application Support/Meetily/…` |
-| Tauri plugin stores (recording preferences/onboarding) | macOS: `~/Library/Application Support/com.meetily.ai/…` |
+| Tauri plugin stores (recording preferences/onboarding) | macOS: `~/Library/Application Support/io.github.tylerbuza.meetily-actuallyfree/…` (copied once from the legacy `com.meetily.ai` folder by `paths::migrate_plugin_stores`) |
 | Bundled diarization models | The platform app bundle's `resources/diarization/` directory |
 | **Audio recordings** | Windows: `%USERPROFILE%\Music\meetily-recordings\<meeting>`; macOS: `~/Movies/meetily-recordings/<meeting>` |
 
@@ -870,6 +870,11 @@ previous duplication allowed the tray/app and installer to silently use
 different brands. The README intentionally renders `icon-source.png` from the
 repository so GitHub uses the same canonical art.
 
+On macOS, `tauri.macos.conf.json` overrides the identifier with
+`io.github.tylerbuza.meetily-actuallyfree`, so this fork no longer shares a
+bundle identity (LaunchServices, privacy permissions, WebView storage) with an
+installed upstream Meetily.
+
 On Windows, `com.meetily.ai` is also the single shell identity: it is Tauri's
 bundle identifier, the installer shortcut AUMID, and the explicit process AUMID
 set before any windows are created. Setup and updater runs recreate Start Menu
@@ -958,7 +963,7 @@ A signed `.app` is immutable at runtime. Writing a database, settings, models,
 or logs beneath `Meetily.app/Contents/MacOS` changes the sealed bundle and makes
 `codesign --verify --deep --strict` fail after first launch. macOS therefore
 uses `~/Library/Application Support/Meetily` for core data,
-`~/Library/Application Support/com.meetily.ai` for Tauri plugin stores, and
+`~/Library/Application Support/io.github.tylerbuza.meetily-actuallyfree` for Tauri plugin stores, and
 `~/Movies/meetily-recordings` (or the configured root) for recordings. Bundled
 diarization models and sidecars are read-only resources.
 

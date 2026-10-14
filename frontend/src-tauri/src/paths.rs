@@ -17,6 +17,9 @@ use std::sync::OnceLock;
 const DATA_SUBDIR: &str = "data";
 /// Folder name used under the OS data directory.
 const FALLBACK_APP_NAME: &str = "Meetily";
+/// Bundle identifier of earlier macOS builds, shared with upstream Meetily.
+/// Still the identifier on Windows/Linux.
+const LEGACY_IDENTIFIER: &str = "com.meetily.ai";
 
 static ROOT: OnceLock<PathBuf> = OnceLock::new();
 
@@ -96,9 +99,9 @@ pub fn migrate_legacy_data<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 
     // The legacy OS app-data directory (what old builds used).
-    let legacy = match app.path().app_data_dir() {
-        Ok(p) => p,
-        Err(_) => {
+    let legacy = match legacy_app_data_dir(app) {
+        Some(p) => p,
+        None => {
             let _ = std::fs::write(&marker, b"no-legacy");
             return;
         }
@@ -147,6 +150,60 @@ pub fn migrate_legacy_data<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let _ = std::fs::write(&marker, b"done");
 }
 
+/// Tauri's app-data directory under the legacy identifier. Equal to
+/// `app_data_dir()` wherever the identifier is unchanged.
+fn legacy_app_data_dir<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<PathBuf> {
+    use tauri::Manager;
+    Some(app.path().app_data_dir().ok()?.with_file_name(LEGACY_IDENTIFIER))
+}
+
+/// One-time copy of Tauri plugin stores (onboarding, recording preferences, …)
+/// from the legacy identifier's app-data dir, so a new bundle identifier keeps
+/// the user's settings. Must run before any `app.store(...)` call.
+pub fn migrate_plugin_stores<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use tauri::Manager;
+
+    let (Ok(current), Some(legacy)) = (app.path().app_data_dir(), legacy_app_data_dir(app)) else {
+        return;
+    };
+    if current == legacy {
+        return;
+    }
+    let marker = current.join(".migrated_plugin_stores");
+    if marker.exists() {
+        return;
+    }
+    match copy_missing_json_files(&legacy, &current) {
+        Ok(n) if n > 0 => log::info!("🚚 Migrated {} settings file(s) from {}", n, legacy.display()),
+        Ok(_) => {}
+        Err(e) => log::warn!("Settings migration from {} failed: {}", legacy.display(), e),
+    }
+    let _ = std::fs::create_dir_all(&current);
+    let _ = std::fs::write(&marker, b"done");
+}
+
+/// Copy top-level `*.json` files from `src` into `dst` unless `dst` already has
+/// them. A missing `src` copies nothing. Returns the number of files copied.
+fn copy_missing_json_files(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<usize> {
+    let entries = match std::fs::read_dir(src) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(e),
+    };
+    let mut copied = 0;
+    for entry in entries {
+        let from = entry?.path();
+        let Some(name) = from.file_name() else { continue };
+        let to = dst.join(name);
+        if from.is_file() && from.extension().is_some_and(|ext| ext == "json") && !to.exists() {
+            std::fs::create_dir_all(dst)?;
+            std::fs::copy(&from, &to)?;
+            copied += 1;
+        }
+    }
+    Ok(copied)
+}
+
 /// Recursively copy a file or directory. Best-effort: per-entry failures are
 /// propagated so the caller can log, but partial progress is retained.
 fn copy_path_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
@@ -180,5 +237,29 @@ fn ensure_writable(dir: &PathBuf) -> bool {
             true
         }
         Err(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::copy_missing_json_files;
+
+    #[test]
+    fn copies_only_missing_top_level_json_files() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join("onboarding-status.json"), "old").unwrap();
+        std::fs::write(src.path().join("recording_preferences.json"), "old").unwrap();
+        std::fs::write(src.path().join("meeting_minutes.sqlite"), "db").unwrap();
+        std::fs::create_dir(src.path().join("models")).unwrap();
+        std::fs::write(dst.path().join("recording_preferences.json"), "new").unwrap();
+
+        assert_eq!(copy_missing_json_files(src.path(), dst.path()).unwrap(), 1);
+        let read = |name| std::fs::read_to_string(dst.path().join(name)).unwrap();
+        assert_eq!(read("onboarding-status.json"), "old");
+        assert_eq!(read("recording_preferences.json"), "new");
+        assert!(!dst.path().join("meeting_minutes.sqlite").exists());
+        assert!(!dst.path().join("models").exists());
+        assert_eq!(copy_missing_json_files(&src.path().join("absent"), dst.path()).unwrap(), 0);
     }
 }

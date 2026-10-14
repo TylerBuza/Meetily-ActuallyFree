@@ -78,7 +78,7 @@ Also preserve these invariants:
 - `Info.plist` contains microphone and Audio Capture usage descriptions.
 - `entitlements.plist` contains only entitlements the app actually uses.
 - Core data uses `~/Library/Application Support/Meetily`, Tauri plugin stores
-  use `~/Library/Application Support/com.meetily.ai`, and neither writes in the
+  use `~/Library/Application Support/io.github.tylerbuza.meetily-actuallyfree`, and neither writes in the
   app bundle. Recordings use Movies or the configured root.
 - The macOS backend list exposes Core Audio only.
 - The updater provider, onboarding update choice, tray, and About do not invoke
