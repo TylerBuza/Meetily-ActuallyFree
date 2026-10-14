@@ -218,15 +218,24 @@ impl NeuralPath {
         Some(self.lag_in_use * 1000 / 16_000)
     }
 
+    #[cfg(test)]
+    fn locked_lag(&self) -> i64 {
+        self.lag_in_use
+    }
+
     fn process(&mut self, mic48: &[f32], sys48: &[f32]) -> Vec<f32> {
         let mic16 = self.down_mic.process(mic48);
         let ref16 = self.down_ref.process(sys48);
         if let Some(lag) = self.lag.observe(&mic16, &ref16) {
             let lag = lag.clamp(ms16(REFERENCE_LEAD_MS - MIC_HOLD_MS), ms16(MAX_LAG_MS));
-            if (lag - self.lag_in_use).abs() > ms16(2) {
+            if lag != self.lag_in_use {
                 info!("🔇 Echo lag locked at {} ms", lag * 1000 / 16_000);
+                // A shift inside the model's 5-40 ms tolerance keeps its state;
+                // a larger one means a new echo path, so start it fresh.
+                if (lag - self.lag_in_use).abs() > ms16(15) {
+                    self.model.reset();
+                }
                 self.lag_in_use = lag;
-                self.model.reset();
             }
         }
         self.mic16.extend(mic16);
@@ -355,8 +364,8 @@ impl Interpolator {
 // Echo lag estimation (GCC-PHAT on 16 kHz mic and reference)
 // ---------------------------------------------------------------------------
 
-const LAG_WINDOW: usize = 32_768; // ~2 s
-const LAG_EVERY: usize = 16_000; // 1 s
+const LAG_WINDOW: usize = 16_384; // ~1 s
+const LAG_EVERY: usize = 8_000; // 0.5 s
 /// Peak height over the correlation's spread needed to trust an estimate.
 const LAG_MIN_CONFIDENCE: f32 = 8.0;
 
@@ -623,6 +632,11 @@ mod tests {
         };
         for neural in [true, false] {
             let (echo_out, _) = run(&mut MicEchoCanceller::with_engine(48_000, neural), &echo_mic[..n], &echo_ref[..n]);
+            for (a, b) in [(0usize, 1usize), (1, 2), (2, 3), (3, 4)] {
+                let w = 48_000 * a + lead..48_000 * b + lead;
+                println!("  {} second {a}-{b}: echo removed {:.1} dB", if neural { "neural" } else { "aec3" },
+                    10.0 * (e(&echo_mic[w.start - lead..w.end - lead]) / e(&echo_out[w])).log10());
+            }
             let (mix_out, _) = run(&mut MicEchoCanceller::with_engine(48_000, neural), &mix, &echo_ref[..n]);
             let skip = 48_000 * 4; // lag lock + convergence
             let r = skip..n;

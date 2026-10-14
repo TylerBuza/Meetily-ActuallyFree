@@ -948,7 +948,8 @@ echo (the measured 5-40 ms plateau), runs the model in 8 ms hops, and
 interpolates the result back to 48 kHz, so the mic track above 7 kHz is
 filtered out while cancellation is on. The echo lag (107 ms on a MacBook Pro's
 built-in speakers) is estimated online by GCC-PHAT over 2 s of playback and
-locked when two consecutive confident estimates agree; until then 100 ms is
+locked when two consecutive confident estimates (1 s windows, every 0.5 s)
+agree; until then 100 ms is
 assumed. AEC3 runs at 48 kHz with its own delay estimation and its redundant
 high-pass filter off (the mic is already high-passed at capture; the filter
 alone dropped clean-voice correlation to 0.67); its 9 ms internal delay is
