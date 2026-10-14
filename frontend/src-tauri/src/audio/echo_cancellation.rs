@@ -174,8 +174,6 @@ const MIC_HOLD_MS: i64 = 100;
 const MAX_LAG_MS: i64 = 500;
 /// Smaller estimate changes are measurement jitter.
 const LAG_HYSTERESIS_MS: i64 = 1;
-/// A larger change means a new echo path: start the model fresh.
-const LAG_RESET_MS: i64 = 15;
 
 struct NeuralPath {
     model: NeuralEcho,
@@ -231,13 +229,11 @@ impl NeuralPath {
         let mic16 = self.down_mic.process(mic48);
         let ref16 = self.down_ref.process(sys48);
         if let Some(lag) = self.lag.observe(&mic16, &ref16) {
-            let change = (lag - self.lag_in_use).abs();
-            if change >= ms16(LAG_HYSTERESIS_MS) {
+            if (lag - self.lag_in_use).abs() >= ms16(LAG_HYSTERESIS_MS) {
                 info!("🔇 Echo lag locked at {} ms", lag * 1000 / 16_000);
-                // A shift inside the model's 5-40 ms tolerance keeps its state.
-                if change > ms16(LAG_RESET_MS) {
-                    self.model.reset();
-                }
+                // The model keeps its state: resetting it on a new lag leaked
+                // more echo after a delay jump and hurt the voice after a
+                // false lock (measured in real_recordings_report).
                 self.lag_in_use = lag;
             }
         }

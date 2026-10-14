@@ -972,12 +972,14 @@ runs at 16 kHz and never hears it). The echo lag (107 ms on a MacBook Pro's
 built-in speakers) is estimated online by GCC-PHAT and changed when two
 consecutive confident estimates (0.5 s windows, every 0.25 s, whatever the
 caller's window size) agree and differ from the lag in use by at least 1 ms;
-until then 100 ms is assumed. A change over 15 ms resets the model's state.
+until then 100 ms is assumed. The model keeps its state across a lag change:
+resetting it leaked more echo after a jump and hurt the voice after a false
+lock (`real_recordings_report`).
 The lag is not fixed for a recording: each new playback stream can reach the
 speakers with a different delay (seen live: 48, 100 and 151 ms in one
 recording, as playback stopped and started). After a 50 ms jump, cancellation
-is back within 0.5 s (`real_recordings_report`); with 1 s windows it took
-1.5-2 s, and the leaked words were transcribed as "You".
+is mostly back within 0.5-1 s (`real_recordings_report`); with 1 s windows it
+took 1.5-2 s, and the leaked words were transcribed as "You".
 
 With "only chosen apps", the reference holds only those apps: other sounds
 the speakers play (notifications, music) are not cancelled and can be
