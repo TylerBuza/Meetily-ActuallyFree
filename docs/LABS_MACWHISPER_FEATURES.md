@@ -40,7 +40,8 @@ Windows browser meeting window titles alongside the existing process and
 NonPackaged lease checks. Blocking scans run in `spawn_blocking`, and a monitor
 generation prevents duplicate loops after settings changes. The detector emits
 `meeting-detected` with `active_media` and `meeting-ended` after 45 seconds of
-missing signals. Labs auto-start acts only on an active Windows media lease;
+missing signals. Labs auto-start acts only on an active media signal (a Windows
+media lease, or Core Audio microphone input on macOS);
 process-only detection still prompts. The frontend stores ownership only after
 a successful start and runs the usual stop/save workflow only for an owned
 recording. Enabling Labs meeting automation also enables the existing Detection
@@ -50,7 +51,16 @@ The plan's proposal to bind the detected PID directly to per-app capture is not
 used. Browser PIDs can contain unrelated tabs, and process capture settings are
 independently selected by the user. The detector does not yet meter WASAPI
 sessions or distinguish a muted live call from an idle app with an open media
-lease. macOS and Linux have no active-media automation signal here. A detection
+lease.
+
+On macOS the active-media signal is Core Audio's per-process
+`kAudioProcessPropertyIsRunningInput` (`macos_mic_in_use_names`): processes
+currently capturing from a microphone, matched against the meeting keywords
+(helpers carry the app name, e.g. "Slack Helper"). macOS no longer falls back to
+process names alone, which fired on idle apps and on Zoom's `zoomupdater`. As a
+result Labs auto-start and auto-stop now also act on macOS when a known meeting
+app is using the microphone; the camera is not observed there. Linux still has
+no active-media signal and keeps the process-name prompt. A detection
 event is not proof a meeting is underway; users should test the Labs action
 against their conferencing apps before relying on it.
 
