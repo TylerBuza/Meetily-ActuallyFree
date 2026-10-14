@@ -245,6 +245,15 @@ export interface MeetingAudio {
 
 export const getMeetingAudio = (meetingId: string) => invoke<MeetingAudio>('api_get_meeting_audio', { meetingId });
 
+/**
+ * The playback track's bytes, for webviews that cannot stream the asset protocol.
+ * Without Tauri's IPC protocol the bytes arrive as a JSON array of numbers.
+ */
+export const readMeetingAudio = async (meetingId: string): Promise<Uint8Array<ArrayBuffer>> => {
+  const data = await invoke<ArrayBuffer | number[]>('api_read_meeting_audio', { meetingId });
+  return data instanceof ArrayBuffer ? new Uint8Array(data) : Uint8Array.from(data);
+};
+
 export interface AskTurn {
   question: string;
   answer: string;

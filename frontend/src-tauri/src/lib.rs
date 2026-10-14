@@ -804,6 +804,7 @@ pub fn run() {
             database::repositories::meeting_notes::api_get_meeting_notes,
             database::repositories::meeting_notes::api_save_meeting_notes,
             api::api_get_meeting_audio,
+            api::api_read_meeting_audio,
             meeting_detection::get_meeting_detection_settings,
             meeting_detection::set_meeting_detection_settings,
             meeting_detection::start_meeting_detection,
