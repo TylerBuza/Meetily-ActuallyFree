@@ -844,10 +844,15 @@ mod tests {
     fn ogg_opus_and_vorbis_decode_with_bundled_ffmpeg() {
         let ffmpeg = find_ffmpeg_path().expect("FFmpeg is required for the import regression test");
         let directory = tempfile::tempdir().unwrap();
-        for codec in ["libopus", "libvorbis"] {
+        // FFmpeg's own Vorbis encoder (experimental, stereo only) exists in
+        // every build; libvorbis is missing from some, e.g. Homebrew's, which
+        // `find_ffmpeg_path` picks when tests run outside the app bundle.
+        for (codec, extra) in [("libopus", &[][..]), ("vorbis", &["-strict", "-2", "-ac", "2"][..])] {
             let input = directory.path().join(format!("{codec}.OGG"));
             let output = Command::new(&ffmpeg)
-                .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=0.2", "-c:a", codec, "-y"])
+                .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=0.2", "-c:a", codec])
+                .args(extra)
+                .arg("-y")
                 .arg(&input)
                 .output()
                 .unwrap();
