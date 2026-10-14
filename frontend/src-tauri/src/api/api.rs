@@ -999,12 +999,27 @@ pub async fn api_delete_meeting<R: Runtime>(
 
     let pool = state.db_manager.pool();
 
+    // Read the audio folder before the row is gone.
+    let folder_path: Option<String> =
+        sqlx::query_scalar("SELECT folder_path FROM meetings WHERE id = ?")
+            .bind(&meeting_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
+
     match MeetingsRepository::delete_meeting(pool, &meeting_id).await {
         Ok(true) => {
             log_info!("Successfully deleted meeting {}", meeting_id);
+            let audio_trashed = match folder_path {
+                Some(folder) => trash_deleted_meeting_audio(&_app, pool, &folder).await,
+                None => false,
+            };
             Ok(serde_json::json!({
                 "status": "success",
-                "message": "Meeting deleted successfully"
+                "message": "Meeting deleted successfully",
+                "audio_trashed": audio_trashed
             }))
         }
         Ok(false) => {
@@ -1017,6 +1032,31 @@ pub async fn api_delete_meeting<R: Runtime>(
         Err(e) => {
             log_error!("Error deleting meeting {}: {}", meeting_id, e);
             Err(format!("Failed to delete meeting: {}", e))
+        }
+    }
+}
+
+/// Move a deleted meeting's audio folder to the Trash, unless another meeting
+/// still uses it. Failures are logged, never fail the deletion itself.
+async fn trash_deleted_meeting_audio<R: Runtime>(
+    app: &AppHandle<R>,
+    pool: &sqlx::SqlitePool,
+    folder: &str,
+) -> bool {
+    let still_used: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM meetings WHERE folder_path = ?")
+        .bind(folder)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(1);
+    if still_used > 0 {
+        log_warn!("Keeping audio folder still used by another meeting: {}", folder);
+        return false;
+    }
+    match crate::audio::recording_preferences::trash_meeting_folder(app, folder).await {
+        Ok(trashed) => trashed,
+        Err(e) => {
+            log_warn!("Meeting deleted, but its audio was kept ({}): {}", e, folder);
+            false
         }
     }
 }

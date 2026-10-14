@@ -541,24 +541,20 @@ pub async fn select_custom_app_executable<R: Runtime>(
     .map_err(|e| format!("Failed to pick executable: {}", e))?
 }
 
-/// Delete a just-written meeting folder (used when a take is discarded as too short).
-/// Only removes paths under the configured recordings root for safety.
-#[tauri::command]
-pub async fn discard_recording_folder<R: Runtime>(
-    app: AppHandle<R>,
-    folder_path: String,
-) -> Result<(), String> {
-    let path = PathBuf::from(&folder_path);
-    if folder_path.trim().is_empty() {
-        return Ok(());
-    }
-    if !path.exists() {
-        return Ok(());
+/// Canonical `folder_path` if it is a meeting folder inside one of the
+/// recordings roots (never a root itself); `None` if it does not exist.
+async fn meeting_folder_within_roots<R: Runtime>(
+    app: &AppHandle<R>,
+    folder_path: &str,
+) -> Result<Option<PathBuf>, String> {
+    let path = PathBuf::from(folder_path);
+    if folder_path.trim().is_empty() || !path.exists() {
+        return Ok(None);
     }
 
     let path_canon = path.canonicalize().map_err(|e| e.to_string())?;
 
-    let preferences = load_recording_preferences(&app)
+    let preferences = load_recording_preferences(app)
         .await
         .map_err(|e| format!("Failed to load recording preferences: {e}"))?;
     let roots = [
@@ -575,9 +571,21 @@ pub async fn discard_recording_folder<R: Runtime>(
     let is_root = roots_canon.iter().any(|root| path_canon == *root);
     let is_meeting_folder = !is_root && roots_canon.iter().any(|root| path_canon.starts_with(root));
     if !is_meeting_folder {
-        return Err("Refusing to delete path outside recordings folders".into());
+        return Err("Refusing to touch a path outside recordings folders".into());
     }
+    Ok(Some(path_canon))
+}
 
+/// Delete a just-written meeting folder (used when a take is discarded as too short).
+/// Only removes paths under the configured recordings root for safety.
+#[tauri::command]
+pub async fn discard_recording_folder<R: Runtime>(
+    app: AppHandle<R>,
+    folder_path: String,
+) -> Result<(), String> {
+    let Some(path_canon) = meeting_folder_within_roots(&app, &folder_path).await? else {
+        return Ok(());
+    };
     if path_canon.is_dir() {
         std::fs::remove_dir_all(&path_canon)
             .map_err(|e| format!("Failed to discard folder: {e}"))?;
@@ -586,6 +594,20 @@ pub async fn discard_recording_folder<R: Runtime>(
         std::fs::remove_file(&path_canon).map_err(|e| format!("Failed to discard file: {e}"))?;
     }
     Ok(())
+}
+
+/// Move a deleted meeting's recording folder to the system Trash (recoverable).
+/// Same safety rule as `discard_recording_folder`; `Ok(false)` if nothing was there.
+pub async fn trash_meeting_folder<R: Runtime>(
+    app: &AppHandle<R>,
+    folder_path: &str,
+) -> Result<bool, String> {
+    let Some(path_canon) = meeting_folder_within_roots(app, folder_path).await? else {
+        return Ok(false);
+    };
+    trash::delete(&path_canon).map_err(|e| format!("Failed to move audio to Trash: {e}"))?;
+    info!("Moved deleted meeting's audio to Trash: {}", path_canon.display());
+    Ok(true)
 }
 
 #[tauri::command]

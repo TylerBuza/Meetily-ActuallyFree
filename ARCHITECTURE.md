@@ -217,6 +217,13 @@ Two gotchas:
 2. `paths.rs` always uses the OS data directory on macOS. Windows and Linux fall
    back there if the install directory isn't writable.
 
+Deleting a meeting (`api_delete_meeting`) moves its `folder_path` to the
+system Trash after the database rows are gone, through the same
+inside-a-recordings-root check as `discard_recording_folder` (never a root,
+never outside). It is skipped, and logged, if another meeting still references
+the folder or the folder lies outside today's roots (for example a former
+custom recordings folder); a Trash failure never fails the deletion.
+
 Recording-folder creation is intentionally collision-safe. Sanitized titles are
 not unique, so `audio_processing.rs` creates the directory atomically and adds a
 suffix if it already exists. The configured custom recordings root must flow

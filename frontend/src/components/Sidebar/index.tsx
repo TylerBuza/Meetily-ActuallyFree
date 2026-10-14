@@ -693,7 +693,7 @@ const Sidebar: React.FC = () => {
         onOpenChange={(open) => !open && setPendingDelete(null)}
         variant="danger"
         title={pendingDelete && pendingDelete.length > 1 ? `Delete ${pendingDelete.length} meetings?` : 'Delete this meeting?'}
-        description="The transcript, summary, notes, and action items are removed. Audio files stay in your recordings folder."
+        description="The transcript, summary, notes, and action items are removed, and the audio is moved to the Trash."
         confirmLabel="Delete"
         onConfirm={confirmDelete}
       />
