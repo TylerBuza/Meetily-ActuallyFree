@@ -62,6 +62,12 @@ has a physical macOS reproduction/qualification yet.
 production build. `globals.css` owns `--font-sans`, and `frontend/pnpm-lock.yaml`
 pins the bundled font package; this removes a network-dependent build step.
 
+Meeting playback (`frontend/src/hooks/useMeetingAudio.ts`) streams the mixed
+track through the asset protocol after `api_get_meeting_audio` adds its folder
+to the scope. WebKitGTK's media player cannot load that protocol, so on Linux the
+hook reads the file with `api_read_meeting_audio` (looked up by meeting id) and
+plays a blob URL; this holds the whole recording in memory while it is open.
+
 Meeting details layout lives in `frontend/src/app/meeting-details/page-content.tsx`:
 the transcript/notes separator stores its width locally and supports pointer and
 keyboard resizing. Pane stacking now responds to the actual content width (which
