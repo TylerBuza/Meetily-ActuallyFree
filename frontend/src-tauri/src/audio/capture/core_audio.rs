@@ -18,6 +18,50 @@ use log::{error, info, warn};
 #[cfg(target_os = "macos")]
 use cidre::{arc, av, cat, cf, core_audio as ca, os};
 
+#[cfg(target_os = "macos")]
+extern "C" {
+    /// libSystem: the app a helper process acts for (browser renderer → browser,
+    /// WebKit WebContent → Safari). Returns the pid itself for ordinary processes.
+    fn responsibility_get_pid_responsible_for_pid(pid: i32) -> i32;
+}
+
+/// Core Audio process objects that belong to the chosen apps: the apps' own
+/// processes plus helpers they are responsible for, which is where browsers
+/// and WebKit actually play audio. Only processes that have used audio exist
+/// as Core Audio process objects, so apps not yet playing may be missing.
+#[cfg(target_os = "macos")]
+pub fn audio_process_objects_for_apps(apps: &[String]) -> Vec<u32> {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    let exe_path = |pid: i32| -> Option<String> {
+        let path = sys.process(sysinfo::Pid::from_u32(u32::try_from(pid).ok()?))?.exe()?;
+        Some(path.to_string_lossy().into_owned())
+    };
+    let Ok(processes) = ca::Process::list() else { return Vec::new() };
+    processes
+        .into_iter()
+        .filter(|process| {
+            let Ok(pid) = process.pid() else { return false };
+            let responsible = unsafe { responsibility_get_pid_responsible_for_pid(pid) };
+            [pid, responsible]
+                .into_iter()
+                .filter_map(|p| exe_path(p))
+                .any(|path| apps.iter().any(|app| app_owns_exe_path(app, &path)))
+        })
+        .map(|process| process.0 .0)
+        .collect()
+}
+
+/// Whether `exe_path` is the app's executable or lives inside its bundle.
+/// `app` is what the record card stores: `Google Chrome.app` or `Google Chrome`.
+#[cfg(any(target_os = "macos", test))]
+fn app_owns_exe_path(app: &str, exe_path: &str) -> bool {
+    let app = app.to_lowercase();
+    let name = app.strip_suffix(".app").unwrap_or(&app);
+    let path = exe_path.to_lowercase();
+    path.contains(&format!("/{name}.app/")) || path.rsplit('/').next() == Some(name)
+}
+
 /// Waker state for async polling
 struct WakerState {
     waker: Option<Waker>,
@@ -58,12 +102,13 @@ struct AudioContext {
 impl CoreAudioCapture {
     /// Create a new Core Audio capture for system audio
     pub fn new() -> Result<Self> {
-        Self::new_with_process(None)
+        Self::new_with_processes(None)
     }
 
-    /// Create a new Core Audio capture targeting a specific process or global audio
-    pub fn new_with_process(target_pid: Option<u32>) -> Result<Self> {
-        info!("🎙️ CoreAudio: Starting Core Audio capture initialization (target_pid: {:?})...", target_pid);
+    /// Create a Core Audio capture of the given Core Audio process objects
+    /// (see `audio_process_objects_for_apps`), or of all audio when `None`.
+    pub fn new_with_processes(process_objects: Option<Vec<u32>>) -> Result<Self> {
+        info!("🎙️ CoreAudio: Starting Core Audio capture initialization (process objects: {:?})...", process_objects);
 
         // Audio Capture permission (NSAudioCaptureUsageDescription) is required.
         // The permission dialog is automatically triggered when creating the Core Audio tap.
@@ -93,26 +138,19 @@ impl CoreAudioCapture {
         // When using a tap, the tap provides all the audio we need
         // Including both the tap AND the device creates duplicate audio (echo issue)
 
-        let tap_desc = if let Some(pid) = target_pid {
-            info!("🎙️ CoreAudio: Creating process tap for target PID {}...", pid);
-            let num = cidre::ns::Number::with_i32(pid as i32);
-            let arr = cidre::ns::Array::from_slice(&[&*num]);
-            ca::TapDesc::with_mono_mixdown_of_processes(&arr)
+        let tap_desc = if let Some(objects) = &process_objects {
+            info!("🎙️ CoreAudio: Creating process tap for process objects {:?}...", objects);
+            let nums: Vec<_> = objects.iter().map(|&id| cidre::ns::Number::with_u32(id)).collect();
+            let refs: Vec<&cidre::ns::Number> = nums.iter().map(|n| &**n).collect();
+            ca::TapDesc::with_mono_mixdown_of_processes(&cidre::ns::Array::from_slice(&refs))
         } else {
             info!("🎙️ CoreAudio: Creating process tap (global mono tap)...");
             ca::TapDesc::with_mono_global_tap_excluding_processes(&cidre::ns::Array::new())
         };
 
+        // No fallback to a global tap: the user chose specific apps, so silently
+        // recording every app would be a privacy surprise.
         let tap = tap_desc.create_process_tap()
-            .or_else(|err| {
-                if target_pid.is_some() {
-                    warn!("⚠️ CoreAudio: Per-process tap failed ({:?}), falling back to global tap...", err);
-                    let fallback_desc = ca::TapDesc::with_mono_global_tap_excluding_processes(&cidre::ns::Array::new());
-                    fallback_desc.create_process_tap()
-                } else {
-                    Err(err)
-                }
-            })
             .map_err(|e| {
                 error!("❌ CoreAudio: Failed to create process tap: {:?}", e);
                 anyhow::anyhow!("Failed to create process tap: {:?}", e)
@@ -508,5 +546,23 @@ mod tests {
 
         info!("Collected {} samples", sample_count);
         assert!(sample_count >= 48000);
+    }
+}
+
+#[cfg(test)]
+mod app_matching_tests {
+    use super::app_owns_exe_path;
+
+    #[test]
+    fn app_owns_its_executable_and_bundled_helpers_only() {
+        let chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+        let renderer = "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)";
+        assert!(app_owns_exe_path("Google Chrome.app", chrome));
+        assert!(app_owns_exe_path("Google Chrome", chrome));
+        assert!(app_owns_exe_path("google chrome.app", renderer));
+        assert!(app_owns_exe_path("zoom.us.app", "/Applications/zoom.us.app/Contents/MacOS/zoom.us"));
+        assert!(!app_owns_exe_path("Safari.app", chrome));
+        assert!(!app_owns_exe_path("Chrome.app", chrome));
+        assert!(!app_owns_exe_path("zoom.us.app", "/Applications/zoom.us.app.bak/zoom"));
     }
 }
