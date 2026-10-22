@@ -45,6 +45,13 @@ contracts are unchanged. Windows release publication remains on hold.
 
 ## Publication blocker
 
+Resolved: the owner re-enabled workflows from GitHub's fork-workflow pause page.
+Candidate `39810916314` built source `f59fedb08a54566d2502658bd130bece1e743fef`
+and passed **374 native tests, 8 ignored**, the packaged permission helper (status
+2/not determined on the runner), and bundle validation. The Nemotron layout test
+passed. Publication and public-download smoke verification follow separately.
+The blocker details below are historical.
+
 Source `1f7c563` is pushed to main and `fix/mac-oct22`. The Mac candidate dispatch
 failed with HTTP 422, **“Actions has been disabled for this repository.”** The
 repository Actions permission API nevertheless reports `enabled: true` and all

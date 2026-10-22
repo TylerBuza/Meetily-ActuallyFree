@@ -28,9 +28,10 @@ The app is ad-hoc signed, not Apple-notarized. If blocked, try opening it and us
 
 ### Qualification and remaining limits
 
-This is a CI-qualified preview, not physical-device signoff. The candidate must
-pass the frontend production build, full native library tests, packaged permission
-helper, and Apple Silicon bundle checks. The Nemotron layout regression uses
+This is a CI-qualified preview, not physical-device signoff. Candidate run
+`39810916314` passed the frontend production build, **374 native tests (8 ignored)**,
+packaged permission helper, and Apple Silicon bundle checks. All 34 isolated
+frontend test files also passed locally. The Nemotron layout regression uses
 synthetic arrays, not a real speech/model accuracy fixture. The permission query
 uses a private Apple API resolved at runtime and falls back if unavailable.
 
