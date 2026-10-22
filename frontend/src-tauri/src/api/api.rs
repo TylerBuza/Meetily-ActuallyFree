@@ -999,12 +999,29 @@ pub async fn api_delete_meeting<R: Runtime>(
 
     let pool = state.db_manager.pool();
 
+    // Read the audio folder before the row is gone.
+    let folder_path: Option<String> =
+        sqlx::query_scalar("SELECT folder_path FROM meetings WHERE id = ?")
+            .bind(&meeting_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
+
     match MeetingsRepository::delete_meeting(pool, &meeting_id).await {
         Ok(true) => {
             log_info!("Successfully deleted meeting {}", meeting_id);
+            let audio = match folder_path {
+                Some(folder) => trash_deleted_meeting_audio(&_app, pool, &folder).await,
+                None => Ok(false),
+            };
             Ok(serde_json::json!({
                 "status": "success",
-                "message": "Meeting deleted successfully"
+                "message": "Meeting deleted successfully",
+                "audio_trashed": audio == Ok(true),
+                // Set only when an audio folder exists and was left in place.
+                "audio_kept_reason": audio.err(),
             }))
         }
         Ok(false) => {
@@ -1019,6 +1036,32 @@ pub async fn api_delete_meeting<R: Runtime>(
             Err(format!("Failed to delete meeting: {}", e))
         }
     }
+}
+
+/// Move a deleted meeting's audio folder to the Trash, unless another meeting
+/// still uses it. `Ok(false)`: there was no folder left to move. `Err`: the
+/// folder was kept, with the reason for the user. Never fails the deletion.
+async fn trash_deleted_meeting_audio<R: Runtime>(
+    app: &AppHandle<R>,
+    pool: &sqlx::SqlitePool,
+    folder: &str,
+) -> Result<bool, String> {
+    if !std::path::Path::new(folder).exists() {
+        return Ok(false);
+    }
+    let still_used = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM meetings WHERE folder_path = ?")
+        .bind(folder)
+        .fetch_one(pool)
+        .await;
+    let result = match still_used {
+        Ok(0) => crate::audio::recording_preferences::trash_meeting_folder(app, folder).await,
+        Ok(_) => Err("another meeting still uses its folder".to_string()),
+        Err(e) => Err(format!("could not check whether another meeting uses its folder: {e}")),
+    };
+    if let Err(reason) = &result {
+        log_warn!("Meeting deleted, but its audio was kept ({}): {}", reason, folder);
+    }
+    result
 }
 
 #[tauri::command]
