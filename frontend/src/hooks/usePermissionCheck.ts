@@ -62,7 +62,12 @@ export function usePermissionCheck() {
           : 'granted';
       const systemAudioAllowed =
         systemAudioPermission === 'granted' ||
-        window.sessionStorage.getItem(MACOS_SYSTEM_AUDIO_VERIFIED_KEY) === 'true';
+        (systemAudioPermission !== 'denied' &&
+          window.sessionStorage.getItem(MACOS_SYSTEM_AUDIO_VERIFIED_KEY) === 'true');
+      // A fresh explicit denial supersedes earlier audio heard in this window.
+      if (systemAudioPermission === 'denied') {
+        window.sessionStorage.setItem(MACOS_SYSTEM_AUDIO_VERIFIED_KEY, 'false');
+      }
       const hasSystemAudio = outputDevices.length > 0 && systemAudioAllowed;
 
       console.log('Permission check:', {

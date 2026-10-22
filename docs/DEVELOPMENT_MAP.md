@@ -71,13 +71,19 @@ Granted means no banner, with no audible proof needed on each launch. Denied and
 not-yet-asked get their own advice. TCC answers from a per-process cache: on
 macOS 26.6.2 a grant from the prompt that "Check again" triggers kept reading
 not-yet-asked in that process until restart (checked with an ad-hoc build).
-Anything short of granted is therefore asked again in a short-lived copy of the
+Readable permission states are therefore asked again in a short-lived copy of the
 app binary. `main.rs` handles `--audio-capture-status` by printing the code and
 exiting before Tauri starts. Audible samples from the session-scoped probe also
-clear the banner, because a denied tap returns zeros. If the symbol is missing,
+clear the banner unless TCC explicitly denies access. If the symbol is missing,
 the status is `unknown` and only the probe decides. Covered by
 `tests/hooks/permission-check.test.tsx` and two native tests in `permissions.rs`;
 the native check that the symbol resolves only runs on macOS.
+
+October 22 follow-up: all readable TCC states, including granted, are rechecked
+in the short-lived helper to avoid trusting a cached grant after revocation.
+An explicit denial clears earlier session probe evidence; unknown status retains
+the audible-probe fallback. Candidate CI tests the packaged helper with a timeout
+and runs the full native library suite. See [MACOS_OCT22_STABILITY.md](MACOS_OCT22_STABILITY.md).
 `frontend/src/app/layout.tsx` now loads packaged Inter font files from
 `@fontsource-variable/inter` rather than fetching Google CSS during a Next
 production build. `globals.css` owns `--font-sans`, and `frontend/pnpm-lock.yaml`

@@ -1316,7 +1316,14 @@ impl Sortformer {
         let log_mel_spec = mel_spec.mapv(|x| (x + LOG_ZERO_GUARD).ln());
 
         // Transpose to (batch, time, features) - NeMo outputs (B, D, T), model expects (B, T, D)
-        Ok(log_mel_spec.t().to_owned().insert_axis(Axis(0)))
+        Ok(Self::time_major_features(&log_mel_spec))
+    }
+
+    fn time_major_features(log_mel_spec: &Array2<f32>) -> Array3<f32> {
+        // `to_owned()` alone preserves the transpose's column-major layout.
+        // ORT's borrowed tensor input needs standard contiguous (B, T, D)
+        // storage, including when live inference slices a shorter time window.
+        log_mel_spec.t().as_standard_layout().into_owned().insert_axis(Axis(0))
     }
 }
 
@@ -1334,6 +1341,24 @@ mod tests {
         assert_eq!((segments[0].speaker_id,segments[0].start,segments[0].end),(0,1600,8000));
         assert_eq!((segments[1].speaker_id,segments[1].start,segments[1].end),(1,4800,6400));
         assert!(Sortformer::post_process(&DiarizationConfig::default(), &Array2::zeros((100, NUM_SPEAKERS)),16000).is_empty());
+    }
+
+    #[test]
+    fn mel_transpose_keeps_live_windows_contiguous_and_in_time_order() {
+        let mel = Array2::from_shape_fn((N_MELS, 120), |(band, time)| (band * 1000 + time) as f32);
+        let old = mel.t().to_owned().insert_axis(Axis(0));
+        assert!(!old.is_standard_layout(), "fixture must reproduce the rejected layout");
+        let features = Sortformer::time_major_features(&mel);
+        assert!(features.is_standard_layout());
+        assert_eq!(features.shape(), &[1, 120, N_MELS]);
+        let live_window = features.slice(s![.., 7..111, ..]).to_owned();
+        assert!(live_window.is_standard_layout());
+        let contiguous = live_window.as_slice().expect("ORT-compatible contiguous window");
+        for time in 0..104 {
+            for band in 0..N_MELS {
+                assert_eq!(contiguous[time * N_MELS + band], mel[[band, time + 7]]);
+            }
+        }
     }
     use std::f32::consts::PI;
 

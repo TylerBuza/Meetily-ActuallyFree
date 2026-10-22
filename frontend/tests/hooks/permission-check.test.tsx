@@ -80,6 +80,19 @@ test('unreadable status falls back to the session probe result', async () => {
   expect(current.hasSystemAudio).toBe(true);
 });
 
+test('revocation supersedes an earlier audible probe in the same session', async () => {
+  storage.set('macos_system_audio_verified', 'true');
+  await mount();
+  expect(current.hasSystemAudio).toBe(true);
+  permission = 'denied';
+  await act(async () => { await current.checkPermissions(); });
+  expect(current.hasSystemAudio).toBe(false);
+  expect(storage.get('macos_system_audio_verified')).toBe('false');
+  permission = new Error('preflight unavailable');
+  await act(async () => { await current.checkPermissions(); });
+  expect(current.hasSystemAudio).toBe(false);
+});
+
 test('Check again clears the banner once the prompt is allowed, even in silence', async () => {
   permission = 'not_determined';
   permissionAfterProbe = 'granted';

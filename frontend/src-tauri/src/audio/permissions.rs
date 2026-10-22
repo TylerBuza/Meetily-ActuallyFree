@@ -187,15 +187,15 @@ pub const AUDIO_CAPTURE_STATUS_ARG: &str = "--audio-capture-status";
 ///
 /// TCC answers from a per-process cache: on macOS 26 a grant made from this
 /// process's own prompt still reads `NotDetermined` here until the app
-/// restarts. Anything short of granted is therefore asked again in a fresh,
-/// short-lived copy of this binary.
+/// restarts. Recheck readable statuses in a fresh, short-lived copy of this
+/// binary, including grants: a cached grant can also outlive a revocation.
 #[cfg(target_os = "macos")]
 pub fn system_audio_permission_status() -> SystemAudioPermission {
     let in_process = preflight_code()
         .map(SystemAudioPermission::from_preflight)
         .unwrap_or(SystemAudioPermission::Unknown);
     let status = match in_process {
-        SystemAudioPermission::Granted | SystemAudioPermission::Unknown => in_process,
+        SystemAudioPermission::Unknown => in_process,
         _ => fresh_process_status().unwrap_or(in_process),
     };
     info!("Audio Capture permission status: {:?} (this process: {:?})", status, in_process);

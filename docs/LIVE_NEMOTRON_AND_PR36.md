@@ -2,6 +2,12 @@
 
 ## Implementation
 
+October 22 #42 follow-up: mel features are materialized in standard contiguous
+time-major order before borrowed ORT tensor construction. The transpose previously
+retained nonstandard strides through `to_owned()`. A model-free regression checks
+full features and sliced live windows against every original band/time value.
+This addresses tensor construction; real-call/model accuracy is a separate check.
+
 The live engine is selected at recording start. Nemotron loads before capture
 begins, consumes continuous system audio (including silence) after the existing
 48 kHz-to-16 kHz resampling, and uses the same recording-relative clock as VAD

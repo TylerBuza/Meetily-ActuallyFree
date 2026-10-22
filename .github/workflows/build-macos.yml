@@ -166,12 +166,11 @@ jobs:
           done
           pnpm exec tauri build --target "$TARGET" --bundles dmg
 
-      - name: Test capture shutdown and source continuity
+      - name: Test native capture, permissions, and transcription regressions
         shell: bash
         run: |
           set -euo pipefail
-          cargo test --release -p meetily --lib --target "$TARGET" audio::capture_worker:: -- --test-threads=1
-          cargo test --release -p meetily --lib --target "$TARGET" audio::pipeline::ring_buffer_tests:: -- --test-threads=1
+          cargo test --release -p meetily --lib --target "$TARGET" -- --test-threads=1
 
       - name: Verify Apple Silicon bundle
         id: artifact
@@ -234,6 +233,16 @@ jobs:
           fi
           file "$APP_BINARY" | grep -q "arm64"
           assert_macos_compatible "$APP_BINARY"
+
+          # Exercise the shipped helper entry point, not just the test harness.
+          # This checks a read-only permission query; it cannot grant capture.
+          python3 - "$APP_BINARY" <<'PY'
+          import subprocess, sys
+          result = subprocess.run([sys.argv[1], "--audio-capture-status"],
+                                  capture_output=True, text=True, timeout=5, check=True)
+          assert result.stdout.strip() in {"0", "1", "2"}, repr(result.stdout)
+          print("Packaged Audio Capture status helper returned:", result.stdout.strip())
+          PY
 
           for sidecar in \
             "$APP_PATH/Contents/MacOS/llama-helper" \
