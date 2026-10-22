@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- macOS stability candidate (0.2.22, not yet published): fix idle tap startup,
+  keep microphone recording during a system-tap stall, refresh Audio Capture
+  permission state, and show unknown backend start errors (#46/#47/#53).
+- Correct live Nemotron mel-feature memory layout for borrowed ONNX tensors (#42).
+- Make microphone/Ogg regression fixtures portable across Mac/FFmpeg builds (#56).
+
 - Preserve combined speaker labels in display, export, and component-level renames (#44/#45; from #38).
 - Own post-call processing above navigation, skip enhancement/diarization when
   keeping the live transcript, and scope cancellation to the active meeting (#31/#35).

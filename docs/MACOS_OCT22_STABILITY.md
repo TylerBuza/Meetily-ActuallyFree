@@ -30,6 +30,10 @@ contracts are unchanged. Windows release publication remains on hold.
 
 - 34 isolated frontend test files passed after integration, including permission
   revocation and recording-error coverage.
+- Next production build/type validation passed. Windows CPU native suite passed
+  **382 tests, 10 ignored**, including the warning-state, permission-code mapping,
+  and mel-layout regression. No ignored model/audio tests ran. A fresh Cargo target
+  directory was required because the old local build cache had missing source files.
 - Candidate CI now runs the complete native library suite serially, then checks
   the packaged permission-helper entry point with a five-second timeout.
 - Release version is 0.2.22, selected after checking published v0.2.21-macos.
@@ -38,3 +42,18 @@ contracts are unchanged. Windows release publication remains on hold.
   tests on the original reporter's Mac. This host is Windows. Physical Mac capture,
   Bluetooth/multi-output routing, macOS 14.2 runtime behavior, and real-model live
   Nemotron accuracy require separate confirmation. No private fixtures are added.
+
+## Publication blocker
+
+Source `1f7c563` is pushed to main and `fix/mac-oct22`. The Mac candidate dispatch
+failed with HTTP 422, **“Actions has been disabled for this repository.”** The
+repository Actions permission API nevertheless reports `enabled: true` and all
+three Mac workflows are active. This is not a passing or queued Mac build.
+No 0.2.22 tag, DMG, or release has been published. v0.2.21-macos remains the
+current Mac preview; Windows v0.2.20 remains Latest.
+
+After the GitHub restriction is cleared, dispatch `build-macos.yml` on main,
+require its full native suite and packaged helper/bundle checks to pass, then
+publish that exact candidate with `preview=true`. Run the public-DMG smoke test
+and update the README and issue #42 with the verified release. Keep #46/#47/#53/
+#56 open pending Mac qualification; their source changes are already incorporated.
