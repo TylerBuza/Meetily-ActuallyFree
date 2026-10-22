@@ -183,6 +183,40 @@ Nemotron is Auto-detect only; manual counts belong to Pyannote. Rerunning speake
 identification must preserve transcript text, row identity, and timestamps.
 Read [PR34_NEMOTRON.md](PR34_NEMOTRON.md) before changing that contract.
 
+With separate `mic.mp4`/`system.mp4` tracks, `diarize_source_tracks` reads the
+system track first. If it is silent (peak under about -60 dBFS) or has under
+5 s of detected speech, nobody spoke through the computer, so the meeting is
+treated as in-person. The microphone track is clustered like a single track
+(manual count = everyone in the room), and "You" comes from a voiceprint match.
+A lone voice with no enrolled voiceprint stays "You", as before. Pyannote matches
+the voiceprint while clustering. For Nemotron, `match_user_by_voiceprint` embeds
+up to eight clear turns per speaker with the bundled Pyannote embedding model and
+matches them afterwards.
+
+The user voiceprint (`voiceprint.rs`) can also be taught explicitly with
+`learn_my_voice` in `voice_profiles.rs`. "This is me" on an unidentified speaker
+teaches it before relabelling that speaker "You", and "Remember my voice" on
+"You" in a call teaches it from the microphone lines. It takes up to 20 clear
+turns (2 to 15 s, nobody overlapping) from `mic.mp4`, or from `audio.mp4` when
+there is no separate track, and skips turns quieter than about -40 dBFS. Each
+meeting counts once. Unlike Labs voice profiles, it needs no Labs switch. Live "You"
+labels are not used there, because every voice in the room reached the
+microphone. Otherwise speaker 0 is the user, remote speakers come
+from the system track, and only that path enrolls the voiceprint. On that call path,
+a line still carrying its capture hint ("You" from the microphone, "Guest" from
+the system track, as written by live capture and retranscription) is labelled
+from its own track only. A microphone line is "You". A system line gets only
+remote speakers, or "Guest" if none overlaps. Before this, a remote line spoken
+while the user said "uh-huh" read "You + Speaker 1": in one call, close to half
+the lines had such combined labels. Lines that already carry generated labels
+from an earlier pass have no hint, so they keep simultaneous speakers. Unit tests
+cover the thresholds and the "You" rule. The ignored
+`in_person_fixture_keeps_every_microphone_speaker` test runs Pyannote on a
+fixture: three synthetic voices over 41 s gave 3 speakers, with about 3 s at a
+10 s window edge given to the wrong voice. That is a TTS fixture, not a
+recorded room. Room echo and a hybrid meeting (people in the room plus a call)
+still use the call path.
+
 Frontend post-call sequencing lives in
 `frontend/src/components/MeetingDetails/PostCallProcessingWorker.tsx`, owned above
 navigation by `frontend/src/contexts/PostCallJobsContext.tsx`. The page's

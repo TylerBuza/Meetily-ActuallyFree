@@ -651,6 +651,7 @@ pub fn run() {
             diarization::voice_profiles::enroll_person_voice,
             diarization::voice_profiles::list_voice_profiles,
             diarization::voice_profiles::delete_voice_profile,
+            diarization::voice_profiles::learn_my_voice,
             save_transcript,
             analytics::commands::init_analytics,
             analytics::commands::disable_analytics,

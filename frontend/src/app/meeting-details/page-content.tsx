@@ -375,11 +375,34 @@ export default function PageContent({
 
   const markMe = async (speaker: string) => {
     try {
+      // Learn the voice while the speaker's own label still marks their turns.
+      // Renaming does not depend on it: the user said who this is.
+      let voiceNote = 'Meetily learned your voice and will label it "You" in later meetings.';
+      try {
+        await invoke<number>('learn_my_voice', { meetingId: meeting.id, speaker });
+      } catch (error) {
+        voiceNote = `Your voice was not learned: ${error instanceof Error ? error.message : String(error)}`;
+      }
       await invoke('rename_meeting_speaker', { meetingId: meeting.id, from: speaker, to: 'You' });
-      toast.success(`${speaker} is now you`);
+      toast.success(`${speaker} is now you`, { description: voiceNote });
       await refreshAfterSpeakerChange({ from: speaker, to: 'You', removedName: false });
     } catch (error) {
       toast.error('Could not update the speaker', { description: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
+  // A call's "You" lines come from the microphone alone, the cleanest sample
+  // of the user's voice for labelling them in later in-person meetings.
+  const learnMyVoice = async () => {
+    try {
+      await invoke<number>('learn_my_voice', { meetingId: meeting.id, speaker: 'You' });
+      toast.success('Meetily learned your voice', {
+        description: 'Later meetings, in-person ones included, will label it "You".',
+      });
+    } catch (error) {
+      toast.error('Could not learn your voice', {
+        description: error instanceof Error ? error.message : String(error),
+      });
     }
   };
 
@@ -535,6 +558,7 @@ export default function PageContent({
         onIdentify={(speaker, segmentId) => setIdentity({ speaker, transcriptId: segmentId || null })}
         onMerge={(speaker) => setIdentity({ speaker, transcriptId: null })}
         onMarkMe={markMe}
+        onLearnMyVoice={learnMyVoice}
         colorIndex={cardTarget ? colorIndexOf(cardTarget.speaker) : undefined}
         meetingId={meeting.id}
       />
