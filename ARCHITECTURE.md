@@ -40,7 +40,8 @@ Windows VAD, Parakeet, and diarization share the pinned Microsoft ONNX Runtime
 Windows-only; never add a second ONNX runtime dependency. `build/onnxruntime.rs`
 verifies exact archive/file hashes and stages the runtime for both packaging and
 plain cargo builds. `tauri.windows.conf.json` preserves all fork resources and
-adds `binaries/onnxruntime/*`; macOS/Linux resource lists are unchanged.
+adds `binaries/onnxruntime/*`. `tauri.macos.conf.json` and `tauri.linux.conf.json`
+ship only templates and diarization models.
 Record must initialize both source VADs before starting any saver or exposing a
 chunk sender. Runtime failures return a distinct startup error, while recording
 destination failures remain storage errors. All three source tracks, mute
