@@ -43,24 +43,23 @@ contracts are unchanged. Windows release publication remains on hold.
   Bluetooth/multi-output routing, macOS 14.2 runtime behavior, and real-model live
   Nemotron accuracy require separate confirmation. No private fixtures are added.
 
-## Publication blocker
+## Published preview qualification
 
 Resolved: the owner re-enabled workflows from GitHub's fork-workflow pause page.
 Candidate `39810916314` built source `f59fedb08a54566d2502658bd130bece1e743fef`
 and passed **374 native tests, 8 ignored**, the packaged permission helper (status
 2/not determined on the runner), and bundle validation. The Nemotron layout test
-passed. Publication and public-download smoke verification follow separately.
-The blocker details below are historical.
+passed. Publisher `39816517025` published the exact candidate as immutable,
+non-Latest prerelease **v0.2.22-macos**. Public-download smoke run `39816868262`
+verified provenance, installed the downloaded app on the hosted Apple Silicon
+runner, launched it twice, and passed post-launch integrity checks.
 
-Source `1f7c563` is pushed to main and `fix/mac-oct22`. The Mac candidate dispatch
-failed with HTTP 422, **“Actions has been disabled for this repository.”** The
-repository Actions permission API nevertheless reports `enabled: true` and all
-three Mac workflows are active. This is not a passing or queued Mac build.
-No 0.2.22 tag, DMG, or release has been published. v0.2.21-macos remains the
-current Mac preview; Windows v0.2.20 remains Latest.
+DMG SHA-256:
+`2afe3fb44663ccf40c22f771e34170e675988c2aac82789cf0729b0d8f41cd0f`.
+Windows v0.2.20 remains Latest; its installer and updater were not changed.
+PRs #46/#47/#53/#56 are manually incorporated with original authorship preserved.
+Issue #42 stays open for physical-device reporter confirmation.
 
-After the GitHub restriction is cleared, dispatch `build-macos.yml` on main,
-require its full native suite and packaged helper/bundle checks to pass, then
-publish that exact candidate with `preview=true`. Run the public-DMG smoke test
-and update the README and issue #42 with the verified release. Keep #46/#47/#53/
-#56 open pending Mac qualification; their source changes are already incorporated.
+The earlier HTTP 422 dispatch failure was GitHub's fork-workflow pause, even
+though its repository permissions API said enabled and workflows said active.
+The owner resolved it through the Actions page's re-enable button.
