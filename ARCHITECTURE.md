@@ -126,6 +126,15 @@ the frontend meter.
   trailing silent window; discarding that return drops the whole utterance.
 - Whisper's current `confidence` is text-length-derived, not a token
   probability. It is diagnostic and must not filter short valid phrases.
+- A non-48 kHz capture resamples in fixed 512-frame blocks, and rubato holds
+  back its filter delay until more input arrives. `AudioStream::stop` calls
+  `AudioCapture::drain` after the backend stops (and its worker drains) and
+  before `RecordingState::stop_recording` clears the pipeline sender. Each
+  callback holds the capture gate for its whole run, so the drain waits for one
+  in progress and later callbacks are dropped. The drain emits the partial
+  block and delay frames once, capped so total output is
+  round(input frames × 48000 / rate), with the last callback's timestamp and
+  mute state. A timed-out capture worker skips the drain.
 - During shutdown `RecordingManager` is temporarily outside its global slot.
   The transcript listener owns a cloned shared segment handle so final events
   remain writable until the worker finishes.

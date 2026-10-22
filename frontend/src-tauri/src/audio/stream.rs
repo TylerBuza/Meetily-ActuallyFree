@@ -71,6 +71,8 @@ unsafe impl Send for StreamBackend {}
 pub struct AudioStream {
     device: Arc<AudioDevice>,
     backend: StreamBackend,
+    /// Drained after the backend stops so a resampled tail reaches the pipeline.
+    capture: Option<AudioCapture>,
 }
 
 // SAFETY: AudioStream contains StreamBackend which we've marked as Send
@@ -253,11 +255,13 @@ impl AudioStream {
             return Ok(Self {
                 device,
                 backend: StreamBackend::CpalWorker { stream, worker, accepting },
+                capture: Some(capture),
             });
         }
         Ok(Self {
             device,
             backend: StreamBackend::Cpal(stream),
+            capture: Some(capture),
         })
     }
 
@@ -413,6 +417,7 @@ impl AudioStream {
             backend: StreamBackend::CoreAudio {
                 task: Some(task),
             },
+            capture: Some(capture),
         })
     }
 
@@ -479,6 +484,7 @@ impl AudioStream {
                     stop_flag,
                     thread_handles,
                 },
+                capture: None,
             })
         }
 
@@ -626,6 +632,7 @@ impl AudioStream {
                 // CPAL's macOS disconnect listener can retain the callback and
                 // its sender after drop. Explicitly close/drain instead of
                 // waiting for channel disconnection, with a bounded DSP wait.
+                // On timeout the worker may still own the capture: skip its drain.
                 worker
                     .stop(std::time::Duration::from_secs(2))
                     .map_err(|error| anyhow::anyhow!("Capture worker shutdown failed ({:?}); queued audio may be incomplete", error))?;
@@ -651,6 +658,13 @@ impl AudioStream {
                 }
                 info!("Windows process loopback stream(s) stopped");
             }
+        }
+
+        // The backend no longer delivers callbacks. The drain waits for one still
+        // in progress and rejects later ones. The caller clears the pipeline
+        // sender (RecordingState::stop_recording) only after this returns.
+        if let Some(capture) = self.capture {
+            capture.drain();
         }
 
         // Explicitly drop self.device Arc reference
