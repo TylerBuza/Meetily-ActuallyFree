@@ -148,6 +148,11 @@ Paths below are relative to `frontend/src-tauri/src/` unless marked frontend.
   their gaps is not a continuous recording and corrupts streaming timing.
 - Mic and system audio must not be mixed before source attribution. Microphone
   audio retains `You`; remote model channels remain `Speaker N`.
+- With separate mic/system tracks, a post-call speaker rerun labels each line
+  from its source track (`apply_source_track_hint`). A mic line stays `You` even
+  when remote speech overlaps it (such as "yeah" while the other person talks),
+  and a remote line never gains `You`. Mixed recordings keep overlap-based
+  multi-speaker labels.
 - Speaker channels are meeting-local. The live model/cache is recreated for each
   recording. Changing settings during a call affects the next live session.
 - One transcript turn currently gets one greatest-overlap label. Do not split
