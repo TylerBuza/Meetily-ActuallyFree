@@ -22,6 +22,9 @@ Speech-start pre-roll, live system speech sensitivity, and real-call replay
 qualification are documented in [LIVE_SPEECH_RETENTION.md](LIVE_SPEECH_RETENTION.md).
 Sample continuity across jittered capture callbacks and issue #40 qualification
 are documented in [AUDIO_CALLBACK_CONTINUITY.md](AUDIO_CALLBACK_CONTINUITY.md).
+Post-processing treats mic audio that is only speaker playback (no headphones)
+as remote speech rather than `You`; see
+[MIC_BLEED_SUPPRESSION.md](MIC_BLEED_SUPPRESSION.md).
 That note also covers the Windows/shared-mixer and macOS follow-ups for #42:
 Windows CPAL mic/system blocks and macOS CPAL mic blocks use bounded workers, with
 capture timestamps, queued mute state, and stop/drain ordering owned by
@@ -133,6 +136,7 @@ Paths below are relative to `frontend/src-tauri/src/` unless marked frontend.
 | `diarization/nemotron.rs` | Validates the pinned model and adapts the attributed Sortformer API to Meetily. Live configuration must not change offline defaults. |
 | `diarization/sortformer/` | Attributed model implementation, including speaker cache, feed/flush, streaming profiles, and ORT session construction. Preserve license/attribution. |
 | `audio/recording_saver.rs`, `audio/incremental_saver.rs` | Persistent transcript/source hints and recording tracks. A displayed rename alone does not update every save path. |
+| `diarization/bleed.rs` | Offline mic-vs-system speaker-bleed analysis used by diarization reruns and retranscription; see [MIC_BLEED_SUPPRESSION.md](MIC_BLEED_SUPPRESSION.md). Inactive (no behavior change) when no delay is found. |
 | `frontend/src/contexts/TranscriptContext.tsx` | Frontend transcript events, ordering/buffering, local recovery, and live state. |
 
 ### Time and identity invariants

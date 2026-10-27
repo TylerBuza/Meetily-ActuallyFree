@@ -163,10 +163,40 @@ fn mel_filterbank(n_fft: usize, n_bins: usize, fs: f32) -> Vec<Vec<f32>> {
 /// Compute 80-dim log-mel fbank features for a 16 kHz mono signal.
 /// Returns `[num_frames][NUM_MEL_BINS]`, with per-utterance mean normalization.
 pub fn compute_fbank(samples: &[f32]) -> Vec<Vec<f32>> {
+    let mut feats: Vec<Vec<f32>> = Vec::new();
+    for_each_log_mel(samples, |row| feats.push(row.to_vec()));
+
+    // Per-utterance mean normalization (CMN), like WeSpeaker.
+    if !feats.is_empty() {
+        let mut mean = vec![0f32; NUM_MEL_BINS];
+        for row in &feats {
+            for d in 0..NUM_MEL_BINS {
+                mean[d] += row[d];
+            }
+        }
+        let n = feats.len() as f32;
+        for d in 0..NUM_MEL_BINS {
+            mean[d] /= n;
+        }
+        for row in feats.iter_mut() {
+            for d in 0..NUM_MEL_BINS {
+                row[d] -= mean[d];
+            }
+        }
+    }
+
+    feats
+}
+
+/// Visit the un-normalized natural-log mel energies of each 10 ms frame (frame
+/// `m` starts at sample `m * 160`). Absolute levels are kept, unlike
+/// `compute_fbank`, so two tracks can be compared; rows are streamed so an hour
+/// of audio never holds 80 bins per frame in memory.
+pub fn for_each_log_mel(samples: &[f32], mut visit: impl FnMut(&[f32])) {
     let frame_len = (FRAME_LENGTH_MS * SAMPLE_RATE as f32 / 1000.0).round() as usize; // 400
     let frame_shift = (FRAME_SHIFT_MS * SAMPLE_RATE as f32 / 1000.0).round() as usize; // 160
     if samples.len() < frame_len {
-        return Vec::new();
+        return;
     }
 
     let mut n_fft = 1usize;
@@ -184,7 +214,7 @@ pub fn compute_fbank(samples: &[f32]) -> Vec<Vec<f32>> {
     let mut fft_out = r2c.make_output_vec();
 
     let num_frames = 1 + (samples.len() - frame_len) / frame_shift;
-    let mut feats: Vec<Vec<f32>> = Vec::with_capacity(num_frames);
+    let mut row = vec![0f32; NUM_MEL_BINS];
 
     for m in 0..num_frames {
         let start = m * frame_shift;
@@ -211,7 +241,8 @@ pub fn compute_fbank(samples: &[f32]) -> Vec<Vec<f32>> {
             fft_in[i] = if i < frame_len { buf[i] } else { 0.0 };
         }
         if r2c.process(&mut fft_in, &mut fft_out).is_err() {
-            feats.push(vec![0.0; NUM_MEL_BINS]);
+            row.fill(0.0);
+            visit(&row);
             continue;
         }
 
@@ -224,7 +255,6 @@ pub fn compute_fbank(samples: &[f32]) -> Vec<Vec<f32>> {
         }
 
         // Mel energies + log.
-        let mut row = vec![0f32; NUM_MEL_BINS];
         for (b, filt) in filters.iter().enumerate() {
             let mut e = 0f32;
             for k in 0..n_bins {
@@ -232,27 +262,6 @@ pub fn compute_fbank(samples: &[f32]) -> Vec<Vec<f32>> {
             }
             row[b] = e.max(LOG_FLOOR).ln();
         }
-        feats.push(row);
+        visit(&row);
     }
-
-    // Per-utterance mean normalization (CMN), like WeSpeaker.
-    if !feats.is_empty() {
-        let mut mean = vec![0f32; NUM_MEL_BINS];
-        for row in &feats {
-            for d in 0..NUM_MEL_BINS {
-                mean[d] += row[d];
-            }
-        }
-        let n = feats.len() as f32;
-        for d in 0..NUM_MEL_BINS {
-            mean[d] /= n;
-        }
-        for row in feats.iter_mut() {
-            for d in 0..NUM_MEL_BINS {
-                row[d] -= mean[d];
-            }
-        }
-    }
-
-    feats
 }

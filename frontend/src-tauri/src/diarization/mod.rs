@@ -14,6 +14,7 @@
 //!
 //! Models live install-locally in `<install>/data/models/diarization`.
 
+pub mod bleed;
 pub mod clustering;
 pub mod download;
 pub mod dsp;
@@ -929,6 +930,59 @@ fn extract_manual_speaker_names(label: &str) -> Vec<String> {
     names
 }
 
+/// Above this share of bleed on the mic track, the whole-track embeddings used
+/// for voiceprint enrollment are too contaminated by the remote voice.
+const VOICEPRINT_MAX_BLEED_SHARE: f32 = 0.10;
+
+/// Compare the decoded mic and system tracks for speaker bleed. Failure leaves
+/// the analysis inactive, which keeps the pre-bleed labeling behavior.
+fn analyze_bleed(mic_wav: &Path, system_wav: &Path) -> bleed::BleedAnalysis {
+    let read = |path: &Path| -> Result<Vec<f32>> {
+        let (samples, rate) = dsp::read_wav(path)?;
+        if rate != dsp::SAMPLE_RATE {
+            return Err(anyhow!("expected {} Hz, got {rate} Hz", dsp::SAMPLE_RATE));
+        }
+        Ok(samples)
+    };
+    let analysis = match (read(mic_wav), read(system_wav)) {
+        (Ok(mic), Ok(system)) => bleed::BleedAnalysis::analyze(&mic, &system),
+        (Err(error), _) | (_, Err(error)) => {
+            log::warn!("Speaker-bleed analysis unavailable: {error}");
+            return bleed::BleedAnalysis::inactive();
+        }
+    };
+    if analysis.active {
+        log::info!(
+            "🔈 Speaker bleed on mic: delay {:.0} ms, confidence {:.2}, {:.0}% of mic speech",
+            analysis.delay_ms,
+            analysis.confidence,
+            analysis.bleed_share() * 100.0
+        );
+    } else {
+        log::info!("🔈 No speaker bleed detected on mic track");
+    }
+    analysis
+}
+
+/// Mic-track segments become speaker 0 ("You"), minus the spans that are only
+/// speaker playback picked up by the mic.
+fn local_mic_segments(segments: Vec<DiarizationSegment>, bleed: &bleed::BleedAnalysis) -> Vec<DiarizationSegment> {
+    let before = segments.len();
+    let kept: Vec<DiarizationSegment> = segments
+        .into_iter()
+        .flat_map(|segment| {
+            bleed
+                .local_regions(segment.start, segment.end)
+                .into_iter()
+                .map(move |(start, end)| DiarizationSegment { start, end, speaker: 0, overlapped: segment.overlapped })
+        })
+        .collect();
+    if bleed.active {
+        log::info!("🔈 Mic segments after bleed removal: {} (was {before})", kept.len());
+    }
+    kept
+}
+
 /// Decode any supported audio container to a temporary 16 kHz mono WAV using
 /// the bundled ffmpeg. Returns the original path unchanged if it's already WAV.
 fn ensure_wav(path: &Path) -> Result<(PathBuf, bool)> {
@@ -1027,7 +1081,7 @@ pub async fn diarize_meeting(
 
     let voiceprint_source = meeting_id.clone();
     let engine_for_blocking = selected_engine.clone();
-    let (result, used_source_tracks, profile_names) = tokio::task::spawn_blocking(move || -> Result<(DiarizationResult, bool, std::collections::HashMap<usize, String>)> {
+    let (result, used_source_tracks, profile_names, bleed) = tokio::task::spawn_blocking(move || -> Result<(DiarizationResult, bool, std::collections::HashMap<usize, String>, bleed::BleedAnalysis)> {
         let parent = source.parent().map(Path::to_path_buf);
         let mic_source = parent.as_ref().map(|p| p.join("mic.mp4"));
         let system_source = parent.as_ref().map(|p| p.join("system.mp4"));
@@ -1048,6 +1102,14 @@ pub async fn diarize_meeting(
                         }
                         return Err(error);
                     }
+                };
+
+                // An explicit solo count means the user said no remote voices
+                // should be labeled, so there is nothing to attribute bleed to.
+                let bleed = if num_speakers == Some(1) {
+                    bleed::BleedAnalysis::inactive()
+                } else {
+                    analyze_bleed(&mic_wav, &system_wav)
                 };
 
                 let dual_result = (|| -> Result<DiarizationResult> {
@@ -1076,14 +1138,7 @@ pub async fn diarize_meeting(
                             nemotron_model.diarize(&sys_samples, sys_sr)?
                         };
 
-                        let mut segments: Vec<DiarizationSegment> = mic_result
-                            .segments
-                            .into_iter()
-                            .map(|mut s| {
-                                s.speaker = 0;
-                                s
-                            })
-                            .collect();
+                        let mut segments = local_mic_segments(mic_result.segments, &bleed);
                         segments.extend(system_result.segments.into_iter().map(|mut s| {
                             s.speaker += 1;
                             s
@@ -1136,7 +1191,15 @@ pub async fn diarize_meeting(
                         );
                         let one_consistent_voice = embeddings.len() >= 3
                             && labels.iter().copied().max().unwrap_or(0) == 0;
-                        if one_consistent_voice {
+                        // Embeddings cover the whole mic track, so meaningful
+                        // speaker bleed would teach the remote voice as "You".
+                        let bleed_share = bleed.bleed_share();
+                        if bleed_share > VOICEPRINT_MAX_BLEED_SHARE {
+                            log::info!(
+                                "Skipping voiceprint enrollment: {:.0}% of mic speech is speaker bleed",
+                                bleed_share * 100.0
+                            );
+                        } else if one_consistent_voice {
                             if let Err(error) = voiceprint::update_from_embeddings(
                                 &embeddings,
                                 &voiceprint_source,
@@ -1151,14 +1214,7 @@ pub async fn diarize_meeting(
                     }
 
                     // Speaker 0 is always You; remote speakers begin at 1.
-                    let mut segments: Vec<DiarizationSegment> = mic_result
-                        .segments
-                        .into_iter()
-                        .map(|mut s| {
-                            s.speaker = 0;
-                            s
-                        })
-                        .collect();
+                    let mut segments = local_mic_segments(mic_result.segments, &bleed);
                     segments.extend(system_result.segments.into_iter().map(|mut s| {
                         s.speaker += 1;
                         s
@@ -1208,7 +1264,7 @@ pub async fn diarize_meeting(
                 if system_temp {
                     let _ = std::fs::remove_file(&system_wav);
                 }
-                return dual_result.map(|result| (result, true, profile_names));
+                return dual_result.map(|result| (result, true, profile_names, bleed));
             }
         }
 
@@ -1217,7 +1273,7 @@ pub async fn diarize_meeting(
         if is_temp {
             let _ = std::fs::remove_file(&wav);
         }
-        out.map(|result| (result, false, std::collections::HashMap::new()))
+        out.map(|result| (result, false, std::collections::HashMap::new(), bleed::BleedAnalysis::inactive()))
     })
     .await
     .map_err(|e| format!("Diarization task failed: {}", e))?
@@ -1385,6 +1441,16 @@ pub async fn diarize_meeting(
                 });
                 let is_named = !is_generated;
                 if is_named {
+                    // Names are user edits and survive reruns, but a "You" joined
+                    // to them was generated from the mic track. When that mic
+                    // audio is speaker bleed, only the "You" part is dropped.
+                    let line_is_bleed = used_source_tracks
+                        && matches!((start, end), (Some(s), Some(e)) if bleed.is_bleed(s as f32, e as f32));
+                    if let Some(remote_only) = line_is_bleed.then(|| without_you_part(live_trim)).flatten() {
+                        updates.push((id.clone(), Some(remote_only.clone())));
+                        assignments.push((id, remote_only));
+                        continue;
+                    }
                     preserved += 1;
                     assignments.push((id, live_trim.to_string()));
                     continue;
@@ -1399,6 +1465,10 @@ pub async fn diarize_meeting(
                 continue;
             }
         };
+
+        // A stored "You" came from mic capture; speaker bleed on the mic is not
+        // the local user, so it must not pin "You" onto the line.
+        let mic_is_local = !bleed.is_bleed(s, e);
 
         // Generated labels are not durable capture-source provenance. Preserve
         // source hints without excluding genuine simultaneous speakers.
@@ -1447,7 +1517,7 @@ pub async fn diarize_meeting(
 
                 speakers.sort_unstable();
                 let mut labels: Vec<_> = speakers.into_iter().map(&speaker_label).collect();
-                apply_source_track_hint(existing.as_deref(), used_source_tracks, num_speakers != Some(1), &mut labels);
+                apply_source_track_hint(existing.as_deref(), used_source_tracks, num_speakers != Some(1), mic_is_local, &mut labels);
                 labels.dedup();
                 labels.truncate(3);
                 let final_label = labels.join(" + ");
@@ -1457,7 +1527,7 @@ pub async fn diarize_meeting(
                 // No voice overlaps this line: keep the source hint, or else the
                 // label it already had, rather than clearing it.
                 let mut labels = Vec::new();
-                apply_source_track_hint(existing.as_deref(), used_source_tracks, num_speakers != Some(1), &mut labels);
+                apply_source_track_hint(existing.as_deref(), used_source_tracks, num_speakers != Some(1), mic_is_local, &mut labels);
                 let fallback = (!labels.is_empty()).then(|| labels.join(" + ")).or_else(|| {
                     existing
                         .as_deref()
@@ -1684,17 +1754,26 @@ fn collect_turns(models: &mut DiarizationModels, samples: &[f32]) -> Result<Vec<
     Ok(turns)
 }
 
+/// "You + Alice B." -> "Alice B."; `None` when there is no "You" part or
+/// nothing would remain.
+fn without_you_part(label: &str) -> Option<String> {
+    let parts: Vec<&str> = label.split(" + ").map(str::trim).collect();
+    let remaining: Vec<&str> = parts.iter().copied().filter(|part| !part.eq_ignore_ascii_case("you")).collect();
+    (remaining.len() < parts.len() && !remaining.is_empty()).then(|| remaining.join(" + "))
+}
+
 fn apply_source_track_hint(
     existing: Option<&str>,
     used_source_tracks: bool,
     allow_remote_hint: bool,
+    mic_is_local: bool,
     labels: &mut Vec<String>,
 ) {
     if !used_source_tracks {
         return;
     }
     match existing {
-        Some(speaker) if speaker.eq_ignore_ascii_case("you") => {
+        Some(speaker) if mic_is_local && speaker.eq_ignore_ascii_case("you") => {
             labels.retain(|label| !label.eq_ignore_ascii_case("you"));
             labels.insert(0, "You".to_string());
         }
@@ -1739,7 +1818,7 @@ mod tests {
     #[test]
     fn dual_track_user_hint_survives_missing_mic_segmentation() {
         let mut labels = vec!["Speaker 1".to_string()];
-        apply_source_track_hint(Some("You"), true, true, &mut labels);
+        apply_source_track_hint(Some("You"), true, true, true, &mut labels);
 
         assert_eq!(labels, vec!["You", "Speaker 1"]);
     }
@@ -1747,7 +1826,7 @@ mod tests {
     #[test]
     fn remote_hint_keeps_user_overlap_when_remote_segmentation_misses() {
         let mut labels = vec!["You".to_string()];
-        apply_source_track_hint(Some("Guest"), true, true, &mut labels);
+        apply_source_track_hint(Some("Guest"), true, true, true, &mut labels);
 
         assert_eq!(labels, vec!["You", "Guest"]);
     }
@@ -1755,7 +1834,7 @@ mod tests {
     #[test]
     fn dual_track_overlap_keeps_you_first_after_remote_clustering() {
         let mut labels = vec!["Speaker 1".to_string(), "You".to_string()];
-        apply_source_track_hint(Some("Guest"), true, true, &mut labels);
+        apply_source_track_hint(Some("Guest"), true, true, true, &mut labels);
 
         assert_eq!(labels, vec!["You", "Speaker 1"]);
     }
@@ -1763,7 +1842,7 @@ mod tests {
     #[test]
     fn mixed_recording_does_not_trust_source_hint() {
         let mut labels = vec!["Speaker 1".to_string()];
-        apply_source_track_hint(Some("You"), false, true, &mut labels);
+        apply_source_track_hint(Some("You"), false, true, true, &mut labels);
 
         assert_eq!(labels, vec!["Speaker 1"]);
     }
@@ -1771,9 +1850,48 @@ mod tests {
     #[test]
     fn explicit_solo_count_suppresses_remote_source_hint() {
         let mut labels = vec!["You".to_string()];
-        apply_source_track_hint(Some("Guest"), true, false, &mut labels);
+        apply_source_track_hint(Some("Guest"), true, false, true, &mut labels);
 
         assert_eq!(labels, vec!["You"]);
+    }
+
+    #[test]
+    fn bleed_you_line_takes_the_remote_label() {
+        let mut labels = vec!["Speaker 1".to_string()];
+        apply_source_track_hint(Some("You"), true, true, false, &mut labels);
+
+        assert_eq!(labels, vec!["Speaker 1"]);
+    }
+
+    #[test]
+    fn local_you_line_keeps_you_with_double_talk() {
+        let mut labels = vec!["Speaker 1".to_string(), "You".to_string()];
+        apply_source_track_hint(Some("You"), true, true, true, &mut labels);
+
+        assert_eq!(labels, vec!["You", "Speaker 1"]);
+    }
+
+    #[test]
+    fn bleed_strips_only_the_generated_you_from_named_labels() {
+        assert_eq!(without_you_part("You + Alice B."), Some("Alice B.".into()));
+        assert_eq!(without_you_part("Alice B. + you + Carol"), Some("Alice B. + Carol".into()));
+        assert_eq!(without_you_part("Alice B."), None);
+        assert_eq!(without_you_part("You"), None);
+        assert_eq!(without_you_part("Youssef"), None);
+    }
+
+    #[test]
+    fn inactive_bleed_analysis_keeps_every_mic_segment() {
+        let segments = vec![
+            DiarizationSegment { start: 1.0, end: 2.5, speaker: 2, overlapped: false },
+            DiarizationSegment { start: 4.0, end: 6.0, speaker: 0, overlapped: true },
+        ];
+        let kept = local_mic_segments(segments, &bleed::BleedAnalysis::inactive());
+
+        assert_eq!(kept.len(), 2);
+        assert!(kept.iter().all(|s| s.speaker == 0));
+        assert_eq!((kept[0].start, kept[0].end), (1.0, 2.5));
+        assert!(kept[1].overlapped);
     }
 
     /// Headless evaluation of the diarization pipeline against a real

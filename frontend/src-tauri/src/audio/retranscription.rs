@@ -257,6 +257,38 @@ fn create_source_labeled_segments(
     Ok(segments)
 }
 
+/// Decode one source track to 16 kHz mono samples, returning its duration.
+async fn decode_source<R: Runtime>(
+    app: &AppHandle<R>,
+    meeting_id: &str,
+    source_index: usize,
+    source_count: usize,
+    source: &RetranscriptionSource,
+) -> Result<(Vec<f32>, f64)> {
+    emit_progress(
+        app,
+        meeting_id,
+        "decoding",
+        (5.0 + (source_index as f32 / source_count as f32) * 20.0) as u32,
+        &format!("Decoding {}...", source.label),
+    );
+
+    let path_for_decode = source.path.clone();
+    let decoded = tokio::task::spawn_blocking(move || decode_audio_file(&path_for_decode))
+        .await
+        .map_err(|e| anyhow!("Decode task panicked: {}", e))??;
+    let duration = decoded.duration_seconds;
+    info!(
+        "Decoded {}: {:.2}s, {}Hz, {} channels",
+        source.label, decoded.duration_seconds, decoded.sample_rate, decoded.channels
+    );
+
+    let samples = tokio::task::spawn_blocking(move || decoded.to_whisper_format())
+        .await
+        .map_err(|e| anyhow!("Resample task panicked: {}", e))?;
+    Ok((samples, duration))
+}
+
 /// Internal function to run retranscription
 async fn run_retranscription<R: Runtime>(
     app: AppHandle<R>,
@@ -283,6 +315,43 @@ async fn run_retranscription<R: Runtime>(
     let mut duration_seconds = 0.0f64;
     let mut speech_segments = Vec::new();
 
+    // Both source tracks are decoded before VAD so the mic can be checked
+    // against the system track for speaker bleed: remote speech played aloud
+    // and picked up by the mic would otherwise be transcribed a second time
+    // as "You".
+    let mut decoded_sources: Vec<Option<Vec<f32>>> = vec![None; source_count];
+    let mut bleed = crate::diarization::bleed::BleedAnalysis::inactive();
+    let mic_index = sources.iter().position(|source| source.speaker_hint == Some("You"));
+    let system_index = sources.iter().position(|source| source.speaker_hint == Some("Guest"));
+    if let (Some(mic_index), Some(system_index)) = (mic_index, system_index) {
+        for index in [mic_index, system_index] {
+            let (samples, duration) = decode_source(&app, &meeting_id, index, source_count, &sources[index]).await?;
+            duration_seconds = duration_seconds.max(duration);
+            decoded_sources[index] = Some(samples);
+        }
+        let mic = decoded_sources[mic_index].take().unwrap_or_default();
+        let system = decoded_sources[system_index].take().unwrap_or_default();
+        let (analysis, mic, system) = tokio::task::spawn_blocking(move || {
+            let analysis = crate::diarization::bleed::BleedAnalysis::analyze(&mic, &system);
+            (analysis, mic, system)
+        })
+        .await
+        .map_err(|e| anyhow!("Bleed analysis task panicked: {}", e))?;
+        bleed = analysis;
+        decoded_sources[mic_index] = Some(mic);
+        decoded_sources[system_index] = Some(system);
+        if bleed.active {
+            info!(
+                "Speaker bleed on microphone track: delay {:.0} ms, confidence {:.2}, {:.0}% of mic speech",
+                bleed.delay_ms,
+                bleed.confidence,
+                bleed.bleed_share() * 100.0
+            );
+        } else {
+            info!("No speaker bleed detected on microphone track");
+        }
+    }
+
     // Retained source tracks prevent one speaker from masking the other. Older
     // recordings fall back to the mixed playback file.
     for (source_index, source) in sources.into_iter().enumerate() {
@@ -290,27 +359,14 @@ async fn run_retranscription<R: Runtime>(
             return Err(anyhow!("Retranscription cancelled"));
         }
 
-        emit_progress(
-            &app,
-            &meeting_id,
-            "decoding",
-            (5.0 + (source_index as f32 / source_count as f32) * 20.0) as u32,
-            &format!("Decoding {}...", source.label),
-        );
-
-        let path_for_decode = source.path.clone();
-        let decoded = tokio::task::spawn_blocking(move || decode_audio_file(&path_for_decode))
-            .await
-            .map_err(|e| anyhow!("Decode task panicked: {}", e))??;
-        duration_seconds = duration_seconds.max(decoded.duration_seconds);
-        info!(
-            "Decoded {}: {:.2}s, {}Hz, {} channels",
-            source.label, decoded.duration_seconds, decoded.sample_rate, decoded.channels
-        );
-
-        let audio_samples = tokio::task::spawn_blocking(move || decoded.to_whisper_format())
-            .await
-            .map_err(|e| anyhow!("Resample task panicked: {}", e))?;
+        let audio_samples = match decoded_sources[source_index].take() {
+            Some(samples) => samples,
+            None => {
+                let (samples, duration) = decode_source(&app, &meeting_id, source_index, source_count, &source).await?;
+                duration_seconds = duration_seconds.max(duration);
+                samples
+            }
+        };
         let app_for_vad = app.clone();
         let meeting_id_for_vad = meeting_id.clone();
         let source_label = source.label;
@@ -351,6 +407,22 @@ async fn run_retranscription<R: Runtime>(
         .map_err(|e| anyhow!("VAD processing failed for {}: {}", source_label, e))?;
 
         info!("VAD detected {} {} segments", source_segments.len(), source_label);
+        if speaker_hint == Some("You") && bleed.active {
+            // Only chunks that are almost entirely playback are dropped; any
+            // local speech, including double-talk, keeps the whole chunk.
+            let before = source_segments.len();
+            source_segments.retain(|segment| {
+                !bleed.is_bleed(
+                    (segment.start_timestamp_ms / 1000.0) as f32,
+                    (segment.end_timestamp_ms / 1000.0) as f32,
+                )
+            });
+            info!(
+                "Dropped {} of {} microphone chunks as speaker bleed",
+                before - source_segments.len(),
+                before
+            );
+        }
         speech_segments.extend(
             source_segments
                 .drain(..)
