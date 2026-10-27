@@ -23,6 +23,8 @@
 //! the public interface takes and returns seconds.
 
 use super::dsp;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 const FRAMES_PER_SECOND: f32 = 100.0;
 /// Mel bins are pooled into coarse bands: enough spectral shape to see a local
@@ -78,6 +80,45 @@ const REGION_BRIDGE_FRAMES: usize = 30;
 const MIN_REGION_FRAMES: usize = 20;
 
 type Bands = [f32; BANDS];
+
+// Labs switch. Native state is authoritative because reruns and
+// retranscriptions run here and can outlive the WebView that started them;
+// each operation reads it once when it starts.
+static ENABLED: OnceLock<AtomicBool> = OnceLock::new();
+
+fn enabled_path() -> std::path::PathBuf {
+    crate::paths::install_data_root().join("mic_bleed_filter_enabled.txt")
+}
+
+fn enabled_flag() -> &'static AtomicBool {
+    ENABLED.get_or_init(|| {
+        let value = std::fs::read_to_string(enabled_path())
+            .map(|text| text.trim() == "true")
+            .unwrap_or(false);
+        AtomicBool::new(value)
+    })
+}
+
+/// Whether post-processing should look for speaker bleed (Labs, off by default).
+pub fn enabled() -> bool {
+    enabled_flag().load(Ordering::Relaxed)
+}
+
+#[tauri::command]
+pub fn get_mic_bleed_filter_enabled() -> bool {
+    enabled()
+}
+
+#[tauri::command]
+pub fn set_mic_bleed_filter_enabled(value: bool) -> Result<(), String> {
+    let file = enabled_path();
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    std::fs::write(file, if value { "true" } else { "false" }).map_err(|error| error.to_string())?;
+    enabled_flag().store(value, Ordering::Relaxed);
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Frame {

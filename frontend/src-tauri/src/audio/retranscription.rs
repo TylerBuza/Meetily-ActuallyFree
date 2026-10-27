@@ -315,7 +315,8 @@ async fn run_retranscription<R: Runtime>(
     let mut duration_seconds = 0.0f64;
     let mut speech_segments = Vec::new();
 
-    // Both source tracks are decoded before VAD so the mic can be checked
+    // With the Labs bleed filter on, both source tracks are decoded before VAD
+    // so the mic can be checked
     // against the system track for speaker bleed: remote speech played aloud
     // and picked up by the mic would otherwise be transcribed a second time
     // as "You".
@@ -323,7 +324,8 @@ async fn run_retranscription<R: Runtime>(
     let mut bleed = crate::diarization::bleed::BleedAnalysis::inactive();
     let mic_index = sources.iter().position(|source| source.speaker_hint == Some("You"));
     let system_index = sources.iter().position(|source| source.speaker_hint == Some("Guest"));
-    if let (Some(mic_index), Some(system_index)) = (mic_index, system_index) {
+    let bleed_filter_enabled = crate::diarization::bleed::enabled();
+    if let (true, Some(mic_index), Some(system_index)) = (bleed_filter_enabled, mic_index, system_index) {
         for index in [mic_index, system_index] {
             let (samples, duration) = decode_source(&app, &meeting_id, index, source_count, &sources[index]).await?;
             duration_seconds = duration_seconds.max(duration);

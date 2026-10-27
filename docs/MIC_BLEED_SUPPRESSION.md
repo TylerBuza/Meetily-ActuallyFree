@@ -9,6 +9,17 @@ second, mic-sourced copy of the remote speaker's words labeled `You`.
 The live path is unchanged. Live labels stay as captured until a diarization rerun
 or a retranscription.
 
+## Labs gate
+
+This feature is off by default, behind Settings > Labs > Playback and transcript >
+**Ignore speaker bleed during retranscription** (`micBleedFilter`). The switch's real state is native:
+`diarization/bleed.rs` persists `mic_bleed_filter_enabled.txt` in the install data
+root and exposes `get_/set_mic_bleed_filter_enabled`. `lib/labs-features.ts`
+mirrors the switch into the browser Labs preferences, as it does for voice
+profiles. `diarize_meeting` and `run_retranscription` each read the flag once
+when they start. With the switch off, no analysis runs, and the result is
+identical to an inactive analysis (the behavior before this feature).
+
 ## Data flow
 
 ```text
@@ -78,6 +89,17 @@ Units: frames are 10 ms; `BleedAnalysis` takes and returns seconds;
   labeled only `You` were flagged. Of 217 stored `You + <remote>` lines, 135 were
   flagged. The recording is not committed.
 
+In-app retranscription (2026-10-27, Linux release CUDA build, same private
+meeting, Whisper large-v3-q5_0): the log reported the same delay, confidence,
+and 135 of 284 dropped mic chunks. The transcript went from 496 to 361 lines.
+Lines labeled `You + <remote>` fell from 217 to 13. `You` lines that duplicated
+an overlapping remote line's text (similarity > 0.6) fell from 96 to 20. The
+remaining duplicates are mixed chunks that also contain the local user, and
+Whisper filler on both tracks. A sample of the new `You`-only lines read as the
+local user's speech. That run predates the Labs gate, which was added afterward.
+The gated build passed native and frontend tests but was not re-qualified in the
+app.
+
 ## Known limits
 
 - Recall is partial. Mic VAD chunks and transcript lines that span both talkers
@@ -89,5 +111,5 @@ Units: frames are 10 ms; `BleedAnalysis` takes and returns seconds;
   margin tuning (`LOCAL_MARGIN_DB`, `LOCAL_MIN_BANDS`).
 - A bleed `You` line with no overlapping diarization segment falls back to its
   stored label.
-- Not qualified yet on macOS/Windows recordings, or with the in-app rerun and
-  retranscription flows end to end.
+- Not qualified yet on macOS/Windows recordings, or with the in-app speaker-label
+  rerun.

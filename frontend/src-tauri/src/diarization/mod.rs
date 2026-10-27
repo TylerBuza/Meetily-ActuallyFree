@@ -1080,6 +1080,7 @@ pub async fn diarize_meeting(
     log::info!("🧑‍🤝‍🧑 Diarizing meeting {} with {} using {}", meeting_id, selected_engine, source.display());
 
     let voiceprint_source = meeting_id.clone();
+    let bleed_filter_enabled = bleed::enabled();
     let engine_for_blocking = selected_engine.clone();
     let (result, used_source_tracks, profile_names, bleed) = tokio::task::spawn_blocking(move || -> Result<(DiarizationResult, bool, std::collections::HashMap<usize, String>, bleed::BleedAnalysis)> {
         let parent = source.parent().map(Path::to_path_buf);
@@ -1106,7 +1107,7 @@ pub async fn diarize_meeting(
 
                 // An explicit solo count means the user said no remote voices
                 // should be labeled, so there is nothing to attribute bleed to.
-                let bleed = if num_speakers == Some(1) {
+                let bleed = if !bleed_filter_enabled || num_speakers == Some(1) {
                     bleed::BleedAnalysis::inactive()
                 } else {
                     analyze_bleed(&mic_wav, &system_wav)

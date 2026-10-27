@@ -136,7 +136,7 @@ Paths below are relative to `frontend/src-tauri/src/` unless marked frontend.
 | `diarization/nemotron.rs` | Validates the pinned model and adapts the attributed Sortformer API to Meetily. Live configuration must not change offline defaults. |
 | `diarization/sortformer/` | Attributed model implementation, including speaker cache, feed/flush, streaming profiles, and ORT session construction. Preserve license/attribution. |
 | `audio/recording_saver.rs`, `audio/incremental_saver.rs` | Persistent transcript/source hints and recording tracks. A displayed rename alone does not update every save path. |
-| `diarization/bleed.rs` | Offline mic-vs-system speaker-bleed analysis used by diarization reruns and retranscription; see [MIC_BLEED_SUPPRESSION.md](MIC_BLEED_SUPPRESSION.md). Inactive (no behavior change) when no delay is found. |
+| `diarization/bleed.rs` | Labs-gated (`micBleedFilter`, off by default) offline mic-vs-system speaker-bleed analysis used by diarization reruns and retranscription; see [MIC_BLEED_SUPPRESSION.md](MIC_BLEED_SUPPRESSION.md). Inactive (no behavior change) when no delay is found. |
 | `frontend/src/contexts/TranscriptContext.tsx` | Frontend transcript events, ordering/buffering, local recovery, and live state. |
 
 ### Time and identity invariants
