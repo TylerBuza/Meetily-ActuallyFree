@@ -31,9 +31,6 @@ This Windows update includes the shared fixes developed since v0.2.20.
   logs. Slow-operation markers are evidence of elapsed work, not proof of a crash
   cause. Older reports cannot gain this timeline retroactively.
 
-The reported Teams/Vulkan startup freeze in #67 is still under investigation;
-better diagnostics do not establish or fix its cause.
-
 ### Install
 
 Download `Meetily-ActuallyFree-0.2.23-x64-universal-setup.exe`, or use the in-app
