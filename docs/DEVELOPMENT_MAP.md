@@ -33,6 +33,9 @@ Per-instance local logs count inserted silence and discarded late samples.
 Timeline resets save both pending source tails before replacing the mixer origin.
 Windows Stop gates new callbacks and bounds native cleanup to three seconds per
 stream; new capture is blocked while timed-out cleanup still owns a native stream.
+Linux PipeWire/PulseAudio capture uses the same cleanup owner for its blocking
+capture threads, and device reconnect is serialized against Stop/Start; see
+[LINUX_PULSE_CAPTURE.md](LINUX_PULSE_CAPTURE.md).
 Twenty-two pipeline regressions passed on Windows, including ten-minute dual
 source skew/stall replays, bounded missing-source output, and queued mute state.
 The ignored `audio::pipeline::hardware_qualification` test opens explicitly named
