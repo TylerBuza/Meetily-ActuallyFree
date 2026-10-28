@@ -180,7 +180,12 @@ fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, 
         .into_iter()
         .filter(|e| !is_self_process(e))
         .collect();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    let media_in_use: std::collections::HashSet<String> = macos_mic_in_use_names(&sys)
+        .into_iter()
+        .filter(|e| !is_self_process(e))
+        .collect();
+    #[cfg(not(any(windows, target_os = "macos")))]
     let media_in_use: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     #[cfg(windows)]
@@ -190,10 +195,7 @@ fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, 
         if media_in_use.is_empty() {
             return true; // no CAM signal → don't require it
         }
-        let stem = name.trim_end_matches(".exe");
-        media_in_use
-            .iter()
-            .any(|m| m == name || m.contains(stem) || stem.contains(m.trim_end_matches(".exe")))
+        media_in_use.iter().any(|holder| media_holder_matches(name, holder))
     };
 
     // 1) Known meeting app that is actively using mic/camera (best signal).
@@ -223,7 +225,10 @@ fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, 
         return None;
     }
 
-    // 2) No CAM signal: process-name match only (macOS/Linux / older Windows).
+    // 2) No CAM signal: process-name match only (Linux / older Windows). macOS
+    // always has the Core Audio microphone signal, so a running app that is not
+    // using the mic (idle Zoom, its `zoomupdater`) is not a meeting.
+    #[cfg(not(target_os = "macos"))]
     for process in sys.processes().values() {
         let name = process.name().to_string_lossy().to_lowercase();
         if is_skipped(&name) {
@@ -240,6 +245,59 @@ fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, 
         }
     }
     None
+}
+
+/// macOS: lowercase names of processes currently capturing from a microphone,
+/// per Core Audio. Meeting apps' helpers carry the app name ("Slack Helper").
+#[cfg(target_os = "macos")]
+fn macos_mic_in_use_names(sys: &sysinfo::System) -> std::collections::HashSet<String> {
+    let Ok(processes) = cidre::core_audio::Process::list() else {
+        return Default::default();
+    };
+    processes
+        .into_iter()
+        .filter(|p| p.is_running_input().unwrap_or(false))
+        .filter_map(|p| {
+            let pid = u32::try_from(p.pid().ok()?).ok()?;
+            let process = sys.process(sysinfo::Pid::from_u32(pid))?;
+            Some(process.name().to_string_lossy().to_lowercase())
+        })
+        .filter(|name| !name.trim().is_empty())
+        .collect()
+}
+
+/// macOS: whether a process with this (lowercase) name is still running.
+#[cfg(target_os = "macos")]
+fn process_is_running(name: &str) -> bool {
+    use sysinfo::{ProcessRefreshKind, RefreshKind, System};
+    let sys = System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
+    let running = sys
+        .processes()
+        .values()
+        .any(|process| process.name().to_string_lossy().to_lowercase() == name);
+    running
+}
+
+/// Shortest name that may match another by substring. An empty or very short
+/// name ("", ".exe", "a") would otherwise be contained in, or contain, almost
+/// any process name.
+const MIN_SUBSTRING_MATCH_LEN: usize = 4;
+
+/// Does a running process (`name`) correspond to a mic/camera holder? Exact
+/// names always match; otherwise one name must contain the other (a holder
+/// path or a helper may differ slightly from the process name), and the
+/// contained name must be at least `MIN_SUBSTRING_MATCH_LEN` characters.
+fn media_holder_matches(name: &str, holder: &str) -> bool {
+    let stem = name.trim().trim_end_matches(".exe");
+    let holder = holder.trim().trim_end_matches(".exe");
+    if stem.is_empty() || holder.is_empty() {
+        return false;
+    }
+    if stem == holder {
+        return true;
+    }
+    let long_enough = |s: &str| s.chars().count() >= MIN_SUBSTRING_MATCH_LEN;
+    (long_enough(stem) && holder.contains(stem)) || (long_enough(holder) && stem.contains(holder))
 }
 
 /// Windows: executables currently holding microphone or webcam via
@@ -349,7 +407,8 @@ fn process_matches_keyword(process_name: &str, keyword: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_self_process, process_matches_keyword};
+    use super::{is_self_process, media_holder_matches, meeting_has_ended, process_matches_keyword};
+    use std::time::Duration;
 
     #[test]
     fn never_treats_meetily_as_a_meeting() {
@@ -376,6 +435,50 @@ mod tests {
         assert!(!process_matches_keyword("steamwebhelper.exe", "teams"));
     }
 
+    #[test]
+    fn zoom_keyword_also_matches_its_updater_so_macos_needs_the_mic_signal() {
+        // Name matching alone cannot tell Zoom's updater from a call; on macOS
+        // the scan therefore requires a process that is using the microphone.
+        assert!(process_matches_keyword("zoomupdater", "zoom"));
+    }
+
+    #[test]
+    fn media_holder_matching_needs_real_names() {
+        assert!(media_holder_matches("slack helper", "slack helper"));
+        assert!(media_holder_matches("ms-teams.exe", "ms-teams.exe"));
+        assert!(media_holder_matches("zoom.exe", "zoom"));
+        assert!(media_holder_matches("zoom.us", "zoom"));
+        // An empty or tiny name must not match every process.
+        assert!(!media_holder_matches("", "zoom.us"));
+        assert!(!media_holder_matches(".exe", "zoom.exe"));
+        assert!(!media_holder_matches("zoom.us", ""));
+        assert!(!media_holder_matches("zoom.us", "  "));
+        assert!(!media_holder_matches("a", "slack helper"));
+        assert!(!media_holder_matches("slack helper", "a"));
+    }
+
+    #[test]
+    fn a_call_is_not_ended_within_the_short_grace() {
+        assert!(!meeting_has_ended(Duration::from_secs(30), false));
+        assert!(!meeting_has_ended(Duration::from_secs(30), true));
+        assert!(meeting_has_ended(Duration::from_secs(45), false));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_waits_out_a_muted_microphone_while_the_app_runs() {
+        assert!(!meeting_has_ended(Duration::from_secs(5 * 60), true));
+        assert!(meeting_has_ended(Duration::from_secs(10 * 60), true));
+        // The app quit: the call is over after the short grace.
+        assert!(meeting_has_ended(Duration::from_secs(60), false));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn other_platforms_keep_the_short_grace() {
+        assert!(meeting_has_ended(Duration::from_secs(60), true));
+    }
+
     #[cfg(windows)]
     #[test]
     fn browser_title_requires_meeting_context() {
@@ -384,6 +487,31 @@ mod tests {
         assert!(!super::browser_title_is_meeting("Meetily documentation - Chrome"));
         assert!(!super::browser_title_is_meeting("Microsoft Teams home - Edge"));
     }
+}
+
+/// How long a detected call may go without its signal before `meeting-ended`
+/// (which stops a recording that Labs meeting automation started).
+const MEETING_END_GRACE: std::time::Duration = std::time::Duration::from_secs(45);
+
+/// macOS: the signal is "the app is capturing from the microphone", and some
+/// apps stop capturing while the user is muted. So while the matched process
+/// is still running, a call ends only after this much longer idle time; once
+/// the process has exited, `MEETING_END_GRACE` applies.
+#[cfg(target_os = "macos")]
+const MACOS_MIC_IDLE_END_GRACE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Whether a call whose signal has been missing for `missing` has ended.
+/// `process_running` (the matched process still exists) only matters on macOS.
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+fn meeting_has_ended(missing: std::time::Duration, process_running: bool) -> bool {
+    if missing < MEETING_END_GRACE {
+        return false;
+    }
+    #[cfg(target_os = "macos")]
+    if process_running && missing < MACOS_MIC_IDLE_END_GRACE {
+        return false;
+    }
+    true
 }
 
 /// Start (or restart) the background monitor with the given settings.
@@ -452,8 +580,19 @@ fn start_monitor<R: Runtime>(app: &AppHandle<R>) {
                 }
                 None => {
                     if let Some((app_name, process, _)) = &alerted {
-                        let since = missing_since.get_or_insert_with(std::time::Instant::now);
-                        if since.elapsed() >= std::time::Duration::from_secs(45) {
+                        let missing = missing_since.get_or_insert_with(std::time::Instant::now).elapsed();
+                        // Rescan processes only once the short grace is over.
+                        #[cfg(target_os = "macos")]
+                        let running = missing >= MEETING_END_GRACE && {
+                            let name = process.clone();
+                            tokio::task::spawn_blocking(move || process_is_running(&name))
+                                .await
+                                .unwrap_or(true)
+                        };
+                        #[cfg(not(target_os = "macos"))]
+                        let running = false;
+                        let ended = meeting_has_ended(missing, running);
+                        if ended {
                             let _ = app.emit("meeting-ended", MeetingEndedPayload { app: app_name.clone(), process: process.clone() });
                             alerted = None;
                             missing_since = None;

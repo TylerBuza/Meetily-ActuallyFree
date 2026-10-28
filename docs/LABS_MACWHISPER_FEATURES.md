@@ -40,7 +40,8 @@ Windows browser meeting window titles alongside the existing process and
 NonPackaged lease checks. Blocking scans run in `spawn_blocking`, and a monitor
 generation prevents duplicate loops after settings changes. The detector emits
 `meeting-detected` with `active_media` and `meeting-ended` after 45 seconds of
-missing signals. Labs auto-start acts only on an active Windows media lease;
+missing signals (longer on macOS while the app still runs; see below). Labs auto-start acts only on an active media signal (a Windows
+media lease, or Core Audio microphone input on macOS);
 process-only detection still prompts. The frontend stores ownership only after
 a successful start and runs the usual stop/save workflow only for an owned
 recording. Enabling Labs meeting automation also enables the existing Detection
@@ -50,8 +51,33 @@ The plan's proposal to bind the detected PID directly to per-app capture is not
 used. Browser PIDs can contain unrelated tabs, and process capture settings are
 independently selected by the user. The detector does not yet meter WASAPI
 sessions or distinguish a muted live call from an idle app with an open media
-lease. macOS and Linux have no active-media automation signal here. A detection
-event is not proof a meeting is underway; users should test the Labs action
+lease.
+
+On macOS the active-media signal is Core Audio's per-process
+`kAudioProcessPropertyIsRunningInput` (`macos_mic_in_use_names`): processes
+currently capturing from a microphone, matched against the meeting keywords
+(helpers carry the app name, e.g. "Slack Helper"). macOS no longer falls back to
+process names alone, which fired on idle apps and on Zoom's `zoomupdater`. As a
+result Labs auto-start and auto-stop now also act on macOS when a known meeting
+app is using the microphone; the camera is not observed there. Linux still has
+no active-media signal and keeps the process-name prompt.
+
+Ending a call on macOS: some apps stop capturing from the microphone while the
+user is muted, so "no meeting app is using the mic" alone would fire
+`meeting-ended` 45 seconds into a mute and auto-stop the recording mid-call.
+`meeting_has_ended` therefore ends a macOS call 45 seconds after the signal
+disappears only if the matched process (e.g. "zoom.us", "slack helper") has
+exited; while it is still running, the call ends after 10 minutes without
+microphone input (`MACOS_MIC_IDLE_END_GRACE`). Input resuming within that time
+keeps the same call and recording. The cost is that a call that really ended
+while its app stays open (Slack, Teams) is recorded for up to 10 more minutes
+before auto-stop; a mute longer than 10 minutes still stops the recording.
+Which apps drop mic input on mute has not been measured per app. Windows keeps
+the 45-second grace. Process names are matched to mic/camera holders exactly,
+or by substring only when the contained name has at least four characters, so
+an empty or very short name cannot match every process.
+
+A detection event is not proof a meeting is underway; users should test the Labs action
 against their conferencing apps before relying on it.
 
 ## Feature 3: audio and transcript seeking
