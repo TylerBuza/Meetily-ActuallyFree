@@ -6,7 +6,11 @@ post-call ownership/cancellation; #22 Linux capture; #38 remaining features;
 
 This note tracks source integration and qualification, not a published release.
 Update: macOS-only preview `v0.2.21-macos` is now published from `5f37f2a`.
-Windows publication is on hold at the user's request; v0.2.20 remains Latest.
+The user lifted the Windows hold on October 28; v0.2.23 is now the immutable
+Latest, including the integrated shared fixes and persistent crash diagnostics.
+See [RELEASE_V0223_QUALIFICATION.md](RELEASE_V0223_QUALIFICATION.md) for source,
+package, installed-upgrade, and publication verification. The newer separate
+Mac preview is v0.2.22-macos; the v0.2.21 provenance below is historical.
 Mac candidate `37490748085`, publication `37492451509`, and public-download
 smoke test `37492566726` passed, including two launches of the published app.
 The immutable DMG SHA-256 is
@@ -136,7 +140,7 @@ edit-distance canonicalization against explicitly configured glossary terms;
 this can alter recognized words and is not an accuracy guarantee. Empty glossary
 retains the original argmax path. Model-dependent accuracy remains unqualified.
 
-## Verification of the integrated source
+## Verification of the integrated source (before v0.2.23 qualification)
 
 - Final Windows CPU native suite: **379 passed, 10 ignored**. No model/audio-dependent
   ignored tests ran during this review. Includes seven vocabulary regressions and

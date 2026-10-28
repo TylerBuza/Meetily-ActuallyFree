@@ -153,6 +153,12 @@ Windows and macOS downloads are released separately. Check each
 [release's notes](https://github.com/TylerBuza/Meetily-ActuallyFree/releases) for
 the features and platform qualifications included in that build.
 
+Windows [v0.2.23](https://github.com/TylerBuza/Meetily-ActuallyFree/releases/tag/v0.2.23)
+includes combined-speaker display/export fixes, post-call processing improvements,
+and local crash-report timelines. See the
+[build and upgrade qualification](docs/RELEASE_V0223_QUALIFICATION.md) for verified
+preservation checks and remaining limits.
+
 <details>
 <summary><strong>Windows setup</strong></summary>
 

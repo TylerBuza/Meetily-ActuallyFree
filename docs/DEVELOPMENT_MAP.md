@@ -219,8 +219,8 @@ saves the **post-call** default; it must not replace the live Parakeet selection
   shell syntax checks ran; actual AMD build/inference did not.
 
 See [OCTOBER_PR_INTEGRATION.md](OCTOBER_PR_INTEGRATION.md) for reviewed but blocked
-PR #22/#38, qualification, and release status. These changes are source work;
-published v0.2.20 installers do not contain them.
+PR #22/#38, qualification, and release status. The integrated shared changes are
+included in Windows v0.2.23; published v0.2.20 installers do not contain them.
 
 `frontend/src/contexts/OptionalModelDownloadsContext.tsx` owns optional jobs above
 onboarding and Settings so normal navigation does not cancel them. This is not an
@@ -290,7 +290,11 @@ bindings, so the Whisper build cache was regenerated with LLVM 18. TypeScript
 package was incomplete. Three isolated combined-speaker/edit/export frontend
 files also passed all 14 tests while rechecking #44. These were synthetic/temp-file
 tests, not a real Teams/Vulkan freeze reproduction or physical Mac qualification.
-This source change is not yet a published installer.
+Windows v0.2.23 now includes these diagnostics. The full candidate suite passed
+389 native tests (ten ignored) and all 34 isolated frontend test files. Packaging,
+local upgrade, two launches, persisted startup events, and clean exits passed;
+see [RELEASE_V0223_QUALIFICATION.md](RELEASE_V0223_QUALIFICATION.md) for preservation
+checks, source/hash provenance, and publication verification.
 
 macOS publication supports an explicitly labeled CI-qualified preview via
 `publish-macos.yml` (`preview=true`). It records no physical-test attestation,
@@ -302,9 +306,10 @@ See `.github/workflows/MACOS_RELEASE.md` for dispatch and remaining limitations.
 The `v0.2.19-macos` preview packages the #42 callback change; build
 `36790029640` and published-asset smoke test `36790877680` passed. It remains
 unqualified for physical microphone capture and the reporter's device. The
-Windows Latest release is now v0.2.20; see
+Windows v0.2.20 release is documented in
 [RELEASE_V0220_QUALIFICATION.md](RELEASE_V0220_QUALIFICATION.md) for Windows build,
 hardware-capture, installed-upgrade, and public updater verification.
+The current Windows Latest is v0.2.23, qualified separately as linked above.
 The `v0.2.20-macos` follow-up packages explicit worker shutdown and short-gap
 source recovery for #42. Apple Silicon build `36876715270` passed all 22 worker
 and pipeline regressions plus bundle/launch checks; public smoke test
