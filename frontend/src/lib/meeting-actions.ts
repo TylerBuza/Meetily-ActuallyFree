@@ -44,13 +44,22 @@ export async function moveMeetingsToGroup(
   }
 }
 
+/** What `api_delete_meeting` reports about the meeting's audio folder. */
+interface DeleteMeetingResult {
+  audio_trashed?: boolean;
+  /** Set when the meeting had an audio folder that was left in place. */
+  audio_kept_reason?: string | null;
+}
+
 export async function deleteMeetings(meetingIds: string[]): Promise<number> {
   let deleted = 0;
+  const kept: string[] = [];
   for (const meetingId of meetingIds) {
     try {
-      await invoke('api_delete_meeting', { meetingId });
+      const result = await invoke<DeleteMeetingResult | null>('api_delete_meeting', { meetingId });
       Analytics.trackMeetingDeleted(meetingId);
       deleted += 1;
+      if (result?.audio_kept_reason) kept.push(result.audio_kept_reason);
     } catch (error) {
       console.error('Failed to delete meeting', meetingId, error);
     }
@@ -60,6 +69,16 @@ export async function deleteMeetings(meetingIds: string[]): Promise<number> {
     announceChange('groups');
     announceChange('actions');
     toast.success(deleted === 1 ? 'Meeting deleted' : `${deleted} meetings deleted`);
+  }
+  if (kept.length > 0) {
+    // The confirm dialog says the audio goes to the Trash; say so when it did not.
+    const reasons = [...new Set(kept)].join('; ');
+    toast.warning(
+      kept.length === 1
+        ? "The meeting's audio was kept"
+        : `Audio for ${kept.length} meetings was kept`,
+      { description: `Not moved to the Trash because ${reasons}.` },
+    );
   }
   if (deleted < meetingIds.length) {
     const failed = meetingIds.length - deleted;

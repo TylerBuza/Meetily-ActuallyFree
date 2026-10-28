@@ -248,7 +248,7 @@ export function MeetingHeader({
         onOpenChange={setConfirmDelete}
         variant="danger"
         title="Delete this meeting?"
-        description="The transcript, summary, notes, and action items are removed. Audio files stay in your recordings folder."
+        description="The transcript, summary, notes, and action items are removed, and the audio is moved to the Trash."
         confirmLabel="Delete"
         onConfirm={async () => {
           await onDelete();

@@ -217,6 +217,26 @@ Two gotchas:
 2. `paths.rs` always uses the OS data directory on macOS. Windows and Linux fall
    back there if the install directory isn't writable.
 
+Deleting a meeting (`api_delete_meeting`) moves its `folder_path` to the
+system Trash after the database rows are gone, through the same check as
+`discard_recording_folder` (`meeting_folder_within_roots`): the folder must be
+a direct child of a recordings root, where `create_meeting_folder` puts every
+meeting, and never a root itself. The roots are the configured save folder and
+the platform default (also used for imports); the app data root (models,
+voiceprints) is not one. A root that is empty, relative, unresolvable, a
+filesystem root, or the home folder is ignored rather than trusted.
+
+The Trash call runs off the async runtime on a fresh OS thread (Windows: the
+`trash` crate initialises COM as single-threaded and panics on a thread that
+is already multithreaded) and, on macOS, uses `NSFileManager` instead of the
+crate's default Finder/Apple Events method, which the hardened app is not
+entitled to drive. Trashing is skipped if another meeting still references the
+folder, the folder lies outside today's roots (for example a former custom
+recordings folder), or the Trash refuses it. The deletion still succeeds; the
+response carries `audio_kept_reason`, and `deleteMeetings` (used by the
+library, sidebar, and meeting page) shows a warning with that reason, so the
+confirm dialog's "moved to the Trash" is never silently untrue.
+
 Recording-folder creation is intentionally collision-safe. Sanitized titles are
 not unique, so `audio_processing.rs` creates the directory atomically and adds a
 suffix if it already exists. The configured custom recordings root must flow

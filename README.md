@@ -206,6 +206,9 @@ Analytics transmission is disabled, and Windows update checks are opt-in.
 Change the recordings folder in **Settings → Recording → Save Location**.
 The meeting database, models, and preferences are distinct from the audio folder;
 copying recordings alone does not move the entire workspace.
+Deleting a meeting moves its recording folder to the Trash (Recycle Bin on Windows), so it
+can still be restored from there. If the folder cannot be moved (another meeting uses it,
+or it is outside the current recordings folders), Meetily says so and leaves it in place.
 
 </details>
 
