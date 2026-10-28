@@ -196,6 +196,22 @@ state for dialogs, including native activation events and stale-response guards.
 Live ASR and post-call ASR defaults are independent. Optional Whisper activation
 saves the **post-call** default; it must not replace the live Parakeet selection.
 
+Post-call Whisper (large-v3 especially, in Russian) emits lines from its subtitle
+training data instead of transcribing. `strip_whisper_hallucination` in
+`audio/retranscription.rs` handles these per segment:
+- A subtitle credit ("Субтитры создавал DimaTorzok", "Редактор субтитров …
+  Корректор …") is cut along with everything after it.
+- A segment that is only "Продолжение следует" is dropped.
+- Phrases people do say ("you", "thank you", "Спасибо", "Спасибо за просмотр")
+  are dropped only from quiet audio (RMS < 0.02). The same call had 29 lone
+  "Спасибо." lines on a call track below -40 dBFS.
+
+In one 44-minute call, 43 of 48 "Продолжение следует" lines came from a near-silent
+track; the other 5, and some credits, came from speech, so gating on energy alone
+was not enough. A read-only pass over 16,237 saved lines (one user's database)
+dropped 137, all of these five strings. Unit tests cover the phrases and the kept
+cases. Live Whisper capture (`transcription/worker.rs`) does not filter content.
+
 ## 4. Optional download ownership and UI synchronization
 
 ### October integration interfaces
