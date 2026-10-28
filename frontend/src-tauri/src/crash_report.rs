@@ -13,7 +13,7 @@ use uuid::Uuid;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-const REPORT_SCHEMA_VERSION: u8 = 1;
+const REPORT_SCHEMA_VERSION: u8 = 2;
 const README: &str = "Meetily crash report\n\
 \n\
 Included:\n\
@@ -21,6 +21,7 @@ Included:\n\
 - Meetily version and selected acceleration backend\n\
 - Operating system family/version, architecture, bucketed CPU core count, and a rounded memory size\n\
 - Panic source and anonymous fingerprint when available\n\
+- Bounded lifecycle stages, outcomes, relative timings, and unfinished operations when available\n\
 \n\
 Not included:\n\
 - Recordings, audio checkpoints, transcripts, summaries, or meeting names\n\
@@ -79,6 +80,8 @@ struct CrashReport {
     memory_gib_bucket: u64,
     backend: String,
     panic: Option<PanicRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    diagnostics: Option<crate::diagnostics::Snapshot>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -145,6 +148,7 @@ pub fn start_session() -> Result<(), String> {
     let root = crash_root(&crate::paths::install_data_root());
     let session = current_session_record();
     start_session_at(&root, session.clone()).map_err(|error| error.to_string())?;
+    crate::diagnostics::start(&root, &session.session_id);
 
     *current_session = Some(session.session_id);
     PANIC_RECORDED.store(false, Ordering::SeqCst);
@@ -164,6 +168,7 @@ pub fn finish_session() -> Result<(), String> {
 
     finish_session_at(&crash_root(&crate::paths::install_data_root()), session_id)
         .map_err(|error| error.to_string())?;
+    crate::diagnostics::finish();
     *current_session = None;
     Ok(())
 }
@@ -253,11 +258,14 @@ fn start_session_at(root: &Path, session: SessionRecord) -> io::Result<()> {
             memory_gib_bucket: metadata.memory_gib_bucket,
             backend: metadata.backend.clone(),
             panic,
+            diagnostics: crate::diagnostics::recover(root, &metadata.session_id),
         };
         write_json_atomic(&pending_path(root), &report)?;
+        crate::diagnostics::remove(root, &metadata.session_id);
     }
 
     remove_if_exists(&root.join("panic.pending.json"))?;
+    crate::diagnostics::prune(root);
     write_json_atomic(&session_path(root), &session)
 }
 
@@ -446,7 +454,7 @@ fn write_report_zip(destination: &Path, report: &CrashReport) -> io::Result<()> 
         .map_err(|error| error.error)
 }
 
-fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
+pub(crate) fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
     let bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
@@ -520,6 +528,56 @@ mod tests {
                 .session_id,
             "current"
         );
+    }
+
+    #[test]
+    fn prior_session_timeline_survives_restart_and_zip_export() {
+        let temp = tempdir().unwrap();
+        write_json_atomic(&session_path(temp.path()), &session("stale")).unwrap();
+        let journal = serde_json::json!({
+            "events": [{"operationId": 1, "stage": "whisper_load", "outcome": "started", "atMs": 100, "elapsedMs": 0}],
+            "active": [{"operationId": 1, "stage": "whisper_load", "outcome": "slow", "atMs": 100, "elapsedMs": 20000}],
+            "elapsedMs": 20100, "droppedEvents": 0, "evictedEvents": 0
+        });
+        let journal_path = temp
+            .path()
+            .join(format!("diagnostics-{:x}.json", Sha256::digest(b"stale")));
+        write_json_atomic(&journal_path, &journal).unwrap();
+        start_session_at(temp.path(), session("current")).unwrap();
+        assert!(!journal_path.exists());
+        let report = read_json::<CrashReport>(&pending_path(temp.path()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(report.diagnostics.as_ref().unwrap()).unwrap(),
+            journal
+        );
+        let destination = temp.path().join("report.zip");
+        write_report_zip(&destination, &report).unwrap();
+        let mut archive = ZipArchive::new(File::open(destination).unwrap()).unwrap();
+        let mut json = String::new();
+        archive
+            .by_name("report.json")
+            .unwrap()
+            .read_to_string(&mut json)
+            .unwrap();
+        let exported: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(exported["diagnostics"], journal);
+        assert!(!json.contains("stale"));
+        assert!(!json.contains("current"));
+    }
+
+    #[test]
+    fn schema_one_pending_reports_remain_exportable() {
+        let temp = tempdir().unwrap();
+        write_json_atomic(&session_path(temp.path()), &session("stale")).unwrap();
+        start_session_at(temp.path(), session("current")).unwrap();
+        let mut legacy: serde_json::Value = read_json(&pending_path(temp.path())).unwrap().unwrap();
+        legacy["schemaVersion"] = serde_json::json!(1);
+        legacy.as_object_mut().unwrap().remove("diagnostics");
+        let report: CrashReport = serde_json::from_value(legacy).unwrap();
+        assert!(report.diagnostics.is_none());
+        write_report_zip(&temp.path().join("legacy.zip"), &report).unwrap();
     }
 
     #[test]
@@ -602,6 +660,7 @@ mod tests {
                 column: Some(4),
                 fingerprint: "fingerprint".to_string(),
             }),
+            diagnostics: None,
         };
         let destination = temp.path().join("report.zip");
         for (name, private_value) in [
@@ -649,6 +708,7 @@ mod tests {
             memory_gib_bucket: 16,
             backend: "cuda".to_string(),
             panic: None,
+            diagnostics: None,
         };
         let destination = temp.path().join("report.ZIP");
         fs::write(&destination, b"previous file").unwrap();

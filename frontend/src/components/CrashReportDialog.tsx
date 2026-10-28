@@ -146,6 +146,7 @@ export default function CrashReportDialog({ report, onResolved }: CrashReportDia
             </summary>
             <div className="mt-3 space-y-2 border-t border-[var(--af-border)] pt-3 text-xs leading-relaxed text-[var(--af-text-3)]">
               <p>Crash time and type, Meetily version, coarse operating-system details, bucketed CPU core count, rounded memory size, acceleration backend, and source-relative panic file/line details with a location fingerprint when available.</p>
+              <p>When available, a short diagnostic timeline shows model loading, recording startup and Stop stages, elapsed times, and operations that failed or were still running.</p>
               <p>No audio, recordings, transcripts, summaries, meeting names, database, settings, credentials, usernames, hostnames, or device names.</p>
             </div>
           </details>

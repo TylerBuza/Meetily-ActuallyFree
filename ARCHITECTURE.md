@@ -266,7 +266,29 @@ report-upload server; nothing is uploaded automatically.
 The in-app ZIP is deliberately allowlist-only: crash classification/time,
 version/backend, OS family and major version, architecture, bucketed CPU core
 count, rounded memory size, source-relative panic file/line details, and a
-panic-location fingerprint. It
+panic-location fingerprint. Schema 2 also includes a bounded, content-free
+lifecycle timeline and active operations recovered from the failed native session.
+`diagnostics.rs` owns the typed stage/outcome allowlist, 128-event queue/ring,
+32-active-operation cap, relative millisecond timings, and dropped/evicted counts.
+A dedicated thread atomically persists snapshots; producers never wait for queue
+capacity or do disk I/O. Active stages get a one-second elapsed-time heartbeat and
+one `slow` marker after 15 seconds (not proof of a deadlock). An unfinished span
+is `interrupted` on unwinding/cancellation; an abruptly killed process leaves it
+active in the last persisted snapshot. Completed/failed outcomes reflect Results.
+Native runtime checks, Parakeet/Whisper init/load, STT memory preparation, both
+recording start paths, lifecycle-lock waits, device/model checks, live diarization,
+capture startup/shutdown, final transcription drain and audio save are instrumented.
+Snapshots are session-keyed, folded into pending.json before a new session starts,
+and old journals are pruned. Export uses that frozen report, never the next session.
+Legacy schema-1 pending reports remain readable. No frontend IPC payload, raw error,
+model filename or device label is accepted by the journal.
+
+Coverage: native tests exercise bounded retention/overflow, slow and unfinished
+operations, session isolation, stale-session ZIP recovery, schema-1 compatibility,
+and rejection of unknown stage strings. Persistence is best effort: abrupt exit
+can lose queued events, disk/thread failures can leave no journal, and frontend-only
+hangs or uninstrumented work remain outside this timeline. These diagnostics do
+not establish the cause of #67 or fix its reported freeze. The ZIP still
 never includes ordinary logs, recordings, checkpoints, transcript/summary data,
 meeting identity, SQLite/WebView/settings storage, credentials, usernames,
 hostnames, or device names. Do not replace it with the much broader manual

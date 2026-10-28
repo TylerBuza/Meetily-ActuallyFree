@@ -234,6 +234,13 @@ fn get_models_directory() -> Option<PathBuf> {
 
 #[command]
 pub async fn whisper_init() -> Result<(), String> {
+    crate::diagnostics::track(
+        crate::diagnostics::Stage::WhisperInit,
+        whisper_init_inner(),
+    ).await
+}
+
+async fn whisper_init_inner() -> Result<(), String> {
     let mut guard = WHISPER_ENGINE.lock().unwrap();
     if guard.is_some() {
         return Ok(());
@@ -326,6 +333,16 @@ pub async fn whisper_load_model(
     app_handle: tauri::AppHandle,
     model_name: String,
 ) -> Result<(), String> {
+    crate::diagnostics::track(
+        crate::diagnostics::Stage::WhisperLoad,
+        whisper_load_model_inner(app_handle, model_name),
+    ).await
+}
+
+async fn whisper_load_model_inner(
+    app_handle: tauri::AppHandle,
+    model_name: String,
+) -> Result<(), String> {
     let engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
         guard.as_ref().cloned()
@@ -333,7 +350,10 @@ pub async fn whisper_load_model(
 
     if let Some(engine) = engine {
         // Free builtin LLM before loading STT so they never share VRAM.
-        crate::audio::common::prepare_for_stt().await;
+        crate::diagnostics::wait(
+            crate::diagnostics::Stage::SttMemoryPreparation,
+            crate::audio::common::prepare_for_stt(),
+        ).await;
 
         // FIX 6: Emit model loading started event
         if let Err(e) = app_handle.emit(

@@ -278,6 +278,20 @@ changing the signed executable payloads.
 
 ## 6. Tests, qualification, and historical notes
 
+Crash diagnostics are mapped in [ARCHITECTURE.md](../ARCHITECTURE.md#crash-reports).
+`src-tauri/src/diagnostics.rs` persists a bounded native lifecycle timeline for the
+next crash ZIP; `crash_report.rs` owns session recovery and export. Run native
+`diagnostics::tests` and `crash_report::tests` for timeline/privacy/rollover coverage.
+October 28 verification: the targeted Windows CPU native invocation passed 14
+tests (13 journal/crash-report tests plus the existing audio diagnostic test).
+It used MSVC and LLVM 18/libclang; local LLVM 22 produced invalid opaque Whisper
+bindings, so the Whisper build cache was regenerated with LLVM 18. TypeScript
+5.9.3 checking passed using a clean pnpm dlx compiler because the local compiler
+package was incomplete. Three isolated combined-speaker/edit/export frontend
+files also passed all 14 tests while rechecking #44. These were synthetic/temp-file
+tests, not a real Teams/Vulkan freeze reproduction or physical Mac qualification.
+This source change is not yet a published installer.
+
 macOS publication supports an explicitly labeled CI-qualified preview via
 `publish-macos.yml` (`preview=true`). It records no physical-test attestation,
 publishes a separate non-Latest prerelease, and retains artifact/hash/source

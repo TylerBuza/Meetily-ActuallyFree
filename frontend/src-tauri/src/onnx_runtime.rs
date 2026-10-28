@@ -78,7 +78,10 @@ fn initialize_library(path: &std::path::Path) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn check_transcription_runtime() -> Result<(), String> {
-    ensure_available().map_err(|error| format!("{START_ERROR_CODE}: {error}"))
+    let diagnostic = crate::diagnostics::Span::start(crate::diagnostics::Stage::RuntimeCheck);
+    let result = ensure_available().map_err(|error| format!("{START_ERROR_CODE}: {error}"));
+    diagnostic.result(&result);
+    result
 }
 
 #[cfg(all(test, windows))]

@@ -41,6 +41,7 @@ pub mod claude_cli;
 pub mod config;
 pub mod console_utils;
 pub mod crash_report;
+pub mod diagnostics;
 pub mod database;
 pub mod diarization;
 mod optional_models;

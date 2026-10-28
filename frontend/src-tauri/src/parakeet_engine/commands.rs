@@ -1,3 +1,4 @@
+use crate::diagnostics::{track, wait, Stage};
 use crate::parakeet_engine::parakeet_engine::DOWNLOAD_CANCELLED_MESSAGE;
 use crate::parakeet_engine::{DownloadProgress, ModelInfo, ModelStatus, ParakeetEngine};
 use std::path::PathBuf;
@@ -38,6 +39,10 @@ fn get_models_directory() -> Option<PathBuf> {
 
 #[command]
 pub async fn parakeet_init() -> Result<(), String> {
+    track(Stage::ParakeetInit, parakeet_init_inner()).await
+}
+
+async fn parakeet_init_inner() -> Result<(), String> {
     let mut guard = PARAKEET_ENGINE.lock().unwrap();
     if guard.is_some() {
         return Ok(());
@@ -72,6 +77,16 @@ pub async fn parakeet_load_model<R: Runtime>(
     app_handle: AppHandle<R>,
     model_name: String,
 ) -> Result<(), String> {
+    track(
+        Stage::ParakeetLoad,
+        parakeet_load_model_inner(app_handle, model_name),
+    ).await
+}
+
+async fn parakeet_load_model_inner<R: Runtime>(
+    app_handle: AppHandle<R>,
+    model_name: String,
+) -> Result<(), String> {
     let engine = {
         let guard = PARAKEET_ENGINE.lock().unwrap();
         guard.as_ref().cloned()
@@ -79,7 +94,7 @@ pub async fn parakeet_load_model<R: Runtime>(
 
     if let Some(engine) = engine {
         // Free builtin LLM before loading STT so they never share VRAM.
-        crate::audio::common::prepare_for_stt().await;
+        wait(Stage::SttMemoryPreparation, crate::audio::common::prepare_for_stt()).await;
 
         // Emit model loading started event
         if let Err(e) = app_handle.emit(
