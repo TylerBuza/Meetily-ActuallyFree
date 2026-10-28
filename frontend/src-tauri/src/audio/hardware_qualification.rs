@@ -41,7 +41,7 @@ fn source_index(source: &DeviceType) -> Option<usize> {
     match source {
         DeviceType::Microphone => Some(0),
         DeviceType::System => Some(1),
-        DeviceType::Mixed => None,
+        DeviceType::Mixed | DeviceType::MicrophoneRaw => None,
     }
 }
 

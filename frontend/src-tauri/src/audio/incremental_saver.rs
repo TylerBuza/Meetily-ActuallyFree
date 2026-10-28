@@ -31,7 +31,7 @@ pub struct IncrementalAudioSaver {
     checkpoints_dir: PathBuf,
     meeting_folder: PathBuf,
     sample_rate: u32,
-    /// Basename without extension: "audio" | "mic" | "system"
+    /// Basename without extension: "audio" | "mic" | "system" | "mic_raw"
     track: String,
 }
 
@@ -411,7 +411,7 @@ pub async fn recover_audio_from_checkpoints(
     };
 
     let mut source_failures = Vec::new();
-    for track in ["mic", "system"] {
+    for track in ["mic", "system", "mic_raw"] {
         let track_dir = checkpoints_root.join(track);
         if track_dir.is_dir() {
             if let Err(error) = recover_checkpoint_track(

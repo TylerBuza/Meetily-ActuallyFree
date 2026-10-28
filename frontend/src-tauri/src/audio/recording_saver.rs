@@ -62,10 +62,14 @@ pub struct DeviceInfo {
 ///   - `audio.mp4`  mixed playback
 ///   - `mic.mp4`    local user (You)
 ///   - `system.mp4` remote / computer audio
+///   - `mic_raw.mp4` the mic before echo cancellation (macOS, only when it ran)
 pub struct RecordingSaver {
     mixed_saver: Option<Arc<AsyncMutex<IncrementalAudioSaver>>>,
     mic_saver: Option<Arc<AsyncMutex<IncrementalAudioSaver>>>,
     system_saver: Option<Arc<AsyncMutex<IncrementalAudioSaver>>>,
+    /// Created on the first raw mic chunk, so recordings without echo
+    /// cancellation get no empty track.
+    mic_raw_saver: Arc<AsyncMutex<Option<IncrementalAudioSaver>>>,
     recordings_folder: Option<PathBuf>,
     meeting_folder: Option<PathBuf>,
     meeting_name: Option<String>,
@@ -82,6 +86,7 @@ impl RecordingSaver {
             mixed_saver: None,
             mic_saver: None,
             system_saver: None,
+            mic_raw_saver: Arc::new(AsyncMutex::new(None)),
             recordings_folder: None,
             meeting_folder: None,
             meeting_name: None,
@@ -208,6 +213,8 @@ impl RecordingSaver {
         let mixed_saver = self.mixed_saver.clone();
         let mic_saver = self.mic_saver.clone();
         let system_saver = self.system_saver.clone();
+        let mic_raw_saver = self.mic_raw_saver.clone();
+        let meeting_folder = self.meeting_folder.clone();
         let save_audio = auto_save;
 
         if let Some(mut receiver) = self.chunk_receiver.take() {
@@ -220,10 +227,28 @@ impl RecordingSaver {
                         continue;
                     }
 
+                    if chunk.device_type == DeviceType::MicrophoneRaw {
+                        let mut raw = mic_raw_saver.lock().await;
+                        if raw.is_none() {
+                            *raw = meeting_folder.clone().and_then(|folder| {
+                                IncrementalAudioSaver::new_track(folder, 48000, "mic_raw")
+                                    .map_err(|e| error!("Failed to create raw mic track: {}", e))
+                                    .ok()
+                            });
+                        }
+                        if let Some(saver) = raw.as_mut() {
+                            if let Err(e) = saver.add_chunk(chunk) {
+                                error!("Failed to add chunk to raw mic track: {}", e);
+                            }
+                        }
+                        continue;
+                    }
+
                     let target = match chunk.device_type {
                         DeviceType::Mixed => mixed_saver.as_ref(),
                         DeviceType::Microphone => mic_saver.as_ref(),
                         DeviceType::System => system_saver.as_ref(),
+                        DeviceType::MicrophoneRaw => None,
                     };
 
                     if let Some(saver_arc) = target {
@@ -455,6 +480,12 @@ impl RecordingSaver {
             .ok_or_else(|| "Mixed audio path missing".to_string())?;
         let mic_audio_path = finalize_track(&self.mic_saver, "mic", false).await?;
         let system_audio_path = finalize_track(&self.system_saver, "system", false).await?;
+        if let Some(raw) = self.mic_raw_saver.lock().await.as_mut() {
+            match raw.finalize().await {
+                Ok(path) => info!("✅ Finalized raw mic: {}", path.display()),
+                Err(e) => warn!("⚠️ Optional track raw mic not finalized: {e}"),
+            }
+        }
 
         // Save final transcripts.json with validation
         if let Some(folder) = &self.meeting_folder {
