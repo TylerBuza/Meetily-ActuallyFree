@@ -100,7 +100,7 @@ if (platform === 'linux' && feature === 'hipblas') {
 }
 if (platform === 'linux' && feature === 'cuda') {
   console.log('🐧 Linux/CUDA detected: Setting CMAKE flags for NVIDIA GPU');
-  env.CMAKE_CUDA_ARCHITECTURES = '75';
+  env.CMAKE_CUDA_ARCHITECTURES ||= '75';
   env.CMAKE_CUDA_STANDARD = '17';
   env.CMAKE_POSITION_INDEPENDENT_CODE = 'ON';
 }
