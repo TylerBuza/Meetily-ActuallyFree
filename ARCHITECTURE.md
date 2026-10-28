@@ -920,7 +920,7 @@ Responsibility map:
 
 | File | macOS responsibility |
 |---|---|
-| `audio/capture/core_audio.rs` | Create the global process tap, aggregate device, stream, and audible probe |
+| `audio/capture/core_audio.rs` | Create the global or per-app process tap, aggregate device, stream, and audible probe; map chosen apps to Core Audio process objects |
 | `audio/permissions.rs` | Preserve legacy IPC names while routing verification to the Core Audio probe |
 | `audio/capture/backend_config.rs` | Expose only implemented backends for the current platform |
 | `components/onboarding/steps/AudioTestStep.tsx` | Serialize the native singleton monitor and guide audible testing |
@@ -941,6 +941,39 @@ name proves that an output exists; it does not prove Audio Capture authorization
 and a non-default output name cannot retarget the global tap. The macOS UI keeps
 this route read-only and directs users to Sound settings. Do not restore a
 selectable output list unless capture actually binds to that route.
+
+"Only chosen apps" (per-app capture) uses the same tap with an include list.
+`CATapDescription` takes Core Audio *process object* IDs, never PIDs.
+`audio_process_objects_for_apps` lists `kAudioHardwarePropertyProcessObjectList`
+and keeps every audio process whose executable, or whose responsible process
+(`responsibility_get_pid_responsible_for_pid`), is a chosen app or lives inside
+its `.app` bundle. Browsers and WebKit play audio from helpers (Chrome renderer,
+WebContent), so matching only the main PID would capture nothing. Executable
+paths come from `proc_pidpath`: sysinfo returns none for Apple's own apps
+(Safari, QuickTime Player), which then never matched. All chosen apps
+go into one mono mixdown tap; Windows keeps its per-PID process loopback.
+Only processes that have already used audio exist as process objects, so the
+include list cannot be fixed at Start: a call joined later, a new tab, or
+Chrome restarting its audio service creates new objects. `CoreAudioCapture::new_for_apps`
+creates the tap with whatever matches (possibly nothing; an empty mixdown tap
+is valid and delivers silent buffers, which keeps the five-second
+no-samples stall check quiet), and the stream owns a `ProcessFollower` thread
+that re-scans every 0.5 s (`APP_RESCAN_INTERVAL`). When the matching set
+changes, `set_tap_processes` edits the live tap's `kAudioTapPropertyDescription`
+in place (same UUID, so the aggregate device's tap UID is unchanged) instead of
+rebuilding the tap and aggregate device. The follower is joined before the
+device stops and the tap is destroyed. Starting with only the chosen-apps list
+empty is an error (the recording manager routes that case to the global tap).
+Limits: up to one rescan interval of an app's first audio can be missed, and a
+per-app tap failure is an error, not a silent fallback to the global tap,
+because recording every app would contradict the user's choice.
+`app_matching_tests` covers the bundle/helper path matching (and an ignored
+check that QuickTime Player's audio process is found) and `follow_tests` the
+rescan diffing/retry loop with a scripted scanner. Qualified live on macOS 27:
+with QuickTime Player chosen and quit at Start, launching it and pressing Play
+mid-recording added its new process object to the running tap, its audio landed
+on the system track, and speech from a process that was not chosen did not.
+At the old 1.5 s interval about 3 s of its first audio were missed.
 
 Creating the process tap triggers the OS Audio Capture prompt. A successful tap
 creation is still not enough because a denied tap can produce an all-zero stream.
