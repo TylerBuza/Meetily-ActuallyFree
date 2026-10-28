@@ -258,6 +258,15 @@ pnpm install
 ./scripts/build-macos-apple-silicon.sh
 ```
 
+Linux builds produce an AppImage and a .deb; see
+[Building on Linux](docs/building_in_linux.md) for the system packages:
+
+```bash
+cd frontend
+pnpm install
+./build-gpu.sh
+```
+
 </details>
 
 ## Credits and license
