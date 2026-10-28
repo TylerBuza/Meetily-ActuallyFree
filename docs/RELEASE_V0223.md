@@ -43,5 +43,5 @@ SmartScreen may show **Unknown publisher**. The updater payload is
 cryptographically signed; `SHA256SUMS.txt` verifies the assets. macOS remains on
 its separate Apple Silicon preview release.
 
-Thanks to @ampersandru, @0cv, @pthurmond, @KARAtel218, @sscarduzio, and everyone
-providing reports and reproduction details.
+Thanks to @ampersandru, @0cv, @pthurmond, @KARAtel218, @sscarduzio, @fernandog,
+and everyone providing reports and reproduction details.
