@@ -437,32 +437,21 @@ pub struct MeetingAudio {
 
 const PLAYABLE_EXTENSIONS: [&str; 8] = ["mp4", "m4a", "mp3", "wav", "aac", "flac", "ogg", "webm"];
 
-/// Locates a meeting's recordings and lets the webview stream them through
-/// the asset protocol. Recordings can live in any folder the user picked, so
-/// the folder is added to the asset scope on demand rather than up front.
-#[tauri::command]
-pub async fn api_get_meeting_audio<R: Runtime>(
-    app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
-    meeting_id: String,
-) -> Result<MeetingAudio, String> {
-    use tauri::Manager;
-
-    let none = MeetingAudio {
-        path: None,
-        mic_path: None,
-        system_path: None,
-    };
+/// A meeting's recording folder and the audio files found in it.
+async fn locate_meeting_audio(
+    state: &AppState,
+    meeting_id: &str,
+) -> Result<Option<(std::path::PathBuf, MeetingAudio)>, String> {
     let folder: Option<String> = sqlx::query_scalar("SELECT folder_path FROM meetings WHERE id = ?")
-        .bind(&meeting_id)
+        .bind(meeting_id)
         .fetch_optional(state.db_manager.pool())
         .await
         .map_err(|e| format!("Failed to look up the meeting folder: {}", e))?
         .flatten();
-    let Some(folder) = folder else { return Ok(none) };
+    let Some(folder) = folder else { return Ok(None) };
     let dir = std::path::PathBuf::from(folder);
     if !dir.is_dir() {
-        return Ok(none);
+        return Ok(None);
     }
 
     let existing = |name: &str| {
@@ -488,12 +477,52 @@ pub async fn api_get_meeting_audio<R: Runtime>(
         mic_path: existing("mic.mp4"),
         system_path: existing("system.mp4"),
     };
+    Ok(Some((dir, audio)))
+}
+
+/// Locates a meeting's recordings and lets the webview stream them through
+/// the asset protocol. Recordings can live in any folder the user picked, so
+/// the folder is added to the asset scope on demand rather than up front.
+#[tauri::command]
+pub async fn api_get_meeting_audio<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+) -> Result<MeetingAudio, String> {
+    use tauri::Manager;
+
+    let Some((dir, audio)) = locate_meeting_audio(&state, &meeting_id).await? else {
+        return Ok(MeetingAudio {
+            path: None,
+            mic_path: None,
+            system_path: None,
+        });
+    };
     if audio.path.is_some() || audio.mic_path.is_some() || audio.system_path.is_some() {
         app.asset_protocol_scope()
             .allow_directory(&dir, false)
             .map_err(|e| format!("Failed to allow playback of the recording: {}", e))?;
     }
     Ok(audio)
+}
+
+/// Returns the bytes of a meeting's playback track. WebKitGTK's media player
+/// cannot load the asset protocol, so Linux plays the recording from a blob
+/// URL instead of streaming it. The file is found by meeting id, never by a
+/// path from the webview.
+#[tauri::command]
+pub async fn api_read_meeting_audio(
+    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+) -> Result<tauri::ipc::Response, String> {
+    let path = locate_meeting_audio(&state, &meeting_id)
+        .await?
+        .and_then(|(_, audio)| audio.path)
+        .ok_or_else(|| "This meeting has no playback audio".to_string())?;
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("Failed to read the recording: {}", e))?;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 #[tauri::command]

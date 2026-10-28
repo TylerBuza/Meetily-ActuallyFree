@@ -5,10 +5,31 @@
  * asset protocol; the page gets a streaming URL plus transport controls. The
  * clock ticks on animation frames while playing so the transcript highlight
  * and scrubber move smoothly.
+ *
+ * WebKitGTK's media player cannot load the asset protocol, so on Linux the
+ * recording is read over IPC and played from a blob URL instead.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { getMeetingAudio } from '@/lib/workspace-api';
+import { getMeetingAudio, readMeetingAudio } from '@/lib/workspace-api';
+import { detectPlatformFromUserAgent } from '@/hooks/usePlatform';
+
+const AUDIO_MIME_TYPES: Record<string, string> = {
+  mp4: 'audio/mp4',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  flac: 'audio/flac',
+  ogg: 'audio/ogg',
+  webm: 'audio/webm',
+};
+
+async function blobSource(meetingId: string, path: string): Promise<string> {
+  const bytes = await readMeetingAudio(meetingId);
+  const extension = path.split('.').pop()?.toLowerCase() ?? '';
+  return URL.createObjectURL(new Blob([bytes], { type: AUDIO_MIME_TYPES[extension] ?? 'audio/mp4' }));
+}
 
 export type AudioStatus = 'loading' | 'ready' | 'unavailable' | 'error';
 
@@ -44,6 +65,7 @@ export function useMeetingAudio(meetingId: string | null | undefined): MeetingAu
 
   useEffect(() => {
     let cancelled = false;
+    let blobUrl: string | null = null;
     setStatus('loading');
     setPath(null);
     setPlaying(false);
@@ -54,16 +76,33 @@ export function useMeetingAudio(meetingId: string | null | undefined): MeetingAu
       return;
     }
     void getMeetingAudio(meetingId)
-      .then((audio) => {
+      .then(async (audio) => {
         if (cancelled) return;
         if (!audio.path) {
           setStatus('unavailable');
           return;
         }
         setPath(audio.path);
+        let src: string;
+        // The OS plugin is not registered, so platform() from it would throw.
+        if (detectPlatformFromUserAgent() === 'linux') {
+          try {
+            src = await blobSource(meetingId, audio.path);
+          } catch {
+            if (!cancelled) setStatus('error');
+            return;
+          }
+          if (cancelled) {
+            URL.revokeObjectURL(src);
+            return;
+          }
+          blobUrl = src;
+        } else {
+          src = convertFileSrc(audio.path);
+        }
         const element = new Audio();
         element.preload = 'metadata';
-        element.src = convertFileSrc(audio.path);
+        element.src = src;
         element.onloadedmetadata = () => {
           if (cancelled) return;
           setDuration(Number.isFinite(element.duration) ? element.duration : 0);
@@ -85,6 +124,7 @@ export function useMeetingAudio(meetingId: string | null | undefined): MeetingAu
         element.removeAttribute('src');
         element.load();
       }
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
       audioRef.current = null;
     };
   }, [meetingId]);
