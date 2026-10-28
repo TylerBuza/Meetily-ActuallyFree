@@ -30,6 +30,9 @@ used:
   combines or removes their voice.
 - Whisper silence guard and Parakeet GPU: tagged on the engine they change in
   Settings > Transcription.
+- Ignore speaker bleed during retranscription: applies when speaker labels are rerun or a meeting with
+  separate microphone and system tracks is retranscribed; see
+  [MIC_BLEED_SUPPRESSION.md](MIC_BLEED_SUPPRESSION.md).
 - Clean transcript: a Clean/Verbatim switch in the meeting player. With Labs
   off the transcript still hides simple fillers, as before.
 
