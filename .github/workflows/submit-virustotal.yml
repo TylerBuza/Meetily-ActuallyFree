@@ -20,7 +20,7 @@ concurrency:
 jobs:
   submit:
     name: Submit Windows executables
-    if: ${{ !endsWith(github.event.release.tag_name || inputs['release-tag'], '-macos') }}
+    if: ${{ !endsWith(github.event.release.tag_name || inputs['release-tag'], '-macos') && !contains(github.event.release.tag_name || inputs['release-tag'], '-linux-') }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:

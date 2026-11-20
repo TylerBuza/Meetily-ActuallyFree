@@ -8,7 +8,7 @@
 //! |---------|---------------------------------------------------|
 //! | Windows | `%USERPROFILE%\Music\meetily-recordings`           |
 //! | macOS   | `~/Movies/meetily-recordings`                      |
-//! | Linux   | `~/Videos/meetily-recordings` (or Documents)       |
+//! | Linux   | XDG Documents directory / `meetily-recordings`   |
 //!
 //! Layout is `<folder>/<sanitized meeting name>/audio.mp4`, alongside
 //! `metadata.json` and `transcripts.json`.
@@ -171,9 +171,11 @@ pub fn get_default_recordings_folder() -> PathBuf {
 
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        // Linux/Others: ~/Documents/meetily-recordings
+        // Minimal desktops may not define XDG_DOCUMENTS_DIR. A relative fallback
+        // can resolve inside AppImage's disposable extraction directory.
         dirs::document_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
+            .or_else(|| dirs::home_dir().map(|home| home.join("Documents")))
+            .unwrap_or_else(crate::paths::install_data_root)
             .join("meetily-recordings")
     }
 }

@@ -4,6 +4,7 @@
 # Automatically detects and runs in development mode with optimal GPU features
 
 set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Colors for output
 RED='\033[0;31m'
@@ -18,7 +19,7 @@ echo ""
 
 # Export CUDA flags for Linux/NVIDIA
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    export CMAKE_CUDA_ARCHITECTURES=75
+    export CMAKE_CUDA_ARCHITECTURES="${CMAKE_CUDA_ARCHITECTURES:-75}"
     export CMAKE_CUDA_STANDARD=17
     export CMAKE_POSITION_INDEPENDENT_CODE=ON
 fi
@@ -43,7 +44,7 @@ if [ -f "package.json" ]; then
     FRONTEND_DIR="."
 elif [ -f "frontend/package.json" ]; then
     cd frontend || { echo -e "${RED}❌ Failed to change to frontend directory${NC}"; exit 1; }
-    FRONTEND_DIR="frontend"
+    FRONTEND_DIR="."
 else
     echo -e "${RED}❌ Could not find package.json${NC}"
     echo -e "${RED}   Make sure you're in the project root or frontend directory${NC}"
@@ -81,6 +82,8 @@ else
     echo -e "${YELLOW}⚠️ No specific GPU feature detected or forced${NC}"
 fi
 
+source "$SCRIPT_DIR/scripts/linux-cuda-env.sh"
+
 # Build llama-helper
 echo ""
 echo -e "${BLUE}🦙 Building llama-helper sidecar (debug)...${NC}"
@@ -88,7 +91,6 @@ echo -e "${BLUE}🦙 Building llama-helper sidecar (debug)...${NC}"
 HELPER_DIR="llama-helper"
 if [ ! -d "$HELPER_DIR" ]; then
     # Try to find it relative to script location
-    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
     HELPER_DIR="$SCRIPT_DIR/../llama-helper"
 fi
 
@@ -148,7 +150,7 @@ if [ "$TAURI_GPU_FEATURE" = "hipblas" ]; then
 fi
 
 echo -e "   Building in $HELPER_DIR with features: ${HELPER_FEATURES:-none}"
-(cd "$HELPER_DIR" && cargo build $HELPER_FEATURES)
+(cd "$HELPER_DIR" && cargo build --locked --no-default-features $HELPER_FEATURES)
 
 if [ $? -ne 0 ]; then
     echo -e "${RED}❌ Failed to build llama-helper${NC}"
@@ -167,8 +169,7 @@ echo -e "   Target: $TARGET_TRIPLE"
 BINARIES_DIR="$FRONTEND_DIR/src-tauri/binaries"
 mkdir -p "$BINARIES_DIR"
 
-# Clean old binaries
-find "$BINARIES_DIR" -name "llama-helper*" -delete
+# Keep other targets' sidecars; only replace the host's binary below.
 
 BASE_BINARY="llama-helper"
 SIDECAR_BINARY="llama-helper-$TARGET_TRIPLE"
@@ -178,25 +179,16 @@ if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
     SIDECAR_BINARY="llama-helper-$TARGET_TRIPLE.exe"
 fi
 
-# The binary is in the workspace target directory, which is one level up from frontend
-# if we are in frontend dir.
-WORKSPACE_ROOT="$FRONTEND_DIR/.."
-SRC_PATH="$WORKSPACE_ROOT/target/debug/$BASE_BINARY"
+# Cargo metadata honors both CARGO_TARGET_DIR and workspace configuration.
+TARGET_DIR="$(cd "$HELPER_DIR" && cargo metadata --no-deps --format-version 1 | node -e 'let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).target_directory))')"
+SRC_PATH="$TARGET_DIR/debug/$BASE_BINARY"
 DEST_PATH="$BINARIES_DIR/$SIDECAR_BINARY"
-
-if [ ! -f "$SRC_PATH" ]; then
-    # Fallback: check if we are running from root and target is in root
-    SRC_PATH="target/debug/$BASE_BINARY"
-fi
 
 if [ -f "$SRC_PATH" ]; then
     cp "$SRC_PATH" "$DEST_PATH"
     echo -e "${GREEN}✅ Copied binary to $DEST_PATH${NC}"
 else
     echo -e "${RED}❌ Binary not found at $SRC_PATH${NC}"
-    # List contents of target/debug to help debugging
-    echo -e "${YELLOW}Contents of target/debug:${NC}"
-    ls -la "$WORKSPACE_ROOT/target/debug/" || ls -la "target/debug/"
     exit 1
 fi
 

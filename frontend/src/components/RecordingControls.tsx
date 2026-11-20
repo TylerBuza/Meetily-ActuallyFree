@@ -102,7 +102,9 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
 
   const { selectedDevices: savedDevices, setSelectedDevices } = useConfig();
   const activeDevices = savedDevices ?? selectedDevices;
-  const isMacOS = usePlatform() === 'macos';
+  const platform = usePlatform();
+  const isMacOS = platform === 'macos';
+  const isLinux = platform === 'linux';
   // All computer audio, or only chosen apps (Settings > Recording has it too).
   const appAudio = useAppAudio();
   const appAudioSupported = useAppAudioSupported();
@@ -204,7 +206,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
 
   const applyLiveDevice = (kind: 'Microphone' | 'SystemAudio', value: string, previous: SelectedDevices, next: SelectedDevices) => {
     saveDevices(next);
-    if (!isRecording || value === 'default') return;
+    if (!isRecording || (value === 'default' && !isLinux)) return;
     const failed = (description: string) => {
       toast.error(kind === 'Microphone' ? 'Could not switch microphone' : 'Could not switch system audio', { description });
       saveDevices(previous);

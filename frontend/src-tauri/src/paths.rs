@@ -1,6 +1,6 @@
 //! Platform-safe local path resolution.
 //!
-//! Windows and Linux prefer a self-contained `data` directory beside the
+//! Windows and standalone Linux prefer a self-contained `data` directory beside the
 //! executable. macOS always uses `~/Library/Application Support/Meetily` because
 //! its executable lives inside the signed app bundle; writing runtime data there
 //! invalidates the bundle signature.
@@ -27,6 +27,16 @@ static ROOT: OnceLock<PathBuf> = OnceLock::new();
 /// Tauri's `app_data_dir()` and `dirs::data_dir()` for app-managed storage.
 pub fn install_data_root() -> PathBuf {
     ROOT.get_or_init(|| {
+        #[cfg(target_os = "linux")]
+        if std::env::var_os("APPIMAGE").is_some_and(|path| !path.is_empty()) {
+            // --appimage-extract-and-run uses a writable temporary directory
+            // which the launcher removes at exit. A write probe there succeeds
+            // but would lose meetings/models. Mounted and extract-and-run images
+            // must both use durable OS storage; standalone builds stay portable.
+            let root = os_data_root();
+            log::info!("📁 AppImage data root: {}", root.display());
+            return root;
+        }
         #[cfg(target_os = "macos")]
         {
             let root = os_data_root();

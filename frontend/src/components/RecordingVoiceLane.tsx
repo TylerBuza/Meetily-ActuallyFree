@@ -8,8 +8,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { LiveAudioVisualizer } from '@/components/LiveAudioVisualizer';
 import { AudioDeviceCard } from '@/components/DeviceSelection';
+import { usePlatform } from '@/hooks/usePlatform';
 import {
   deviceDisplayName,
+  deviceLabel,
+  selectedDevice,
   toDeviceOptionValue,
   type AudioDeviceOption,
 } from '@/lib/audio-devices';
@@ -70,14 +73,15 @@ export function RecordingVoiceLane({
   hideDevice?: boolean;
 }) {
   const [listOpen, setListOpen] = useState(false);
+  const isLinux = usePlatform() === 'linux';
   const [meter, setMeter] = useState({ rms: 0, peak: 0, tick: 0 });
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const Icon = kind === 'mic' ? Mic : Volume2;
-  const chosen = options.find((device) => toDeviceOptionValue(device) === savedValue);
+  const chosen = selectedDevice(savedValue, options);
   const summary = macDefaultOutput
     ? 'System default'
-    : chosen?.name || (savedValue ? deviceDisplayName(savedValue) : kind === 'mic' ? 'Default microphone' : 'Default output');
+    : (chosen ? deviceLabel(chosen) : null) || (savedValue ? deviceDisplayName(savedValue) : kind === 'mic' ? 'Default microphone' : 'Default output');
 
   useEffect(() => {
     if (!open) setListOpen(false);
@@ -88,12 +92,17 @@ export function RecordingVoiceLane({
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     const opts = optionsRef.current;
-    const selected = opts.find((device) => toDeviceOptionValue(device) === savedValue);
+    const selected = selectedDevice(savedValue, opts);
     const wanted = selected?.name ?? (savedValue ? deviceDisplayName(savedValue) : null);
     const wantedType = kind === 'mic' ? 'input' : 'output';
 
     runLevelMonitor(async () => {
-      await invoke('start_audio_level_monitoring', { deviceNames: wanted ? [wanted] : [] });
+      if (cancelled) return;
+      const names = isLinux
+        ? [selected ? toDeviceOptionValue(selected) : savedValue ?? `default (${wantedType})`]
+        : wanted ? [wanted] : [];
+      await invoke('start_audio_level_monitoring', { deviceNames: names })
+        .catch((error) => console.error('Failed to start device levels:', error));
     });
 
     void listen<LevelEvent>('audio-levels', (event) => {
@@ -109,7 +118,9 @@ export function RecordingVoiceLane({
           return name.length > 0 && (name === wanted || name.includes(wanted) || wanted.includes(name));
         })
         : undefined;
-      const match = named ?? levels.find(sameType) ?? levels.reduce<(typeof levels)[number] | undefined>((best, level) => {
+      const match = isLinux
+        ? levels.find((level) => sameType(level) && (!wanted || level.device_name === wanted))
+        : named ?? levels.find(sameType) ?? levels.reduce<(typeof levels)[number] | undefined>((best, level) => {
         const score = Math.max(level.rms_level ?? 0, level.peak_level ?? 0);
         const bestScore = Math.max(best?.rms_level ?? 0, best?.peak_level ?? 0);
         return score >= bestScore ? level : best;
@@ -132,7 +143,7 @@ export function RecordingVoiceLane({
         await invoke('stop_audio_level_monitoring').catch(() => undefined);
       });
     };
-  }, [open, live, savedValue, kind]);
+  }, [open, live, savedValue, kind, isLinux]);
 
   // macOS has no output to pick, but the panel still opens for `source`.
   const canOpen = !macDefaultOutput || !!source;
@@ -229,7 +240,7 @@ export function RecordingVoiceLane({
             levelLabel={kind === 'mic' ? 'Input level' : 'System level'}
             deviceName={summary}
             devices={macDefaultOutput ? [] : options}
-            selectedValue={macDefaultOutput ? null : savedValue}
+            selectedValue={macDefaultOutput ? null : chosen ? toDeviceOptionValue(chosen) : savedValue}
             open={listOpen}
             onOpenChange={(next) => {
               if (macDefaultOutput) return;
@@ -242,7 +253,7 @@ export function RecordingVoiceLane({
             disabled={macDefaultOutput}
             note={macDefaultOutput && !hideDevice ? 'macOS records the current system output.' : null}
             unavailable={
-              !macDefaultOutput && savedValue && options.length > 0 && !options.some((device) => toDeviceOptionValue(device) === savedValue)
+              !macDefaultOutput && savedValue && options.length > 0 && !chosen
                 ? deviceDisplayName(savedValue)
                 : null
             }

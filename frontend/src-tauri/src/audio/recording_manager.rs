@@ -143,6 +143,7 @@ impl RecordingManager {
         self.stream_manager.start_streams_with_per_app(microphone_device.clone(), system_device.clone(), per_app_opt, None).await?;
 
         // Start device monitoring to detect disconnects (skip system device monitoring if per-app)
+        #[cfg(not(target_os = "linux"))]
         if let Some(ref mut monitor) = self.device_monitor {
             let monitor_sys = if self.per_app_enabled { None } else { system_device.clone() };
             if let Err(e) = monitor.start_monitoring(microphone_device, monitor_sys) {
@@ -545,6 +546,23 @@ impl RecordingManager {
     pub async fn attempt_device_reconnect(&mut self, device_name: &str, device_type: DeviceMonitorType) -> Result<bool> {
         info!("🔄 Attempting to reconnect device: {} ({:?})", device_name, device_type);
 
+        #[cfg(target_os = "linux")]
+        {
+            let role = if device_type == DeviceMonitorType::Microphone {
+                super::devices::DeviceType::Input
+            } else { super::devices::DeviceType::Output };
+            let available = list_audio_devices().await?;
+            let selected = super::devices::platform::linux::resolve_selection(
+                Some(device_name), role, &available,
+            )?.ok_or_else(|| anyhow::anyhow!("No default audio device is available"))?;
+            let capture_role = if device_type == DeviceMonitorType::Microphone {
+                RecordingDeviceType::Microphone
+            } else { RecordingDeviceType::System };
+            return self.stream_manager.replace_linux_source(Arc::new(selected), capture_role).await;
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
         // List current devices
         let available_devices = list_audio_devices().await?;
 
@@ -592,6 +610,7 @@ impl RecordingManager {
         } else {
             warn!("❌ Device '{}' not yet available", device_name);
             Ok(false)
+        }
         }
     }
 

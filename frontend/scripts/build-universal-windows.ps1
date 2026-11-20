@@ -218,6 +218,13 @@ $env:PATH = "$env:CUDA_PATH\bin;$env:CUDA_PATH\bin\x64;$env:PATH"
 # CUDA 13 supports Turing and newer. Include native cubins for the widely used
 # generations rather than shipping the previous Ada-only (89) executable.
 $env:CMAKE_CUDA_ARCHITECTURES = "75;80;86;89;90;100;120"
+$env:CMAKE_CUDA_STANDARD = "17"
+# These flags used to be forced globally by Cargo, which also passed MSVC
+# options to Linux nvcc. Keep the Windows release compiler contract here.
+$cccl = "-DCCCL_IGNORE_DEPRECATED_CPP_DIALECT -DCCCL_IGNORE_MSVC_TRADITIONAL_PREPROCESSOR_WARNING"
+$env:CMAKE_CUDA_FLAGS = "--std=c++17 $cccl -Xcompiler=`"/Zc:preprocessor`""
+$env:CL = "$env:CL $cccl /Zc:preprocessor".Trim()
+$env:_CL_ = "$env:_CL_ $cccl /Zc:preprocessor".Trim()
 $env:NVCC_APPEND_FLAGS = "-std=c++17 -Xcompiler=/Zc:preprocessor -DCCCL_IGNORE_MSVC_TRADITIONAL_PREPROCESSOR_WARNING"
 $cudaBinary = Build-Variant "CUDA" $cudaTarget @("cuda")
 

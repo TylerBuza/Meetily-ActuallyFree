@@ -2,18 +2,25 @@
 
 /**
  * Plays a meeting's recording. Rust finds the file and allows it through the
- * asset protocol; the page gets a streaming URL plus transport controls. The
+ * asset protocol (Windows/macOS) or bounded binary IPC/blob (Linux). The
  * clock ticks on animation frames while playing so the transcript highlight
  * and scrubber move smoothly.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { getMeetingAudio } from '@/lib/workspace-api';
+import { getMeetingAudio, readMeetingAudio } from '@/lib/workspace-api';
+import { detectPlatformFromUserAgent } from '@/hooks/usePlatform';
+
+const AUDIO_MIME_TYPES: Record<string, string> = {
+  mp4: 'audio/mp4', m4a: 'audio/mp4', aac: 'audio/aac', mp3: 'audio/mpeg',
+  wav: 'audio/wav', flac: 'audio/flac', ogg: 'audio/ogg', webm: 'audio/webm',
+};
 
 export type AudioStatus = 'loading' | 'ready' | 'unavailable' | 'error';
 
 export interface MeetingAudioControls {
   status: AudioStatus;
+  errorMessage?: string | null;
   /** The recording's file, once found. */
   path: string | null;
   playing: boolean;
@@ -36,6 +43,7 @@ export function useMeetingAudio(meetingId: string | null | undefined): MeetingAu
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const frame = useRef<number | null>(null);
   const [status, setStatus] = useState<AudioStatus>('loading');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [path, setPath] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -44,7 +52,9 @@ export function useMeetingAudio(meetingId: string | null | undefined): MeetingAu
 
   useEffect(() => {
     let cancelled = false;
+    let blobUrl: string | null = null;
     setStatus('loading');
+    setErrorMessage(null);
     setPath(null);
     setPlaying(false);
     setCurrentTime(0);
@@ -54,16 +64,26 @@ export function useMeetingAudio(meetingId: string | null | undefined): MeetingAu
       return;
     }
     void getMeetingAudio(meetingId)
-      .then((audio) => {
+      .then(async (audio) => {
         if (cancelled) return;
         if (!audio.path) {
           setStatus('unavailable');
           return;
         }
         setPath(audio.path);
+        let src: string;
+        if (detectPlatformFromUserAgent() === 'linux') {
+          const bytes = await readMeetingAudio(meetingId);
+          if (cancelled) return;
+          const extension = audio.path.split('.').pop()?.toLowerCase() ?? '';
+          blobUrl = URL.createObjectURL(new Blob([bytes], { type: AUDIO_MIME_TYPES[extension] ?? 'audio/mp4' }));
+          src = blobUrl;
+        } else {
+          src = convertFileSrc(audio.path);
+        }
         const element = new Audio();
         element.preload = 'metadata';
-        element.src = convertFileSrc(audio.path);
+        element.src = src;
         element.onloadedmetadata = () => {
           if (cancelled) return;
           setDuration(Number.isFinite(element.duration) ? element.duration : 0);
@@ -76,16 +96,23 @@ export function useMeetingAudio(meetingId: string | null | undefined): MeetingAu
         element.ontimeupdate = () => setCurrentTime(element.currentTime);
         audioRef.current = element;
       })
-      .catch(() => !cancelled && setStatus('unavailable'));
+      .catch((error) => {
+        if (cancelled) return;
+        setErrorMessage(String(error));
+        setStatus('error');
+      });
     return () => {
       cancelled = true;
       const element = audioRef.current;
       if (element) {
+        element.onloadedmetadata = element.onerror = element.onplay = element.onpause =
+          element.onended = element.ontimeupdate = null;
         element.pause();
         element.removeAttribute('src');
         element.load();
       }
       audioRef.current = null;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
   }, [meetingId]);
 
@@ -132,5 +159,5 @@ export function useMeetingAudio(meetingId: string | null | undefined): MeetingAu
     setRateState(next);
   }, []);
 
-  return { status, path, playing, currentTime, duration, rate, play, pause, toggle, seek, skip, setRate };
+  return { status, errorMessage, path, playing, currentTime, duration, rate, play, pause, toggle, seek, skip, setRate };
 }

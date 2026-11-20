@@ -5,6 +5,19 @@ pub mod system;
 pub mod backend_config;
 pub mod per_app;
 
+#[cfg(target_os = "linux")]
+pub mod pulse_linux;
+#[cfg(target_os = "linux")]
+pub mod pulse_enumerator;
+#[cfg(target_os = "linux")]
+pub use pulse_linux::{
+    PulseCapture, PulseSink, PulseSource,
+    list_sinks as list_pulse_sinks, list_sources as list_pulse_sources,
+    default_sink_name as default_pulse_sink_name,
+    default_source_name as default_pulse_source_name,
+    default_sink as default_pulse_sink,
+};
+
 #[cfg(target_os = "macos")]
 pub mod core_audio;
 

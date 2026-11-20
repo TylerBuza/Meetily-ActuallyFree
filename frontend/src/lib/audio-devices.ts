@@ -8,11 +8,26 @@
 export interface AudioDeviceOption {
   name: string;
   device_type: 'Input' | 'Output';
+  label?: string;
+  legacy_name?: string;
+  is_default?: boolean;
 }
 
 /** The option value a device renders as, and the string persisted in preferences. */
 export const toDeviceOptionValue = (d: AudioDeviceOption) =>
   `${d.name} (${d.device_type.toLowerCase()})`;
+
+export const deviceLabel = (d: AudioDeviceOption) => d.label || d.name;
+
+/** Resolve display-only migration only when the old caption identifies one endpoint. */
+export function selectedDevice(saved: string | null, devices: AudioDeviceOption[]) {
+  if (!saved) return undefined;
+  const exact = devices.find((d) => toDeviceOptionValue(d) === saved);
+  if (exact) return exact;
+  const legacy = devices.filter((d) => d.legacy_name &&
+    `${d.legacy_name} (${d.device_type.toLowerCase()})` === saved);
+  return legacy.length === 1 ? legacy[0] : undefined;
+}
 
 export const UNAVAILABLE_DEVICE_VALUE = '__saved_device__';
 

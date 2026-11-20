@@ -33,12 +33,21 @@ static IS_MONITORING: AtomicBool = AtomicBool::new(false);
 /// Latest levels keyed by device name (shared with cpal callbacks).
 type LevelMap = Arc<Mutex<std::collections::HashMap<String, AudioLevelData>>>;
 
+#[cfg(target_os = "linux")]
+#[path = "linux_level_monitor.rs"]
+mod linux;
+
 /// Start real level monitoring for the given device names.
 /// Empty list → default mic (input) + default output (system loopback on WASAPI).
 pub async fn start_monitoring<R: Runtime>(
     app_handle: AppHandle<R>,
     mut device_names: Vec<String>,
 ) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    return linux::start(app_handle, device_names).await;
+
+    #[cfg(not(target_os = "linux"))]
+    {
     stop_monitoring().await?;
     tokio::time::sleep(Duration::from_millis(80)).await;
 
@@ -130,13 +139,19 @@ pub async fn start_monitoring<R: Runtime>(
     });
 
     Ok(())
+    }
 }
 
 pub async fn stop_monitoring() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    return linux::stop().await;
+    #[cfg(not(target_os = "linux"))]
+    {
     info!("Stopping audio level monitoring");
     IS_MONITORING.store(false, Ordering::SeqCst);
     tokio::time::sleep(Duration::from_millis(60)).await;
     Ok(())
+    }
 }
 
 pub fn is_monitoring() -> bool {
@@ -337,7 +352,7 @@ fn push_levels(
 
     if let Ok(mut map) = levels.try_lock() {
         map.insert(
-            device_name.to_string(),
+            format!("{} ({})", device_name, device_type),
             AudioLevelData {
                 device_name: device_name.to_string(),
                 device_type: device_type.to_string(),

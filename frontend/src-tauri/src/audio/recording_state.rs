@@ -45,6 +45,7 @@ pub enum AudioError {
     ChannelClosed,
     SystemCaptureStalled,
     SystemCaptureEnded,
+    LinuxReconnecting,
     InitializationFailed,
     ConfigurationError,
     PermissionDenied,
@@ -70,6 +71,7 @@ impl AudioError {
             AudioError::PermissionDenied => false,
             AudioError::BufferOverflow => true,
             AudioError::SampleRateUnsupported => false,
+            AudioError::LinuxReconnecting => true,
         }
     }
 
@@ -88,6 +90,7 @@ impl AudioError {
             AudioError::PermissionDenied => "Microphone permission denied",
             AudioError::BufferOverflow => "Audio buffer overflow",
             AudioError::SampleRateUnsupported => "Audio sample rate not supported",
+            AudioError::LinuxReconnecting => "An audio source disconnected. Retrying it for up to 30 seconds while the other source continues. If recovery fails, the meeting will stop and save.",
         }
     }
 }
@@ -125,6 +128,8 @@ pub struct RecordingState {
     error_count: AtomicU32,
     recoverable_error_count: AtomicU32,
     last_error: Mutex<Option<AudioError>>,
+    #[cfg(target_os = "linux")]
+    linux_fatal_claimed: AtomicBool,
     error_callback: Mutex<Option<Box<dyn Fn(&AudioError) + Send + Sync>>>,
     warning_callback: Mutex<Option<Box<dyn Fn(&AudioError) + Send + Sync>>>,
 
@@ -157,6 +162,8 @@ impl RecordingState {
             error_count: AtomicU32::new(0),
             recoverable_error_count: AtomicU32::new(0),
             last_error: Mutex::new(None),
+            #[cfg(target_os = "linux")]
+            linux_fatal_claimed: AtomicBool::new(false),
             error_callback: Mutex::new(None),
             warning_callback: Mutex::new(None),
             stats: Mutex::new(RecordingStats::default()),
@@ -178,6 +185,8 @@ impl RecordingState {
         self.error_count.store(0, Ordering::SeqCst);
         self.recoverable_error_count.store(0, Ordering::SeqCst);
         *self.last_error.lock().unwrap() = None;
+        #[cfg(target_os = "linux")]
+        self.linux_fatal_claimed.store(false, Ordering::Release);
         self.capture_setup_complete.store(false, Ordering::SeqCst);
         self.microphone_capture_active.store(false, Ordering::SeqCst);
         self.system_capture_active.store(false, Ordering::SeqCst);
@@ -366,6 +375,16 @@ impl RecordingState {
         *self.error_callback.lock().unwrap() = Some(Box::new(callback));
     }
 
+    #[cfg(target_os = "linux")]
+    pub(crate) fn report_linux_fatal(&self, error: AudioError) {
+        debug_assert!(!error.is_recoverable());
+        // Both streams can fail before either marks the recording stopped.
+        // Only the first source owns the fatal event and teardown request.
+        if self.is_recording() && !self.linux_fatal_claimed.swap(true, Ordering::AcqRel) {
+            self.report_error(error);
+        }
+    }
+
     pub fn report_error(&self, error: AudioError) {
         let count = self.error_count.fetch_add(1, Ordering::SeqCst) + 1;
         let mut should_stop = false;
@@ -528,6 +547,8 @@ impl Default for RecordingState {
             error_count: AtomicU32::new(0),
             recoverable_error_count: AtomicU32::new(0),
             last_error: Mutex::new(None),
+            #[cfg(target_os = "linux")]
+            linux_fatal_claimed: AtomicBool::new(false),
             error_callback: Mutex::new(None),
             warning_callback: Mutex::new(None),
             stats: Mutex::new(RecordingStats::default()),
@@ -556,6 +577,33 @@ impl Clone for RecordingStats {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn simultaneous_linux_failures_request_teardown_once() {
+        let state = RecordingState::new();
+        let callbacks = Arc::new(AtomicUsize::new(0));
+        let count = callbacks.clone();
+        state.set_error_callback(move |_| { count.fetch_add(1, Ordering::SeqCst); });
+        for expected in 1..=2 {
+            state.start_recording().unwrap();
+            let barrier = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                for error in [AudioError::StreamFailed, AudioError::ChannelClosed] {
+                    let state = &state;
+                    let barrier = &barrier;
+                    scope.spawn(move || {
+                        barrier.wait();
+                        state.report_linux_fatal(error);
+                    });
+                }
+            });
+            assert_eq!(callbacks.load(Ordering::SeqCst), expected);
+            assert_eq!(state.get_error_count(), 1);
+            assert!(state.has_fatal_error());
+            assert!(!state.is_recording());
+        }
+    }
 
     #[test]
     fn system_capture_stall_warning_keeps_recording() {

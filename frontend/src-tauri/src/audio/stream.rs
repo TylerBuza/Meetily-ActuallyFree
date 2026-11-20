@@ -51,6 +51,8 @@ pub enum StreamBackend {
         stop_flag: Arc<std::sync::atomic::AtomicBool>,
         thread_handles: Vec<std::thread::JoinHandle<()>>,
     },
+    #[cfg(target_os = "linux")]
+    Pulse(super::linux_stream::LinuxStream),
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -100,6 +102,16 @@ impl AudioStream {
         info!("🎵 Stream: Creating audio stream for device: {} with backend: {:?}, device_type: {:?}",
               device.name, backend_type, device_type);
 
+        #[cfg(target_os = "linux")]
+        {
+            let stream = super::linux_stream::LinuxStream::start(
+                device.clone(), state, device_type, recording_sender,
+            ).await?;
+            return Ok(Self { device, backend: StreamBackend::Pulse(stream) });
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
         // For system audio devices, use the selected backend
         // For microphone devices, always use CPAL
         #[cfg(target_os = "macos")]
@@ -139,6 +151,7 @@ impl AudioStream {
 
         info!("🎵 Stream: Using CPAL backend ({}) for device: {}", backend_name, device.name);
         Self::create_cpal_stream(device, state, device_type, recording_sender).await
+        }
     }
 
     /// Create a CPAL-based stream (ScreenCaptureKit on macOS)
@@ -453,10 +466,10 @@ impl AudioStream {
         }
 
         let display_names: Vec<String> = running_targets.iter().map(|(name, _)| name.clone()).collect();
-        let device = Arc::new(AudioDevice {
-            name: format!("App Audio: {}", display_names.join(", ")),
-            device_type: super::devices::DeviceType::Output,
-        });
+        let device = Arc::new(AudioDevice::new(
+            format!("App Audio: {}", display_names.join(", ")),
+            super::devices::DeviceType::Output,
+        ));
 
         #[cfg(windows)]
         {
@@ -607,6 +620,8 @@ impl AudioStream {
         info!("Stopping audio stream for device: {}", self.device.name);
 
         match self.backend {
+            #[cfg(target_os = "linux")]
+            StreamBackend::Pulse(stream) => stream.stop()?,
             StreamBackend::Cpal(stream) => {
                 // CRITICAL: Pause the stream first to stop callbacks immediately
                 // This ensures closures stop executing before we drop the stream,
@@ -743,6 +758,13 @@ impl AudioStreamManager {
                 }
                 Err(e) => {
                     warn!("⚠️ Failed to create system audio stream: {}", e);
+                    #[cfg(target_os = "linux")]
+                    {
+                        // A selected source must not silently disappear at Start.
+                        let _ = self.stop_streams();
+                        self.state.finish_capture_setup();
+                        return Err(e);
+                    }
                     // Don't fail if only system audio fails
                 }
             }
@@ -768,6 +790,41 @@ impl AudioStreamManager {
         recording_sender: Option<mpsc::UnboundedSender<super::recording_state::AudioChunk>>,
     ) -> Result<()> {
         self.start_streams_with_per_app(microphone_device, system_device, None, recording_sender).await
+    }
+
+    /// Stop all audio streams
+    #[cfg(target_os = "linux")]
+    pub async fn replace_linux_source(&mut self, device: Arc<AudioDevice>, role: DeviceType) -> Result<bool> {
+        let slot = if role == DeviceType::Microphone { &mut self.microphone_stream } else { &mut self.system_stream };
+        let previous = slot.as_ref().map(|stream| stream.device.clone());
+        if let Some(stream) = slot.take() {
+            if let Err(error) = stream.stop() {
+                self.state.report_linux_fatal(super::recording_state::AudioError::StreamFailed);
+                return Err(error);
+            }
+        }
+        match AudioStream::create(device.clone(), self.state.clone(), role.clone(), None).await {
+            Ok(stream) => {
+                *slot = Some(stream);
+                if role == DeviceType::Microphone { self.state.set_microphone_device(device); }
+                else { self.state.set_system_device(device); }
+                self.state.set_capture_active(role, true);
+                Ok(true)
+            }
+            Err(error) => {
+                // Roll back only this source; the other source never stops.
+                if let Some(previous) = previous {
+                    match AudioStream::create(previous, self.state.clone(), role.clone(), None).await {
+                        Ok(stream) => *slot = Some(stream),
+                        Err(restore) => {
+                            log::error!("Could not restore Linux source after switch: {}", restore);
+                            self.state.report_linux_fatal(super::recording_state::AudioError::StreamFailed);
+                        }
+                    }
+                }
+                Err(error)
+            }
+        }
     }
 
     /// Stop all audio streams

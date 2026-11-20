@@ -1,12 +1,9 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronRight, Mic, Volume2 } from 'lucide-react';
 import { LiveAudioVisualizer } from './LiveAudioVisualizer';
-import { toDeviceOptionValue, deviceDisplayName } from '@/lib/audio-devices';
+import { toDeviceOptionValue, deviceDisplayName, deviceLabel, type AudioDeviceOption } from '@/lib/audio-devices';
 
-export interface AudioDevice {
-  name: string;
-  device_type: 'Input' | 'Output';
-}
+export interface AudioDevice extends AudioDeviceOption {}
 
 export interface SelectedDevices {
   micDevice: string | null;
@@ -192,6 +189,12 @@ export function AudioDeviceCard({
         >
           <div className="w-[280px] overflow-hidden rounded-xl border border-[var(--af-border-strong)] bg-[var(--af-panel)] py-1 shadow-[var(--af-shadow-lg)]">
           <div className="max-h-72 overflow-y-auto" role="radiogroup" aria-label={label}>
+            <DeviceChoice
+              name="System default"
+              selected={!selectedValue || selectedValue === 'default'}
+              onSelect={() => onSelect('default')}
+              icon={<Icon size={14} className="shrink-0 text-[var(--af-text-3)]" />}
+            />
             {devices.length === 0 && (
               <p className="px-3 py-3 text-[13px] text-[var(--af-text-3)]">No devices found</p>
             )}
@@ -201,7 +204,7 @@ export function AudioDeviceCard({
               return (
                 <DeviceChoice
                   key={value}
-                  name={device.name}
+                  name={deviceLabel(device)}
                   selected={selected}
                   onSelect={() => onSelect(value)}
                   icon={<Icon size={14} className="shrink-0 text-[var(--af-text-3)]" />}

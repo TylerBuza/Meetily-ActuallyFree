@@ -1,12 +1,22 @@
 use anyhow::Result;
+#[cfg(not(target_os = "linux"))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+#[cfg(not(target_os = "linux"))]
 use log::error;
 
-use super::configuration::{AudioDevice, DeviceType};
+use super::configuration::AudioDevice;
+#[cfg(not(target_os = "linux"))]
+use super::configuration::DeviceType;
 use super::platform;
 
 /// List all available audio devices on the system
 pub async fn list_audio_devices() -> Result<Vec<AudioDevice>> {
+    #[cfg(target_os = "linux")]
+    return tokio::task::spawn_blocking(|| platform::configure_linux_audio(&cpal::default_host()))
+        .await?;
+
+    #[cfg(not(target_os = "linux"))]
+    {
     let host = cpal::default_host();
 
     // Platform-specific device enumeration
@@ -39,11 +49,17 @@ pub async fn list_audio_devices() -> Result<Vec<AudioDevice>> {
     }
 
     Ok(devices)
+    }
 }
 
 /// Trigger audio permission request on platforms that require it
 /// Returns Ok(true) if permission is granted, Ok(false) if denied, Err if something went wrong
 pub fn trigger_audio_permission() -> Result<bool> {
+    #[cfg(target_os = "linux")]
+    return super::microphone::default_input_device().map(|_| true);
+
+    #[cfg(not(target_os = "linux"))]
+    {
     use log::info;
 
     let host = cpal::default_host();
@@ -95,4 +111,5 @@ pub fn trigger_audio_permission() -> Result<bool> {
     drop(stream);
 
     Ok(true)
+    }
 }

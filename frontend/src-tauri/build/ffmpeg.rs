@@ -14,6 +14,8 @@ pub fn ensure_ffmpeg_binary() {
 
     let binary_name = if target.contains("windows") {
         format!("ffmpeg-{}.exe", target)
+    } else if target.contains("linux") {
+        format!("meetily-ffmpeg-{}", target)
     } else {
         format!("ffmpeg-{}", target)
     };

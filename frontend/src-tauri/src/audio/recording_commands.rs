@@ -326,6 +326,12 @@ async fn start_recording_with_meeting_name_inner<R: Runtime>(
     // ============================================================================
     // MICROPHONE DEVICE RESOLUTION: Preference â†’ Default â†’ Error
     // ============================================================================
+    #[cfg(target_os = "linux")]
+    let (microphone_device, system_device) = super::devices::platform::linux::resolve_recording_devices(
+        preferred_mic_name, preferred_system_name,
+    ).await.map_err(|error| error.to_string())?;
+
+    #[cfg(not(target_os = "linux"))]
     let microphone_device = match preferred_mic_name {
         Some(pref_name) => {
             info!("ðŸŽ¤ Attempting to use preferred microphone: '{}'", pref_name);
@@ -405,7 +411,7 @@ async fn start_recording_with_meeting_name_inner<R: Runtime>(
         }
     };
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let system_device = match preferred_system_name {
         Some(pref_name) => {
             info!("ðŸ”Š Attempting to use preferred system audio: '{}'", pref_name);
@@ -649,6 +655,12 @@ async fn start_recording_with_devices_and_meeting_inner<R: Runtime>(
     let device_diagnostic = Span::start(Stage::DeviceResolution);
     // Resolve devices against the current enumeration. A syntactically valid
     // persisted name can refer to hardware that has since disconnected.
+    #[cfg(target_os = "linux")]
+    let (mic_device, system_device) = super::devices::platform::linux::resolve_recording_devices(
+        mic_device_name.clone(), system_device_name.clone(),
+    ).await.map_err(|error| error.to_string())?;
+
+    #[cfg(not(target_os = "linux"))]
     let mic_device = if let Some(ref name) = mic_device_name {
         let preferred = parse_audio_device(name)
             .map_err(|e| format!("Invalid microphone device '{}': {}", name, e))?;
@@ -690,7 +702,7 @@ async fn start_recording_with_devices_and_meeting_inner<R: Runtime>(
         }
     };
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let system_device = if let Some(ref name) = system_device_name {
         let preferred = parse_audio_device(name)
             .map_err(|e| format!("Invalid system device '{}': {}", name, e))?;

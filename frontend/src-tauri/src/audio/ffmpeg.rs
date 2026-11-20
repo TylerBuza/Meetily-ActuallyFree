@@ -29,6 +29,10 @@ fn find_ffmpeg_path_internal() -> Option<PathBuf> {
     // ============================================================
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_folder) = exe_path.parent() {
+            // DEBs must not own /usr/bin/ffmpeg (the distro package owns it).
+            #[cfg(target_os = "linux")]
+            let bundled = exe_folder.join("meetily-ffmpeg");
+            #[cfg(not(target_os = "linux"))]
             let bundled = exe_folder.join(EXECUTABLE_NAME);
             if bundled.exists() && bundled.is_file() {
                 debug!("Found bundled ffmpeg: {:?}", bundled);

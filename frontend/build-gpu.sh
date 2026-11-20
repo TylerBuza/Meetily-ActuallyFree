@@ -4,6 +4,7 @@
 # Automatically detects and builds with optimal GPU features
 
 set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Colors for output
 RED='\033[0;31m'
@@ -17,7 +18,7 @@ echo ""
 
 # Export CUDA flags for Linux/NVIDIA
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    export CMAKE_CUDA_ARCHITECTURES=75
+    export CMAKE_CUDA_ARCHITECTURES="${CMAKE_CUDA_ARCHITECTURES:-75}"
     export CMAKE_CUDA_STANDARD=17
     export CMAKE_POSITION_INDEPENDENT_CODE=ON
 fi
@@ -37,20 +38,9 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
-# Find the correct directory - we need to be in frontend root for npm commands
-if [ -f "package.json" ]; then
-  FRONTEND_DIR="."
-elif [ -f "frontend/package.json" ]; then
-  cd frontend || {
-    echo -e "${RED}❌ Failed to change to frontend directory${NC}"
-    exit 1
-  }
-  FRONTEND_DIR="frontend"
-else
-  echo -e "${RED}❌ Could not find package.json${NC}"
-  echo -e "${RED}   Make sure you're in the project root or frontend directory${NC}"
-  exit 1
-fi
+# mhlas7's root-invocation fix: never resolve paths from a changed cwd.
+FRONTEND_DIR="$SCRIPT_DIR"
+cd "$FRONTEND_DIR"
 
 echo ""
 echo -e "${BLUE}📦 Building Meetily...${NC}"
@@ -69,17 +59,7 @@ fi
 # Detect GPU feature if not already set
 if [ -z "$TAURI_GPU_FEATURE" ]; then
     echo -e "${BLUE}🔍 Detecting GPU features...${NC}"
-    # Run the detection script and capture output
-    # We need to run it from frontend dir
-    if [ "$FRONTEND_DIR" != "." ]; then
-        cd "$FRONTEND_DIR"
-    fi
-    
     TAURI_GPU_FEATURE=$(node scripts/auto-detect-gpu.js)
-    
-    if [ "$FRONTEND_DIR" != "." ]; then
-        cd ..
-    fi
 fi
 
 if [ -n "$TAURI_GPU_FEATURE" ]; then
@@ -89,16 +69,13 @@ else
     echo -e "${YELLOW}⚠️ No specific GPU feature detected or forced${NC}"
 fi
 
+source "$SCRIPT_DIR/scripts/linux-cuda-env.sh"
+
 # Build llama-helper
 echo ""
 echo -e "${BLUE}🦙 Building llama-helper sidecar (release)...${NC}"
 
-HELPER_DIR="llama-helper"
-if [ ! -d "$HELPER_DIR" ]; then
-    # Try to find it relative to script location
-    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-    HELPER_DIR="$SCRIPT_DIR/../llama-helper"
-fi
+HELPER_DIR="$SCRIPT_DIR/../llama-helper"
 
 if [ ! -d "$HELPER_DIR" ]; then
     echo -e "${RED}❌ Could not find llama-helper directory${NC}"
@@ -109,7 +86,7 @@ fi
 # Note: llama-cpp-2 supports neither coreml (use metal instead) nor the
 # `hipblas` name the Tauri transcription crate uses for AMD HIP (use `rocm`).
 HELPER_FEATURES=""
-if [ -n "$TAURI_GPU_FEATURE" ]; then
+if [ -n "$TAURI_GPU_FEATURE" ] && [ "$TAURI_GPU_FEATURE" != "none" ]; then
     LLAMA_FEATURE="$TAURI_GPU_FEATURE"
     if [ "$LLAMA_FEATURE" = "coreml" ]; then
         LLAMA_FEATURE="metal"
@@ -158,7 +135,7 @@ if [ "$TAURI_GPU_FEATURE" = "hipblas" ]; then
 fi
 
 echo -e "   Building in $HELPER_DIR with features: ${HELPER_FEATURES:-none}"
-(cd "$HELPER_DIR" && cargo build --release $HELPER_FEATURES)
+(cd "$HELPER_DIR" && cargo build --locked --release --no-default-features $HELPER_FEATURES)
 
 if [ $? -ne 0 ]; then
     echo -e "${RED}❌ Failed to build llama-helper${NC}"
@@ -177,8 +154,7 @@ echo -e "   Target: $TARGET_TRIPLE"
 BINARIES_DIR="$FRONTEND_DIR/src-tauri/binaries"
 mkdir -p "$BINARIES_DIR"
 
-# Clean old binaries
-find "$BINARIES_DIR" -name "llama-helper*" -delete
+# Keep other targets' sidecars; only replace the host's binary below.
 
 BASE_BINARY="llama-helper"
 SIDECAR_BINARY="llama-helper-$TARGET_TRIPLE"
@@ -188,25 +164,16 @@ if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
     SIDECAR_BINARY="llama-helper-$TARGET_TRIPLE.exe"
 fi
 
-# The binary is in the workspace target directory, which is one level up from frontend
-# if we are in frontend dir.
-WORKSPACE_ROOT="$FRONTEND_DIR/.."
-SRC_PATH="$WORKSPACE_ROOT/target/release/$BASE_BINARY"
+# Cargo metadata honors both CARGO_TARGET_DIR and workspace configuration.
+TARGET_DIR="$(cd "$HELPER_DIR" && cargo metadata --no-deps --format-version 1 | node -e 'let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).target_directory))')"
+SRC_PATH="$TARGET_DIR/release/$BASE_BINARY"
 DEST_PATH="$BINARIES_DIR/$SIDECAR_BINARY"
-
-if [ ! -f "$SRC_PATH" ]; then
-    # Fallback: check if we are running from root and target is in root
-    SRC_PATH="target/release/$BASE_BINARY"
-fi
 
 if [ -f "$SRC_PATH" ]; then
     cp "$SRC_PATH" "$DEST_PATH"
     echo -e "${GREEN}✅ Copied binary to $DEST_PATH${NC}"
 else
     echo -e "${RED}❌ Binary not found at $SRC_PATH${NC}"
-    # List contents of target/release to help debugging
-    echo -e "${YELLOW}Contents of target/release:${NC}"
-    ls -la "$WORKSPACE_ROOT/target/release/" || ls -la "target/release/"
     exit 1
 fi
 
@@ -227,4 +194,3 @@ else
   echo -e "${RED}❌ Build failed${NC}"
   exit 1
 fi
-

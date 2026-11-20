@@ -437,32 +437,19 @@ pub struct MeetingAudio {
 
 const PLAYABLE_EXTENSIONS: [&str; 8] = ["mp4", "m4a", "mp3", "wav", "aac", "flac", "ogg", "webm"];
 
-/// Locates a meeting's recordings and lets the webview stream them through
-/// the asset protocol. Recordings can live in any folder the user picked, so
-/// the folder is added to the asset scope on demand rather than up front.
-#[tauri::command]
-pub async fn api_get_meeting_audio<R: Runtime>(
-    app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
-    meeting_id: String,
-) -> Result<MeetingAudio, String> {
-    use tauri::Manager;
-
-    let none = MeetingAudio {
-        path: None,
-        mic_path: None,
-        system_path: None,
-    };
+async fn locate_meeting_audio(
+    pool: &sqlx::SqlitePool, meeting_id: &str,
+) -> Result<Option<(std::path::PathBuf, MeetingAudio)>, String> {
     let folder: Option<String> = sqlx::query_scalar("SELECT folder_path FROM meetings WHERE id = ?")
-        .bind(&meeting_id)
-        .fetch_optional(state.db_manager.pool())
+        .bind(meeting_id)
+        .fetch_optional(pool)
         .await
         .map_err(|e| format!("Failed to look up the meeting folder: {}", e))?
         .flatten();
-    let Some(folder) = folder else { return Ok(none) };
+    let Some(folder) = folder else { return Ok(None) };
     let dir = std::path::PathBuf::from(folder);
     if !dir.is_dir() {
-        return Ok(none);
+        return Ok(None);
     }
 
     let existing = |name: &str| {
@@ -488,12 +475,88 @@ pub async fn api_get_meeting_audio<R: Runtime>(
         mic_path: existing("mic.mp4"),
         system_path: existing("system.mp4"),
     };
+    Ok(Some((dir, audio)))
+}
+
+/// Authorize only the meeting's own folder for ordinary asset-protocol playback.
+#[tauri::command]
+pub async fn api_get_meeting_audio<R: Runtime>(
+    app: AppHandle<R>, state: tauri::State<'_, AppState>, meeting_id: String,
+) -> Result<MeetingAudio, String> {
+    use tauri::Manager;
+    let Some((dir, audio)) = locate_meeting_audio(state.db_manager.pool(), &meeting_id).await? else {
+        return Ok(MeetingAudio { path: None, mic_path: None, system_path: None });
+    };
     if audio.path.is_some() || audio.mic_path.is_some() || audio.system_path.is_some() {
         app.asset_protocol_scope()
             .allow_directory(&dir, false)
             .map_err(|e| format!("Failed to allow playback of the recording: {}", e))?;
     }
     Ok(audio)
+}
+
+/// WebKitGTK media cannot load the asset scheme. Binary IPC is scoped to a
+/// database meeting ID, never an arbitrary path supplied by the WebView.
+#[tauri::command]
+pub async fn api_read_meeting_audio(
+    state: tauri::State<'_, AppState>, meeting_id: String,
+) -> Result<tauri::ipc::Response, String> {
+    // A stale WebView request can outlive navigation. Bound native read ownership
+    // instead of relying on the page's cancellation flag.
+    static READ: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+    let _permit = READ.try_acquire().map_err(|_| "Another recording is still loading; try again")?;
+    read_meeting_audio(state.db_manager.pool(), &meeting_id).await.map(tauri::ipc::Response::new)
+}
+
+const MAX_PLAYBACK_BYTES: u64 = 256 * 1024 * 1024;
+const PLAYBACK_LIMIT_ERROR: &str = "Recording exceeds the 256 MiB Linux in-app playback limit; open the recording folder to play it externally";
+
+async fn read_meeting_audio(pool: &sqlx::SqlitePool, meeting_id: &str) -> Result<Vec<u8>, String> {
+    use tokio::io::AsyncReadExt;
+    let path = locate_meeting_audio(pool, meeting_id).await?
+        .and_then(|(_, audio)| audio.path)
+        .ok_or_else(|| "This meeting has no playback audio".to_string())?;
+    let file = tokio::fs::File::open(path).await.map_err(|e| e.to_string())?;
+    if file.metadata().await.map_err(|e| e.to_string())?.len() > MAX_PLAYBACK_BYTES {
+        return Err(PLAYBACK_LIMIT_ERROR.into());
+    }
+    let mut bytes = Vec::new();
+    // take also bounds a file which grows after the metadata check.
+    file.take(MAX_PLAYBACK_BYTES + 1).read_to_end(&mut bytes).await.map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > MAX_PLAYBACK_BYTES {
+        return Err(PLAYBACK_LIMIT_ERROR.into());
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
+mod meeting_audio_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn reads_only_the_requested_meetings_mixed_audio_and_rejects_large_files() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query("CREATE TABLE meetings (id TEXT PRIMARY KEY, folder_path TEXT)")
+            .execute(&pool).await.unwrap();
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        for (id, folder) in [("a", a.path()), ("b", b.path())] {
+            sqlx::query("INSERT INTO meetings VALUES (?, ?)").bind(id)
+                .bind(folder.to_string_lossy().as_ref()).execute(&pool).await.unwrap();
+        }
+        std::fs::write(a.path().join("audio.mp4"), b"meeting a").unwrap();
+        std::fs::write(a.path().join("mic.mp4"), b"private source").unwrap();
+        std::fs::write(b.path().join("audio.wav"), b"meeting b").unwrap();
+        assert_eq!(read_meeting_audio(&pool, "a").await.unwrap(), b"meeting a");
+        assert_eq!(read_meeting_audio(&pool, "b").await.unwrap(), b"meeting b");
+        assert!(read_meeting_audio(&pool, "../a").await.is_err());
+        assert!(read_meeting_audio(&pool, "missing").await.is_err());
+        std::fs::remove_file(a.path().join("audio.mp4")).unwrap();
+        assert!(read_meeting_audio(&pool, "a").await.is_err(), "must not substitute the mic track");
+        let large = std::fs::File::create(a.path().join("audio.mp4")).unwrap();
+        large.set_len(MAX_PLAYBACK_BYTES + 1).unwrap();
+        assert_eq!(read_meeting_audio(&pool, "a").await.unwrap_err(), PLAYBACK_LIMIT_ERROR);
+    }
 }
 
 #[tauri::command]

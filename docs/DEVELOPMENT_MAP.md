@@ -18,6 +18,15 @@ and a model's anonymous speaker channels are also different concepts.
 
 ## 2. Recording data flow
 
+Linux native capture, device identity/default-route intent, recovery, preview
+meters, playback IPC and candidate packaging are mapped in
+[LINUX_SUPPORT.md](LINUX_SUPPORT.md). Read it before changing the Linux path;
+source/runtime prerequisites are in [building_in_linux.md](building_in_linux.md).
+`audio/linux_stream.rs` adapts the Pulse protocol backend to the fork's bounded
+worker and independent source pipeline. `api/api.rs` / `useMeetingAudio.ts` own
+Linux's bounded meeting-scoped blob playback. Physical qualification and
+publication are separate from the documented synthetic checks.
+
 Speech-start pre-roll, live system speech sensitivity, and real-call replay
 qualification are documented in [LIVE_SPEECH_RETENTION.md](LIVE_SPEECH_RETENTION.md).
 Sample continuity across jittered capture callbacks and issue #40 qualification

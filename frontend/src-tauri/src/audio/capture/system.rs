@@ -2,6 +2,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use futures_util::{Stream, StreamExt};
 use anyhow::Result;
+#[cfg(not(target_os = "linux"))]
 use cpal::traits::{DeviceTrait, HostTrait};
 
 
@@ -24,6 +25,10 @@ impl SystemAudioCapture {
     }
 
     pub fn list_system_devices() -> Result<Vec<String>> {
+        #[cfg(target_os = "linux")]
+        return super::list_pulse_sinks().map(|sinks| sinks.into_iter().map(|s| s.name).collect());
+        #[cfg(not(target_os = "linux"))]
+        {
         let host = cpal::default_host();
         let devices = host.output_devices()
             .map_err(|e| anyhow::anyhow!("Failed to enumerate output devices: {}", e))?;
@@ -36,6 +41,7 @@ impl SystemAudioCapture {
         }
 
         Ok(device_names)
+        }
     }
 
     pub fn start_system_audio_capture(&self) -> Result<SystemAudioStream> {
@@ -104,10 +110,15 @@ impl SystemAudioCapture {
     }
 
     pub fn check_system_audio_permissions() -> bool {
+        #[cfg(target_os = "linux")]
+        return super::list_pulse_sinks().is_ok();
+        #[cfg(not(target_os = "linux"))]
+        {
         // Check if we can enumerate audio devices
         match cpal::default_host().output_devices() {
             Ok(_) => true,
             Err(_) => false,
+        }
         }
     }
 }

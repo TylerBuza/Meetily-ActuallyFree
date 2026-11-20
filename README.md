@@ -204,9 +204,9 @@ Analytics transmission is disabled, and Windows update checks are opt-in.
 
 | Data | Location |
 | --- | --- |
-| Database, templates, and models | Windows/Linux: `<app folder>/data` when writable, with an OS data-directory fallback; macOS: `~/Library/Application Support/Meetily` |
+| Database, templates, and models | Windows/standalone Linux: `<app folder>/data` when writable, with an OS data-directory fallback; Linux AppImage: `$XDG_DATA_HOME/Meetily` (normally `~/.local/share/Meetily`); macOS: `~/Library/Application Support/Meetily` |
 | Recording/onboarding preferences | Tauri's application-data store; macOS: `~/Library/Application Support/com.meetily.ai` |
-| Default recordings folder | Windows: `Music/meetily-recordings`; macOS: `Movies/meetily-recordings` |
+| Default recordings folder | Windows: `Music/meetily-recordings`; macOS: `Movies/meetily-recordings`; Linux: XDG Documents / `meetily-recordings` |
 | Saved audio tracks | `audio.mp4` (mixed playback), `mic.mp4`, and `system.mp4` |
 
 Change the recordings folder in **Settings → Recording → Save Location**.
@@ -219,6 +219,11 @@ copying recordings alone does not move the entire workspace.
 
 Start with the [development map](docs/DEVELOPMENT_MAP.md),
 [architecture notes](ARCHITECTURE.md), and [contributor conventions](AGENTS.md).
+
+Linux source builds and DEB/AppImage candidates are documented in
+[Building on Linux](docs/building_in_linux.md). See the
+[Linux qualification note](docs/LINUX_SUPPORT.md) for tested behavior and
+remaining physical-device checks. Candidate builds are not published releases.
 
 <details>
 <summary><strong>Build commands</strong></summary>

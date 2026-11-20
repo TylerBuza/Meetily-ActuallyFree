@@ -1,10 +1,25 @@
 import { describe, expect, test } from 'bun:test';
 import {
   deviceDisplayName,
+  deviceLabel,
+  selectedDevice,
   deviceSelectValue,
   toDeviceOptionValue,
   UNAVAILABLE_DEVICE_VALUE,
 } from '../../src/lib/audio-devices';
+
+test('Linux labels stay separate from identity and ambiguous legacy names require reselect', () => {
+  const devices = [
+    { name: 'source.a', device_type: 'Input' as const, label: 'USB 1', legacy_name: 'USB' },
+    { name: 'source.b', device_type: 'Input' as const, label: 'USB 2', legacy_name: 'USB' },
+  ];
+  expect(deviceLabel(devices[1])).toBe('USB 2');
+  expect(toDeviceOptionValue(devices[1])).toBe('source.b (input)');
+  expect(selectedDevice('source.b (input)', devices)).toBe(devices[1]);
+  expect(selectedDevice('USB (input)', devices)).toBeUndefined();
+  expect(selectedDevice('USB (input)', [devices[1]])).toBe(devices[1]);
+  expect(selectedDevice(null, devices)).toBeUndefined();
+});
 
 describe('toDeviceOptionValue', () => {
   test('matches the string persisted in preferences', () => {

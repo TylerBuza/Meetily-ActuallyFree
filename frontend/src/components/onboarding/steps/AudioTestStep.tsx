@@ -9,10 +9,19 @@ import { MACOS_SYSTEM_AUDIO_VERIFIED_KEY } from '@/hooks/usePermissionCheck';
 import { OnboardingContainer } from '../OnboardingContainer';
 import { Check, Mic, Volume2, RefreshCw } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { deviceLabel, selectedDevice, toDeviceOptionValue, UNAVAILABLE_DEVICE_VALUE, type AudioDeviceOption } from '@/lib/audio-devices';
 
-interface AudioDevice {
-  name: string;
-  device_type: 'Input' | 'Output' | string;
+type DevicePreference = 'preferred_mic_device' | 'preferred_system_device';
+type RecordingPreferences = Record<string, unknown> & Partial<Record<DevicePreference, string | null>>;
+
+function linuxPreviewChoice(saved: string | null | undefined, devices: AudioDeviceOption[], role: 'Input' | 'Output') {
+  const selected = selectedDevice(saved ?? null, devices);
+  if (selected) return toDeviceOptionValue(selected);
+  const defaultValue = `default (${role.toLowerCase()})`;
+  if (saved && saved !== 'default' && !(role === 'Input' && /^(default|pipewire|pulse) \(input\)$/.test(saved))) {
+    return UNAVAILABLE_DEVICE_VALUE;
+  }
+  return devices.some(device => device.is_default) ? defaultValue : '';
 }
 
 interface AudioLevelData {
@@ -36,14 +45,15 @@ export function AudioTestStep() {
   const { goPrevious, completeOnboarding } = useOnboarding();
   const platform = usePlatform();
   const isMacOS = platform === 'macos';
+  const isLinux = platform === 'linux';
   const [micRms, setMicRms] = useState(0);
   const [sysRms, setSysRms] = useState(0);
   const [micHeard, setMicHeard] = useState(false);
   const [sysHeard, setSysHeard] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState('Starting meters…');
-  const [inputs, setInputs] = useState<AudioDevice[]>([]);
-  const [outputs, setOutputs] = useState<AudioDevice[]>([]);
+  const [inputs, setInputs] = useState<AudioDeviceOption[]>([]);
+  const [outputs, setOutputs] = useState<AudioDeviceOption[]>([]);
   const [micName, setMicName] = useState<string>('');
   const [sysName, setSysName] = useState<string>('');
   const monitoring = useRef(false);
@@ -55,6 +65,9 @@ export function AudioTestStep() {
   const meterTransition = useRef<Promise<void>>(Promise.resolve());
   const micNameRef = useRef('');
   const sysNameRef = useRef('');
+  const changedDevices = useRef<Partial<Record<DevicePreference, string | null>>>({});
+  const finishing = useRef(false);
+  const [isFinishing, setIsFinishing] = useState(false);
 
   const stop = useCallback(async () => {
     if (!monitoring.current) return;
@@ -78,9 +91,9 @@ export function AudioTestStep() {
         setStatus('Opening devices…');
 
         const deviceNames = (isMacOS ? [mic] : [mic, sys]).filter(
-          (name) => name && name.trim().length > 0,
+          (name) => name && name.trim().length > 0 && name !== UNAVAILABLE_DEVICE_VALUE,
         );
-        if (!mic && !sys) {
+        if (deviceNames.length === 0 && !(isMacOS && sys)) {
           setError('No microphone or speakers found. Check your system sound settings.');
           setStatus('No devices');
           return;
@@ -88,10 +101,12 @@ export function AudioTestStep() {
 
         try {
           // Ask the OS for mic permission before opening streams.
-          try {
-            await invoke('trigger_microphone_permission');
-          } catch {
-            /* non-fatal */
+          if (!isLinux) {
+            try {
+              await invoke('trigger_microphone_permission');
+            } catch {
+              /* non-fatal */
+            }
           }
           if (!active.current || run !== meterRun.current) return;
 
@@ -136,7 +151,7 @@ export function AudioTestStep() {
           setStatus(
             isMacOS
               ? `Listening${mic ? ` · ${shortName(mic)}` : ''} · native system-audio probe complete`
-              : `Listening${mic ? ` · ${shortName(mic)}` : ''}`,
+              : isLinux ? 'Listening…' : `Listening${mic ? ` · ${shortName(mic)}` : ''}`,
           );
         } catch (e) {
           if (!active.current || run !== meterRun.current) return;
@@ -149,7 +164,7 @@ export function AudioTestStep() {
       meterTransition.current = transition.catch(() => undefined);
       return transition;
     },
-    [isMacOS, stop],
+    [isLinux, isMacOS, stop],
   );
 
   const queueStop = useCallback(() => {
@@ -164,15 +179,18 @@ export function AudioTestStep() {
     setError(null);
     setStatus('Finding devices…');
     try {
-      const devices = await invoke<AudioDevice[]>('get_audio_devices');
+      const devices = await invoke<AudioDeviceOption[]>('get_audio_devices');
+      const prefs = isLinux ? await invoke<RecordingPreferences>('get_recording_preferences') : {};
       if (!active.current || run !== deviceLoad.current) return;
       const inputList = devices.filter((d) => String(d.device_type).toLowerCase() === 'input');
       const outputList = devices.filter((d) => String(d.device_type).toLowerCase() === 'output');
       setInputs(inputList);
       setOutputs(outputList);
 
-      const nextMic = inputList[0]?.name || '';
-      const nextSys = outputList[0]?.name || '';
+      const changes = changedDevices.current;
+      const pending = { ...prefs, ...changes };
+      const nextMic = isLinux ? linuxPreviewChoice(pending.preferred_mic_device, inputList, 'Input') : inputList[0]?.name || '';
+      const nextSys = isLinux ? linuxPreviewChoice(pending.preferred_system_device, outputList, 'Output') : outputList[0]?.name || '';
       setMicName(nextMic);
       setSysName(nextSys);
 
@@ -189,7 +207,7 @@ export function AudioTestStep() {
       setError(msg || 'Failed to list audio devices');
       setStatus('Failed');
     }
-  }, [startMeters]);
+  }, [isLinux, startMeters]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -198,9 +216,13 @@ export function AudioTestStep() {
 
     (async () => {
       try {
-        unlisten = await listen<AudioLevelUpdate>('audio-levels', (event) => {
+        const dispose = await listen<AudioLevelUpdate>('audio-levels', (event) => {
           if (cancelled) return;
           const levels = event.payload?.levels || [];
+          if (isLinux) {
+            setMicRms(0);
+            setSysRms(0);
+          }
           for (const level of levels) {
             const rms =
               typeof level.rms_level === 'number'
@@ -229,6 +251,8 @@ export function AudioTestStep() {
             }
           }
         });
+        if (cancelled) dispose();
+        else unlisten = dispose;
       } catch (e) {
         console.error('audio-levels listen failed', e);
       }
@@ -245,28 +269,42 @@ export function AudioTestStep() {
       unlisten?.();
       void queueStop();
     };
-  }, [loadDevicesAndStart, queueStop]);
+  }, [isLinux, loadDevicesAndStart, queueStop]);
 
   const onMicChange = async (name: string) => {
+    if (isLinux) changedDevices.current.preferred_mic_device = name === 'default (input)' ? null : name;
     setMicName(name);
     setMicHeard(false);
     await startMeters(name, sysName);
   };
 
   const onSysChange = async (name: string) => {
+    if (isLinux) changedDevices.current.preferred_system_device = name === 'default (output)' ? null : name;
     setSysName(name);
     setSysHeard(false);
     await startMeters(micName, name);
   };
 
   const finish = async () => {
-    await queueStop();
+    if (finishing.current) return;
+    finishing.current = true;
+    setIsFinishing(true);
     try {
+      await queueStop();
+      // A preview is not a preference change. Keep untouched (including stale)
+      // selections and all non-device settings when completing onboarding.
+      if (isLinux && Object.keys(changedDevices.current).length) {
+        const prefs = await invoke<RecordingPreferences>('get_recording_preferences');
+        await invoke('set_recording_preferences', { preferences: { ...prefs, ...changedDevices.current } });
+      }
       await completeOnboarding();
       await new Promise((r) => setTimeout(r, 100));
       window.location.reload();
     } catch (e) {
       console.error('Failed to complete onboarding:', e);
+      setError(`Could not save setup: ${String(e)}`);
+      finishing.current = false;
+      setIsFinishing(false);
     }
   };
 
@@ -297,8 +335,8 @@ export function AudioTestStep() {
         goPrevious();
       }}
       onNext={finish}
-      canGoNext
-      canGoPrevious
+      canGoNext={!isFinishing}
+      canGoPrevious={!isFinishing}
     >
       <div className="mx-auto max-w-md space-y-5">
         <div className="rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] p-4 space-y-3">
@@ -317,8 +355,8 @@ export function AudioTestStep() {
               )}
             </span>
           </div>
-          {inputs.length > 0 ? (
-            <DeviceSelect label="Microphone" value={micName} devices={inputs} onChange={(name) => void onMicChange(name)} />
+          {inputs.length > 0 || micName === UNAVAILABLE_DEVICE_VALUE ? (
+            <DeviceSelect label="Microphone" value={micName} devices={inputs} linuxRole={isLinux ? 'Input' : undefined} onChange={(name) => void onMicChange(name)} />
           ) : (
             <p className="text-xs text-[var(--af-text-3)]">No microphones found</p>
           )}
@@ -345,8 +383,8 @@ export function AudioTestStep() {
             <p className="text-xs text-[var(--af-text-3)]">
               Current default output (change it in System Settings)
             </p>
-          ) : outputs.length > 0 ? (
-            <DeviceSelect label="System audio device" value={sysName} devices={outputs} onChange={(name) => void onSysChange(name)} />
+          ) : outputs.length > 0 || sysName === UNAVAILABLE_DEVICE_VALUE ? (
+            <DeviceSelect label="System audio device" value={sysName} devices={outputs} linuxRole={isLinux ? 'Output' : undefined} onChange={(name) => void onSysChange(name)} />
           ) : (
             <p className="text-xs text-[var(--af-text-3)]">No playback devices found</p>
           )}
@@ -357,6 +395,7 @@ export function AudioTestStep() {
           <p className="text-xs text-[var(--af-text-3)]">{status}</p>
           <button
             type="button"
+            disabled={isFinishing}
             onClick={() => void loadDevicesAndStart()}
             className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--af-border)] px-2.5 py-1.5 text-xs text-[var(--af-text-2)] hover:bg-[var(--af-panel-2)]"
           >
@@ -371,6 +410,7 @@ export function AudioTestStep() {
 
         <button
           type="button"
+          disabled={isFinishing}
           onClick={() => void finish()}
           className="w-full h-11 rounded-xl bg-[var(--af-accent)] text-sm font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.99]"
         >
@@ -391,11 +431,13 @@ function DeviceSelect({
   label,
   value,
   devices,
+  linuxRole,
   onChange,
 }: {
   label: string;
   value: string;
-  devices: Array<{ name: string }>;
+  devices: AudioDeviceOption[];
+  linuxRole?: 'Input' | 'Output';
   onChange: (name: string) => void;
 }) {
   return (
@@ -404,9 +446,15 @@ function DeviceSelect({
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
+        {linuxRole && devices.some(device => device.is_default) && (
+          <SelectItem value={`default (${linuxRole.toLowerCase()})`}>System default</SelectItem>
+        )}
+        {value === UNAVAILABLE_DEVICE_VALUE && (
+          <SelectItem value={UNAVAILABLE_DEVICE_VALUE} disabled>Saved device unavailable</SelectItem>
+        )}
         {devices.map((device) => (
-          <SelectItem key={device.name} value={device.name}>
-            {device.name}
+          <SelectItem key={device.name} value={linuxRole ? toDeviceOptionValue(device) : device.name}>
+            {linuxRole ? deviceLabel(device) : device.name}
           </SelectItem>
         ))}
       </SelectContent>

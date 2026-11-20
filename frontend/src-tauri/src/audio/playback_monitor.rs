@@ -119,20 +119,13 @@ async fn get_windows_output() -> Result<AudioOutputInfo> {
 
 #[cfg(target_os = "linux")]
 async fn get_linux_output() -> Result<AudioOutputInfo> {
-    use cpal::traits::{DeviceTrait, HostTrait};
-
-    let host = cpal::default_host();
-    let device = host.default_output_device()
-        .ok_or_else(|| anyhow::anyhow!("No default output device found"))?;
-
-    let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
-
-    let sample_rate = device.default_output_config()
-        .ok()
-        .map(|config| config.sample_rate().0);
+    let sink = tokio::task::spawn_blocking(super::capture::default_pulse_sink).await??
+        .ok_or_else(|| anyhow::anyhow!("No default audio output found"))?;
+    let device_name = sink.description;
+    let sample_rate = None;
 
     // Linux Bluetooth detection (PulseAudio/PipeWire naming)
-    let name_lower = device_name.to_lowercase();
+    let name_lower = format!("{} {}", sink.name, device_name).to_lowercase();
     let is_bluetooth = name_lower.contains("bluez")
         || name_lower.contains("bluetooth")
         || name_lower.contains("wireless")

@@ -29,6 +29,14 @@ if ($Cuda) {
   $env:PATH = "$(Join-Path $env:CUDA_PATH 'bin');$(Join-Path $env:CUDA_PATH 'bin\x64');$env:PATH"
   $env:CMAKE_CUDA_ARCHITECTURES = '120'
   $env:NVCC_APPEND_FLAGS = '-std=c++17 -Xcompiler=/Zc:preprocessor -DCCCL_IGNORE_MSVC_TRADITIONAL_PREPROCESSOR_WARNING'
+  $env:CMAKE_CUDA_STANDARD = '17'
+  if (-not $env:CMAKE_CUDA_ARCHITECTURES) {
+    $env:CMAKE_CUDA_ARCHITECTURES = '75;80;86;89;120'
+  }
+  $cccl = '-DCCCL_IGNORE_DEPRECATED_CPP_DIALECT -DCCCL_IGNORE_MSVC_TRADITIONAL_PREPROCESSOR_WARNING'
+  $env:CMAKE_CUDA_FLAGS = "--std=c++17 $cccl -Xcompiler=`"/Zc:preprocessor`""
+  $env:CL = "$env:CL $cccl /Zc:preprocessor".Trim()
+  $env:_CL_ = "$env:_CL_ $cccl /Zc:preprocessor".Trim()
 }
 foreach ($required in @((Join-Path $env:ORT_LIB_LOCATION 'onnxruntime.dll'), (Join-Path $env:LIBCLANG_PATH 'libclang.dll'))) {
   if (-not (Test-Path -LiteralPath $required)) { throw "Build dependency is missing: $required" }

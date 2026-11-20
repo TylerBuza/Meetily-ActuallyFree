@@ -12,7 +12,7 @@ declare global {
 /**
  * Detect platform from user agent (fallback method)
  */
-function detectPlatformFromUserAgent(): Platform {
+export function detectPlatformFromUserAgent(): Platform {
   if (typeof navigator === 'undefined') return 'unknown';
 
   const userAgent = navigator.userAgent.toLowerCase();
