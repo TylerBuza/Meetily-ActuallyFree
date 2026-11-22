@@ -108,15 +108,17 @@ bash frontend/scripts/test-linux-audio.sh
 ```
 
 The opt-in script starts its own PulseAudio server, exercises synthetic virtual
-devices, and tears it down. It does not change desktop defaults. Ordinary native
+devices, and tears it down. It checks active-output discovery on an empty server
+and again with a named virtual default, including on headless CI runners.
+It does not change desktop defaults. Ordinary native
 tests skip live-server and real-model tests. Next production builds must run
 serially with native builds embedding `frontend/out`.
 
 Local qualification uses WSL Ubuntu 26.04 x86_64, Rust 1.99.1, Node 22.22.1,
 pnpm 11.9.0, Tauri CLI 2.11.4 and PulseAudio 17.0:
 
-- Full Linux native library suite: **420 passed, 15 ignored**, including
-  **192 passed, 11 ignored** in the audio module. Ignored tests require
+- Full Linux native library suite with no desktop audio server: **419 passed,
+  16 ignored**, including **191 passed, 12 ignored** in the audio module. Ignored tests require
   explicit live-server, model or audio fixtures.
 - Native meeting playback regression passed: meeting-scoped mixed-file lookup,
   missing tracks/IDs and oversized-file rejection (a sparse synthetic file).
@@ -126,7 +128,8 @@ pnpm 11.9.0, Tauri CLI 2.11.4 and PulseAudio 17.0:
   route switching, pause/resume, pinned selection, endpoint removal/recreation,
   failed-switch rollback, continued microphone delivery while switching system
   capture, real 30-second recovery exhaustion, and preview restart/default
-  switching passed across four opt-in tests.
+  switching passed across four opt-in tests. A fifth opt-in test verified that
+  an empty private server reports no output, then resolves the selected virtual sink.
 - Native regressions cover cancelling Start while waiting for worker readiness
   and claiming teardown exactly once when two threads report a fatal error.
 - Frontend: **36/36 isolated files passed**, including Linux onboarding,

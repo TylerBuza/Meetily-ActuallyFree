@@ -21,5 +21,6 @@ for _ in {1..100}; do
 done
 pactl info
 cd "$ROOT/frontend/src-tauri"
+cargo test --locked -p meetily --lib --no-default-features isolated_linux_default_output -- --ignored --nocapture
 cargo test --locked -p meetily --lib --no-default-features graceful_closeout_on_an_isolated_virtual_sink -- --ignored --nocapture
 cargo test --locked -p meetily --lib --no-default-features isolated_linux_lifecycle -- --ignored --nocapture --test-threads=1

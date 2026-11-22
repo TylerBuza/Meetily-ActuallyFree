@@ -153,6 +153,7 @@ async fn get_linux_output() -> Result<AudioOutputInfo> {
 mod tests {
     use super::*;
 
+    #[cfg(not(target_os = "linux"))]
     #[tokio::test]
     async fn test_get_output_device() {
         let result = get_active_audio_output().await;
@@ -164,5 +165,28 @@ mod tests {
             println!("Sample rate: {:?}", info.sample_rate);
             println!("Type: {}", info.device_type);
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[ignore = "Run test-linux-audio.sh with a private PulseAudio server"]
+    async fn isolated_linux_default_output() {
+        assert_eq!(std::env::var("MEETILY_TEST_PULSE_ISOLATED").as_deref(), Ok("1"));
+        // The fixture starts empty, then selects a virtual sink. A headless
+        // runner's missing desktop route must not be replaced with a fake one.
+        assert!(get_active_audio_output().await.is_err());
+        fn pactl(args: &[&str]) -> String {
+            let out = std::process::Command::new("pactl").args(args).output().unwrap();
+            assert!(out.status.success(), "pactl {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8(out.stdout).unwrap().trim().to_owned()
+        }
+        let module = pactl(&["load-module", "module-null-sink", "sink_name=meetily_test_output",
+            "sink_properties=device.description=Meetily_Test_Speaker"]);
+        pactl(&["set-default-sink", "meetily_test_output"]);
+        let output = get_active_audio_output().await.unwrap();
+        assert_eq!(output.device_name, "Meetily_Test_Speaker");
+        assert_eq!(output.device_type, "Speaker");
+        assert!(!output.is_bluetooth);
+        pactl(&["unload-module", &module]);
     }
 }
