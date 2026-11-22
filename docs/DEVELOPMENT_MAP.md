@@ -270,6 +270,9 @@ The universal Windows build script is
 `frontend/scripts/build-universal-windows.ps1`. It packages CPU/Vulkan/CUDA app
 variants; the runtime payload must match the one validated in tests. Validate with
 `node frontend/scripts/verify-windows-release.mjs`.
+For CPAL microphone/loopback format negotiation and the Windows setup backend
+handoff, including focused test commands and qualification limits, see
+[HARDWARE_SETUP_COMPATIBILITY.md](HARDWARE_SETUP_COMPATIBILITY.md).
 The packager reads release notes with .NET `ReadAllText` so Windows PowerShell
 does not attach provider/filesystem metadata to updater `notes`. The payload
 verifier requires `notes` to be a string. This was caught during v0.2.18 draft

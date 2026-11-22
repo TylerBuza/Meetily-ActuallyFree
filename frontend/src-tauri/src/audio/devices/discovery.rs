@@ -63,12 +63,12 @@ pub fn trigger_audio_permission() -> Result<bool> {
         }
     };
 
-    // Build and start an input stream to trigger the permission request
-    let stream = match device.build_input_stream(
-        &config.into(),
-        |_data: &[f32], _: &cpal::InputCallbackInfo| {
-            // Do nothing, we just want to trigger the permission request
-        },
+    // Opening the default stream triggers the OS prompt. We don't need samples,
+    // and requesting float here can fail on a perfectly usable integer device.
+    let stream = match device.build_input_stream_raw(
+        &config.config(),
+        config.sample_format(),
+        |_, _| {},
         |err| error!("Error in audio stream: {}", err),
         None,
     ) {

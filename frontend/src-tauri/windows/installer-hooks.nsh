@@ -314,13 +314,20 @@ Var MeetilyCudaNotice
 
   ${If} $MeetilyBackend != "bundled"
     DetailPrint "      Selected transcription backend: $MeetilyBackend"
-    CopyFiles /SILENT "$R5" "$INSTDIR\meetily.selected.exe"
-    ${If} ${FileExists} "$INSTDIR\meetily.selected.exe"
-      Delete "$INSTDIR\${MAINBINARYNAME}.exe"
-      Rename "$INSTDIR\meetily.selected.exe" "$INSTDIR\${MAINBINARYNAME}.exe"
-    ${Else}
-      DetailPrint "      Backend replacement failed — keeping bundled executable."
-      StrCpy $MeetilyBackend "bundled"
+    ; Both files are in the install tree. A single same-volume replace avoids
+    ; a second (up to ~700 MB) copy and leaves the original intact on sharing errors.
+    System::Call 'kernel32::MoveFileExW(w "$R5", w "$INSTDIR\${MAINBINARYNAME}.exe", i 1)i.r0 ?e'
+    Pop $1
+    ${If} $0 == 0
+      StrCpy $2 "Windows could not activate the $MeetilyBackend build (error $1). Close Meetily and retry setup."
+      DetailPrint "$2"
+      ${If} $MeetilyProgressToken != ""
+        WriteRegStr HKCU "Software\meetily\InstallerProgress\$MeetilyProgressToken" "ErrorMessage" "$2"
+      ${Else}
+        MessageBox MB_ICONSTOP|MB_OK "$2" /SD IDOK
+      ${EndIf}
+      SetErrorLevel 1
+      Abort
     ${EndIf}
   ${EndIf}
 

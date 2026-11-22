@@ -6,6 +6,7 @@
 #include <gdiplus.h>
 #include <shlobj.h>
 #include <shobjidl.h>
+#include <shellapi.h>
 
 #include <algorithm>
 #include <atomic>
@@ -42,6 +43,7 @@ std::atomic<Page> g_page{Page::Welcome};
 std::atomic<int> g_progress{0};
 std::atomic<int> g_milestone{-1};
 std::wstring g_install_dir;
+std::wstring g_backend_override;
 std::wstring g_error;
 std::wstring g_payload_path;
 std::wstring g_progress_token;
@@ -177,7 +179,8 @@ void DrawWelcome(HDC dc) {
   DrawCapability(dc, 82, L"Private",
                  L"Audio, transcripts, and notes stay on this PC.");
   DrawCapability(dc, 287, L"Hardware-aware",
-                 L"CUDA, Vulkan, or CPU is selected automatically.");
+                  g_backend_override.empty() ? L"CUDA, Vulkan, or CPU is selected automatically."
+                                             : L"Setup will check the requested backend.");
   DrawCapability(dc, 492, L"Actually free",
                  L"No accounts, limits, subscriptions, or telemetry.");
 
@@ -214,7 +217,7 @@ void DrawProgress(HDC dc) {
   } else if (milestone < 78) {
     status = L"Registering Meetily for this Windows user";
   } else if (milestone < 80) {
-    status = L"Creating app shortcuts";
+    status = L"Preparing runtime setup";
   } else if (milestone < 85) {
     status = L"Checking the bundled Microsoft Visual C++ runtime";
   } else if (milestone < 90) {
@@ -224,7 +227,7 @@ void DrawProgress(HDC dc) {
   } else if (milestone < 98) {
     status = L"Installing bundled backend runtime files";
   } else {
-    status = L"Finishing setup";
+    status = L"Creating app shortcuts and finishing setup";
   }
   Text(dc, extracting ? L"Preparing Meetily" : L"Installing Meetily",
        {72, 100, 688, 148}, g_title_font, 0xf2f6fc, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
@@ -671,7 +674,9 @@ void InstallWorker() {
   g_progress.store(-1);
   PostMessageW(g_window, kWorkUpdate, 0, 0);
   std::wstring command = L"\"" + g_payload_path + L"\" /P /PROGRESSTOKEN=" +
-      g_progress_token + L" /D=" + g_install_dir;
+      g_progress_token;
+  if (!g_backend_override.empty()) command += L" /BACKEND=" + g_backend_override;
+  command += L" /D=" + g_install_dir;  // NSIS requires /D last, including spaces.
   std::vector<wchar_t> command_buffer(command.begin(), command.end());
   command_buffer.push_back(L'\0');
   STARTUPINFOW startup{};
@@ -714,6 +719,11 @@ void InstallWorker() {
   if (exit_code == 0) {
     std::lock_guard<std::mutex> lock(g_result_mutex);
     g_cuda_notice = ReadInstallerResult(L"CudaNotice");
+  } else {
+    g_error = ReadInstallerResult(L"ErrorMessage");
+    if (g_error.empty()) {
+      g_error = L"The installation engine returned error " + std::to_wstring(exit_code) + L".";
+    }
   }
   CleanupProgressRegistry();
   CleanupPayload();
@@ -721,7 +731,6 @@ void InstallWorker() {
   if (exit_code == 0) {
     PostMessageW(g_window, kWorkComplete, 0, 0);
   } else {
-    g_error = L"The installation engine returned error " + std::to_wstring(exit_code) + L".";
     PostMessageW(g_window, kWorkFailed, 0, 0);
   }
   CoUninitialize();
@@ -738,7 +747,14 @@ void StartInstall() {
 
 void LaunchMeetily() {
   std::filesystem::path executable = std::filesystem::path(g_install_dir) / L"meetily.exe";
-  ShellExecuteW(nullptr, L"open", executable.c_str(), nullptr, g_install_dir.c_str(), SW_SHOWNORMAL);
+  const auto result = reinterpret_cast<INT_PTR>(ShellExecuteW(
+      g_window, L"open", executable.c_str(), nullptr, g_install_dir.c_str(), SW_SHOWNORMAL));
+  if (result <= 32) {
+    const std::wstring message = L"Setup finished, but Windows could not open " +
+        executable.wstring() + L" (error " + std::to_wstring(result) + L").";
+    MessageBoxW(g_window, message.c_str(), L"Meetily could not start", MB_OK | MB_ICONERROR);
+    return;
+  }
   DestroyWindow(g_window);
 }
 
@@ -828,10 +844,25 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM w_param, LPARAM l_
 
 }  // namespace
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int) {
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
   CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-  if (wcscmp(command_line, L"--verify-payload") == 0) {
+  int argc = 0;
+  auto argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+  if (!argv) {
+    CoUninitialize();
+    return 1;
+  }
+  const bool verify_only = argc == 2 && wcscmp(argv[1], L"--verify-payload") == 0;
+  if (argc == 2) {
+    for (const auto* backend : {L"cpu", L"vulkan", L"cuda"}) {
+      if (_wcsicmp(argv[1], (std::wstring(L"/BACKEND=") + backend).c_str()) == 0) {
+        g_backend_override = backend;
+      }
+    }
+  }
+  LocalFree(argv);
+  if (verify_only) {
     std::wstring error;
     const bool verified = ExtractPayload(error);
     CleanupPayload();

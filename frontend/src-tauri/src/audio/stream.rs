@@ -6,8 +6,8 @@ use std::sync::mpsc::TrySendError;
 use super::capture_worker::{capture_end_seconds, CaptureWorker};
 use std::sync::Arc;
 use anyhow::Result;
-use cpal::traits::{DeviceTrait, StreamTrait};
-use cpal::{Device, Stream, SupportedStreamConfig};
+use cpal::traits::StreamTrait;
+use cpal::Stream;
 use log::{error, info, warn};
 use tokio::sync::mpsc;
 
@@ -242,7 +242,11 @@ impl AudioStream {
         };
 
         // Build the appropriate stream based on sample format
-        let stream = Self::build_stream(&cpal_device, &config, capture.clone(), on_samples)?;
+        let stream = super::cpal_input::open(
+            &cpal_device, &config,
+            move |samples, info| on_samples(samples, info),
+            move |err| capture.handle_stream_error(err),
+        )?;
 
         // Start the stream
         stream.play()?;
@@ -499,85 +503,6 @@ impl AudioStream {
             let _ = (state, _device_type, recording_sender);
             Err(anyhow::anyhow!("Per-app audio recording is only supported on Windows and macOS."))
         }
-    }
-
-    /// Build stream based on sample format
-    fn build_stream(
-        device: &Device,
-        config: &SupportedStreamConfig,
-        capture: AudioCapture,
-        on_samples: Arc<dyn Fn(&[f32], &cpal::InputCallbackInfo) + Send + Sync>,
-    ) -> Result<Stream> {
-        let config_copy = config.clone();
-
-        let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => {
-                let capture_clone = capture.clone();
-                device.build_input_stream(
-                    &config_copy.into(),
-                    move |data: &[f32], info: &cpal::InputCallbackInfo| {
-                        on_samples(data, info);
-                    },
-                    move |err| {
-                        capture_clone.handle_stream_error(err);
-                    },
-                    None,
-                )?
-            }
-            cpal::SampleFormat::I16 => {
-                let capture_clone = capture.clone();
-                device.build_input_stream(
-                    &config_copy.into(),
-                    move |data: &[i16], info: &cpal::InputCallbackInfo| {
-                        let f32_data: Vec<f32> = data.iter()
-                            .map(|&sample| sample as f32 / i16::MAX as f32)
-                            .collect();
-                        on_samples(&f32_data, info);
-                    },
-                    move |err| {
-                        capture_clone.handle_stream_error(err);
-                    },
-                    None,
-                )?
-            }
-            cpal::SampleFormat::I32 => {
-                let capture_clone = capture.clone();
-                device.build_input_stream(
-                    &config_copy.into(),
-                    move |data: &[i32], info: &cpal::InputCallbackInfo| {
-                        let f32_data: Vec<f32> = data.iter()
-                            .map(|&sample| sample as f32 / i32::MAX as f32)
-                            .collect();
-                        on_samples(&f32_data, info);
-                    },
-                    move |err| {
-                        capture_clone.handle_stream_error(err);
-                    },
-                    None,
-                )?
-            }
-            cpal::SampleFormat::I8 => {
-                let capture_clone = capture.clone();
-                device.build_input_stream(
-                    &config_copy.into(),
-                    move |data: &[i8], info: &cpal::InputCallbackInfo| {
-                        let f32_data: Vec<f32> = data.iter()
-                            .map(|&sample| sample as f32 / i8::MAX as f32)
-                            .collect();
-                        on_samples(&f32_data, info);
-                    },
-                    move |err| {
-                        capture_clone.handle_stream_error(err);
-                    },
-                    None,
-                )?
-            }
-            _ => {
-                return Err(anyhow::anyhow!("Unsupported sample format: {:?}", config.sample_format()));
-            }
-        };
-
-        Ok(stream)
     }
 
     /// Get device info

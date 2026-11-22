@@ -177,7 +177,12 @@ pub fn get_windows_device(audio_device: &AudioDevice) -> Result<(cpal::Device, c
                     if name == base_name {
                         // info!("Found matching output device: {}", name);
 
-                        // For output devices, we want to use them in loopback mode
+                        // Loopback captures the shared Windows mix. Enumerating
+                        // first can select a lower rate just because it was listed
+                        // before the endpoint's native stereo/surround format.
+                        if let Ok(config) = device.default_output_config() {
+                            return Ok((device, config));
+                        }
                         if let Ok(supported_configs) = device.supported_output_configs() {
                             let configs: Vec<_> = supported_configs.collect();
                             if configs.is_empty() {
@@ -212,11 +217,6 @@ pub fn get_windows_device(audio_device: &AudioDevice) -> Result<(cpal::Device, c
                             warn!("Could not enumerate supported configurations for device: {}", name);
                         }
 
-                        // If we couldn't get supported configs, try default
-                        if let Ok(default_config) = device.default_output_config() {
-                            // info!("Using default output config: {:?}", default_config);
-                            return Ok((device, default_config));
-                        }
                     }
                 }
             }
@@ -226,4 +226,23 @@ pub fn get_windows_device(audio_device: &AudioDevice) -> Result<(cpal::Device, c
     }
 
     Err(anyhow!("Device not found or no compatible configuration available: {}", audio_device.name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires a Windows desktop with a default render endpoint"]
+    fn physical_loopback_selects_the_windows_mix_format() {
+        let host = cpal::host_from_id(cpal::HostId::Wasapi).unwrap();
+        let endpoint = host.default_output_device().expect("no default output");
+        let mix = endpoint.default_output_config().unwrap();
+        let requested = AudioDevice::new(endpoint.name().unwrap(), DeviceType::Output);
+        let (_, config) = get_windows_device(&requested).unwrap();
+        assert_eq!(config.sample_rate(), mix.sample_rate());
+        assert_eq!(config.channels(), mix.channels());
+        assert_eq!(config.sample_format(), mix.sample_format());
+        eprintln!("Windows mix: {} Hz, {} channels, {}", mix.sample_rate().0, mix.channels(), mix.sample_format());
+    }
 }

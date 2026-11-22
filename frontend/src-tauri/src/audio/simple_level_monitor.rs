@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Sample, SampleFormat};
 use log::{error, info, warn};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime};
@@ -235,70 +234,11 @@ fn build_input_level_stream(
     levels: LevelMap,
 ) -> Result<cpal::Stream> {
     let channels = config.channels();
-    let sample_format = config.sample_format();
-    let stream_config: cpal::StreamConfig = config.into();
-    let err_fn = |e| error!("Level stream error: {}", e);
-
-    let stream = match sample_format {
-        SampleFormat::F32 => {
-            let levels = levels.clone();
-            let name = device_name.clone();
-            let dtype = device_type.to_string();
-            device.build_input_stream(
-                &stream_config,
-                move |data: &[f32], _| {
-                    push_levels(data, channels, &name, &dtype, &levels);
-                },
-                err_fn,
-                None,
-            )?
-        }
-        SampleFormat::I16 => {
-            let levels = levels.clone();
-            let name = device_name.clone();
-            let dtype = device_type.to_string();
-            device.build_input_stream(
-                &stream_config,
-                move |data: &[i16], _| {
-                    let f: Vec<f32> = data.iter().map(|&s| s.to_sample::<f32>()).collect();
-                    push_levels(&f, channels, &name, &dtype, &levels);
-                },
-                err_fn,
-                None,
-            )?
-        }
-        SampleFormat::U16 => {
-            let levels = levels.clone();
-            let name = device_name.clone();
-            let dtype = device_type.to_string();
-            device.build_input_stream(
-                &stream_config,
-                move |data: &[u16], _| {
-                    let f: Vec<f32> = data.iter().map(|&s| s.to_sample::<f32>()).collect();
-                    push_levels(&f, channels, &name, &dtype, &levels);
-                },
-                err_fn,
-                None,
-            )?
-        }
-        SampleFormat::I32 => {
-            let levels = levels.clone();
-            let name = device_name.clone();
-            let dtype = device_type.to_string();
-            device.build_input_stream(
-                &stream_config,
-                move |data: &[i32], _| {
-                    let f: Vec<f32> = data.iter().map(|&s| s.to_sample::<f32>()).collect();
-                    push_levels(&f, channels, &name, &dtype, &levels);
-                },
-                err_fn,
-                None,
-            )?
-        }
-        other => return Err(anyhow!("Unsupported sample format: {:?}", other)),
-    };
-
-    Ok(stream)
+    super::cpal_input::open(
+        device, &config,
+        move |data, _| push_levels(data, channels, &device_name, device_type, &levels),
+        |err| error!("Level stream error: {}", err),
+    )
 }
 
 fn push_levels(

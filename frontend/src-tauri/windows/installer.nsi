@@ -1235,7 +1235,13 @@ Section Install
   System::Call 'user32::SendMessageTimeoutW(p 0xffff, i 0x001A, p 0, w "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall", i 0x0002, i 2000, *p .r9)'
   Pop $9
 
-  ; Create start menu shortcut
+  !insertmacro MeetilyReportProgress 78
+
+  !ifmacrodef NSIS_HOOK_POSTINSTALL
+    !insertmacro NSIS_HOOK_POSTINSTALL
+  !endif
+
+  ; Resolve shortcut icons only after the final backend executable is in place.
   !insertmacro MUI_STARTMENU_WRITE_BEGIN Application
     Call CreateOrUpdateStartMenuShortcut
   !insertmacro MUI_STARTMENU_WRITE_END
@@ -1247,12 +1253,6 @@ Section Install
   ${OrIf} $UpdateMode = 1
     Call CreateOrUpdateDesktopShortcut
   ${EndIf}
-
-  !insertmacro MeetilyReportProgress 78
-
-  !ifmacrodef NSIS_HOOK_POSTINSTALL
-    !insertmacro NSIS_HOOK_POSTINSTALL
-  !endif
 
   ; The direct NSIS engine has no usable navigation while files are copying.
   ; Reveal Next only after every install and runtime step has completed.
