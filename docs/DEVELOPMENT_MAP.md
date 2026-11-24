@@ -206,6 +206,19 @@ saves the **post-call** default; it must not replace the live Parakeet selection
   Speaker edits preserve transcript rows, text, timestamps, and source provenance.
   Coverage: `combined-speakers`, `combined-speaker-edit`, `live-speaker-edits`, and
   the native person-repository regressions.
+- The meeting header gets line counts for every distinct saved label from
+  `api_get_meeting_metadata`, independently of transcript pagination. On first
+  open and post-call refresh, `meetingSpeakerRoster` splits those labels into
+  people: a shared line contributes once to each voice, never a separate
+  participant. Person cards and merge choices use that same roster; transcript
+  rows retain their original overlap labels. `combined-speakers.test.ts` covers
+  the five-label/three-person case and `speaker_counts_cover_unloaded_pages_and_refresh_after_relabeling`
+  covers a later-page voice and a saved label change. The page also checks that
+  its loaded meeting ID matches the route before attaching the post-call view.
+  A browser preview with 105 synthetic lines showed the same three participants
+  on recording handoff, after “Keep live transcript” refreshed that meeting, and
+  after navigating away and back. These checks concern the display of assigned
+  labels, not diarization accuracy.
 - Markdown export uses `exportMarkdownFrontmatter.ts` and the current
   `useCopyOperations` hook. Named overlap components get separate optional links;
   generic labels do not become contacts. Other formats retain their old rendering.

@@ -88,12 +88,18 @@ export interface SummaryDataResponse {
 }
 
 // Pagination types for optimized transcript loading
+export interface SpeakerLabelCount {
+  label: string;
+  count: number;
+}
+
 export interface MeetingMetadata {
   id: string;
   title: string;
   created_at: string;
   updated_at: string;
   folder_path?: string;
+  speaker_label_counts: SpeakerLabelCount[];
 }
 
 export interface PaginatedTranscriptsResponse {

@@ -6,6 +6,7 @@
  */
 
 import { colorForName, type GroupColor } from '@/lib/group-colors';
+import type { SpeakerLabelCount } from '@/types';
 
 // Speaker colors come from the theme's group palette (--af-c-*), which each
 // theme tunes for its own background. The class strings stay literal so
@@ -133,6 +134,23 @@ export function displaySpeaker(speaker: string, userName: string): string {
 export function speakerKey(speaker?: string | null): string {
   if (isUserSpeaker(speaker)) return '__you__';
   return (speaker ?? '').trim().toLowerCase() || '__unknown__';
+}
+
+/** One entry per person. An overlapping line counts once for each of its voices. */
+export function meetingSpeakerRoster(labels: readonly SpeakerLabelCount[]): SpeakerLabelCount[] {
+  const people = new Map<string, SpeakerLabelCount>();
+  for (const { label, count } of labels) {
+    const seenOnLine = new Set<string>();
+    for (const part of splitSpeakerLabel(label)) {
+      const key = speakerKey(part);
+      if (seenOnLine.has(key)) continue;
+      seenOnLine.add(key);
+      const person = people.get(key);
+      if (person) person.count += count;
+      else people.set(key, { label: part, count });
+    }
+  }
+  return [...people.values()].sort((a, b) => b.count - a.count);
 }
 
 export function speakerPaletteIndex(speaker: string): number {

@@ -11,6 +11,12 @@ pub struct MeetingModel {
     pub folder_path: Option<String>,
 }
 
+#[derive(Debug, FromRow, Serialize, Deserialize)]
+pub struct SpeakerLabelCount {
+    pub label: String,
+    pub count: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(transparent)]
 pub struct DateTimeUtc(pub DateTime<Utc>);

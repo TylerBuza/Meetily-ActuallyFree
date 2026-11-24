@@ -1,7 +1,7 @@
 "use client"
 import { useSidebar } from "@/components/Sidebar/SidebarProvider";
 import { useState, useEffect, useCallback, useRef, Suspense } from "react";
-import { Transcript, Summary } from "@/types";
+import type { MeetingMetadata, Transcript, Summary } from "@/types";
 import PageContent from "./page-content";
 import { useRouter, useSearchParams } from "next/navigation";
 import Analytics from "@/lib/analytics";
@@ -12,13 +12,8 @@ import { useConfig } from "@/contexts/ConfigContext";
 import { usePaginatedTranscripts } from "@/hooks/usePaginatedTranscripts";
 import { shouldSetUpAutoSummary } from "@/lib/meeting-summary-policy";
 
-interface MeetingDetailsResponse {
-  id: string;
-  title: string;
-  created_at: string;
-  updated_at: string;
+interface MeetingDetailsResponse extends MeetingMetadata {
   transcripts: Transcript[];
-  folder_path?: string;
 }
 
 function MeetingDetailsContent() {
@@ -144,12 +139,8 @@ function MeetingDetailsContent() {
 
     console.log('Meeting metadata loaded:', metadata);
     setMeetingDetails((current) => ({
-      id: metadata.id,
-      title: metadata.title,
-      created_at: metadata.created_at,
-      updated_at: metadata.updated_at,
+      ...metadata,
       transcripts: current?.id === metadata.id ? current.transcripts : [],
-      folder_path: metadata.folder_path,
     }));
     setCurrentMeeting({ id: metadata.id, title: metadata.title });
   }, [metadata, meetingId, setCurrentMeeting]);
@@ -392,7 +383,9 @@ function MeetingDetailsContent() {
   // Initial load only. Once meetingDetails exists, keep PageContent mounted —
   // flipping isLoadingTranscripts used to unmount it and wipe in-flight summary
   // state (status + just-generated aiSummary).
-  if (!meetingDetails) {
+  // A route change renders before the reset effect. Never attach the new
+  // route's post-call workflow to the previous meeting's header/transcripts.
+  if (!meetingDetails || meetingDetails.id !== meetingId) {
     return (
       <div className="h-full bg-[var(--af-panel)]">
         {source === 'recording' ? (
