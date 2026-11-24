@@ -18,6 +18,10 @@ and a model's anonymous speaker channels are also different concepts.
 
 ## 2. Recording data flow
 
+See the [November issues, PRs and upstream release review](OPEN_REPORTS_AND_UPSTREAM_2026_11.md)
+for the per-app scope check, capture resampler/queue timing fixes, local drift
+measurement tool, revised Parakeet sources, and hardware qualification limits.
+
 Speech-start pre-roll, live system speech sensitivity, and real-call replay
 qualification are documented in [LIVE_SPEECH_RETENTION.md](LIVE_SPEECH_RETENTION.md).
 Sample continuity across jittered capture callbacks and issue #40 qualification

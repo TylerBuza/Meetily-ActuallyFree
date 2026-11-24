@@ -20,7 +20,7 @@ rustup target add "$TARGET"
 echo "Building the Apple Silicon llama-helper sidecar..."
 (
     cd "$REPO_DIR"
-    cargo build --release --package llama-helper --target "$TARGET" --features metal
+    CMAKE_DISABLE_FIND_PACKAGE_OpenSSL=TRUE cargo build --release --package llama-helper --target "$TARGET" --features metal
 )
 
 mkdir -p "$FRONTEND_DIR/src-tauri/binaries"
