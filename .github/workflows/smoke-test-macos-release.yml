@@ -3,6 +3,10 @@ name: "Smoke Test - macOS Release"
 on:
   workflow_dispatch:
     inputs:
+      use-macos-26:
+        description: "Use the alternate standard Apple Silicon runner when macOS 15 capacity is unavailable"
+        type: boolean
+        default: false
       release-tag:
         description: "Published macOS release tag"
         required: true
@@ -16,7 +20,7 @@ jobs:
   smoke-test:
     name: Launch Published Apple Silicon App
     if: ${{ github.ref == 'refs/heads/main' }}
-    runs-on: macos-15
+    runs-on: ${{ inputs.use-macos-26 && 'macos-26' || 'macos-15' }}
     timeout-minutes: 15
 
     steps:

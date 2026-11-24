@@ -3,6 +3,10 @@ name: "Build - macOS Apple Silicon"
 on:
   workflow_dispatch:
     inputs:
+      use-macos-26:
+        description: "Use the alternate standard Apple Silicon runner when macOS 15 capacity is unavailable"
+        type: boolean
+        default: false
       sign-and-notarize:
         description: "Use configured Apple Developer credentials"
         required: true
@@ -26,7 +30,7 @@ jobs:
     name: Build Apple Silicon DMG
     if: ${{ github.ref == 'refs/heads/main' }}
     environment: macos-release
-    runs-on: macos-15
+    runs-on: ${{ inputs.use-macos-26 && 'macos-26' || 'macos-15' }}
 
     steps:
       - name: Checkout repository
@@ -65,7 +69,7 @@ jobs:
         uses: swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
           workspaces: ". -> target"
-          key: macos-aarch64-release-helper-no-openssl-v1
+          key: ${{ inputs.use-macos-26 && 'macos-26' || 'macos-15' }}-aarch64-release-helper-no-openssl-v1
 
       - name: Install frontend dependencies
         working-directory: frontend

@@ -46,6 +46,12 @@ after publication; it validates preview/stable metadata and launches the public
 DMG twice. These checks do not qualify physical audio capture or macOS 14.2.
 Preview notes can be supplied in `docs/RELEASE_V<digits>_MACOS.md`.
 
+If macOS 15 jobs are cancelled **before assignment** because of hosted runner
+capacity, dispatch the candidate with `-f use-macos-26=true`; use the same
+option for the public smoke test. Both choices use standard hosted ARM64
+runners. The minimum deployment target (14.2), artifact provenance and
+native qualification checks apply on both. This is a new candidate run.
+
 The v0.2.18 preview path was requested without waiting for physical testing.
 Local workflow checks exercise signoff rejection, source-change rejection, and
 CRLF checksum handling; CI owns actual macOS bundle/launch verification.
