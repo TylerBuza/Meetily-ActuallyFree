@@ -538,7 +538,14 @@ function handle(cmd: string, args: Args): unknown {
     case 'api_get_meeting_metadata': {
       const entry = meeting(args.meetingId);
       if (!entry) throw new Error('Meeting not found');
-      return { id: entry.id, title: entry.title, created_at: entry.created_at, updated_at: entry.created_at, folder_path: entry.folder_path };
+      const counts = new Map<string, number>();
+      for (const { speaker } of transcripts(entry.id)) {
+        if (speaker?.trim()) counts.set(speaker, (counts.get(speaker) ?? 0) + 1);
+      }
+      return {
+        id: entry.id, title: entry.title, created_at: entry.created_at, updated_at: entry.created_at, folder_path: entry.folder_path,
+        speaker_label_counts: Array.from(counts, ([label, count]) => ({ label, count })),
+      };
     }
     case 'api_get_meeting_transcripts': {
       const rows = transcripts(args.meetingId);

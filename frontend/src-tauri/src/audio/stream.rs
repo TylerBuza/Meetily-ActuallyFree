@@ -6,8 +6,8 @@ use std::sync::mpsc::TrySendError;
 use super::capture_worker::{capture_end_seconds, CaptureWorker};
 use std::sync::Arc;
 use anyhow::Result;
-use cpal::traits::{DeviceTrait, StreamTrait};
-use cpal::{Device, Stream, SupportedStreamConfig};
+use cpal::traits::StreamTrait;
+use cpal::Stream;
 use log::{error, info, warn};
 use tokio::sync::mpsc;
 
@@ -60,10 +60,71 @@ pub struct CaptureFrame {
     samples: Vec<f32>,
     timestamp: f64,
     muted: bool,
+    // Samples known to have been dropped by this stream's bounded queue.
+    missing_samples: usize,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl CaptureFrame {
+    fn enqueue(mut self, sender: &std::sync::mpsc::SyncSender<Self>, missing: &mut usize) -> bool {
+        self.missing_samples = std::mem::take(missing);
+        if let Err(TrySendError::Full(frame)) = sender.try_send(self) {
+            *missing = frame.missing_samples.saturating_add(frame.samples.len());
+            return false;
+        }
+        true
+    }
+
+    fn deliver(self, samples_per_second: usize, mut process: impl FnMut(&[f32], f64, bool)) {
+        // Preserve short confirmed losses in source time before resampling.
+        // Leave longer discontinuities to the mixer, bounding the allocation.
+        if self.missing_samples > 0 && self.missing_samples <= samples_per_second / 10 {
+            let gap_end = (self.timestamp - self.samples.len() as f64 / samples_per_second as f64).max(0.0);
+            process(&vec![0.0; self.missing_samples], gap_end, true);
+        }
+        process(&self.samples, self.timestamp, self.muted);
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 const CAPTURE_QUEUE_BLOCKS: usize = 256;
+
+#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
+mod queue_timing_tests {
+    use super::CaptureFrame;
+    use std::sync::mpsc::sync_channel;
+
+    #[test]
+    fn lost_eight_ms_packets_do_not_shift_later_audio_earlier() {
+        // One real bounded queue, three isolated 8 ms losses on a stereo input.
+        // The other track receives every packet. Compare sample positions,
+        // not just file lengths (the mixer can pad equal-length tails).
+        let (sender, rx) = sync_channel(1);
+        let mut missing = 0;
+        let mut reference = Vec::new();
+        let mut captured = Vec::new();
+        let mut gaps = Vec::new();
+        let mut receive = || rx.recv().map(|frame: CaptureFrame| frame.deliver(96_000, |data, end, muted| {
+            if muted { gaps.push((data.len(), (end * 96_000.0).round() as usize)); }
+            captured.extend_from_slice(data);
+        })).unwrap();
+        for i in 0..50 {
+            let samples = vec![(i + 1) as f32; 768];
+            reference.extend_from_slice(&samples);
+            let frame = CaptureFrame { samples, timestamp: (i + 1) as f64 * 0.008, muted: false, missing_samples: 0 };
+            let accepted = frame.enqueue(&sender, &mut missing);
+            assert_eq!(accepted, ![10, 21, 35].contains(&i));
+            if ![9, 20, 34].contains(&i) { receive(); }
+        }
+        assert_eq!(gaps, [(768, 11 * 768), (768, 22 * 768), (768, 36 * 768)]);
+        assert_eq!(captured.len(), reference.len());
+        for i in 0..50 {
+            let range = i * 768..(i + 1) * 768;
+            if [10, 21, 35].contains(&i) { assert!(captured[range].iter().all(|&s| s == 0.0)); }
+            else { assert_eq!(captured[range.clone()], reference[range]); }
+        }
+    }
+}
 
 // SAFETY: While Stream doesn't implement Send, we ensure it's only accessed
 // from the same thread context by using spawn_blocking for operations that cross thread boundaries
@@ -73,6 +134,8 @@ unsafe impl Send for StreamBackend {}
 pub struct AudioStream {
     device: Arc<AudioDevice>,
     backend: StreamBackend,
+    /// Drained after the backend stops so a resampled tail reaches the pipeline.
+    capture: Option<AudioCapture>,
 }
 
 // SAFETY: AudioStream contains StreamBackend which we've marked as Send
@@ -107,7 +170,7 @@ impl AudioStream {
             let stream = super::linux_stream::LinuxStream::start(
                 device.clone(), state, device_type, recording_sender,
             ).await?;
-            return Ok(Self { device, backend: StreamBackend::Pulse(stream) });
+            return Ok(Self { device, backend: StreamBackend::Pulse(stream), capture: None });
         }
 
         #[cfg(not(target_os = "linux"))]
@@ -191,8 +254,10 @@ impl AudioStream {
             let worker_state = state.clone();
             let mut reported_overflow = false;
             let source = device_type.clone();
+            let samples_per_second = usize::from(config.channels()) * config.sample_rate().0 as usize;
             let worker = CaptureWorker::spawn(CAPTURE_QUEUE_BLOCKS, move |frame: CaptureFrame| {
-                worker_capture.process_audio_data_at(&frame.samples, frame.timestamp, frame.muted);
+                frame.deliver(samples_per_second, |samples, timestamp, muted|
+                    worker_capture.process_audio_data_at(samples, timestamp, muted));
                 if worker_overflowed.swap(false, Ordering::Relaxed) && !reported_overflow {
                     warn!("{:?} processing queue overflowed; some audio was lost", source);
                     worker_state.report_error(AudioError::BufferOverflow);
@@ -208,15 +273,17 @@ impl AudioStream {
         // pipeline delivery belong to the worker. CPAL timestamps describe the
         // first captured sample, whereas the mixer consumes block-end seconds.
         #[cfg(any(target_os = "macos", target_os = "windows"))]
-        let on_samples: Arc<dyn Fn(&[f32], &cpal::InputCallbackInfo) + Send + Sync> = if let Some((worker, overflowed, accepting)) = &capture_worker {
+        let mut on_samples: Box<dyn FnMut(&[f32], &cpal::InputCallbackInfo) + Send> = if let Some((worker, overflowed, accepting)) = &capture_worker {
             let sender = worker.sender();
             let overflowed = overflowed.clone();
             let state = state.clone();
             let accepting = accepting.clone();
             let sample_rate = config.sample_rate().0;
             let channels = config.channels();
-            Arc::new(move |samples, info| {
+            let mut missing_samples = 0usize;
+            Box::new(move |samples, info| {
                 if !accepting.load(Ordering::Acquire) || !state.is_recording() || state.is_paused() {
+                    missing_samples = 0;
                     return;
                 }
                 let times = info.timestamp();
@@ -225,11 +292,13 @@ impl AudioStream {
                     samples.len(), channels, sample_rate,
                     times.callback.duration_since(&times.capture),
                 );
-                if let Err(TrySendError::Full(_)) = sender.try_send(CaptureFrame {
+                let frame = CaptureFrame {
                     samples: samples.to_vec(),
                     timestamp,
                     muted: state.is_audio_source_muted(&device_type),
-                }) {
+                    missing_samples: 0,
+                };
+                if !frame.enqueue(&sender, &mut missing_samples) {
                     overflowed.store(true, Ordering::Relaxed);
                 }
             })
@@ -238,7 +307,7 @@ impl AudioStream {
             let state = state.clone();
             let sample_rate = config.sample_rate().0;
             let channels = config.channels();
-            Arc::new(move |samples, info| {
+            Box::new(move |samples, info| {
                 let times = info.timestamp();
                 let timestamp = capture_end_seconds(
                     state.get_active_recording_duration().unwrap_or(0.0),
@@ -255,7 +324,12 @@ impl AudioStream {
         };
 
         // Build the appropriate stream based on sample format
-        let stream = Self::build_stream(&cpal_device, &config, capture.clone(), on_samples)?;
+        let error_capture = capture.clone();
+        let stream = super::cpal_input::open(
+            &cpal_device, &config,
+            move |samples, info| on_samples(samples, info),
+            move |err| error_capture.handle_stream_error(err),
+        )?;
 
         // Start the stream
         stream.play()?;
@@ -266,11 +340,13 @@ impl AudioStream {
             return Ok(Self {
                 device,
                 backend: StreamBackend::CpalWorker { stream, worker, accepting },
+                capture: Some(capture),
             });
         }
         Ok(Self {
             device,
             backend: StreamBackend::Cpal(stream),
+            capture: Some(capture),
         })
     }
 
@@ -426,6 +502,7 @@ impl AudioStream {
             backend: StreamBackend::CoreAudio {
                 task: Some(task),
             },
+            capture: Some(capture),
         })
     }
 
@@ -492,6 +569,7 @@ impl AudioStream {
                     stop_flag,
                     thread_handles,
                 },
+                capture: None,
             })
         }
 
@@ -512,85 +590,6 @@ impl AudioStream {
             let _ = (state, _device_type, recording_sender);
             Err(anyhow::anyhow!("Per-app audio recording is only supported on Windows and macOS."))
         }
-    }
-
-    /// Build stream based on sample format
-    fn build_stream(
-        device: &Device,
-        config: &SupportedStreamConfig,
-        capture: AudioCapture,
-        on_samples: Arc<dyn Fn(&[f32], &cpal::InputCallbackInfo) + Send + Sync>,
-    ) -> Result<Stream> {
-        let config_copy = config.clone();
-
-        let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => {
-                let capture_clone = capture.clone();
-                device.build_input_stream(
-                    &config_copy.into(),
-                    move |data: &[f32], info: &cpal::InputCallbackInfo| {
-                        on_samples(data, info);
-                    },
-                    move |err| {
-                        capture_clone.handle_stream_error(err);
-                    },
-                    None,
-                )?
-            }
-            cpal::SampleFormat::I16 => {
-                let capture_clone = capture.clone();
-                device.build_input_stream(
-                    &config_copy.into(),
-                    move |data: &[i16], info: &cpal::InputCallbackInfo| {
-                        let f32_data: Vec<f32> = data.iter()
-                            .map(|&sample| sample as f32 / i16::MAX as f32)
-                            .collect();
-                        on_samples(&f32_data, info);
-                    },
-                    move |err| {
-                        capture_clone.handle_stream_error(err);
-                    },
-                    None,
-                )?
-            }
-            cpal::SampleFormat::I32 => {
-                let capture_clone = capture.clone();
-                device.build_input_stream(
-                    &config_copy.into(),
-                    move |data: &[i32], info: &cpal::InputCallbackInfo| {
-                        let f32_data: Vec<f32> = data.iter()
-                            .map(|&sample| sample as f32 / i32::MAX as f32)
-                            .collect();
-                        on_samples(&f32_data, info);
-                    },
-                    move |err| {
-                        capture_clone.handle_stream_error(err);
-                    },
-                    None,
-                )?
-            }
-            cpal::SampleFormat::I8 => {
-                let capture_clone = capture.clone();
-                device.build_input_stream(
-                    &config_copy.into(),
-                    move |data: &[i8], info: &cpal::InputCallbackInfo| {
-                        let f32_data: Vec<f32> = data.iter()
-                            .map(|&sample| sample as f32 / i8::MAX as f32)
-                            .collect();
-                        on_samples(&f32_data, info);
-                    },
-                    move |err| {
-                        capture_clone.handle_stream_error(err);
-                    },
-                    None,
-                )?
-            }
-            _ => {
-                return Err(anyhow::anyhow!("Unsupported sample format: {:?}", config.sample_format()));
-            }
-        };
-
-        Ok(stream)
     }
 
     /// Get device info
@@ -641,6 +640,7 @@ impl AudioStream {
                 // CPAL's macOS disconnect listener can retain the callback and
                 // its sender after drop. Explicitly close/drain instead of
                 // waiting for channel disconnection, with a bounded DSP wait.
+                // On timeout the worker may still own the capture: skip its drain.
                 worker
                     .stop(std::time::Duration::from_secs(2))
                     .map_err(|error| anyhow::anyhow!("Capture worker shutdown failed ({:?}); queued audio may be incomplete", error))?;
@@ -666,6 +666,11 @@ impl AudioStream {
                 }
                 info!("Windows process loopback stream(s) stopped");
             }
+        }
+
+        // The caller clears the pipeline sender only after stream teardown.
+        if let Some(capture) = self.capture {
+            capture.drain()?;
         }
 
         // Explicitly drop self.device Arc reference

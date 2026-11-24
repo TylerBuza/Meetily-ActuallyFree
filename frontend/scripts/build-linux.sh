@@ -34,7 +34,7 @@ print(json.dumps({"bundle": {"linux": {"deb": {"depends": [*depends, "libvulkan1
 ')"
     app_args+=(--config "$vulkan_config")
 fi
-cargo build "${helper_args[@]}"
+CMAKE_DISABLE_FIND_PACKAGE_OpenSSL=TRUE cargo build "${helper_args[@]}"
 mkdir -p frontend/src-tauri/binaries
 install -m 755 "$target/$profile/llama-helper" "frontend/src-tauri/binaries/llama-helper-$triple"
 cd frontend

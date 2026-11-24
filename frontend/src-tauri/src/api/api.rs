@@ -7,7 +7,7 @@ use tauri_plugin_store::StoreExt;
 
 use crate::{
     database::{
-        models::MeetingModel,
+        models::{MeetingModel, SpeakerLabelCount},
         repositories::{
             meeting::MeetingsRepository, setting::SettingsRepository,
             transcript::TranscriptsRepository, vocabulary::VocabularyRepository,
@@ -177,6 +177,7 @@ pub struct MeetingMetadata {
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub folder_path: Option<String>,
+    pub speaker_label_counts: Vec<SpeakerLabelCount>,
 }
 
 /// Paginated transcripts response with total count
@@ -1140,6 +1141,8 @@ pub async fn api_get_meeting_metadata<R: Runtime>(
             }
             log_info!("Successfully retrieved meeting metadata {}", meeting_id);
             Ok(MeetingMetadata {
+                speaker_label_counts: MeetingsRepository::speaker_label_counts(pool, &meeting_id)
+                    .await.map_err(|e| format!("Failed to read meeting speakers: {}", e))?,
                 id: meeting.id,
                 title: meeting.title,
                 created_at: created_at.to_rfc3339(),

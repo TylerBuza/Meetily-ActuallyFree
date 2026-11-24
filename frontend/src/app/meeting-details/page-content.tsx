@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { motion } from 'framer-motion';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
-import type { Summary, Transcript, TranscriptSegmentData } from '@/types';
+import type { MeetingMetadata, Summary, Transcript, TranscriptSegmentData } from '@/types';
 import Analytics from '@/lib/analytics';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { useConfig } from '@/contexts/ConfigContext';
@@ -37,7 +37,7 @@ import { announceChange, getMeetingGroup, setMeetingGroup } from '@/lib/workspac
 import { deleteMeetings, renameMeeting } from '@/lib/meeting-actions';
 import { displayTitle } from '@/lib/meeting-titles';
 import { cn } from '@/lib/utils';
-import { displaySpeaker, speakerColorIndexMap, speakerKey } from '@/utils/speakerUtils';
+import { displaySpeaker, meetingSpeakerRoster, speakerColorIndexMap, speakerKey } from '@/utils/speakerUtils';
 
 // Page remounts join the same backend-start attempt. Only accepted attempts are
 // persisted in sessionStorage below; failed preflight attempts remain retryable.
@@ -70,7 +70,7 @@ export default function PageContent({
   focusTranscriptId,
   focusTime,
 }: {
-  meeting: any;
+  meeting: MeetingMetadata & { transcripts: Transcript[] };
   summaryData: Summary | null;
   summaryUserEdited?: boolean;
   isPostCallRecording?: boolean;
@@ -297,14 +297,7 @@ export default function PageContent({
     [segments, meetingData.transcripts],
   );
 
-  const speakers = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const segment of transcriptSegments) {
-      const label = segment.speaker?.trim();
-      if (label) counts.set(label, (counts.get(label) ?? 0) + 1);
-    }
-    return [...counts.entries()].map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count);
-  }, [transcriptSegments]);
+  const speakers = useMemo(() => meetingSpeakerRoster(meeting.speaker_label_counts), [meeting.speaker_label_counts]);
 
   // One colour per speaker, in the order they first spoke, shared by the
   // transcript, the person card and the identify dialog.
@@ -531,7 +524,8 @@ export default function PageContent({
       <PersonCard
         target={cardTarget}
         onClose={() => setCardTarget(null)}
-        lineCount={cardTarget ? speakers.find((speaker) => speaker.label === cardTarget.speaker)?.count : undefined}
+        lineCount={cardTarget ? speakers.find(({ label }) => speakerKey(label) === speakerKey(cardTarget.speaker))?.count
+          ?? meeting.speaker_label_counts.find(({ label }) => label === cardTarget.speaker)?.count : undefined}
         onIdentify={(speaker, segmentId) => setIdentity({ speaker, transcriptId: segmentId || null })}
         onMerge={(speaker) => setIdentity({ speaker, transcriptId: null })}
         onMarkMe={markMe}

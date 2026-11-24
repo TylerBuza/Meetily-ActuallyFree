@@ -27,6 +27,10 @@ worker and independent source pipeline. `api/api.rs` / `useMeetingAudio.ts` own
 Linux's bounded meeting-scoped blob playback. Physical qualification and
 publication are separate from the documented synthetic checks.
 
+See the [November issues, PRs and upstream release review](OPEN_REPORTS_AND_UPSTREAM_2026_11.md)
+for the per-app scope check, capture resampler/queue timing fixes, local drift
+measurement tool, revised Parakeet sources, and hardware qualification limits.
+
 Speech-start pre-roll, live system speech sensitivity, and real-call replay
 qualification are documented in [LIVE_SPEECH_RETENTION.md](LIVE_SPEECH_RETENTION.md).
 Sample continuity across jittered capture callbacks and issue #40 qualification
@@ -146,6 +150,21 @@ Paths below are relative to `frontend/src-tauri/src/` unless marked frontend.
 
 ### Time and identity invariants
 
+- Recording duration uses a single monotonic clock in `audio/recording_state.rs`.
+  Stop freezes elapsed/active time (including an open pause in paused time);
+  stream cleanup leaves that snapshot for `save_recording_only` and analytics.
+  Starting a new recording resets it. Adapted from Simone Scarduzio's
+  [PR #58](https://github.com/TylerBuza/Meetily-ActuallyFree/pull/58);
+  `duration_survives_stop_and_cleanup_then_resets_for_next_session` covers the
+  state transitions independently of transcript availability.
+- Recovery-only corrections from reviewing
+  [PR #60](https://github.com/TylerBuza/Meetily-ActuallyFree/pull/60):
+  `audio/incremental_saver.rs` orders numbered AAC checkpoints numerically,
+  explicitly muxes MP4 to the temporary `.recovering` path and renames it over
+  the destination only after FFmpeg succeeds. Cleanup requires a success marker
+  and preserves incomplete or extra source checkpoints. Tests use synthetic
+  audio, out-of-order filenames and partial recovery. This is not a change
+  to the normal encoder or a fix for the stepwise track drift in issue #73.
 - Capture/pipeline input is currently configured at 48 kHz. The streaming observer
   receives **16 kHz mono**, using the exact same resampled audio as VAD.
 - Observer start positions and Sortformer segment boundaries use **16 kHz sample
@@ -215,6 +234,19 @@ saves the **post-call** default; it must not replace the live Parakeet selection
   Speaker edits preserve transcript rows, text, timestamps, and source provenance.
   Coverage: `combined-speakers`, `combined-speaker-edit`, `live-speaker-edits`, and
   the native person-repository regressions.
+- The meeting header gets line counts for every distinct saved label from
+  `api_get_meeting_metadata`, independently of transcript pagination. On first
+  open and post-call refresh, `meetingSpeakerRoster` splits those labels into
+  people: a shared line contributes once to each voice, never a separate
+  participant. Person cards and merge choices use that same roster; transcript
+  rows retain their original overlap labels. `combined-speakers.test.ts` covers
+  the five-label/three-person case and `speaker_counts_cover_unloaded_pages_and_refresh_after_relabeling`
+  covers a later-page voice and a saved label change. The page also checks that
+  its loaded meeting ID matches the route before attaching the post-call view.
+  A browser preview with 105 synthetic lines showed the same three participants
+  on recording handoff, after “Keep live transcript” refreshed that meeting, and
+  after navigating away and back. These checks concern the display of assigned
+  labels, not diarization accuracy.
 - Markdown export uses `exportMarkdownFrontmatter.ts` and the current
   `useCopyOperations` hook. Named overlap components get separate optional links;
   generic labels do not become contacts. Other formats retain their old rendering.
@@ -279,6 +311,9 @@ The universal Windows build script is
 `frontend/scripts/build-universal-windows.ps1`. It packages CPU/Vulkan/CUDA app
 variants; the runtime payload must match the one validated in tests. Validate with
 `node frontend/scripts/verify-windows-release.mjs`.
+For CPAL microphone/loopback format negotiation and the Windows setup backend
+handoff, including focused test commands and qualification limits, see
+[HARDWARE_SETUP_COMPATIBILITY.md](HARDWARE_SETUP_COMPATIBILITY.md).
 The packager reads release notes with .NET `ReadAllText` so Windows PowerShell
 does not attach provider/filesystem metadata to updater `notes`. The payload
 verifier requires `notes` to be a string. This was caught during v0.2.18 draft

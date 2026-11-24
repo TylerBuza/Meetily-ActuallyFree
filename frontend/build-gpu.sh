@@ -135,7 +135,7 @@ if [ "$TAURI_GPU_FEATURE" = "hipblas" ]; then
 fi
 
 echo -e "   Building in $HELPER_DIR with features: ${HELPER_FEATURES:-none}"
-(cd "$HELPER_DIR" && cargo build --locked --release --no-default-features $HELPER_FEATURES)
+(cd "$HELPER_DIR" && CMAKE_DISABLE_FIND_PACKAGE_OpenSSL=TRUE cargo build --locked --release --no-default-features $HELPER_FEATURES)
 
 if [ $? -ne 0 ]; then
     echo -e "${RED}❌ Failed to build llama-helper${NC}"

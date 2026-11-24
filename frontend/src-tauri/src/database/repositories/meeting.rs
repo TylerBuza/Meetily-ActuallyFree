@@ -1,5 +1,5 @@
 use crate::api::{MeetingDetails, MeetingTranscript};
-use crate::database::models::{MeetingModel, Transcript};
+use crate::database::models::{MeetingModel, SpeakerLabelCount, Transcript};
 use crate::database::repositories::transcript::timestamp_from_offset;
 use chrono::{DateTime, Utc};
 use sqlx::{Connection, Error as SqlxError, SqliteConnection, SqlitePool};
@@ -131,6 +131,18 @@ impl MeetingsRepository {
                 .await?;
 
         Ok(meeting)
+    }
+
+    /// Roster input is meeting-wide; never fetch transcript text just to count people.
+    pub async fn speaker_label_counts(pool: &SqlitePool, meeting_id: &str) -> Result<Vec<SpeakerLabelCount>, SqlxError> {
+        sqlx::query_as(
+            "SELECT speaker AS label, COUNT(*) AS count FROM transcripts
+             WHERE meeting_id = ? AND speaker IS NOT NULL AND TRIM(speaker) <> ''
+             GROUP BY speaker ORDER BY MIN(COALESCE(audio_start_time, 0)), speaker",
+        )
+        .bind(meeting_id)
+        .fetch_all(pool)
+        .await
     }
 
     /// Get meeting transcripts with pagination support
@@ -352,6 +364,30 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn speaker_counts_cover_unloaded_pages_and_refresh_after_relabeling() {
+        let pool = test_pool().await;
+        sqlx::query(
+            "WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<101)
+             INSERT INTO transcripts(id,meeting_id,transcript,timestamp,audio_start_time,speaker)
+             SELECT CAST(i AS TEXT), 'm', '', '', i, CASE WHEN i<=100 THEN 'Speaker 1'
+             ELSE 'Speaker 1 + Speaker 2' END FROM n",
+        ).execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO transcripts(id,meeting_id,transcript,timestamp,speaker) VALUES
+             ('other','other','','','Speaker 9'), ('blank','m','','',' '), ('null','m','','',NULL)",
+        ).execute(&pool).await.unwrap();
+
+        let counts = MeetingsRepository::speaker_label_counts(&pool, "m").await.unwrap();
+        assert_eq!(counts.iter().map(|s| (s.label.as_str(), s.count)).collect::<Vec<_>>(),
+                   [("Speaker 1", 100), ("Speaker 1 + Speaker 2", 1)]);
+        sqlx::query("UPDATE transcripts SET speaker='Speaker 1' WHERE id='101'")
+            .execute(&pool).await.unwrap();
+        let refreshed = MeetingsRepository::speaker_label_counts(&pool, "m").await.unwrap();
+        assert_eq!(refreshed.len(), 1);
+        assert_eq!((refreshed[0].label.as_str(), refreshed[0].count), ("Speaker 1", 101));
     }
 
     #[tokio::test]

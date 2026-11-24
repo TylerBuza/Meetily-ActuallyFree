@@ -135,10 +135,10 @@ pub struct ParakeetEngine {
 impl ParakeetEngine {
     fn download_base_urls(model_name: &str) -> Vec<&'static str> {
         if model_name.contains("-v2-") {
-            vec!["https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main"]
+            vec!["https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/0bbb45a3365852604aef28b538a8f066f4ccaa85"]
         } else {
             vec![
-                "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main",
+                "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce",
                 "https://github.com/TylerBuza/Meetily-ActuallyFree/releases/download/parakeet-tdt-0.6b-v3-onnx",
             ]
         }
@@ -692,6 +692,7 @@ impl ParakeetEngine {
 
         // Optimized HTTP client for large file downloads
         let client = reqwest::Client::builder()
+            .user_agent(concat!("Meetily-ActuallyFree/", env!("CARGO_PKG_VERSION")))
             .tcp_nodelay(true) // Disable Nagle's algorithm for better streaming
             .pool_max_idle_per_host(1) // Keep connection alive
             .timeout(Duration::from_secs(3600)) // 1 hour timeout for large files
@@ -1059,7 +1060,7 @@ mod tests {
         assert_eq!(
             ParakeetEngine::download_base_urls("parakeet-tdt-0.6b-v3-int8"),
             vec![
-                "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main",
+                "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce",
                 "https://github.com/TylerBuza/Meetily-ActuallyFree/releases/download/parakeet-tdt-0.6b-v3-onnx",
             ]
         );

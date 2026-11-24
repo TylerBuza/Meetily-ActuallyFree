@@ -476,6 +476,91 @@ impl ProfessionalAudioMixer {
     }
 }
 
+/// Persistent capture resampler with its partial input block. Rubato only
+/// accepts whole blocks, and `SincFixedIn` reports its `output_delay()` by
+/// shortening the first block's output rather than delaying the signal, so
+/// the delay frames stay held back until more input arrives. `drain` emits
+/// them and the partial block at Stop, without the zero padding that pushes
+/// them out: total output stays round(input frames × ratio).
+struct CaptureResampler {
+    resampler: SincFixedIn<f32>,
+    pending: Vec<f32>,
+    chunk_size: usize,
+    ratio: f64,
+    input_frames: u64,
+    output_frames: u64,
+}
+
+impl CaptureResampler {
+    fn new(resampler: SincFixedIn<f32>, chunk_size: usize, ratio: f64) -> Self {
+        Self {
+            resampler,
+            pending: Vec::with_capacity(chunk_size * 2),
+            chunk_size,
+            ratio,
+            input_frames: 0,
+            output_frames: 0,
+        }
+    }
+
+    /// Resample every complete block. Output of earlier blocks stays in `out`
+    /// if a later block fails.
+    fn process(&mut self, samples: &[f32], out: &mut Vec<f32>) -> Result<(), rubato::ResampleError> {
+        self.pending.extend_from_slice(samples);
+        self.input_frames += samples.len() as u64;
+        while self.pending.len() >= self.chunk_size {
+            let block: Vec<f32> = self.pending.drain(0..self.chunk_size).collect();
+            let mut waves_out = self.resampler.process(&[block], None)?;
+            self.keep_real_output(waves_out.pop().unwrap_or_default(), out);
+        }
+        Ok(())
+    }
+
+    /// Flush the partial block and the held-back delay frames. Rubato pads
+    /// both with zeros; only output that corresponds to real input is kept.
+    fn drain(&mut self, out: &mut Vec<f32>) -> Result<(), rubato::ResampleError> {
+        if !self.pending.is_empty() {
+            let partial = std::mem::take(&mut self.pending);
+            let mut waves_out = self.resampler.process_partial(Some(&[partial]), None)?;
+            self.keep_real_output(waves_out.pop().unwrap_or_default(), out);
+        }
+        // Our longest sinc filter is one 512-frame input block. Two padded
+        // blocks cover its lookahead and rounding; don't synthesize an entire
+        // recording at Stop if a prior processing failure left counters apart.
+        for _ in 0..2 {
+            if self.output_frames >= self.expected_output_frames() { break; }
+            let mut waves_out = self.resampler.process_partial(None::<&[Vec<f32>]>, None)?;
+            let raw = waves_out.pop().unwrap_or_default();
+            if raw.is_empty() {
+                break;
+            }
+            self.keep_real_output(raw, out);
+        }
+        if self.output_frames < self.expected_output_frames() {
+            warn!("Capture resampler tail incomplete after bounded drain");
+        }
+        Ok(())
+    }
+
+    fn expected_output_frames(&self) -> u64 {
+        (self.input_frames as f64 * self.ratio).round() as u64
+    }
+
+    fn keep_real_output(&mut self, raw: Vec<f32>, out: &mut Vec<f32>) {
+        let room = self.expected_output_frames().saturating_sub(self.output_frames);
+        let keep = raw.len().min(room as usize);
+        out.extend_from_slice(&raw[..keep]);
+        self.output_frames += keep as u64;
+    }
+}
+
+/// Held while processing a callback. Stop can drain only with exclusive ownership.
+#[derive(Default)]
+struct CaptureGate {
+    last_timestamp: Option<f64>,
+    last_muted: bool,
+}
+
 /// Simplified audio capture without broadcast channels
 #[derive(Clone)]
 pub struct AudioCapture {
@@ -488,11 +573,11 @@ pub struct AudioCapture {
     #[allow(dead_code)]
     recording_sender: Option<mpsc::UnboundedSender<AudioChunk>>,
     needs_resampling: bool,  // Flag if resampling is required
-    // CRITICAL FIX: Persistent resampler to preserve energy across chunks
-    resampler: Arc<std::sync::Mutex<Option<SincFixedIn<f32>>>>,
-    // Buffering for variable-size chunks → fixed-size resampler input
-    resampler_input_buffer: Arc<std::sync::Mutex<Vec<f32>>>,
-    resampler_chunk_size: usize,  // Fixed chunk size for resampler (512 samples)
+    // CRITICAL FIX: Persistent resampler to preserve energy across chunks.
+    // It buffers variable-size chunks into fixed 512-sample resampler input.
+    resampler: Arc<std::sync::Mutex<Option<CaptureResampler>>>,
+    gate: Arc<std::sync::Mutex<CaptureGate>>,
+    capture_closed: Arc<std::sync::atomic::AtomicBool>,
     // Audio enhancement processors (microphone only)
     noise_suppressor: Arc<std::sync::Mutex<Option<NoiseSuppressionProcessor>>>,
     high_pass_filter: Arc<std::sync::Mutex<Option<HighPassFilter>>>,
@@ -656,7 +741,7 @@ impl AudioCapture {
                         device.name, sample_rate, TARGET_SAMPLE_RATE, RESAMPLER_CHUNK_SIZE
                     );
                     info!("   Buffering enabled for variable-size chunks (e.g., 320, 512, 1024, etc.)");
-                    Some(resampler)
+                    Some(CaptureResampler::new(resampler, RESAMPLER_CHUNK_SIZE, ratio))
                 }
                 Err(e) => {
                     warn!(
@@ -680,10 +765,8 @@ impl AudioCapture {
             recording_sender,
             needs_resampling,
             resampler: Arc::new(std::sync::Mutex::new(resampler)),
-            resampler_input_buffer: Arc::new(std::sync::Mutex::new(Vec::with_capacity(
-                RESAMPLER_CHUNK_SIZE * 2,
-            ))),
-            resampler_chunk_size: RESAMPLER_CHUNK_SIZE,
+            gate: Arc::new(std::sync::Mutex::new(CaptureGate::default())),
+            capture_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             noise_suppressor: Arc::new(std::sync::Mutex::new(noise_suppressor)),
             high_pass_filter: Arc::new(std::sync::Mutex::new(high_pass_filter)),
             normalizer: Arc::new(std::sync::Mutex::new(normalizer)),
@@ -708,10 +791,19 @@ impl AudioCapture {
         if !self.state.is_recording() {
             return;
         }
+        let mut gate = self.gate.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.capture_closed.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
 
         // A queued block may outlive a mute/unmute command. Preserve its capture
         // decision as well as the current mute state, including after stateful DSP.
         let source_muted_at_capture = muted_at_capture || self.state.is_audio_source_muted(&self.device_type);
+        // The drained tail ends with this callback's last real sample.
+        let input_end = callback_timestamp
+            .unwrap_or_else(|| self.state.get_active_recording_duration().unwrap_or(0.0));
+        gate.last_timestamp = Some(input_end);
+        gate.last_muted = source_muted_at_capture;
 
         // Convert to mono if needed
         let mut mono_data = if self.channels > 1 {
@@ -731,6 +823,7 @@ impl AudioCapture {
         // Creating a new resampler per chunk causes energy amplification (173.5% RMS)
         // Buffering handles variable chunk sizes (320, 512, 1024, etc.) by accumulating to fixed 512-sample chunks
         const TARGET_SAMPLE_RATE: u32 = 48000;
+        let mut output_end = input_end;
         if self.needs_resampling {
             let before_len = mono_data.len();
             let before_rms = if !mono_data.is_empty() {
@@ -743,38 +836,20 @@ impl AudioCapture {
             let mut resampled_output = Vec::new();
             let mut used_persistent_resampler = false;
 
-            if let Ok(mut buffer_lock) = self.resampler_input_buffer.lock() {
-                // Add new samples to buffer
-                buffer_lock.extend_from_slice(&mono_data);
-
-                // Process complete chunks through the resampler
-                if let Ok(mut resampler_lock) = self.resampler.lock() {
-                    if let Some(ref mut resampler) = *resampler_lock {
-                        used_persistent_resampler = true;
-
-                        // Process as many complete chunks as we have
-                        while buffer_lock.len() >= self.resampler_chunk_size {
-                            // Extract exactly chunk_size samples
-                            let chunk: Vec<f32> =
-                                buffer_lock.drain(0..self.resampler_chunk_size).collect();
-
-                            // Rubato expects input as Vec<Vec<f32>> (one Vec per channel)
-                            let waves_in = vec![chunk];
-
-                            match resampler.process(&waves_in, None) {
-                                Ok(mut waves_out) => {
-                                    if let Some(output) = waves_out.pop() {
-                                        resampled_output.extend_from_slice(&output);
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!("⚠️ Persistent resampler processing failed: {}", e);
-                                    used_persistent_resampler = false;
-                                    break;
-                                }
-                            }
-                        }
-                        // Remaining samples in buffer will be processed in next iteration
+            if let Ok(mut resampler_lock) = self.resampler.lock() {
+                if let Some(ref mut resampler) = *resampler_lock {
+                    used_persistent_resampler = true;
+                    // Remaining samples (< 512) stay buffered for the next callback or the Stop drain
+                    let result = resampler.process(&mono_data, &mut resampled_output);
+                    // Timestamp only samples already emitted. Variable callback sizes
+                    // change how much real input remains in the 512-frame buffer/filter.
+                    let held = resampler.expected_output_frames().saturating_sub(resampler.output_frames);
+                    output_end = (input_end - held as f64 / TARGET_SAMPLE_RATE as f64).max(0.0);
+                    if let Err(e) = result {
+                        warn!("⚠️ Persistent resampler processing failed: {}", e);
+                        used_persistent_resampler = false;
+                        *resampler_lock = None;
+                        if resampled_output.is_empty() { output_end = input_end; }
                     }
                 }
             }
@@ -816,8 +891,8 @@ impl AudioCapture {
                     100.0
                 };
 
-                let buffer_size = if let Ok(buf) = self.resampler_input_buffer.lock() {
-                    buf.len()
+                let buffer_size = if let Ok(resampler) = self.resampler.lock() {
+                    resampler.as_ref().map_or(0, |r| r.pending.len())
                 } else {
                     0
                 };
@@ -833,6 +908,42 @@ impl AudioCapture {
             }
         }
 
+        self.deliver(mono_data, output_end, source_muted_at_capture);
+    }
+
+    /// Emit the resampler's partial block and filter tail exactly once. Call it
+    /// after the stream stops delivering callbacks and before
+    /// `RecordingState::stop_recording()` closes the pipeline sender.
+    pub fn drain(&self) -> Result<()> {
+        if self.capture_closed.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            return Ok(());
+        }
+        // CPAL workers have been joined; an aborted Core Audio task, however,
+        // may still be in DSP. Never wait indefinitely or drain it concurrently.
+        let gate = self.gate.try_lock()
+            .map_err(|_| anyhow::anyhow!("Capture processing has not shut down cleanly; the final audio block may be incomplete"))?;
+        let Some(timestamp) = gate.last_timestamp else { return Ok(()) };
+        if !self.state.is_recording() {
+            return Ok(());
+        }
+        let mut tail = Vec::new();
+        if let Ok(mut resampler_lock) = self.resampler.lock() {
+            if let Some(ref mut resampler) = *resampler_lock {
+                if let Err(e) = resampler.drain(&mut tail) {
+                    warn!("⚠️ Persistent resampler drain failed: {}", e);
+                }
+            }
+        }
+        if tail.is_empty() {
+            return Ok(());
+        }
+        debug!("[{:?}] Drained {} resampled samples at stop", self.device_type, tail.len());
+        self.deliver(tail, timestamp, gate.last_muted);
+        Ok(())
+    }
+
+    /// Post-resampling DSP, mute and pipeline delivery for 48 kHz mono samples.
+    fn deliver(&self, mut mono_data: Vec<f32>, timestamp: f64, source_muted_at_capture: bool) {
         // AUDIO ENHANCEMENT PIPELINE (Microphone Only)
         // Processing order is critical: high-pass → noise suppression → normalization
         // This ensures noise is removed before being amplified by the normalizer
@@ -915,6 +1026,7 @@ impl AudioCapture {
         }
 
         // Create audio chunk with stream-specific timestamp (get ID first for logging)
+        let sample_count = mono_data.len();
         let chunk_id = self
             .chunk_counter
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -950,9 +1062,6 @@ impl AudioCapture {
         if self.state.is_audio_source_muted(&self.device_type) {
             mono_data.fill(0.0);
         }
-
-        let timestamp = callback_timestamp
-            .unwrap_or_else(|| self.state.get_active_recording_duration().unwrap_or(0.0));
 
         // RAW AUDIO CHUNK: No gain applied - will be mixed and gained downstream
         // Use 48kHz if we resampled, otherwise use original rate
@@ -993,7 +1102,7 @@ impl AudioCapture {
             };
             self.state.report_error(error);
         } else {
-            debug!("Sent audio chunk {} ({} samples)", chunk_id, data.len());
+            debug!("Sent audio chunk {} ({} samples)", chunk_id, sample_count);
         }
     }
 
@@ -2149,5 +2258,134 @@ mod ring_buffer_tests {
         assert!((samples[0] - PEAK_LIMIT).abs() < f32::EPSILON);
         assert!((samples[1] + PEAK_LIMIT / 2.0).abs() < f32::EPSILON);
         assert_eq!(samples[2], 0.0);
+    }
+
+    fn resampling_capture(rate: u32) -> (Arc<RecordingState>, AudioCapture, mpsc::UnboundedReceiver<AudioChunk>) {
+        let state = RecordingState::new();
+        state.start_recording().unwrap();
+        let (sender, receiver) = mpsc::unbounded_channel();
+        state.set_audio_sender(sender);
+        let device = Arc::new(AudioDevice::new("Test system".into(), AudioDeviceType::Output));
+        let capture = AudioCapture::new(device, state.clone(), rate, 1, DeviceType::System, None);
+        (state, capture, receiver)
+    }
+
+    fn received(receiver: &mut mpsc::UnboundedReceiver<AudioChunk>) -> Vec<AudioChunk> {
+        std::iter::from_fn(|| receiver.try_recv().ok()).collect()
+    }
+
+    /// Feed `input` in odd-sized callbacks ending at `end_seconds`.
+    fn feed(capture: &AudioCapture, input: &[f32], rate: u32, end_seconds: f64) {
+        let sizes = [333, 77, 1_001, 5, 480];
+        let mut offset = 0;
+        for size in sizes.iter().cycle() {
+            if offset == input.len() {
+                break;
+            }
+            let block = &input[offset..(offset + size).min(input.len())];
+            offset += block.len();
+            let timestamp = end_seconds - (input.len() - offset) as f64 / rate as f64;
+            capture.process_audio_data_at(block, timestamp, false);
+        }
+    }
+
+    #[test]
+    fn busy_resampler_tail_reports_incomplete_without_waiting_for_dsp() {
+        let (_, capture, mut receiver) = resampling_capture(16_000);
+        let in_flight = capture.gate.lock().unwrap();
+        let other = capture.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let stop = std::thread::spawn(move || tx.send(other.drain()).unwrap());
+        let result = rx.recv_timeout(std::time::Duration::from_secs(2));
+        drop(in_flight);
+        stop.join().unwrap();
+        assert!(result.expect("Stop waited for the capture gate").is_err());
+        capture.process_audio_data_at(&[0.5; 1024], 1.0, false);
+        assert!(received(&mut receiver).is_empty());
+    }
+
+    #[test]
+    fn resampled_chunk_timestamps_end_at_emitted_samples_not_buffered_input() {
+        for rate in [16_000u32, 44_100] {
+            let (_, capture, mut receiver) = resampling_capture(rate);
+            let input = vec![0.25; rate as usize / 2];
+            feed(&capture, &input, rate, 2.0);
+            capture.drain().unwrap();
+            let mut samples = 0;
+            for chunk in received(&mut receiver) {
+                samples += chunk.data.len();
+                let expected = 1.5 + samples as f64 / 48_000.0;
+                assert!((chunk.timestamp - expected).abs() <= 1.0 / 48_000.0,
+                    "{rate} Hz: emitted block ends at {expected}, timestamp {}", chunk.timestamp);
+            }
+            assert_eq!(samples, 24_000);
+        }
+    }
+
+    #[test]
+    fn stop_drain_emits_the_real_resampled_tail_once() {
+        const TONE_HZ: f64 = 1_000.0;
+        for rate in [44_100u32, 16_000] {
+            // 0.5 s plus a remainder, so the input is not 512-aligned. Only
+            // the final 20 ms carries a tone, ending on the last input sample.
+            let len = rate as usize / 2 + 37;
+            assert_ne!(len % 512, 0);
+            let tone_len = rate as usize / 50;
+            let tone_start = len - tone_len;
+            let input: Vec<f32> = (0..len).map(|i| if i < tone_start { 0.0 } else {
+                0.5 * (2.0 * std::f64::consts::PI * TONE_HZ * (i - tone_start) as f64 / rate as f64).sin() as f32
+            }).collect();
+            let expected = (len as f64 * 48_000.0 / rate as f64).round() as usize;
+            let (_state, capture, mut receiver) = resampling_capture(rate);
+
+            feed(&capture, &input, rate, 2.0);
+            let before_drain: usize = received(&mut receiver).iter().map(|chunk| chunk.data.len()).sum();
+            assert!(before_drain < expected, "{} Hz: tail should still be buffered", rate);
+
+            capture.drain().unwrap();
+            let tail = received(&mut receiver);
+            assert_eq!(tail.len(), 1, "{} Hz: one drained chunk", rate);
+            assert_eq!(tail[0].timestamp, 2.0);
+            assert_eq!(tail[0].sample_rate, 48_000);
+            let total = before_drain + tail[0].data.len();
+            assert!(total.abs_diff(expected) <= 1, "{} Hz: {} samples, expected {}", rate, total, expected);
+
+            // Collect again in one buffer to check alignment and the very end.
+            let (_state, capture, mut receiver) = resampling_capture(rate);
+            feed(&capture, &input, rate, 2.0);
+            capture.drain().unwrap();
+            let output: Vec<f32> = received(&mut receiver).into_iter().flat_map(|chunk| chunk.data).collect();
+            // No sample is shifted: the tone sits where the input put it, within
+            // the interpolator's few-sample phase offset.
+            let out_tone_start = (tone_start as f64 * 48_000.0 / rate as f64).round() as usize;
+            let edge = 48 * 3;
+            let alignment_error = |lag: i64| (out_tone_start + edge..output.len() - edge).map(|n| {
+                let t = (n as i64 - out_tone_start as i64 - lag) as f64 / 48_000.0;
+                (output[n] as f64 - 0.5 * (2.0 * std::f64::consts::PI * TONE_HZ * t).sin()).abs()
+            }).fold(0.0, f64::max);
+            let best = (-3..=3).map(alignment_error).fold(f64::MAX, f64::min);
+            assert!(best < 0.05, "{} Hz: tone misaligned (error {})", rate, best);
+            let last_ms = &output[output.len() - 48..];
+            let rms = (last_ms.iter().map(|x| x * x).sum::<f32>() / last_ms.len() as f32).sqrt();
+            assert!(rms > 0.25, "{} Hz: final real samples lost (rms {})", rate, rms);
+
+            // Drain is idempotent and closes the capture to late callbacks.
+            capture.drain().unwrap();
+            capture.process_audio_data_at(&input[..1_024], 2.1, false);
+            assert!(received(&mut receiver).is_empty());
+        }
+    }
+
+    #[test]
+    fn stop_drain_of_a_muted_source_is_silent() {
+        let (state, capture, mut receiver) = resampling_capture(16_000);
+        capture.process_audio_data_at(&vec![0.5; 1_000], 0.1, false);
+        state.set_system_audio_muted(true);
+        capture.process_audio_data_at(&vec![0.5; 300], 0.12, true);
+        received(&mut receiver);
+        capture.drain().unwrap();
+        let tail = received(&mut receiver);
+        assert_eq!(tail.len(), 1);
+        assert!(tail[0].data.iter().all(|sample| *sample == 0.0));
     }
 }
