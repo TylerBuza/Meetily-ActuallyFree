@@ -11,6 +11,7 @@
 //! watch, and an "ignored apps" list to suppress false positives.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Runtime};
@@ -158,14 +159,31 @@ fn is_self_process(name: &str) -> bool {
 fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, String, bool)> {
     use sysinfo::System;
 
-    let mut sys = System::new_all();
-    sys.refresh_all();
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(sysinfo::ProcessesToUpdate::All, true, sysinfo::ProcessRefreshKind::new());
 
+    #[cfg(windows)]
+    let (media_in_use, browser_meeting_pids) = (windows_media_in_use_exes(), windows_browser_meeting_pids());
+    #[cfg(not(windows))]
+    let (media_in_use, browser_meeting_pids) = (HashSet::new(), HashSet::<u32>::new());
+
+    select_meeting_app(settings, media_in_use, sys.processes().values().map(|process| {
+        let name = process.name().to_string_lossy().to_lowercase();
+        let browser_meeting = is_browser(&name) && browser_meeting_pids.contains(&process.pid().as_u32());
+        (name, browser_meeting)
+    }))
+}
+
+fn select_meeting_app(
+    settings: &MeetingDetectionSettings,
+    mut media_in_use: HashSet<String>,
+    processes: impl Iterator<Item = (String, bool)>,
+) -> Option<(String, String, bool)> {
     let ignored: Vec<String> = settings
         .ignored_apps
         .iter()
-        .map(|s| s.to_lowercase())
-        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
         .collect();
 
     let is_skipped = |name: &str| -> bool {
@@ -175,59 +193,17 @@ fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, 
         ignored.iter().any(|ig| name.contains(ig))
     };
 
-    #[cfg(windows)]
-    let media_in_use: std::collections::HashSet<String> = windows_media_in_use_exes()
-        .into_iter()
-        .filter(|e| !is_self_process(e))
-        .collect();
-    #[cfg(not(windows))]
-    let media_in_use: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    #[cfg(windows)]
-    let browser_meeting_pids = windows_browser_meeting_pids();
-
-    let matches_media = |name: &str| -> bool {
-        if media_in_use.is_empty() {
-            return true; // no CAM signal → don't require it
-        }
-        let stem = name.trim_end_matches(".exe");
-        media_in_use
-            .iter()
-            .any(|m| m == name || m.contains(stem) || stem.contains(m.trim_end_matches(".exe")))
-    };
-
-    // 1) Known meeting app that is actively using mic/camera (best signal).
-    if !media_in_use.is_empty() {
-        for process in sys.processes().values() {
-            let name = process.name().to_string_lossy().to_lowercase();
-            if is_skipped(&name) || !matches_media(&name) {
-                continue;
-            }
-            #[cfg(windows)]
-            if is_browser(&name) && browser_meeting_pids.contains(&process.pid().as_u32()) {
-                return Some(("Browser meeting".into(), name, true));
-            }
-            for keyword in &settings.meeting_apps {
-                let kw = keyword.trim().to_lowercase();
-                if kw.is_empty() {
-                    continue;
-                }
-                if process_matches_keyword(&name, &kw) {
-                    return Some((friendly_name(&kw), name, true));
-                }
-            }
-        }
-        // CAM has holders but none are known meeting apps (e.g. only Meetily or
-        // a browser). Do not fall through to process-only — that re-fires on idle
-        // Zoom/Teams sitting in the tray.
-        return None;
-    }
-
-    // 2) No CAM signal: process-name match only (macOS/Linux / older Windows).
-    for process in sys.processes().values() {
-        let name = process.name().to_string_lossy().to_lowercase();
-        if is_skipped(&name) {
+    // Ignored leases are not evidence either for or against a call. Remaining
+    // leases are normalized executable names (including packaged Teams); only
+    // the actual holder may supply active_media to Labs auto-start.
+    media_in_use.retain(|name| !is_skipped(name));
+    for (name, browser_meeting) in processes {
+        let active_media = media_in_use.contains(&name);
+        if is_skipped(&name) || (!media_in_use.is_empty() && !active_media) {
             continue;
+        }
+        if active_media && browser_meeting {
+            return Some(("Browser meeting".into(), name, true));
         }
         for keyword in &settings.meeting_apps {
             let kw = keyword.trim().to_lowercase();
@@ -235,7 +211,7 @@ fn scan_for_meeting_app(settings: &MeetingDetectionSettings) -> Option<(String, 
                 continue;
             }
             if process_matches_keyword(&name, &kw) {
-                return Some((friendly_name(&kw), name, false));
+                return Some((friendly_name(&kw), name, active_media));
             }
         }
     }
@@ -294,7 +270,6 @@ fn windows_media_in_use_exes() -> std::collections::HashSet<String> {
     out
 }
 
-#[cfg(windows)]
 fn is_browser(name: &str) -> bool {
     matches!(name, "chrome.exe" | "msedge.exe" | "firefox.exe")
 }
@@ -350,6 +325,21 @@ fn process_matches_keyword(process_name: &str, keyword: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{is_self_process, process_matches_keyword};
+
+    #[test]
+    fn ignored_holders_do_not_block_a_prompt_or_authorize_auto_start() {
+        let mut settings = super::MeetingDetectionSettings::default();
+        settings.ignored_apps = vec![" LGHub ".into()];
+        let scan = |holders: &[&str]| super::select_meeting_app(
+            &settings, holders.iter().map(|s| s.to_string()).collect(),
+            ["lghub_agent.exe", "ms-teams.exe"].into_iter().map(|s| (s.into(), false)),
+        );
+        let teams = |active| Some(("Microsoft Teams".into(), "ms-teams.exe".into(), active));
+        assert_eq!(scan(&["lghub_agent.exe", "meetily.exe"]), teams(false));
+        assert_eq!(scan(&["lghub_agent.exe", "ms-teams.exe"]), teams(true));
+        assert_eq!(scan(&["other-recorder.exe"]), None);
+        assert_eq!(scan(&["ms-teams-updater.exe"]), None);
+    }
 
     #[test]
     fn never_treats_meetily_as_a_meeting() {

@@ -271,31 +271,47 @@ pub struct AudioRecoveryStatus {
     pub message: String,
 }
 
-/// Recover audio from checkpoint files
-/// This is called by the transcript recovery system to merge audio chunks after a crash
+fn numbered_checkpoints(dir: &std::path::Path, track: &str) -> Result<Vec<PathBuf>, String> {
+    let prefix = format!("{track}_chunk_");
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if let Some(index) = path.file_name().and_then(|n| n.to_str())
+            .and_then(|n| n.strip_prefix(&prefix)).and_then(|n| n.strip_suffix(".mp4"))
+            .and_then(|n| n.parse::<u32>().ok())
+        {
+            files.push((index, path));
+        }
+    }
+    // Writers zero-pad to *at least* three digits; "1000" precedes "999" as text.
+    files.sort_unstable();
+    Ok(files.into_iter().map(|(_, path)| path).collect())
+}
+
 fn recover_checkpoint_track(
     checkpoints_dir: &PathBuf,
     output_path: &PathBuf,
     expected_count: Option<u32>,
 ) -> Result<u32, String> {
-    let mut checkpoint_files: Vec<PathBuf> = std::fs::read_dir(checkpoints_dir)
-        .map_err(|e| format!("Failed to read {}: {e}", checkpoints_dir.display()))?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("mp4"))
-        .collect();
-    checkpoint_files.sort();
+    let marker = checkpoints_dir.join(".recovered");
+    // A failed retry must not inherit cleanup permission from an older attempt.
+    match std::fs::remove_file(&marker) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(format!("Failed to reset {}: {e}", marker.display())),
+        _ => {}
+    }
+    let track = output_path.file_stem().and_then(|n| n.to_str()).ok_or("Invalid track name")?;
+    let checkpoint_files = numbered_checkpoints(checkpoints_dir, track)?;
     if checkpoint_files.is_empty() {
         return Err(format!("No checkpoints found in {}", checkpoints_dir.display()));
     }
     if let Some(expected) = expected_count {
-        if checkpoint_files.len() < expected as usize {
+        if checkpoint_files.len() != expected as usize {
             return Err(format!(
-                "{} has {} checkpoints; expected at least {expected}",
+                "{} has {} checkpoints; expected {expected} to match mixed audio; retaining source checkpoints",
                 checkpoints_dir.display(),
                 checkpoint_files.len()
             ));
         }
-        checkpoint_files.truncate(expected as usize);
     }
 
     let concat_file = checkpoints_dir.join("concat_list.txt");
@@ -323,6 +339,8 @@ fn recover_checkpoint_track(
         concat_file.to_str().ok_or("Invalid checkpoint path")?,
         "-c",
         "copy",
+        "-f",
+        "mp4", // The staging suffix is ".recovering", so FFmpeg can't infer the muxer.
         "-y",
         temp_output.to_str().ok_or("Invalid output path")?,
     ]);
@@ -346,13 +364,9 @@ fn recover_checkpoint_track(
     if !temp_output.is_file() {
         return Err(format!("FFmpeg did not create {}", temp_output.display()));
     }
-    if output_path.exists() {
-        std::fs::remove_file(output_path)
-            .map_err(|e| format!("Failed to replace {}: {e}", output_path.display()))?;
-    }
     std::fs::rename(&temp_output, output_path)
         .map_err(|e| format!("Failed to promote {}: {e}", output_path.display()))?;
-    std::fs::write(checkpoints_dir.join(".recovered"), b"ok")
+    std::fs::write(marker, b"ok")
         .map_err(|e| format!("Failed to mark recovered track: {e}"))?;
     let _ = std::fs::remove_file(concat_file);
     Ok(checkpoint_files.len() as u32)
@@ -461,9 +475,15 @@ pub async fn cleanup_checkpoints(meeting_folder: String) -> Result<(), String> {
                 }
             }
             let _ = std::fs::remove_dir(&checkpoints_root);
-        } else if folder_path.join("audio.mp4").is_file() {
-            std::fs::remove_dir_all(&checkpoints_root)
-                .map_err(|e| format!("Failed to remove checkpoints directory: {e}"))?;
+        } else if folder_path.join("audio.mp4").is_file() && checkpoints_root.join(".recovered").is_file() {
+            // A missing audio/ subfolder also occurs after a partial cleanup.
+            // A legacy flat-track marker authorizes only the mixed checkpoints,
+            // never recursive deletion of unrecovered mic/ or system/ data.
+            for path in numbered_checkpoints(&checkpoints_root, "audio")? {
+                std::fs::remove_file(&path).map_err(|e| format!("Failed to remove {}: {e}", path.display()))?;
+            }
+            std::fs::remove_file(checkpoints_root.join(".recovered")).map_err(|e| e.to_string())?;
+            let _ = std::fs::remove_dir(&checkpoints_root);
         }
         info!("Cleaned checkpoints for successfully recovered tracks");
     } else {
@@ -506,6 +526,45 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
     use super::super::recording_state::DeviceType;
+
+    #[test]
+    fn recovery_orders_numbered_files_and_rejects_other_tracks() {
+        let dir = tempdir().unwrap();
+        for name in ["mic_chunk_1000.mp4", "mic_chunk_003.mp4", "mic_chunk_999.mp4", "system_chunk_001.mp4", "junk.mp4"] {
+            std::fs::write(dir.path().join(name), []).unwrap();
+        }
+        let files = numbered_checkpoints(dir.path(), "mic").unwrap();
+        assert_eq!(files, ["mic_chunk_003.mp4", "mic_chunk_999.mp4", "mic_chunk_1000.mp4"].map(|n| dir.path().join(n)));
+    }
+
+    #[tokio::test]
+    async fn recover_legacy_audio_without_deleting_unrecovered_sources() {
+        let dir = tempdir().unwrap();
+        let folder = dir.path();
+        let root = folder.join(".checkpoints");
+        std::fs::create_dir_all(root.join("mic")).unwrap();
+        let checkpoint = root.join("audio_chunk_000.mp4");
+        encode_single_audio(bytemuck::cast_slice(&vec![0.0f32; 4800]), 48000, 1, &checkpoint).unwrap();
+        let failed_source = root.join("mic/mic_chunk_000.mp4");
+        std::fs::write(&failed_source, b"incomplete checkpoint").unwrap();
+        std::fs::create_dir_all(root.join("system")).unwrap();
+        std::fs::write(root.join("system/.recovered"), b"ok").unwrap();
+        for name in ["system_chunk_000.mp4", "system_chunk_001.mp4"] {
+            std::fs::copy(&checkpoint, root.join("system").join(name)).unwrap();
+        }
+        let folder = folder.to_str().unwrap().to_owned();
+        let status = recover_audio_from_checkpoints(folder.clone(), 48000).await.unwrap();
+        assert_eq!(status.status, "partial", "{}", status.message);
+        assert_eq!(status.chunk_count, 1);
+        let bytes = std::fs::read(status.audio_file_path.unwrap()).unwrap();
+        assert_eq!(&bytes[4..8], b"ftyp");
+        cleanup_checkpoints(folder.clone()).await.unwrap();
+        cleanup_checkpoints(folder).await.unwrap();
+        assert!(!checkpoint.exists());
+        assert_eq!(std::fs::read(failed_source).unwrap(), b"incomplete checkpoint");
+        assert!(root.join("system/system_chunk_001.mp4").is_file());
+        assert!(!root.join("system/.recovered").exists());
+    }
 
     #[test]
     fn concat_paths_escape_apostrophes() {

@@ -46,6 +46,15 @@ a successful start and runs the usual stop/save workflow only for an owned
 recording. Enabling Labs meeting automation also enables the existing Detection
 monitor; switching Labs off leaves ordinary detection prompts available.
 
+Windows [#76](https://github.com/TylerBuza/Meetily-ActuallyFree/issues/76):
+the ignore list applies to active mic/camera holders as well as running processes.
+For example, add `lghub` to Ignored apps if G HUB holds the microphone continuously.
+If Windows then reports no eligible holders, a running Teams can prompt, but
+cannot auto-start recording. If Windows explicitly reports Teams holding the
+device, automation can act. An unrelated, non-ignored holder still suppresses
+process-only prompts. The native regression uses synthetic process/lease
+snapshots, not a physical Teams call or a change to Windows privacy settings.
+
 The plan's proposal to bind the detected PID directly to per-app capture is not
 used. Browser PIDs can contain unrelated tabs, and process capture settings are
 independently selected by the user. The detector does not yet meter WASAPI

@@ -137,6 +137,21 @@ Paths below are relative to `frontend/src-tauri/src/` unless marked frontend.
 
 ### Time and identity invariants
 
+- Recording duration uses a single monotonic clock in `audio/recording_state.rs`.
+  Stop freezes elapsed/active time (including an open pause in paused time);
+  stream cleanup leaves that snapshot for `save_recording_only` and analytics.
+  Starting a new recording resets it. Adapted from Simone Scarduzio's
+  [PR #58](https://github.com/TylerBuza/Meetily-ActuallyFree/pull/58);
+  `duration_survives_stop_and_cleanup_then_resets_for_next_session` covers the
+  state transitions independently of transcript availability.
+- Recovery-only corrections from reviewing
+  [PR #60](https://github.com/TylerBuza/Meetily-ActuallyFree/pull/60):
+  `audio/incremental_saver.rs` orders numbered AAC checkpoints numerically,
+  explicitly muxes MP4 to the temporary `.recovering` path and renames it over
+  the destination only after FFmpeg succeeds. Cleanup requires a success marker
+  and preserves incomplete or extra source checkpoints. Tests use synthetic
+  audio, out-of-order filenames and partial recovery. This is not a change
+  to the normal encoder or a fix for the stepwise track drift in issue #73.
 - Capture/pipeline input is currently configured at 48 kHz. The streaming observer
   receives **16 kHz mono**, using the exact same resampled audio as VAD.
 - Observer start positions and Sortformer segment boundaries use **16 kHz sample
