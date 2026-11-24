@@ -95,7 +95,12 @@ impl CoreAudioCapture {
 
         let tap_desc = if let Some(pid) = target_pid {
             info!("🎙️ CoreAudio: Creating process tap for target PID {}...", pid);
-            let num = cidre::ns::Number::with_i32(pid as i32);
+            // CATapDescription takes an AudioObjectID, not the OS PID. The
+            // translation can return the unknown object (0) for an idle app.
+            let ca::Process(ca::Obj(object)) = ca::Process::with_pid(pid as i32)
+                .map_err(|e| anyhow::anyhow!("Selected app has no Core Audio process: {e:?}. Start audio in the app and retry."))?;
+            anyhow::ensure!(object != 0, "Selected app has no Core Audio process. Start audio in the app and retry.");
+            let num = cidre::ns::Number::with_u32(object);
             let arr = cidre::ns::Array::from_slice(&[&*num]);
             ca::TapDesc::with_mono_mixdown_of_processes(&arr)
         } else {
@@ -104,22 +109,12 @@ impl CoreAudioCapture {
         };
 
         let tap = tap_desc.create_process_tap()
-            .or_else(|err| {
-                if target_pid.is_some() {
-                    warn!("⚠️ CoreAudio: Per-process tap failed ({:?}), falling back to global tap...", err);
-                    let fallback_desc = ca::TapDesc::with_mono_global_tap_excluding_processes(&cidre::ns::Array::new());
-                    fallback_desc.create_process_tap()
-                } else {
-                    Err(err)
-                }
-            })
             .map_err(|e| {
                 error!("❌ CoreAudio: Failed to create process tap: {:?}", e);
                 anyhow::anyhow!("Failed to create process tap: {:?}", e)
             })?;
 
-        // Get tap information
-        let tap_uid = tap.uid().unwrap_or_else(|_| cf::Uuid::new().to_cf_string());
+        let tap_uid = tap.uid().map_err(|e| anyhow::anyhow!("Failed to identify the created Core Audio tap: {e:?}"))?;
         let tap_asbd = tap.asbd();
 
         match tap_asbd {
@@ -136,7 +131,7 @@ impl CoreAudioCapture {
         // Create sub-tap dictionary
         let sub_tap = cf::DictionaryOf::with_keys_values(
             &[ca::sub_device_keys::uid()],
-            &[tap.uid().unwrap().as_type_ref()],
+            &[tap_uid.as_type_ref()],
         );
 
         // Create aggregate device descriptor

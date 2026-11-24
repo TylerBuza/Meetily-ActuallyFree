@@ -72,6 +72,8 @@ impl RecordingManager {
         level_sender: Option<mpsc::UnboundedSender<super::pipeline::AudioLevels>>,
     ) -> Result<mpsc::UnboundedReceiver<AudioChunk>> {
         info!("Starting recording manager (auto_save: {})", auto_save);
+        anyhow::ensure!(!self.per_app_enabled || !self.per_app_targets.is_empty(),
+            "Choose at least one application to record, or explicitly select all computer audio.");
 
         // Set up transcription channel
         let (transcription_sender, transcription_receiver) = mpsc::unbounded_channel::<AudioChunk>();
@@ -651,6 +653,23 @@ impl RecordingManager {
 impl Default for RecordingManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod target_scope_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn empty_chosen_apps_cannot_start_global_capture() {
+        let folder = tempfile::tempdir().unwrap();
+        let mut manager = RecordingManager::new();
+        manager.set_per_app_config(true, vec![]);
+        manager.set_recordings_folder(folder.path().to_path_buf());
+        let err = manager.start_recording(None, None, true, None).await.unwrap_err();
+        assert!(err.to_string().contains("Choose at least one application"));
+        assert!(!manager.state.is_recording());
+        assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 0);
     }
 }
 
