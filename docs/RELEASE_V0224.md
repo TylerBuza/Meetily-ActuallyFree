@@ -10,4 +10,12 @@
 
 For a new installation, download the **universal setup**. Existing installations use the signed **universal updater**. CPU, Vulkan and CUDA variants are included. The Windows executables are not Authenticode-signed.
 
-Thanks to the contributors and reporters, including Simone Scarduzio for the resampler and recording-duration work.
+### Thanks
+
+- @fernandog measured the stepwise drift between the microphone and system tracks in [#73](https://github.com/TylerBuza/Meetily-ActuallyFree/issues/73). Those measurements helped us test the timing fixes; confirmation on the affected setup is still open.
+- @sscarduzio contributed the [recording-duration fix](https://github.com/TylerBuza/Meetily-ActuallyFree/pull/58) and the [fix that keeps the last samples when stopping a non-48 kHz recording](https://github.com/TylerBuza/Meetily-ActuallyFree/pull/59).
+- @slappa81 reported that Logitech G HUB could prevent Teams detection even when the utility was on the ignore list ([#76](https://github.com/TylerBuza/Meetily-ActuallyFree/issues/76)).
+
+### From upstream Meetily
+
+Thanks to @safvanatzack for [upstream #805](https://github.com/Zackriya-Solutions/meetily/pull/805), merged into [Meetily v0.5.0](https://github.com/Zackriya-Solutions/meetily/releases/tag/v0.5.0). We adapted its Parakeet download changes: new downloads use pinned Hugging Face revisions, and the fork keeps its v3 fallback mirror.
