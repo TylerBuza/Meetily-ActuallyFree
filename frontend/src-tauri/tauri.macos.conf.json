@@ -1,4 +1,5 @@
 {
+    "identifier": "io.github.tylerbuza.meetily-actuallyfree",
     "bundle": {
         "targets": [
             "dmg"
