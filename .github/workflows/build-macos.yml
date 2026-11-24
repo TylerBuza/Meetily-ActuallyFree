@@ -65,7 +65,7 @@ jobs:
         uses: swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
           workspaces: ". -> target"
-          key: macos-aarch64-release-openssl3-v1
+          key: macos-aarch64-release-helper-no-openssl-v1
 
       - name: Install frontend dependencies
         working-directory: frontend

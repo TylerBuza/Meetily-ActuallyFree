@@ -71,6 +71,13 @@ try {
   }
   assert.deepEqual(await hash(join(extracted, 'ffmpeg.exe')),
     await hash(join(repo, 'frontend/src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe')));
+  assert.deepEqual(await hash(join(extracted, 'llama-helper.exe')),
+    await hash(join(repo, 'frontend/src-tauri/binaries/llama-helper-x86_64-pc-windows-msvc.exe')));
+  assert.equal((await readFile(join(extracted, 'installer-variants/universal.marker'), 'utf8')).trim(), 'universal');
+  for (const name of ['cudart64_13.dll', 'cublas64_13.dll', 'cublasLt64_13.dll', 'DirectML.dll', 'vc_redist.x64.exe']) {
+    assert.deepEqual(await hash(join(extracted, 'runtime-deps', name)),
+      await hash(join(repo, 'frontend/src-tauri/runtime-deps', name)), `Unexpected installer runtime: ${name}`);
+  }
   assert.deepEqual(await hash(join(extracted, 'resources/diarization/parakeet-rs-LICENSE.txt')),
     await hash(join(repo, 'frontend/src-tauri/resources/diarization/parakeet-rs-LICENSE.txt')));
   for (const name of ['onnxruntime.dll', 'onnxruntime_providers_shared.dll', 'onnxruntime-LICENSE.txt', 'DirectML.dll', 'DirectML-LICENSE.txt']) {
