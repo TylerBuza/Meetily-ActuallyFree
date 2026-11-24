@@ -14,6 +14,9 @@ pub enum DeviceType {
     System,
     /// Pre-mixed mic+system for the playback file (`audio.mp4`).
     Mixed,
+    /// The mic before echo cancellation (`mic_raw.mp4`, macOS), kept so the
+    /// original is never lost to the canceller.
+    MicrophoneRaw,
 }
 
 /// Audio chunk with metadata for processing
@@ -213,7 +216,7 @@ impl RecordingState {
         match device_type {
             DeviceType::Microphone => self.microphone_capture_active.store(active, Ordering::SeqCst),
             DeviceType::System => self.system_capture_active.store(active, Ordering::SeqCst),
-            DeviceType::Mixed => {}
+            DeviceType::Mixed | DeviceType::MicrophoneRaw => {}
         }
     }
 
@@ -314,7 +317,7 @@ impl RecordingState {
         match device_type {
             DeviceType::Microphone => self.is_microphone_muted(),
             DeviceType::System => self.is_system_audio_muted(),
-            DeviceType::Mixed => false,
+            DeviceType::Mixed | DeviceType::MicrophoneRaw => false,
         }
     }
 
