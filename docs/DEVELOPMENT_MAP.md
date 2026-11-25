@@ -4,6 +4,19 @@ This is an orientation map for contributors and coding agents, not a substitute
 for reading the owning code. The map describes this branch's implementation;
 release availability and qualification are separate facts documented below.
 
+### Public website and downloads
+
+The [project site](https://tylerbuza.github.io/Meetily-ActuallyFree/) is static
+HTML/CSS in `site/`, separate from the desktop WebView. `scripts/build-pages.py`
+stages an allowlist of site files, the app icon and the demo workspace screenshot
+into an empty directory. `.github/workflows/pages.yml` publishes that directory
+from `main`. To preview, run `python scripts/build-pages.py <empty-directory>`,
+then `python -m http.server --bind 127.0.0.1 --directory <that-directory>`.
+For a release, check the platform links in both `README.md` and `site/index.html`:
+`releases/latest` is Windows only; macOS and Linux preview links use their own
+published tags. If the public URL changes, update canonical, social and
+structured-data URLs and `site/sitemap.xml` together.
+
 ## 1. Keep these three responsibilities separate
 
 | Responsibility | Owner | Meaning |
@@ -344,7 +357,8 @@ unqualified for physical microphone capture and the reporter's device. The
 Windows v0.2.20 release is documented in
 [RELEASE_V0220_QUALIFICATION.md](RELEASE_V0220_QUALIFICATION.md) for Windows build,
 hardware-capture, installed-upgrade, and public updater verification.
-The current Windows Latest is v0.2.23, qualified separately as linked above.
+For current downloads, use the [platform links in the README](../README.md#download).
+The Windows, macOS and Linux v0.2.24 updates have separate release pages.
 The `v0.2.20-macos` follow-up packages explicit worker shutdown and short-gap
 source recovery for #42. Apple Silicon build `36876715270` passed all 22 worker
 and pipeline regressions plus bundle/launch checks; public smoke test
