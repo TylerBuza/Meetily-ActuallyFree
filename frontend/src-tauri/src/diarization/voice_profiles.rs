@@ -509,6 +509,72 @@ pub async fn list_voice_profiles(state: tauri::State<'_, crate::state::AppState>
     Ok(profiles.iter().map(VoiceProfile::info).collect())
 }
 
+/// Turns quieter than this on the learning track (about -40 dBFS RMS) are not
+/// the speaker's own voice there, e.g. a remote voice marked "This is me".
+const MIN_LEARN_RMS: f32 = 0.01;
+
+/// A speaker's clear turns: 2 to 15 seconds, with no other label overlapping.
+fn clear_turns(rows: &[(String, Option<f64>, Option<f64>)], speaker: &str) -> Vec<(f64, f64)> {
+    let span = |(_, start, end): &(String, Option<f64>, Option<f64>)| Some((start.as_ref()?.to_owned(), end.as_ref()?.to_owned()));
+    let others: Vec<(f64, f64)> = rows.iter().filter(|(label, _, _)| label != speaker).filter_map(span).collect();
+    rows.iter().filter(|(label, _, _)| label == speaker).filter_map(span)
+        .filter(|(start, end)| start.is_finite() && end.is_finite() && *start >= 0.0 && end - start >= 2.0 && end - start <= 15.0)
+        .filter(|(start, end)| !others.iter().any(|(other_start, other_end)| other_start < end && other_end > start))
+        .collect()
+}
+
+/// Learns the user's own voice from one speaker the user marked as themselves
+/// ("This is me"), so later meetings can label that voice "You" by voiceprint.
+/// Reads the microphone track, or the mixed recording when there is none.
+/// Returns how many turns the voiceprint now holds.
+#[tauri::command]
+pub async fn learn_my_voice(
+    state: tauri::State<'_, crate::state::AppState>,
+    meeting_id: String,
+    speaker: String,
+) -> Result<u32, String> {
+    if !super::pyannote_models_available() {
+        return Err("Learning your voice needs the speaker models. Download them in Settings > Transcription.".into());
+    }
+    let pool = state.db_manager.pool();
+    let folder: Option<String> = sqlx::query_scalar("SELECT folder_path FROM meetings WHERE id = ?")
+        .bind(&meeting_id).fetch_optional(pool).await.map_err(|error| error.to_string())?.flatten();
+    let folder = PathBuf::from(folder.ok_or("This meeting has no saved audio.")?);
+    let track = ["mic.mp4", "audio.mp4"].iter().map(|name| folder.join(name)).find(|path| path.is_file())
+        .ok_or("This meeting has no saved audio to learn your voice from.")?;
+    let rows: Vec<(String, Option<f64>, Option<f64>)> = sqlx::query_as(
+        "SELECT COALESCE(speaker, ''), audio_start_time, audio_end_time FROM transcripts WHERE meeting_id = ? ORDER BY audio_start_time",
+    ).bind(&meeting_id).fetch_all(pool).await.map_err(|error| error.to_string())?;
+    let no_clear_turn = "To learn your voice, Meetily needs a turn of 2 to 15 seconds where you speak and nobody talks over you.";
+    let turns = spread(&clear_turns(&rows, &speaker), LEARN_TURNS);
+    if turns.is_empty() {
+        return Err(no_clear_turn.into());
+    }
+    let vectors = tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>> {
+        let audio = crate::audio::decoder::decode_audio_file(&track)?.to_whisper_format();
+        let mut models = DiarizationModels::load(&super::diarization_model_dir())?;
+        let mut vectors = Vec::new();
+        for (start, end) in turns {
+            let first = (start * 16_000.0) as usize;
+            let last = (end * 16_000.0) as usize;
+            if first >= last || last > audio.len() { continue; }
+            let turn = &audio[first..last];
+            let rms = (turn.iter().map(|sample| sample * sample).sum::<f32>() / turn.len() as f32).sqrt();
+            if rms < MIN_LEARN_RMS { continue; }
+            if let Ok(vector) = models.embed(turn) {
+                if vector.len() == 128 { vectors.push(vector); }
+            }
+        }
+        Ok(vectors)
+    }).await.map_err(|error| error.to_string())?.map_err(|error| error.to_string())?;
+    if vectors.is_empty() {
+        return Err(no_clear_turn.into());
+    }
+    let print = super::voiceprint::update_from_embeddings(&vectors, &meeting_id).map_err(|error| error.to_string())?;
+    log::info!("🎙️ Learned the user's voice from {} turns of {} in {}", vectors.len(), speaker, meeting_id);
+    Ok(print.samples)
+}
+
 #[tauri::command]
 pub fn delete_voice_profile(person_id: String) -> Result<(), String> {
     edit_profiles(|profiles| forget(profiles, &person_id)).map_err(|error| error.to_string())
@@ -597,6 +663,22 @@ pub fn contact_deleted(person_id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn learning_uses_only_clear_turns_of_the_marked_speaker() {
+        let row = |label: &str, start: f64, end: f64| (label.to_string(), Some(start), Some(end));
+        let rows = vec![
+            row("Speaker 2", 0.0, 5.0),   // clear
+            row("Speaker 2", 6.0, 7.0),   // too short
+            row("Speaker 2", 8.0, 30.0),  // too long
+            row("Speaker 2", 31.0, 36.0), // overlapped below
+            row("Speaker 1", 34.0, 40.0),
+            row("Speaker 2", 41.0, 44.5), // clear
+            ("Speaker 2".to_string(), None, Some(50.0)),
+        ];
+        assert_eq!(clear_turns(&rows, "Speaker 2"), vec![(0.0, 5.0), (41.0, 44.5)]);
+        assert!(clear_turns(&rows, "Speaker 3").is_empty());
+    }
     #[test]
     fn matching_requires_margin_and_correct_dimension() {
         let mut vector = vec![0.0; 128]; vector[0] = 1.0;

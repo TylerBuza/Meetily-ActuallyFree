@@ -37,6 +37,7 @@ export function PersonCard({
   onIdentify,
   onMerge,
   onMarkMe,
+  onLearnMyVoice,
   colorIndex,
   meetingId,
 }: {
@@ -51,6 +52,8 @@ export function PersonCard({
   onIdentify: (speaker: string, segmentId: string) => void;
   onMerge?: (speaker: string) => void;
   onMarkMe?: (speaker: string) => void;
+  /** Learns the user's voice from this meeting's "You" lines. */
+  onLearnMyVoice?: () => void;
 }) {
   const router = useRouter();
   const { people } = useWorkspace();
@@ -195,6 +198,19 @@ export function PersonCard({
                 <UserRoundSearch />
                 {contact || isYou ? 'Change' : 'Identify'}
               </Button>
+              {isYou && meetingId && onLearnMyVoice && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    onClose();
+                    onLearnMyVoice();
+                  }}
+                >
+                  <Fingerprint />
+                  Remember my voice
+                </Button>
+              )}
               {!isYou && !contact && splitSpeakerLabel(speaker).length === 1 && onMarkMe && (
                 <Button
                   size="sm"
