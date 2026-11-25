@@ -8,7 +8,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { invoke } from '@tauri-apps/api/core';
-import { AudioWaveform, Eraser, Fingerprint, Gauge, VolumeX, Workflow, X, type LucideIcon } from 'lucide-react';
+import { AudioWaveform, Eraser, Fingerprint, Gauge, Speaker, VolumeX, Workflow, X, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Switch } from '@/components/ui/switch';
 import { Avatar } from '@/components/ui/avatar';
@@ -61,6 +61,14 @@ const GROUPS: Array<{ title: string; features: Feature[] }> = [
         description:
           'Hide hesitations and stutters ("um", "we we") in the transcript, and write new summaries from the clean text. The saved transcript stays word for word.',
         where: 'Switch between Clean and Verbatim in the meeting player.',
+      },
+      {
+        key: 'micBleedFilter',
+        icon: Speaker,
+        title: 'Ignore speaker bleed during retranscription',
+        description:
+          'Without headphones, your microphone also picks up people talking through your speakers. Recognize that playback so it is not labeled as you or transcribed twice. Speech where you talk over someone is kept.',
+        where: 'Applies after a meeting, when you retranscribe it or rerun its speaker labels. Live transcription during a call is not changed.',
       },
     ],
   },
@@ -207,7 +215,7 @@ export function LabsSettings() {
   const { labs } = useLabs();
   const [busy, setBusy] = useState<LabsFeature | null>(null);
 
-  // Three switches live in Rust; show what it actually has.
+  // Four switches live in Rust; show what it actually has.
   useEffect(() => {
     void syncLabsFromBackend().catch(() => undefined);
   }, []);
