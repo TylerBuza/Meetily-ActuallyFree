@@ -33,4 +33,8 @@ pub const WHISPER_MODEL_CATALOG: &[(&str, &str, u32, &str, &str, &str)] = &[
     ("medium-q5_0", "ggml-medium-q5_0.bin", 514, "High", "Medium", "Quantized medium model, professional quality"),
     ("large-v3-turbo-q5_0", "ggml-large-v3-turbo-q5_0.bin", 547, "High", "Medium", "Quantized large model, best balance"),
     ("large-v3-q5_0", "ggml-large-v3-q5_0.bin", 1031, "High", "Slow", "Quantized large model, high accuracy"),
+
+    // NbAiLab NB-Whisper (Norwegian fine-tune of large-v3), Apache-2.0
+    ("nb-whisper-large", "ggml-nb-whisper-large.bin", 2951, "High", "Slow", "Norwegian (Bokmål/Nynorsk) large model from the National Library of Norway"),
+    ("nb-whisper-large-q5_0", "ggml-nb-whisper-large-q5_0.bin", 1031, "High", "Slow", "Quantized Norwegian large model, smaller and faster"),
 ];

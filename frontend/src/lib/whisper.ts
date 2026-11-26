@@ -126,6 +126,20 @@ export const MODEL_CONFIGS: Record<string, Partial<ModelInfo>> = {
     size_mb: 1031,
     accuracy: 'High',
     speed: 'Slow'
+  },
+
+  // NbAiLab NB-Whisper (Norwegian fine-tune of large-v3)
+  'nb-whisper-large': {
+    description: 'Norwegian (Bokmål/Nynorsk) large model from the National Library of Norway.',
+    size_mb: 2951,
+    accuracy: 'High',
+    speed: 'Slow'
+  },
+  'nb-whisper-large-q5_0': {
+    description: 'Quantized Norwegian large model, smaller and faster.',
+    size_mb: 1031,
+    accuracy: 'High',
+    speed: 'Slow'
   }
 };
 
@@ -225,6 +239,8 @@ export function getModelTagline(modelName: string, speed: ProcessingSpeed, accur
     featureText = 'Balanced quality';
   } else if (baseName === 'tiny') {
     featureText = 'Fastest option';
+  } else if (baseName === 'nb-whisper-large') {
+    featureText = 'Norwegian';
   }
 
   // Add quantization note if applicable
