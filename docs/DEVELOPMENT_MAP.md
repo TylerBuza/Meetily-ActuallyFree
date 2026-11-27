@@ -410,7 +410,35 @@ depends on a recognizable Key Topics heading or legacy section. Verification
 covers frontend/native builds and the Windows installer payload; a local installer
 is not a published release.
 
-### Speaker colors in transcripts
+### Interface localization
+
+The interface language is a display preference, separate from the transcription
+language and the summary output language. `frontend/src/i18n/` owns it:
+`locales.ts` registers English (default) and Simplified Chinese, persists the
+choice in `localStorage` (`meetily_ui_locale`) and syncs `<html lang>`;
+`I18nProvider.tsx` exposes `useI18n()` (`{ locale, setLocale, t }`);
+`translate.ts` flattens the catalogues, interpolates `{placeholders}` and falls
+back Chinese → English → key. Messages live in
+`frontend/src/i18n/messages/<locale>/<namespace>.ts`; the English tree is the
+source of truth and its shape types every other locale, so a missing or extra
+translation key is a compile error. Shared button words belong to `common`, and
+the shell's own startup/crash/window-event text to `app`. Components outside
+React (module-level listeners, service helpers) use `tNow()` instead of the hook.
+`useI18n()` returns English when no provider is mounted, which keeps isolated
+component tests working. Settings → General renders
+`components/settings/UiLanguagePicker.tsx`; the compact recorder window is kept
+in step through the `storage` event. The initial hydration render is English
+because the static export is built once, and the saved locale is applied
+immediately after mount. `tests/i18n/messages.test.ts` checks key parity,
+placeholder parity and fallback behaviour, and `tests/i18n/dates.test.ts` covers
+the localized date wording. `lib/dates.ts` formats day sections, clock times,
+weekday names, durations and relative times in the active interface language;
+`lib/meeting-titles.ts` keeps automatic meeting titles in their original form
+because the native side recognises that prefix. Strings produced by the Rust
+backend and user data remain outside the catalogues for now. See
+[I18N.md](I18N.md) for the full contract and limits.
+
+
 
 `speakerUtils.ts` supplies the shared dot/text palette for the live and post-call
 virtualized transcript, the live speakers list, the person card and the identify

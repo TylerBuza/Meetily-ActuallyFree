@@ -1,6 +1,8 @@
 /** Advisory post-gain digital levels, not Windows volume percentages or VAD
  * speech probabilities. Amplitude alone cannot establish that speech is present.
  */
+import { tNow } from '@/i18n/translate'
+
 const QUIET_RMS = 10 ** (-45 / 20);
 const QUIET_PEAK = 10 ** (-30 / 20);
 const SIGNAL_FLOOR = 10 ** (-80 / 20);
@@ -25,4 +27,8 @@ export class SystemAudioLevelMonitor {
   }
 }
 
-export const LOW_SYSTEM_AUDIO_MESSAGE = 'System audio is very quiet. If someone is speaking, raise the call/playback volume or System volume in the recorder’s Output settings. Stop increasing it if the meter warns that audio is too loud.';
+/** Advice shown beside the meter when system audio stays quiet. Translated at
+ *  call time so it follows the interface language. */
+export function lowSystemAudioMessage(): string {
+  return tNow('feedback.lowSystemAudioAdvice');
+}

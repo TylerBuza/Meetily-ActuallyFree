@@ -8,12 +8,50 @@
 import * as React from 'react';
 import { Check, ChevronDown, Layers } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { GROUP_COLORS, groupColorVar } from '@/lib/group-colors';
+import { GROUP_COLORS, groupColorVar, type GroupColor } from '@/lib/group-colors';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
-import { announceChange, createGroup, type GroupSummary } from '@/lib/workspace-api';
+import { announceChange, createGroup, type GroupKind, type GroupSummary } from '@/lib/workspace-api';
 import { colorForName } from '@/lib/group-colors';
 import { toast } from 'sonner';
+import { tNow, useI18n, type MessageKey } from '@/i18n';
+
+/** Group kind labels and hints; the stored kind id never changes. */
+export const GROUP_KIND_LABEL_KEYS: Record<GroupKind, MessageKey> = {
+  recurring: 'people.kindRecurring',
+  customer: 'people.kindCustomer',
+  team: 'people.kindTeam',
+  project: 'people.kindProject',
+  other: 'people.kindOther',
+};
+
+export const GROUP_KIND_HINT_KEYS: Record<GroupKind, MessageKey> = {
+  recurring: 'people.kindRecurringHint',
+  customer: 'people.kindCustomerHint',
+  team: 'people.kindTeamHint',
+  project: 'people.kindProjectHint',
+  other: 'people.kindOtherHint',
+};
+
+/** The label key for a stored group kind; nothing for 'other' or unknown kinds. */
+export function kindLabelKey(kind?: string | null): MessageKey | null {
+  if (!kind || kind === 'other') return null;
+  return (GROUP_KIND_LABEL_KEYS as Record<string, MessageKey>)[kind] ?? null;
+}
+
+/** Display names for the stored color keys. */
+export const GROUP_COLOR_LABEL_KEYS: Record<GroupColor, MessageKey> = {
+  blue: 'people.colorBlue',
+  sky: 'people.colorSky',
+  teal: 'people.colorTeal',
+  green: 'people.colorGreen',
+  amber: 'people.colorAmber',
+  orange: 'people.colorOrange',
+  red: 'people.colorRed',
+  pink: 'people.colorPink',
+  violet: 'people.colorViolet',
+  slate: 'people.colorSlate',
+};
 
 export function GroupDot({ color, className }: { color?: string | null; className?: string }) {
   return (
@@ -65,7 +103,9 @@ export function groupOptions(groups: GroupSummary[]): ComboboxOption[] {
     value: group.id,
     label: group.name,
     color: group.color ?? 'blue',
-    description: group.meetingCount ? `${group.meetingCount} meeting${group.meetingCount === 1 ? '' : 's'}` : undefined,
+    description: group.meetingCount
+      ? tNow(group.meetingCount === 1 ? 'people.meetingCountOne' : 'people.meetingCountMany', { count: group.meetingCount })
+      : undefined,
   }));
 }
 
@@ -76,7 +116,7 @@ export async function createGroupFromPicker(name: string): Promise<ComboboxOptio
     announceChange('groups');
     return { value: created.id, label: created.name, color: created.color };
   } catch (error) {
-    toast.error('Could not create the group', { description: error instanceof Error ? error.message : String(error) });
+    toast.error(tNow('people.couldNotCreateGroup'), { description: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -91,7 +131,7 @@ export function GroupPicker({
   align = 'start',
   side = 'bottom',
   disabled,
-  placeholder = 'No group',
+  placeholder,
   triggerClassName,
 }: {
   value: string | null;
@@ -104,6 +144,7 @@ export function GroupPicker({
   placeholder?: string;
   triggerClassName?: string;
 }) {
+  const { t } = useI18n();
   const { groups, groupById } = useWorkspace();
   const current = groupById(value);
   return (
@@ -111,15 +152,15 @@ export function GroupPicker({
       value={value}
       onChange={(next, option) => onChange(next, option?.label)}
       options={groupOptions(groups)}
-      clearLabel="No group"
-      searchPlaceholder="Find or create a group"
-      emptyText="No groups yet"
+      clearLabel={t('people.noGroup')}
+      searchPlaceholder={t('people.findOrCreateGroup')}
+      emptyText={t('people.noGroupsYet')}
       onCreate={createGroupFromPicker}
-      createLabel={(query) => `Create group “${query}”`}
+      createLabel={(query) => t('people.createGroupNamed', { name: query })}
       align={align}
       side={side}
       disabled={disabled}
-      aria-label="Group"
+      aria-label={t('people.groupAria')}
       trigger={
         trigger ?? (
           <button
@@ -133,7 +174,7 @@ export function GroupPicker({
             style={current ? ({ '--chip': groupColorVar(current.color) } as React.CSSProperties) : undefined}
           >
             {!current && <Layers className="h-3.5 w-3.5 shrink-0" />}
-            <span className="truncate">{current?.name ?? placeholder}</span>
+            <span className="truncate">{current?.name ?? placeholder ?? t('people.noGroup')}</span>
             <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
           </button>
         )
@@ -152,8 +193,9 @@ export function ColorSwatches({
   onChange: (color: string) => void;
   className?: string;
 }) {
+  const { t } = useI18n();
   return (
-    <div role="radiogroup" aria-label="Group color" className={cn('flex flex-wrap gap-2', className)}>
+    <div role="radiogroup" aria-label={t('people.groupColorAria')} className={cn('flex flex-wrap gap-2', className)}>
       {GROUP_COLORS.map((color) => {
         const selected = color.key === value;
         return (
@@ -162,7 +204,7 @@ export function ColorSwatches({
             type="button"
             role="radio"
             aria-checked={selected}
-            aria-label={color.label}
+            aria-label={t(GROUP_COLOR_LABEL_KEYS[color.key])}
             onClick={() => onChange(color.key)}
             className={cn(
               'af-tint-dot flex h-7 w-7 items-center justify-center rounded-full text-white transition-transform duration-150 ease-af hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-af-elevated',

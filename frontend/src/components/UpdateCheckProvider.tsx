@@ -9,6 +9,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { usePlatform } from '@/hooks/usePlatform';
 import { toast } from 'sonner';
 import type { CudaReconfigurationStatus } from '@/lib/transcription-acceleration';
+import { tNow } from '@/i18n';
 
 interface UpdateCheckContextType {
   updateInfo: UpdateInfo | null;
@@ -57,24 +58,24 @@ export function UpdateCheckProvider({
 
         const reconfigurationUrl = status.setupDownloadUrl;
         if (status.reconfigurationRequired && reconfigurationUrl) {
-          toast.warning('NVIDIA CUDA is ready', {
+          toast.warning(tNow('shell.cudaReady'), {
             id: 'cuda-reconfiguration-status',
-            description: `Rerun Meetily setup to replace the ${status.compiledBackend} build with the CUDA build.`,
+            description: tNow('shell.cudaReadyDescription', { backend: status.compiledBackend }),
             duration: 30000,
             action: {
-              label: 'Download setup',
+              label: tNow('shell.downloadSetup'),
               onClick: () => {
                 void invoke('open_external_url', { url: reconfigurationUrl });
               },
             },
           });
         } else if (status.driverUpdateRequired) {
-          toast.warning('NVIDIA driver update recommended', {
+          toast.warning(tNow('shell.driverUpdateRecommended'), {
             id: 'cuda-reconfiguration-status',
-            description: 'Install a current NVIDIA driver, then reopen Meetily to recheck CUDA support.',
+            description: tNow('shell.driverUpdateDescription'),
             duration: 30000,
             action: {
-              label: 'Get driver',
+              label: tNow('shell.getDriver'),
               onClick: () => {
                 void invoke('open_external_url', {
                   url: 'https://www.nvidia.com/Download/index.aspx',

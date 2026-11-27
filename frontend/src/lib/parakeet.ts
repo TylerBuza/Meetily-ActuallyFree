@@ -1,3 +1,6 @@
+import { tNow } from '@/i18n/translate';
+import type { MessageKey } from '@/i18n';
+
 // Types for Parakeet (NVIDIA NeMo) integration
 export interface ParakeetModelInfo {
   name: string;
@@ -59,26 +62,48 @@ export const MODEL_DISPLAY_CONFIG: Record<string, ModelDisplayInfo> = {
   }
 };
 
+// Display copy lives in the catalogue; these maps keep the model keys above as
+// the lookup keys and let the getters translate at call time (a module-level
+// `tNow` would be frozen to the locale current at import).
+const DISPLAY_NAME_KEYS: Record<string, MessageKey> = {
+  'parakeet-tdt-0.6b-v3-int8': 'modelCatalog.parakeetLightning',
+  'parakeet-tdt-0.6b-v2-int8': 'modelCatalog.parakeetCompact',
+  'parakeet-tdt-0.6b-v3-fp32': 'modelCatalog.parakeetPrecise'
+};
+
+const TAGLINE_KEYS: Record<string, MessageKey> = {
+  'parakeet-tdt-0.6b-v3-int8': 'modelCatalog.parakeetLightningTagline',
+  'parakeet-tdt-0.6b-v2-int8': 'modelCatalog.parakeetCompactTagline',
+  'parakeet-tdt-0.6b-v3-fp32': 'modelCatalog.parakeetPreciseTagline'
+};
+
 // Model configuration for Parakeet models (matching Rust implementation)
 // Supported models: parakeet-tdt-0.6b in v2 and v3 variants
 // Source: https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx
 export const PARAKEET_MODEL_CONFIGS: Record<string, Partial<ParakeetModelInfo>> = {
   'parakeet-tdt-0.6b-v3-int8': {
-    description: 'Real time on M4 Max, optimized for speed',
+    // Resolved on read so the copy follows the interface language.
+    get description() {
+      return tNow('modelCatalog.parakeetLightningDescription');
+    },
     size_mb: 670, // Actual download: 652MB encoder + 18.2MB decoder + 0.2MB extras
     accuracy: 'High',
     speed: 'Ultra Fast',
     quantization: 'Int8'
   },
   'parakeet-tdt-0.6b-v2-int8': {
-    description: '25x real-time, smaller size with good accuracy',
+    get description() {
+      return tNow('modelCatalog.parakeetCompactDescription');
+    },
     size_mb: 661, // Actual download: 652MB encoder + 9MB decoder + 0.15MB extras
     accuracy: 'High',
     speed: 'Very Fast',
     quantization: 'Int8'
   },
   'parakeet-tdt-0.6b-v3-fp32': {
-    description: '20x real-time on M4 Max, higher precision',
+    get description() {
+      return tNow('modelCatalog.parakeetPreciseDescription');
+    },
     size_mb: 2554, // Actual download: 2.44GB + 41.8MB encoder + 72.5MB decoder + 0.2MB extras
     accuracy: 'High',
     speed: 'Fast',
@@ -104,13 +129,23 @@ export function getModelIcon(accuracy: ModelAccuracy): string {
 
 // Get user-friendly display name for a model
 export function getModelDisplayName(modelName: string): string {
+  const nameKey = DISPLAY_NAME_KEYS[modelName];
+  if (nameKey) return tNow(nameKey);
   const displayInfo = MODEL_DISPLAY_CONFIG[modelName];
   return displayInfo?.friendlyName || modelName;
 }
 
 // Get model display info (icon, tagline, etc.)
 export function getModelDisplayInfo(modelName: string): ModelDisplayInfo | null {
-  return MODEL_DISPLAY_CONFIG[modelName] || null;
+  const displayInfo = MODEL_DISPLAY_CONFIG[modelName];
+  if (!displayInfo) return null;
+  const nameKey = DISPLAY_NAME_KEYS[modelName];
+  const taglineKey = TAGLINE_KEYS[modelName];
+  return {
+    ...displayInfo,
+    friendlyName: nameKey ? tNow(nameKey) : displayInfo.friendlyName,
+    tagline: taglineKey ? tNow(taglineKey) : displayInfo.tagline,
+  };
 }
 
 export function getStatusColor(status: ModelStatus): string {
@@ -137,11 +172,11 @@ export function isQuantizedModel(modelName: string): boolean {
 export function getModelPerformanceBadge(quantization: QuantizationType): { label: string; color: string } {
   switch (quantization) {
     case 'FP32':
-      return { label: 'Full Precision', color: 'blue' };
+      return { label: tNow('modelCatalog.badgeFullPrecision'), color: 'blue' };
     case 'Int8':
-      return { label: 'Int8 Quantized', color: 'green' };
+      return { label: tNow('modelCatalog.badgeInt8Quantized'), color: 'green' };
     default:
-      return { label: 'Standard', color: 'gray' };
+      return { label: tNow('modelCatalog.badgeStandard'), color: 'gray' };
   }
 }
 

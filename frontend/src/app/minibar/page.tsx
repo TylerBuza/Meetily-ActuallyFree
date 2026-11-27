@@ -21,6 +21,7 @@ import { useAppTheme } from '@/lib/app-theme';
 import { LiveAudioVisualizer } from '@/components/LiveAudioVisualizer';
 import { formatClock } from '@/lib/dates';
 import { recordingService } from '@/services/recordingService';
+import { useI18n } from '@/i18n';
 
 const sideButton =
   'flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-af-panel-2 text-af-text-2 ring-1 ring-inset ring-af-border transition-[background-color,color,transform] duration-150 hover:bg-af-hover hover:text-af-text active:scale-95 disabled:opacity-40';
@@ -34,6 +35,7 @@ const laneButton = (muted: boolean) =>
   );
 
 export default function MiniBarPage() {
+  const { t } = useI18n();
   // Follow theme changes made in the main window.
   useAppTheme();
   const [elapsed, setElapsed] = useState(0);
@@ -158,7 +160,7 @@ export default function MiniBarPage() {
         type="button"
         onClick={() => void stop()}
         disabled={busy}
-        aria-label="Stop recording"
+        aria-label={t('home.stopRecording')}
         className="af-record-button relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full transition-[background,transform] duration-200 active:scale-95 disabled:opacity-40"
       >
         {!isPaused && !isStopping && (
@@ -170,7 +172,7 @@ export default function MiniBarPage() {
       <div className="w-[5.25rem] shrink-0 text-left leading-tight">
         <div className="text-sm font-semibold tabular-nums tracking-tight">{formatClock(elapsed)}</div>
         <div className={cn('text-[11px] font-medium', isStopping ? 'text-af-text-3' : isPaused ? 'text-af-warning' : 'text-af-record')}>
-          {isStopping ? 'Finishing…' : isPaused ? 'Paused' : 'Recording'}
+          {isStopping ? t('home.finishing') : isPaused ? t('home.paused') : t('home.recording')}
         </div>
       </div>
 
@@ -178,13 +180,13 @@ export default function MiniBarPage() {
         type="button"
         onClick={() => void togglePause()}
         disabled={busy}
-        aria-label={isPaused ? 'Resume recording' : 'Pause recording'}
+        aria-label={isPaused ? t('home.resumeRecording') : t('home.pauseRecording')}
         className={sideButton}
       >
         {isPaused ? <Play size={14} /> : <Pause size={14} />}
       </button>
 
-      <button type="button" onClick={expand} disabled={busy} aria-label="Back to the full window" className={sideButton}>
+      <button type="button" onClick={expand} disabled={busy} aria-label={t('home.backToFullWindow')} className={sideButton}>
         <Maximize2 size={14} />
       </button>
 
@@ -195,7 +197,7 @@ export default function MiniBarPage() {
         onClick={() => void toggleMicMute()}
         disabled={busy}
         aria-pressed={isMicMuted}
-        aria-label={isMicMuted ? 'Unmute microphone' : 'Mute microphone'}
+        aria-label={isMicMuted ? t('home.unmuteMicrophone') : t('home.muteMicrophone')}
         className={laneButton(isMicMuted)}
       >
         {isMicMuted ? <MicOff size={15} strokeWidth={1.75} /> : <Mic size={15} strokeWidth={1.75} />}
@@ -207,7 +209,7 @@ export default function MiniBarPage() {
         onClick={() => void toggleSystemMute()}
         disabled={busy}
         aria-pressed={isSystemMuted}
-        aria-label={isSystemMuted ? 'Unmute output' : 'Mute output'}
+        aria-label={isSystemMuted ? t('home.unmuteOutput') : t('home.muteOutput')}
         className={laneButton(isSystemMuted)}
       >
         {isSystemMuted ? <VolumeX size={15} strokeWidth={1.75} /> : <Volume2 size={15} strokeWidth={1.75} />}

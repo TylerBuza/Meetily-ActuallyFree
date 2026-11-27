@@ -19,6 +19,7 @@ import {
   openCrashReportIssue,
   type PendingCrashReport,
 } from '@/services/crashReportService'
+import { useI18n } from '@/i18n'
 
 interface CrashReportDialogProps {
   report: PendingCrashReport
@@ -28,6 +29,7 @@ interface CrashReportDialogProps {
 type PendingAction = 'send' | 'save' | 'ignore' | null
 
 export default function CrashReportDialog({ report, onResolved }: CrashReportDialogProps) {
+  const { t } = useI18n()
   const [mounted, setMounted] = useState(false)
   const [pendingAction, setPendingAction] = useState<PendingAction>(null)
   const busy = pendingAction !== null
@@ -49,8 +51,8 @@ export default function CrashReportDialog({ report, onResolved }: CrashReportDia
       await dismissCrashReport()
     } catch (error) {
       console.error('[CrashReport] Failed to persist dismissal:', error)
-      toast.warning('The report could not be dismissed permanently', {
-        description: 'You can continue now, but Meetily may ask about it again next launch.',
+      toast.warning(t('shell.crashDismissFailed'), {
+        description: t('shell.crashDismissFailedDescription'),
       })
     }
     onResolved()
@@ -62,10 +64,10 @@ export default function CrashReportDialog({ report, onResolved }: CrashReportDia
       const destination = await createZip()
       if (!destination) return
       await finishDialog()
-      toast.success('Crash report saved', { description: destination })
+      toast.success(t('shell.crashSaved'), { description: destination })
     } catch (error) {
       console.error('[CrashReport] Failed to save report:', error)
-      toast.error('Could not save the crash report')
+      toast.error(t('shell.crashSaveFailed'))
     } finally {
       setPendingAction(null)
     }
@@ -78,12 +80,12 @@ export default function CrashReportDialog({ report, onResolved }: CrashReportDia
       if (!destination) return
       await openCrashReportIssue(report)
       await finishDialog()
-      toast.success('Crash report ready to attach', {
-        description: 'GitHub opened with the report details. Attach the ZIP you just saved.',
+      toast.success(t('shell.crashReadyToAttach'), {
+        description: t('shell.crashReadyToAttachDescription'),
       })
     } catch (error) {
       console.error('[CrashReport] Failed to prepare report:', error)
-      toast.error('Could not prepare the crash report')
+      toast.error(t('shell.crashPrepareFailed'))
     } finally {
       setPendingAction(null)
     }
@@ -100,11 +102,11 @@ export default function CrashReportDialog({ report, onResolved }: CrashReportDia
 
   const detected = new Date(report.detectedAt)
   const detectedLabel = Number.isNaN(detected.getTime())
-    ? 'the previous session'
+    ? t('shell.crashDetectedFallback')
     : detected.toLocaleString()
   const description = report.crashType === 'panic'
-    ? 'Meetily encountered an internal error during the previous session.'
-    : 'Meetily did not shut down cleanly during the previous session.'
+    ? t('shell.crashDescriptionPanic')
+    : t('shell.crashDescriptionUnclean')
 
   return (
     <Dialog open>
@@ -120,10 +122,10 @@ export default function CrashReportDialog({ report, onResolved }: CrashReportDia
               <ShieldCheck className="h-5 w-5" />
             </div>
             <DialogTitle className="text-xl text-[var(--af-text)]">
-              Meetily encountered a problem
+              {t('shell.crashTitle')}
             </DialogTitle>
             <DialogDescription className="text-[var(--af-text-2)]">
-              {description} Creating or ignoring this report does not include or modify meeting content.
+              {description}
             </DialogDescription>
           </DialogHeader>
         </div>
@@ -131,42 +133,42 @@ export default function CrashReportDialog({ report, onResolved }: CrashReportDia
         <div className="space-y-4 px-6 py-5">
           <div className="rounded-lg border border-[var(--af-border)] bg-black/10 px-4 py-3 text-sm">
             <div className="flex items-center justify-between gap-4">
-              <span className="text-[var(--af-text-3)]">Detected</span>
+              <span className="text-[var(--af-text-3)]">{t('shell.detected')}</span>
               <span className="text-right text-[var(--af-text-2)]">{detectedLabel}</span>
             </div>
             <div className="mt-2 flex items-center justify-between gap-4">
-              <span className="text-[var(--af-text-3)]">Version</span>
+              <span className="text-[var(--af-text-3)]">{t('shell.version')}</span>
               <span className="font-mono text-[var(--af-text-2)]">{report.appVersion}</span>
             </div>
           </div>
 
           <details className="group rounded-lg border border-[var(--af-border)] bg-black/10 px-4 py-3 text-sm">
             <summary className="cursor-pointer select-none rounded font-medium text-[var(--af-text-2)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--af-accent)]">
-              What&apos;s included?
+              {t('shell.whatsIncluded')}
             </summary>
             <div className="mt-3 space-y-2 border-t border-[var(--af-border)] pt-3 text-xs leading-relaxed text-[var(--af-text-3)]">
-              <p>Crash time and type, Meetily version, coarse operating-system details, bucketed CPU core count, rounded memory size, acceleration backend, and source-relative panic file/line details with a location fingerprint when available.</p>
-              <p>When available, a short diagnostic timeline shows model loading, recording startup and Stop stages, elapsed times, and operations that failed or were still running.</p>
-              <p>No audio, recordings, transcripts, summaries, meeting names, database, settings, credentials, usernames, hostnames, or device names.</p>
+              <p>{t('shell.crashIncludedCrash')}</p>
+              <p>{t('shell.crashIncludedTimeline')}</p>
+              <p>{t('shell.crashIncludedExcluded')}</p>
             </div>
           </details>
 
           <p className="text-xs leading-relaxed text-[var(--af-text-3)]">
-            Send Report asks where to save the private ZIP, then opens a public GitHub issue. Opening GitHub contacts GitHub; the ZIP stays local until you choose it as an attachment, which uploads it before issue submission.
+            {t('shell.crashSendExplainer')}
           </p>
 
           <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-3">
             <Button variant="ghost" onClick={handleIgnore} disabled={busy}>
               {pendingAction === 'ignore' && <Spinner className="" />}
-              Ignore
+              {t('shell.ignore')}
             </Button>
             <Button variant="outline" onClick={handleSave} disabled={busy}>
               {pendingAction === 'save' ? <Spinner className="" /> : <FileArchive />}
-              Save ZIP
+              {t('shell.saveZip')}
             </Button>
             <Button onClick={handleSend} disabled={busy}>
               {pendingAction === 'send' ? <Spinner className="" /> : <Send />}
-              Send Report
+              {t('shell.sendReport')}
             </Button>
           </div>
         </div>

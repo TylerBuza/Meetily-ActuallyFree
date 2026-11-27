@@ -2,7 +2,7 @@
 
 **Record meetings, transcribe them live, and turn the conversation into searchable notes and action items.** Meetily – Actually Free is a local-first desktop meeting assistant. It captures your microphone and computer audio directly, so no meeting bot needs to join the call. No app account, subscription, or license key is required.
 
-[Project website](https://tylerbuza.github.io/Meetily-ActuallyFree/) · [Release notes](https://github.com/TylerBuza/Meetily-ActuallyFree/releases) · [Report an issue](https://github.com/TylerBuza/Meetily-ActuallyFree/issues)
+[Project website](https://tylerbuza.github.io/Meetily-ActuallyFree/) · [Release notes](https://github.com/TylerBuza/Meetily-ActuallyFree/releases) · [Report an issue](https://github.com/TylerBuza/Meetily-ActuallyFree/issues) · [简体中文说明](README.zh-CN.md)
 
 ## Download
 

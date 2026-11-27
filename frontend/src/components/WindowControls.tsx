@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { cn } from '@/lib/utils';
 import { useCustomChrome } from '@/hooks/useCustomChrome';
+import { useI18n } from '@/i18n';
 
 const glyph = 'h-[10px] w-[10px]';
 
@@ -42,6 +43,7 @@ const button =
   'flex h-full w-[46px] items-center justify-center text-af-text-2 transition-colors duration-100 focus-visible:outline-none';
 
 export default function WindowControls() {
+  const { t } = useI18n();
   const show = useCustomChrome();
   const [maximized, setMaximized] = useState(false);
 
@@ -74,10 +76,10 @@ export default function WindowControls() {
 
   return (
     // pointer-events-auto keeps the buttons usable while a modal dialog is open.
-    <div role="group" aria-label="Window" className="pointer-events-auto fixed right-0 top-0 z-[100] flex h-[var(--af-chrome-h)]">
+    <div role="group" aria-label={t('shell.windowGroup')} className="pointer-events-auto fixed right-0 top-0 z-[100] flex h-[var(--af-chrome-h)]">
       <button
         type="button"
-        aria-label="Minimize"
+        aria-label={t('shell.minimize')}
         onClick={() => void getCurrentWindow().minimize()}
         className={cn(button, 'hover:bg-af-hover hover:text-af-text focus-visible:bg-af-hover active:bg-af-active')}
       >
@@ -85,7 +87,7 @@ export default function WindowControls() {
       </button>
       <button
         type="button"
-        aria-label={maximized ? 'Restore' : 'Maximize'}
+        aria-label={maximized ? t('shell.restore') : t('shell.maximize')}
         onClick={() => void getCurrentWindow().toggleMaximize()}
         className={cn(button, 'hover:bg-af-hover hover:text-af-text focus-visible:bg-af-hover active:bg-af-active')}
       >
@@ -93,7 +95,7 @@ export default function WindowControls() {
       </button>
       <button
         type="button"
-        aria-label="Close"
+        aria-label={t('common.close')}
         onClick={() => void getCurrentWindow().close()}
         className={cn(button, 'hover:bg-[#c42b1c] hover:text-white focus-visible:bg-[#c42b1c] focus-visible:text-white active:bg-[#b22a1c]')}
       >

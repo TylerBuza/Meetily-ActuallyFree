@@ -14,32 +14,34 @@ import {
 import type { MeetingExportContent, MeetingExportFormat } from '@/hooks/meeting-details/useCopyOperations';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { LinkStyle } from '@/lib/exportMarkdownFrontmatter';
+import { useI18n } from '@/i18n';
+import type { MessageKey } from '@/i18n';
 
-const contentOptions: Array<{ value: MeetingExportContent; label: string; description: string }> = [
-  { value: 'transcript', label: 'Transcript', description: 'Everything said, with timestamps' },
-  { value: 'summary', label: 'Summary', description: 'The current AI meeting summary' },
-  { value: 'both', label: 'Transcript + Summary', description: 'A complete meeting record' },
+const contentOptions: Array<{ value: MeetingExportContent; label: MessageKey; description: MessageKey }> = [
+  { value: 'transcript', label: 'meeting.exportContentTranscript', description: 'meeting.exportContentTranscriptDescription' },
+  { value: 'summary', label: 'meeting.exportContentSummary', description: 'meeting.exportContentSummaryDescription' },
+  { value: 'both', label: 'meeting.exportContentBoth', description: 'meeting.exportContentBothDescription' },
 ];
 
 const formatOptions: Array<{
   value: MeetingExportFormat;
-  label: string;
-  description: string;
+  label: MessageKey;
+  description: MessageKey;
   icon: typeof FileText;
 }> = [
-  { value: 'pdf', label: 'PDF', description: 'Ready to share or print', icon: FileText },
-  { value: 'docx', label: 'Word', description: 'Editable .docx document', icon: FileType },
-  { value: 'txt', label: 'Text', description: 'Plain .txt file', icon: ScrollText },
-  { value: 'markdown', label: 'Markdown', description: 'Formatted .md file', icon: Files },
-  { value: 'json', label: 'JSON', description: 'Rendered content as JSON', icon: FileJson },
-  { value: 'clipboard', label: 'Clipboard', description: 'Copy formatted content', icon: Clipboard },
+  { value: 'pdf', label: 'meeting.formatPdf', description: 'meeting.formatPdfDescription', icon: FileText },
+  { value: 'docx', label: 'meeting.formatWord', description: 'meeting.formatWordDescription', icon: FileType },
+  { value: 'txt', label: 'meeting.formatText', description: 'meeting.formatTextDescription', icon: ScrollText },
+  { value: 'markdown', label: 'meeting.formatMarkdown', description: 'meeting.formatMarkdownDescription', icon: Files },
+  { value: 'json', label: 'meeting.formatJson', description: 'meeting.formatJsonDescription', icon: FileJson },
+  { value: 'clipboard', label: 'meeting.formatClipboard', description: 'meeting.formatClipboardDescription', icon: Clipboard },
 ];
 
 const LINK_STYLE_STORAGE_KEY = 'meetily_export_link_style';
 
-const linkStyleOptions: Array<{ value: LinkStyle; label: string; description: string }> = [
-  { value: 'generic', label: 'Generic Markdown', description: 'Plain links, works everywhere' },
-  { value: 'obsidian', label: 'Obsidian', description: 'Wikilinks to identified speakers' },
+const linkStyleOptions: Array<{ value: LinkStyle; label: MessageKey; description: MessageKey }> = [
+  { value: 'generic', label: 'meeting.linkStyleGeneric', description: 'meeting.linkStyleGenericDescription' },
+  { value: 'obsidian', label: 'meeting.linkStyleObsidian', description: 'meeting.linkStyleObsidianDescription' },
 ];
 
 function loadStoredLinkStyle(): LinkStyle {
@@ -61,6 +63,7 @@ export function MeetingExportDialog({
   hasSummary: boolean;
   onExport: (content: MeetingExportContent, format: MeetingExportFormat, linkStyle: LinkStyle) => Promise<boolean>;
 }) {
+  const { t } = useI18n();
   const [step, setStep] = useState<'content' | 'format'>('content');
   const [content, setContent] = useState<MeetingExportContent>('both');
   const [exporting, setExporting] = useState(false);
@@ -98,11 +101,15 @@ export function MeetingExportDialog({
     <Dialog open={open} onOpenChange={(nextOpen) => !exporting && onOpenChange(nextOpen)}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{step === 'content' ? 'What do you want to export?' : 'How should it be exported?'}</DialogTitle>
+          <DialogTitle>{step === 'content' ? t('meeting.exportWhatTitle') : t('meeting.exportHowTitle')}</DialogTitle>
           <DialogDescription>
             {step === 'content'
-              ? 'Transcript + Summary is selected by default for a complete meeting record.'
-              : `Choose a format for the ${content === 'both' ? 'transcript and summary' : content}.`}
+              ? t('meeting.exportDefaultDescription')
+              : content === 'both'
+                ? t('meeting.chooseFormatBoth')
+                : content === 'transcript'
+                  ? t('meeting.chooseFormatTranscript')
+                  : t('meeting.chooseFormatSummary')}
           </DialogDescription>
         </DialogHeader>
 
@@ -118,9 +125,9 @@ export function MeetingExportDialog({
                 onClick={() => setContent(option.value)}
               >
                 <span>
-                  <span className="block text-sm font-semibold">{option.label}</span>
+                  <span className="block text-sm font-semibold">{t(option.label)}</span>
                   <span className="block text-xs font-normal opacity-70">
-                    {isAvailable(option.value) ? option.description : 'Not available for this meeting'}
+                    {isAvailable(option.value) ? t(option.description) : t('meeting.notAvailableForMeeting')}
                   </span>
                 </span>
               </Button>
@@ -130,7 +137,7 @@ export function MeetingExportDialog({
           <>
             <div className="mb-3">
               <label htmlFor="export-link-style" className="mb-1 block text-xs font-medium opacity-70">
-                Markdown link style
+                {t('meeting.markdownLinkStyle')}
               </label>
               <Select value={linkStyle} onValueChange={(value) => selectLinkStyle(value as LinkStyle)}>
                 <SelectTrigger id="export-link-style">
@@ -139,7 +146,7 @@ export function MeetingExportDialog({
                 <SelectContent>
                   {linkStyleOptions.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
-                      {option.label} — {option.description}
+                      {t(option.label)} — {t(option.description)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -159,8 +166,8 @@ export function MeetingExportDialog({
                   >
                     <Icon size={17} />
                     <span>
-                      <span className="block text-sm font-semibold">{option.label}</span>
-                      <span className="block text-[11px] font-normal opacity-70">{option.description}</span>
+                      <span className="block text-sm font-semibold">{t(option.label)}</span>
+                      <span className="block text-[11px] font-normal opacity-70">{t(option.description)}</span>
                     </span>
                   </Button>
                 );
@@ -172,12 +179,12 @@ export function MeetingExportDialog({
         <DialogFooter>
           {step === 'format' && (
             <Button type="button" variant="outline" disabled={exporting} onClick={() => setStep('content')}>
-              Back
+              {t('meeting.back')}
             </Button>
           )}
           {step === 'content' && (
             <Button type="button" disabled={!isAvailable(content)} onClick={() => setStep('format')}>
-              Choose format
+              {t('meeting.chooseFormat')}
             </Button>
           )}
         </DialogFooter>

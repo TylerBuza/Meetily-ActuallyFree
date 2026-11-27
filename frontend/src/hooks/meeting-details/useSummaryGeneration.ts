@@ -17,6 +17,7 @@ import {
   readMeetingSummaryLanguage,
   readCachedDetectedSummaryLanguage,
 } from '@/lib/summary-language-preferences';
+import { tNow } from '@/i18n/translate';
 
 /**
  * The Claude Code CLI provider depends on software outside this app, so it can
@@ -47,8 +48,8 @@ async function resolveSummaryLanguage(
     if (perMeeting.language) return perMeeting.language;
   } catch (err) {
     console.warn('Failed to load meeting summary language:', err);
-    toast.warning('Could not load saved summary language', {
-      description: 'Using Auto for this generation.',
+    toast.warning(tNow('feedback.couldNotLoadSavedSummaryLanguage'), {
+      description: tNow('feedback.couldNotLoadSavedSummaryLanguageHint'),
     });
   }
 
@@ -62,8 +63,8 @@ async function resolveSummaryLanguage(
   try {
     const detection = await detectAndCacheSummaryLanguage(meetingId, transcriptTexts);
     if (detection.reason === 'tie') {
-      toast.warning('Bilingual transcript detected', {
-        description: 'Pick a summary language manually if Auto chooses the wrong fallback.',
+      toast.warning(tNow('feedback.bilingualTranscriptDetected'), {
+        description: tNow('feedback.bilingualTranscriptDetectedHint'),
       });
     }
     return detection.language;
@@ -161,8 +162,8 @@ export function useSummaryGeneration({
             setSummaryStatus('completed');
             setSummaryError(null);
             stopSummaryPollingRef.current(meeting.id);
-            toast.success('Summary generated successfully!', {
-              description: message || 'Your meeting summary is ready',
+            toast.success(tNow('feedback.summaryGenerated'), {
+              description: message || tNow('feedback.summaryReadyDescription'),
               duration: 4000,
             });
             await onMeetingUpdatedRef.current?.();
@@ -177,7 +178,7 @@ export function useSummaryGeneration({
           if (stage === 'error') {
             activeProcessIdRef.current = null;
             setSummaryStatus('error');
-            setSummaryError(message || 'Summary generation failed');
+            setSummaryError(message || tNow('feedback.summaryGenerationFailed'));
             stopSummaryPollingRef.current(meeting.id);
           }
         });
@@ -219,10 +220,10 @@ export function useSummaryGeneration({
       if (result.data) setAiSummaryRef.current(result.data);
       if (status === 'failed' || status === 'error') {
         setSummaryStatus('error');
-        setSummaryError(result.error || 'Summary generation failed. Please retry.');
+        setSummaryError(result.error || tNow('feedback.summaryGenerationFailedRetry'));
       } else if (status === 'completed' && !result.data) {
         setSummaryStatus('error');
-        setSummaryError('Summary completed without content. Please retry.');
+        setSummaryError(tNow('feedback.summaryCompletedWithoutContent'));
       } else {
         setSummaryStatus(result.data ? 'completed' : 'idle');
         setSummaryError(null);
@@ -252,7 +253,7 @@ export function useSummaryGeneration({
       } catch (error) {
         if (isCurrent()) {
           setSummaryStatus('error');
-          setSummaryError('Could not restore summary status. Reopen this meeting to retry.');
+          setSummaryError(tNow('feedback.couldNotRestoreSummaryStatus'));
           console.error('Failed to restore summary status:', error);
         }
       }
@@ -269,15 +270,15 @@ export function useSummaryGeneration({
   const getSummaryStatusMessage = useCallback((status: SummaryStatus) => {
     switch (status) {
       case 'processing':
-        return 'Processing transcript...';
+        return tNow('feedback.processingTranscript');
       case 'summarizing':
-        return 'Generating summary...';
+        return tNow('feedback.generatingSummary');
       case 'regenerating':
-        return 'Regenerating summary...';
+        return tNow('feedback.regeneratingSummary');
       case 'completed':
-        return 'Summary completed';
+        return tNow('feedback.summaryCompleted');
       case 'error':
-        return 'Error generating summary';
+        return tNow('feedback.errorGeneratingSummary');
       default:
         return '';
     }
@@ -312,7 +313,7 @@ export function useSummaryGeneration({
 
     try {
       if (!transcriptText.trim()) {
-        throw new Error('No transcript text available. Please add some text first.');
+        throw new Error(tNow('feedback.noTranscriptText'));
       }
 
       console.log('Processing transcript with template:', selectedTemplate);
@@ -336,10 +337,16 @@ export function useSummaryGeneration({
       }
 
       // Show toast notification for generation start
-      toast.info(`${isRegeneration ? 'Regenerating' : 'Generating'} summary...`, {
-        description: `Using ${modelConfig.provider}/${modelConfig.model}`,
-        duration: 3000,
-      });
+      toast.info(
+        tNow(isRegeneration ? 'feedback.regeneratingSummary' : 'feedback.generatingSummary'),
+        {
+          description: tNow('feedback.usingModel', {
+            provider: modelConfig.provider,
+            model: modelConfig.model,
+          }),
+          duration: 3000,
+        },
+      );
 
       // Resolve explicit metadata override first; Auto detects the transcript language.
       const summaryLanguage = await resolveSummaryLanguage(
@@ -363,7 +370,7 @@ export function useSummaryGeneration({
 
       const process_id = result.process_id;
       if (typeof process_id !== 'string' || !process_id.trim()) {
-        throw new Error('Summary backend did not accept the generation request.');
+        throw new Error(tNow('feedback.summaryBackendRejectedRequest'));
       }
       backendAccepted = true;
       if (!isCurrentRequest()) return backendAccepted;
@@ -408,7 +415,11 @@ export function useSummaryGeneration({
         if (pollingResult.status === 'error' || pollingResult.status === 'failed') {
           activeProcessIdRef.current = null;
           console.error('Backend returned error:', pollingResult.error);
-          const errorMessage = pollingResult.error || `Summary ${isRegeneration ? 'regeneration' : 'generation'} failed`;
+          const errorMessage = pollingResult.error || (
+            isRegeneration
+              ? tNow('feedback.summaryRegenerationFailed')
+              : tNow('feedback.summaryGenerationFailed')
+          );
 
           // If this was a regeneration, try to restore previous summary from database
           if (isRegeneration) {
@@ -425,8 +436,8 @@ export function useSummaryGeneration({
                 setSummaryError(null);
 
                 // Show error toast with restoration message
-                toast.error(`Failed to regenerate summary`, {
-                  description: `${errorMessage}. Your previous summary has been restored.`,
+                toast.error(tNow('feedback.failedToRegenerateSummary'), {
+                  description: tNow('feedback.previousSummaryRestored', { error: errorMessage }),
                 });
 
                 await Analytics.trackSummaryGenerationCompleted(
@@ -454,11 +465,14 @@ export function useSummaryGeneration({
             errorMessage.toLowerCase().includes('model') && errorMessage.toLowerCase().includes('required');
 
           // Show error toast
-          toast.error(`Failed to ${isRegeneration ? 'regenerate' : 'generate'} summary`, {
-            description: errorMessage.includes('Connection refused')
-              ? 'Could not connect to LLM service. Please ensure Ollama or your configured LLM provider is running.'
-              : errorMessage,
-          });
+          toast.error(
+            tNow(isRegeneration ? 'feedback.failedToRegenerateSummary' : 'feedback.failedToGenerateSummary'),
+            {
+              description: errorMessage.includes('Connection refused')
+                ? tNow('feedback.couldNotConnectToLlm')
+                : errorMessage,
+            },
+          );
 
           // Auto-open model settings modal if model is missing
           if (isModelRequiredError && onOpenModelSettings) {
@@ -492,8 +506,8 @@ export function useSummaryGeneration({
             setSummaryStatus('completed');
 
             // Show success toast
-            toast.success('Summary generated successfully!', {
-              description: 'Your meeting summary is ready',
+            toast.success(tNow('feedback.summaryGenerated'), {
+              description: tNow('feedback.summaryReadyDescription'),
               duration: 4000,
             });
 
@@ -513,7 +527,7 @@ export function useSummaryGeneration({
 
           if (allEmpty) {
             console.error('Summary completed but all sections empty');
-            setSummaryError('Summary generation completed but returned empty content.');
+            setSummaryError(tNow('feedback.summaryEmptyContent'));
             setSummaryStatus('error');
 
             await Analytics.trackSummaryGenerationCompleted(
@@ -564,8 +578,8 @@ export function useSummaryGeneration({
           setSummaryStatus('completed');
 
           // Show success toast
-          toast.success('Summary generated successfully!', {
-            description: 'Your meeting summary is ready',
+          toast.success(tNow('feedback.summaryGenerated'), {
+            description: tNow('feedback.summaryReadyDescription'),
             duration: 4000,
           });
 
@@ -581,15 +595,18 @@ export function useSummaryGeneration({
       return true;
     } catch (error) {
       console.error(`Failed to ${isRegeneration ? 'regenerate' : 'generate'} summary:`, error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage = error instanceof Error ? error.message : tNow('feedback.unknownError');
       if (!isCurrentRequest()) return backendAccepted;
       setSummaryError(errorMessage);
       setSummaryStatus('error');
       // Note: We don't clear the summary here because the backend has already restored from backup
 
-      toast.error(`Failed to ${isRegeneration ? 'regenerate' : 'generate'} summary`, {
-        description: errorMessage,
-      });
+      toast.error(
+        tNow(isRegeneration ? 'feedback.failedToRegenerateSummary' : 'feedback.failedToGenerateSummary'),
+        {
+          description: errorMessage,
+        },
+      );
 
       await Analytics.trackSummaryGenerationCompleted(
         modelConfig.provider,
@@ -640,7 +657,7 @@ export function useSummaryGeneration({
       return allData.transcripts;
     } catch (error) {
       console.error('❌ Error fetching all transcripts:', error);
-      toast.error('Failed to fetch transcripts for summary generation');
+      toast.error(tNow('feedback.failedToFetchSummaryTranscripts'));
       return [];
     }
   }, []);
@@ -681,7 +698,7 @@ export function useSummaryGeneration({
     // Check if model config is still loading
     if (isModelConfigLoading) {
       console.log('⏳ Model configuration is still loading, please wait...');
-      toast.info('Loading model configuration, please wait...');
+      toast.info(tNow('feedback.loadingModelConfiguration'));
       return false;
     }
 
@@ -697,10 +714,9 @@ export function useSummaryGeneration({
     if (!isCurrentRequest()) return false;
 
     if (!allTranscripts.length) {
-      const error_msg = 'No transcripts available for summary';
-      console.log(error_msg);
+      console.log('No transcripts available for summary');
       setSummaryStatus('idle');
-      toast.error(error_msg);
+      toast.error(tNow('feedback.noTranscriptsAvailable'));
       return false;
     }
 
@@ -720,11 +736,11 @@ export function useSummaryGeneration({
         if (!isCurrentRequest()) return false;
 
         if (!models || models.length === 0) {
-          const errorMessage = 'No Ollama models are installed at the configured endpoint.';
+          const errorMessage = tNow('feedback.noOllamaModelsInstalled');
           setSummaryStatus('error');
           setSummaryError(errorMessage);
           toast.error(
-            'No Ollama models found. Please download gemma3:1b from Model Settings.',
+            tNow('feedback.noOllamaModelsFound'),
             { duration: 5000 }
           );
           onOpenModelSettings?.();
@@ -736,11 +752,11 @@ export function useSummaryGeneration({
         );
         if (!modelConfig.model || !selectedModelAvailable) {
           const errorMessage = modelConfig.model
-            ? `${modelConfig.model} is not installed at the configured endpoint.`
-            : 'Select an installed model before generating a summary.';
+            ? tNow('feedback.modelNotInstalledAtEndpoint', { model: modelConfig.model })
+            : tNow('feedback.selectModelForSummary');
           setSummaryStatus('error');
           setSummaryError(errorMessage);
-          toast.error('Selected Ollama model is unavailable', {
+          toast.error(tNow('feedback.selectedOllamaModelUnavailable'), {
             description: errorMessage,
             duration: 6000,
           });
@@ -757,12 +773,12 @@ export function useSummaryGeneration({
         if (isOllamaNotInstalledError(errorMessage)) {
           // Ollama is not installed - show specific message with download link
           toast.error(
-            'Ollama is not installed',
+            tNow('feedback.ollamaNotInstalled'),
             {
-              description: 'Please download and install Ollama to use local models.',
+              description: tNow('feedback.ollamaNotInstalledHint'),
               duration: 7000,
               action: {
-                label: 'Download',
+                label: tNow('feedback.download'),
                 onClick: () => invokeTauri('open_external_url', { url: 'https://ollama.com/download' })
               }
             }
@@ -770,7 +786,7 @@ export function useSummaryGeneration({
         } else {
           // Other error - generic message
           toast.error(
-            'Failed to check Ollama models. Please ensure Ollama is running and download a model from Settings.',
+            tNow('feedback.failedToCheckOllamaModels'),
             { duration: 5000 }
           );
         }
@@ -787,13 +803,13 @@ export function useSummaryGeneration({
       if (problem) {
         setSummaryStatus('error');
         setSummaryError(problem.message);
-        toast.error('Claude Code CLI is not ready', {
+        toast.error(tNow('feedback.claudeCliNotReady'), {
           description: problem.message,
           duration: 7000,
           action: problem.installed
             ? undefined
             : {
-                label: 'Install',
+                label: tNow('feedback.install'),
                 onClick: () =>
                   invokeTauri('open_external_url', { url: CLAUDE_CODE_INSTALL_URL }),
               },
@@ -810,8 +826,8 @@ export function useSummaryGeneration({
 
         if (!selectedModel) {
           setSummaryStatus('idle');
-          toast.error('No built-in AI model selected', {
-            description: 'Please select a model in settings',
+          toast.error(tNow('feedback.noBuiltInAiModelSelected'), {
+            description: tNow('feedback.selectModelInSettings'),
             duration: 5000,
           });
           if (onOpenModelSettings) {
@@ -839,8 +855,11 @@ export function useSummaryGeneration({
 
             if (status.type === 'downloading') {
               setSummaryStatus('idle');
-              toast.info('Model download in progress', {
-                description: `${selectedModel} is downloading (${status.progress}%). Please wait until download completes.`,
+              toast.info(tNow('feedback.modelDownloadInProgress'), {
+                description: tNow('feedback.modelDownloading', {
+                  model: selectedModel,
+                  progress: status.progress,
+                }),
                 duration: 5000,
               });
               return false;
@@ -848,8 +867,8 @@ export function useSummaryGeneration({
 
             if (status.type === 'not_downloaded') {
               setSummaryStatus('idle');
-              toast.error('Built-in AI model not downloaded', {
-                description: `${selectedModel} needs to be downloaded. Please download it in model settings.`,
+              toast.error(tNow('feedback.builtInAiModelNotDownloaded'), {
+                description: tNow('feedback.builtInAiModelNotDownloadedHint', { model: selectedModel }),
                 duration: 7000,
               });
               if (onOpenModelSettings) {
@@ -860,8 +879,8 @@ export function useSummaryGeneration({
 
             if (status.type === 'incomplete') {
               setSummaryStatus('idle');
-              toast.info('Built-in AI model download incomplete', {
-                description: `${selectedModel} has a saved partial download. Resume it in model settings.`,
+              toast.info(tNow('feedback.builtInAiDownloadIncomplete'), {
+                description: tNow('feedback.builtInAiDownloadIncompleteHint', { model: selectedModel }),
                 duration: 7000,
               });
               onOpenModelSettings?.();
@@ -871,10 +890,10 @@ export function useSummaryGeneration({
             if (status.type === 'corrupted' || status.type === 'error') {
               setSummaryStatus('idle');
               const errorDesc = status.type === 'error'
-                ? status.Error || 'The model file has an error'
-                : 'The model file is corrupted';
-              toast.error('Built-in AI model not available', {
-                description: `${errorDesc}. Please check model settings.`,
+                ? status.Error || tNow('feedback.modelFileHasError')
+                : tNow('feedback.modelFileCorrupted');
+              toast.error(tNow('feedback.builtInAiModelNotAvailable'), {
+                description: tNow('feedback.builtInAiModelNotAvailableHint', { error: errorDesc }),
                 duration: 7000,
               });
               if (onOpenModelSettings) {
@@ -886,8 +905,8 @@ export function useSummaryGeneration({
 
           // Fallback if we couldn't get model info
           setSummaryStatus('idle');
-          toast.error('Built-in AI model not ready', {
-            description: 'Please ensure the model is downloaded in settings',
+          toast.error(tNow('feedback.builtInAiModelNotReady'), {
+            description: tNow('feedback.builtInAiModelNotReadyHint'),
             duration: 5000,
           });
           if (onOpenModelSettings) {
@@ -901,7 +920,7 @@ export function useSummaryGeneration({
         if (!isCurrentRequest()) return false;
         console.error('Error validating built-in AI model:', error);
         setSummaryStatus('idle');
-        toast.error('Failed to validate built-in AI model', {
+        toast.error(tNow('feedback.failedToValidateBuiltInAiModel'), {
           description: error instanceof Error ? error.message : String(error),
           duration: 5000,
         });
@@ -935,7 +954,7 @@ export function useSummaryGeneration({
     if (!allTranscripts.length) {
       console.error('No transcripts available for regeneration');
       setSummaryStatus('idle');
-      toast.error('No transcripts available for summary regeneration');
+      toast.error(tNow('feedback.noTranscriptsAvailableForRegeneration'));
       return;
     }
 
@@ -946,7 +965,7 @@ export function useSummaryGeneration({
       if (problem) {
         setSummaryStatus('error');
         setSummaryError(problem.message);
-        toast.error('Claude Code CLI is not ready', {
+        toast.error(tNow('feedback.claudeCliNotReady'), {
           description: problem.message,
           duration: 7000,
         });
@@ -966,11 +985,11 @@ export function useSummaryGeneration({
         );
         if (!modelConfig.model || !selectedModelAvailable) {
           const errorMessage = modelConfig.model
-            ? `${modelConfig.model} is not installed at the configured endpoint.`
-            : 'Select an installed model before regenerating a summary.';
+            ? tNow('feedback.modelNotInstalledAtEndpoint', { model: modelConfig.model })
+            : tNow('feedback.selectModelForRegeneration');
           setSummaryStatus('error');
           setSummaryError(errorMessage);
-          toast.error('Selected Ollama model is unavailable', {
+          toast.error(tNow('feedback.selectedOllamaModelUnavailable'), {
             description: errorMessage,
             duration: 6000,
           });
@@ -982,7 +1001,7 @@ export function useSummaryGeneration({
         const errorMessage = error instanceof Error ? error.message : String(error);
         setSummaryStatus('error');
         setSummaryError(errorMessage);
-        toast.error('Failed to check Ollama models', {
+        toast.error(tNow('feedback.failedToCheckOllamaModelsShort'), {
           description: errorMessage,
           duration: 5000,
         });
@@ -1016,8 +1035,8 @@ export function useSummaryGeneration({
       if (mountedRef.current && activeMeetingIdRef.current === meetingId &&
           summaryRequestGenerationRef.current === generation) {
         setSummaryStatus('error');
-        setSummaryError('Could not cancel the summary. Reopen this meeting to restore its current status.');
-        toast.error('Summary cancellation failed');
+        setSummaryError(tNow('feedback.couldNotCancelSummary'));
+        toast.error(tNow('feedback.summaryCancellationFailed'));
       }
       return;
     }
@@ -1033,8 +1052,8 @@ export function useSummaryGeneration({
     setSummaryError(null);
 
     // Show toast notification
-    toast.info('Summary generation stopped', {
-      description: 'You can generate a new summary anytime',
+    toast.info(tNow('feedback.summaryGenerationStopped'), {
+      description: tNow('feedback.summaryGenerationStoppedHint'),
       duration: 3000,
     });
   }, [meeting.id, stopSummaryPolling]);

@@ -1,3 +1,4 @@
+'use client'
 import React, { useState, useEffect } from "react";
 import { Spinner } from '@/components/ui/spinner';
 import { getVersion } from '@tauri-apps/api/app';
@@ -9,9 +10,11 @@ import { Button } from './ui/button';
 import { CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { usePlatform } from '@/hooks/usePlatform';
+import { useI18n } from '@/i18n';
 
 
 export function About() {
+    const { t } = useI18n();
     const platform = usePlatform();
     const [currentVersion, setCurrentVersion] = useState<string>('0.0.1');
     const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
@@ -31,11 +34,11 @@ export function About() {
             if (info.available) {
                 setShowUpdateDialog(true);
             } else {
-                toast.success('You are running the latest version');
+                toast.success(t('shell.youAreUpToDate'));
             }
         } catch (error: any) {
             console.error('Failed to check for updates:', error);
-            toast.error('Failed to check for updates: ' + (error.message || 'Unknown error'));
+            toast.error(t('shell.updateCheckFailed', { message: error.message || t('shell.unknownError') }));
         } finally {
             setIsChecking(false);
         }
@@ -44,7 +47,7 @@ export function About() {
     const openExternal = (url: string) => {
         invoke('open_external_url', { url }).catch((error) => {
             console.error('Failed to open external link:', error);
-            toast.error('Could not open the link');
+            toast.error(t('shell.couldNotOpenLink'));
         });
     };
 
@@ -55,7 +58,7 @@ export function About() {
                 <div className="mb-3">
                     <Image
                         src="icon_128x128.png"
-                        alt="Meetily Logo"
+                        alt={t('shell.meetilyLogo')}
                         width={64}
                         height={64}
                         className="mx-auto"
@@ -64,7 +67,7 @@ export function About() {
                 {/* <h1 className="text-xl font-bold text-af-text">Meetily</h1> */}
                 <span className="text-sm text-af-text-3"> v{currentVersion}</span>
                 <p className="text-medium text-af-text-2 mt-1">
-                    Real-time notes and summaries that never leave your machine.
+                    {t('shell.aboutTagline')}
                 </p>
                 <div className="mt-3">
                     {platform === 'macos' ? (
@@ -75,7 +78,7 @@ export function About() {
                             className="text-xs"
                         >
                             <CheckCircle2 className="h-3 w-3 mr-2" />
-                            View macOS Releases
+                            {t('shell.viewMacosReleases')}
                         </Button>
                     ) : (
                         <Button
@@ -88,19 +91,19 @@ export function About() {
                             {isChecking ? (
                                 <>
                                     <Spinner className="h-3 w-3 mr-2 " />
-                                    Checking...
+                                    {t('shell.checkingForUpdates')}
                                 </>
                             ) : (
                                 <>
                                     <CheckCircle2 className="h-3 w-3 mr-2" />
-                                    Check for Updates
+                                    {t('shell.checkForUpdates')}
                                 </>
                             )}
                         </Button>
                     )}
                     {updateInfo?.available && (
                         <div className="mt-2 text-xs text-af-accent">
-                            Update available: v{updateInfo.version}
+                            {t('shell.updateAvailableInline', { version: updateInfo.version ?? '' })}
                         </div>
                     )}
                 </div>
@@ -108,23 +111,23 @@ export function About() {
 
             {/* Features Grid - Compact */}
             <div className="space-y-3">
-                <h2 className="text-base font-semibold text-af-text">What makes Meetily different</h2>
+                <h2 className="text-base font-semibold text-af-text">{t('shell.whatMakesDifferent')}</h2>
                 <div className="grid grid-cols-2 gap-2">
                     <div className="bg-af-panel-2 rounded p-3 hover:bg-af-panel-2 transition-colors">
-                        <h3 className="font-bold text-sm text-af-text mb-1">Privacy-first</h3>
-                        <p className="text-xs text-af-text-2 leading-relaxed">Your data & AI processing workflow can now stay within your premise. No cloud, no leaks.</p>
+                        <h3 className="font-bold text-sm text-af-text mb-1">{t('shell.privacyFirst')}</h3>
+                        <p className="text-xs text-af-text-2 leading-relaxed">{t('shell.privacyFirstBody')}</p>
                     </div>
                     <div className="bg-af-panel-2 rounded p-3 hover:bg-af-panel-2 transition-colors">
-                        <h3 className="font-bold text-sm text-af-text mb-1">Use Any Model</h3>
-                        <p className="text-xs text-af-text-2 leading-relaxed">Prefer local open-source model? Great. Want to plug in an external API? Also fine. No lock-in.</p>
+                        <h3 className="font-bold text-sm text-af-text mb-1">{t('shell.useAnyModel')}</h3>
+                        <p className="text-xs text-af-text-2 leading-relaxed">{t('shell.useAnyModelBody')}</p>
                     </div>
                     <div className="bg-af-panel-2 rounded p-3 hover:bg-af-panel-2 transition-colors">
-                        <h3 className="font-bold text-sm text-af-text mb-1">Cost-Smart</h3>
-                        <p className="text-xs text-af-text-2 leading-relaxed">Avoid pay-per-minute bills by running models locally (or pay only for the calls you choose).</p>
+                        <h3 className="font-bold text-sm text-af-text mb-1">{t('shell.costSmart')}</h3>
+                        <p className="text-xs text-af-text-2 leading-relaxed">{t('shell.costSmartBody')}</p>
                     </div>
                     <div className="bg-af-panel-2 rounded p-3 hover:bg-af-panel-2 transition-colors">
-                        <h3 className="font-bold text-sm text-af-text mb-1">Works everywhere</h3>
-                        <p className="text-xs text-af-text-2 leading-relaxed">Google Meet, Zoom, Teams-online or offline.</p>
+                        <h3 className="font-bold text-sm text-af-text mb-1">{t('shell.worksEverywhere')}</h3>
+                        <p className="text-xs text-af-text-2 leading-relaxed">{t('shell.worksEverywhereBody')}</p>
                     </div>
                 </div>
             </div>
@@ -132,7 +135,7 @@ export function About() {
             {/* Footer - Compact */}
             <div className="pt-2 border-t border-af-border text-center">
                 <p className="text-xs text-af-text-4">
-                    Meetily - Actually Free · Open source (MIT)
+                    {t('shell.aboutFooter')}
                 </p>
                 <p className="mt-1 text-xs text-af-text-3">
                     Tyler Buza ·{' '}

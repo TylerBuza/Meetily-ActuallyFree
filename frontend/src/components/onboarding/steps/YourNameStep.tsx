@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useOnboarding } from '@/contexts/OnboardingContext';
 import { OnboardingContainer } from '../OnboardingContainer';
 import { User } from 'lucide-react';
+import { useI18n } from '@/i18n';
 
 /**
  * Capture the user's display name once. Live + post-call transcripts label
@@ -11,6 +12,7 @@ import { User } from 'lucide-react';
  */
 export function YourNameStep() {
   const { goNext, goPrevious } = useOnboarding();
+  const { t } = useI18n();
   const [name, setName] = useState('');
 
   useEffect(() => {
@@ -30,8 +32,8 @@ export function YourNameStep() {
 
   return (
     <OnboardingContainer
-      title="What should we call you?"
-      description="Your name labels your voice in transcripts as “You”. You can change this later in Settings."
+      title={t('onboarding.yourNameTitle')}
+      description={t('onboarding.yourNameDescription')}
       step={4}
       totalSteps={5}
       showNavigation
@@ -52,20 +54,24 @@ export function YourNameStep() {
             onKeyDown={(e) => {
               if (e.key === 'Enter') saveAndNext();
             }}
-            placeholder="Your name"
+            placeholder={t('onboarding.yourNamePlaceholder')}
             className="h-12 min-w-0 flex-1 rounded-xl border border-[var(--af-border)] bg-[var(--af-panel)] px-4 text-base text-[var(--af-text)] placeholder:text-[var(--af-text-3)] focus:border-af-accent/40 focus:outline-none focus:ring-2 focus:ring-af-accent/50"
             autoFocus
           />
         </div>
         <p className="text-center text-xs text-[var(--af-text-3)]">
-          Example: lines you speak show as <strong className="text-af-accent">{name.trim() || 'You'} (You)</strong>
+          {t('onboarding.yourNameExamplePrefix')}{' '}
+          <strong className="text-af-accent">
+            {name.trim() || t('onboarding.yourNameFallback')}
+            {t('onboarding.yourNameSuffix')}
+          </strong>
         </p>
         <button
           type="button"
           onClick={saveAndNext}
           className="mt-6 h-11 w-full rounded-xl bg-[var(--af-accent)] text-sm font-semibold text-white shadow-sm transition hover:brightness-110 active:scale-[0.99]"
         >
-          Continue
+          {t('onboarding.continue')}
         </button>
       </div>
     </OnboardingContainer>

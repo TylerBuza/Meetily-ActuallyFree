@@ -6,6 +6,7 @@ import { useRecentLanguages } from "@/hooks/useRecentLanguages";
 import { Check, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { floatingSurface } from "@/components/ui/popover";
+import { useI18n } from "@/i18n";
 
 interface LanguagePickerPopoverProps {
   value: string | null;
@@ -22,6 +23,7 @@ export function LanguagePickerPopover({
   mode = "meeting",
   autoSubtitle,
 }: LanguagePickerPopoverProps) {
+  const { t } = useI18n();
   const { recents } = useRecentLanguages();
   const [query, setQuery] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -58,9 +60,9 @@ export function LanguagePickerPopover({
     return options.filter(
       (l) =>
         l.code.toLowerCase().includes(filter) ||
-        l.label.toLowerCase().includes(filter),
+        t(l.labelKey).toLowerCase().includes(filter),
     );
-  }, [filter, mode, recentCodes]);
+  }, [filter, mode, recentCodes, t]);
 
   const recentsResolved = useMemo(
     () =>
@@ -71,9 +73,9 @@ export function LanguagePickerPopover({
           (l) =>
             !filter ||
             l.code.toLowerCase().includes(filter) ||
-            l.label.toLowerCase().includes(filter),
+            t(l.labelKey).toLowerCase().includes(filter),
         ),
-    [recents, filter],
+    [recents, filter, t],
   );
 
   const showAuto = mode === "meeting" && (!filter || "auto".includes(filter));
@@ -94,7 +96,7 @@ export function LanguagePickerPopover({
       ref={containerRef}
       className={cn("w-72 overflow-hidden", floatingSurface)}
       role="dialog"
-      aria-label="Pick summary language"
+      aria-label={t('models.pickSummaryLanguageAria')}
     >
       <div className="flex h-10 items-center gap-2 border-b border-af-border px-3">
         <Search className="h-4 w-4 shrink-0 text-af-text-4" aria-hidden="true" />
@@ -103,8 +105,8 @@ export function LanguagePickerPopover({
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search languages"
-          aria-label="Search languages"
+          placeholder={t('models.searchLanguages')}
+          aria-label={t('models.searchLanguages')}
           className="h-full min-w-0 flex-1 border-none bg-transparent text-[13px] text-af-text outline-none placeholder:text-af-text-4"
         />
       </div>
@@ -112,7 +114,7 @@ export function LanguagePickerPopover({
       <div className="max-h-80 overflow-y-auto p-1">
         {showRecents && (
           <>
-            <div className={sectionLabel}>Recently used</div>
+            <div className={sectionLabel}>{t('models.recentlyUsed')}</div>
             {recentsResolved.map((opt) => (
               <button
                 key={`recent-${opt.code}`}
@@ -122,7 +124,7 @@ export function LanguagePickerPopover({
                 className={row(value === opt.code)}
               >
                 <span className="truncate">
-                  {opt.label}
+                  {t(opt.labelKey)}
                   <span className="ml-1.5 text-[11px] font-normal text-af-text-4">{opt.code}</span>
                 </span>
                 {value === opt.code && tick}
@@ -140,7 +142,7 @@ export function LanguagePickerPopover({
             className={row(value === null)}
           >
             <span className="flex min-w-0 flex-col">
-              <span>Auto</span>
+              <span>{t('models.autoLabel')}</span>
               {autoSubtitle && <span className="text-[11px] font-normal text-af-text-3">{autoSubtitle}</span>}
             </span>
             {value === null && tick}
@@ -148,7 +150,7 @@ export function LanguagePickerPopover({
         )}
 
         {filteredAll.length > 0 && (
-          <div className={sectionLabel}>{mode === "meeting" ? "Other languages" : "All languages"}</div>
+          <div className={sectionLabel}>{mode === "meeting" ? t('models.otherLanguages') : t('models.allLanguages')}</div>
         )}
 
         {filteredAll.map((opt) => (
@@ -160,14 +162,14 @@ export function LanguagePickerPopover({
             className={row(value === opt.code)}
           >
             <span className="truncate">
-              {opt.label}
+              {t(opt.labelKey)}
               <span className="ml-1.5 text-[11px] font-normal text-af-text-4">{opt.code}</span>
             </span>
             {value === opt.code && tick}
           </button>
         ))}
 
-        {hasNoResults && <div className="px-2.5 py-2 text-[13px] text-af-text-4">No matches</div>}
+        {hasNoResults && <div className="px-2.5 py-2 text-[13px] text-af-text-4">{t('models.noMatches')}</div>}
       </div>
     </div>
   );

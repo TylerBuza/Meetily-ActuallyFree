@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronRight, Mic, Volume2 } from 'lucide-react';
 import { LiveAudioVisualizer } from './LiveAudioVisualizer';
 import { toDeviceOptionValue, deviceDisplayName } from '@/lib/audio-devices';
+import { useI18n } from '@/i18n';
 
 export interface AudioDevice {
   name: string;
@@ -76,6 +77,7 @@ export function AudioDeviceCard({
   /** The device is not used, e.g. while only chosen apps are recorded. */
   hideDevice?: boolean;
 }) {
+  const { t } = useI18n();
   const popoverRef = useRef<HTMLDivElement>(null);
   const onOpenChangeRef = useRef(onOpenChange);
   onOpenChangeRef.current = onOpenChange;
@@ -180,7 +182,7 @@ export function AudioDeviceCard({
       {open && !disabled && (
         <div
           role="dialog"
-          aria-label={`${label} devices`}
+          aria-label={t('recording.devicesAria', { label })}
           onMouseEnter={cancelClose}
           className={`absolute z-50 ${
             place === 'below'
@@ -193,7 +195,7 @@ export function AudioDeviceCard({
           <div className="w-[280px] overflow-hidden rounded-xl border border-[var(--af-border-strong)] bg-[var(--af-panel)] py-1 shadow-[var(--af-shadow-lg)]">
           <div className="max-h-72 overflow-y-auto" role="radiogroup" aria-label={label}>
             {devices.length === 0 && (
-              <p className="px-3 py-3 text-[13px] text-[var(--af-text-3)]">No devices found</p>
+              <p className="px-3 py-3 text-[13px] text-[var(--af-text-3)]">{t('recording.noDevicesFound')}</p>
             )}
             {devices.map((device) => {
               const value = toDeviceOptionValue(device);
@@ -217,7 +219,7 @@ export function AudioDeviceCard({
 
       {source && (
         <div className={`px-3.5 py-3${hideDevice ? '' : ' border-t border-[var(--af-border)]'}`}>
-          <div className="mb-2 text-[12px] font-medium text-[var(--af-text-3)]">{hideDevice ? label : 'Record'}</div>
+          <div className="mb-2 text-[12px] font-medium text-[var(--af-text-3)]">{hideDevice ? label : t('recording.recordSection')}</div>
           {source}
         </div>
       )}
@@ -259,7 +261,7 @@ export function AudioDeviceCard({
           />
         )}
         {unavailable && (
-          <p className="mt-2 text-[11px] text-[var(--af-text-3)]">{unavailable} is not connected.</p>
+          <p className="mt-2 text-[11px] text-[var(--af-text-3)]">{t('recording.deviceNotConnected', { device: unavailable })}</p>
         )}
         {note && <p className="mt-2 text-[11px] text-[var(--af-text-3)]">{note}</p>}
       </div>

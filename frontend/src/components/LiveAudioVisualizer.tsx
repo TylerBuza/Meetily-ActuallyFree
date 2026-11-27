@@ -14,7 +14,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { LOW_SYSTEM_AUDIO_MESSAGE, SystemAudioLevelMonitor } from '@/lib/system-audio-level';
+import { lowSystemAudioMessage, SystemAudioLevelMonitor } from '@/lib/system-audio-level';
+import { useI18n } from '@/i18n';
 
 /**
  * Per-source live audio level sample emitted by the Rust audio pipeline
@@ -89,6 +90,7 @@ export function LiveAudioVisualizer({
   feedTick,
   displayGain = 1,
 }: LiveAudioVisualizerProps) {
+  const { t } = useI18n();
   const previewMode = feedTick !== undefined;
   const [levels, setLevels] = useState<number[]>(() => new Array(bars).fill(0));
   const [limiterWarning, setLimiterWarning] = useState(false);
@@ -219,15 +221,22 @@ export function LiveAudioVisualizer({
       : source === 'mic'
         ? 'var(--af-accent)'
         : 'var(--af-c-violet)';
-  const warningText = 'System audio is hitting the limiter. Lower system gain or playback volume.';
+  const warningText = t('home.systemAudioHittingLimiter');
   const warning = !previewMode && active && (limiterWarning || lowWarning);
-  const advice = limiterWarning ? warningText : LOW_SYSTEM_AUDIO_MESSAGE;
+  const advice = limiterWarning ? warningText : lowSystemAudioMessage();
+  const sourceLabel = source === 'mic' ? t('home.microphone') : t('home.systemAudio');
 
   return (
     <div
       className={`flex items-end gap-[2px] h-4 ${fill ? 'w-full' : ''} ${className}`}
       role="group"
-      aria-label={`${source === 'mic' ? 'Microphone' : 'System'} audio level${warning ? limiterWarning ? '. Too loud.' : '. Very quiet.' : ''}`}
+      aria-label={
+        warning
+          ? limiterWarning
+            ? t('home.audioLevelTooLoud', { source: sourceLabel })
+            : t('home.audioLevelVeryQuiet', { source: sourceLabel })
+          : t('home.audioLevel', { source: sourceLabel })
+      }
       title={warning ? advice : undefined}
     >
       {levels.map((level, index) => {
@@ -245,7 +254,7 @@ export function LiveAudioVisualizer({
         );
       })}
       {warning && <span role="status" tabIndex={0} title={advice} aria-label={advice} className="shrink-0 self-center whitespace-nowrap text-[10px] font-medium text-[var(--af-warning)]">
-        {limiterWarning ? 'Too loud' : 'Low audio'}
+        {limiterWarning ? t('home.tooLoud') : t('home.lowAudio')}
       </span>}
     </div>
   );

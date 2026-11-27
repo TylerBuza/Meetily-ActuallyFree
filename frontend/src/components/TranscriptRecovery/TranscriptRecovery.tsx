@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * TranscriptRecovery Component
  *
@@ -6,7 +8,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { formatDistanceToNow } from 'date-fns';
+import { formatTimeAgo } from '@/lib/dates';
 import { AlertCircle, CheckCircle2, Clock, FileText, Trash2, XCircle } from 'lucide-react';
 import {
   Dialog,
@@ -23,6 +25,7 @@ import { MeetingMetadata, StoredTranscript } from '@/services/indexedDBService';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { useI18n } from '@/i18n';
 
 interface TranscriptRecoveryProps {
   isOpen: boolean;
@@ -41,6 +44,7 @@ export function TranscriptRecovery({
   onDelete,
   onLoadPreview,
 }: TranscriptRecoveryProps) {
+  const { t } = useI18n();
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
   const [previewTranscripts, setPreviewTranscripts] = useState<StoredTranscript[]>([]);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
@@ -88,7 +92,7 @@ export function TranscriptRecovery({
       onClose();
     } catch (error) {
       console.error('Recovery failed:', error);
-      toast.error('Could not recover the meeting', { description: 'Please try again.' });
+      toast.error(t('importing.recoverToastFailed'), { description: t('importing.recoveryToastFailedDescription') });
     } finally {
       setIsRecovering(false);
     }
@@ -105,7 +109,7 @@ export function TranscriptRecovery({
       setPreviewTranscripts([]);
     } catch (error) {
       console.error('Delete failed:', error);
-      toast.error('Could not delete the recording', { description: 'Please try again.' });
+      toast.error(t('importing.deleteToastFailed'), { description: t('importing.recoveryToastFailedDescription') });
     } finally {
       setIsDeleting(false);
     }
@@ -117,16 +121,18 @@ export function TranscriptRecovery({
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl h-[80vh] flex flex-col p-0">
         <DialogHeader className="px-6 pt-6">
-          <DialogTitle className="text-2xl">Recover Interrupted Meetings</DialogTitle>
+          <DialogTitle className="text-2xl">{t('importing.recoverTitle')}</DialogTitle>
           <DialogDescription>
-            We found {recoverableMeetings.length} meeting{recoverableMeetings.length !== 1 ? 's' : ''} that {recoverableMeetings.length !== 1 ? 'were' : 'was'} interrupted. Select a meeting to preview and recover it.
+            {recoverableMeetings.length !== 1
+              ? t('importing.recoverDescriptionMany', { count: recoverableMeetings.length })
+              : t('importing.recoverDescriptionOne', { count: recoverableMeetings.length })}
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 flex gap-4 px-6 pb-6 overflow-hidden">
           {/* Meeting List */}
           <div className="w-1/3 flex flex-col">
-            <h3 className="text-sm font-medium mb-2">Interrupted Meetings</h3>
+            <h3 className="text-sm font-medium mb-2">{t('importing.interruptedMeetings')}</h3>
             <ScrollArea className="flex-1 border rounded-lg">
               <div className="p-2 space-y-2">
                 {recoverableMeetings.map((meeting) => (
@@ -145,19 +151,21 @@ export function TranscriptRecovery({
                         <p className="font-medium text-sm truncate">{meeting.title}</p>
                         <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
                           <Clock className="w-3 h-3" />
-                          {formatDistanceToNow(new Date(meeting.lastUpdated), { addSuffix: true })}
+                          {formatTimeAgo(new Date(meeting.lastUpdated))}
                         </p>
                         <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
                           <FileText className="w-3 h-3" />
-                          {meeting.transcriptCount} transcript{meeting.transcriptCount !== 1 ? 's' : ''}
+                          {meeting.transcriptCount === 1
+                            ? t('importing.transcriptCountOne', { count: meeting.transcriptCount })
+                            : t('importing.transcriptsCount', { count: meeting.transcriptCount })}
                         </p>
                       </div>
                       {meeting.folderPath ? (
-                        <span title="Audio available">
+                        <span title={t('importing.audioAvailable')}>
                           <CheckCircle2 className="w-4 h-4 text-af-success flex-shrink-0" />
                         </span>
                       ) : (
-                        <span title="No audio">
+                        <span title={t('importing.noAudio')}>
                           <AlertCircle className="w-4 h-4 text-af-warning flex-shrink-0" />
                         </span>
                       )}
@@ -170,7 +178,7 @@ export function TranscriptRecovery({
 
           {/* Preview Panel */}
           <div className="flex-1 flex flex-col">
-            <h3 className="text-sm font-medium mb-2">Preview</h3>
+            <h3 className="text-sm font-medium mb-2">{t('importing.preview')}</h3>
             <div className="flex-1 border rounded-lg overflow-hidden flex flex-col">
               {selectedMeeting ? (
                 <>
@@ -178,22 +186,22 @@ export function TranscriptRecovery({
                   <div className="p-4 border-b bg-muted/50">
                     <h4 className="font-semibold">{selectedMeeting.title}</h4>
                     <p className="text-sm text-muted-foreground mt-1">
-                      Started {new Date(selectedMeeting.startTime).toLocaleString()}
+                      {t('importing.startedAt', { date: new Date(selectedMeeting.startTime).toLocaleString() })}
                     </p>
                     <div className="flex items-center gap-4 mt-2 text-sm">
                       <span className="flex items-center gap-1">
                         <FileText className="w-4 h-4" />
-                        {selectedMeeting.transcriptCount} transcripts
+                        {t('importing.transcriptsCount', { count: selectedMeeting.transcriptCount })}
                       </span>
                       {selectedMeeting.folderPath ? (
                         <span className="flex items-center gap-1 text-af-success">
                           <CheckCircle2 className="w-4 h-4" />
-                          Audio available
+                          {t('importing.audioAvailable')}
                         </span>
                       ) : (
                         <span className="flex items-center gap-1 text-af-warning">
                           <AlertCircle className="w-4 h-4" />
-                          No audio
+                          {t('importing.noAudio')}
                         </span>
                       )}
                     </div>
@@ -203,13 +211,16 @@ export function TranscriptRecovery({
                   <ScrollArea className="flex-1 p-4">
                     {isLoadingPreview ? (
                       <div className="flex items-center justify-center h-full text-muted-foreground">
-                        Loading preview...
+                        {t('importing.loadingPreview')}
                       </div>
                     ) : previewTranscripts.length > 0 ? (
                       <div className="space-y-3">
                         <Alert>
                           <AlertDescription>
-                            Showing first {previewTranscripts.length} transcript segments (of {selectedMeeting.transcriptCount} total)
+                            {t('importing.showingFirstSegments', {
+                              shown: previewTranscripts.length,
+                              total: selectedMeeting.transcriptCount,
+                            })}
                           </AlertDescription>
                         </Alert>
                         {previewTranscripts.map((transcript, index) => {
@@ -243,20 +254,22 @@ export function TranscriptRecovery({
                         })}
                         {selectedMeeting.transcriptCount > 10 && (
                           <p className="text-sm text-muted-foreground italic">
-                            ... and {selectedMeeting.transcriptCount - 10} more transcript{selectedMeeting.transcriptCount - 10 !== 1 ? 's' : ''}
+                            {selectedMeeting.transcriptCount - 10 === 1
+                              ? t('importing.andMoreTranscriptOne', { count: selectedMeeting.transcriptCount - 10 })
+                              : t('importing.andMoreTranscripts', { count: selectedMeeting.transcriptCount - 10 })}
                           </p>
                         )}
                       </div>
                     ) : (
                       <div className="flex items-center justify-center h-full text-muted-foreground">
-                        No transcripts to preview
+                        {t('importing.noTranscriptsToPreview')}
                       </div>
                     )}
                   </ScrollArea>
                 </>
               ) : (
                 <div className="flex items-center justify-center h-full text-muted-foreground">
-                  Select a meeting to preview
+                  {t('importing.selectMeetingToPreview')}
                 </div>
               )}
             </div>
@@ -269,7 +282,7 @@ export function TranscriptRecovery({
             onClick={onClose}
             disabled={isRecovering || isDeleting}
           >
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button
             variant="danger-ghost"
@@ -278,7 +291,7 @@ export function TranscriptRecovery({
             loading={isDeleting}
           >
             <Trash2 />
-            Delete
+            {t('common.delete')}
           </Button>
           <Button
             onClick={handleRecover}
@@ -286,7 +299,7 @@ export function TranscriptRecovery({
             loading={isRecovering}
           >
             <CheckCircle2 />
-            Recover
+            {t('importing.recover')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -294,9 +307,9 @@ export function TranscriptRecovery({
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
         variant="danger"
-        title="Delete this unsaved recording?"
-        description="Its recovered transcript is removed for good. This cannot be undone."
-        confirmLabel="Delete"
+        title={t('importing.deleteUnsavedTitle')}
+        description={t('importing.deleteUnsavedDescription')}
+        confirmLabel={t('common.delete')}
         onConfirm={handleDelete}
       />
     </Dialog>

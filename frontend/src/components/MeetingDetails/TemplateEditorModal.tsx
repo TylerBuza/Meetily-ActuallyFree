@@ -9,14 +9,15 @@ import { IconButton } from '@/components/ui/icon-button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useI18n, type MessageKey } from '@/i18n';
 
 type Format = 'paragraph' | 'list' | 'table' | 'string';
 
-const FORMATS: Array<{ value: Format; label: string }> = [
-  { value: 'list', label: 'List' },
-  { value: 'paragraph', label: 'Paragraph' },
-  { value: 'table', label: 'Table' },
-  { value: 'string', label: 'Single line' },
+const FORMATS: Array<{ value: Format; label: MessageKey }> = [
+  { value: 'list', label: 'summaries.formatList' },
+  { value: 'paragraph', label: 'summaries.formatParagraph' },
+  { value: 'table', label: 'summaries.formatTable' },
+  { value: 'string', label: 'summaries.formatSingleLine' },
 ];
 
 interface SectionDraft {
@@ -47,6 +48,7 @@ export function TemplateEditorModal({
   onSave,
   onDelete,
 }: TemplateEditorModalProps) {
+  const { t } = useI18n();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [sections, setSections] = useState<SectionDraft[]>([emptySection()]);
@@ -63,12 +65,12 @@ export function TemplateEditorModal({
   };
 
   const save = async () => {
-    if (!name.trim()) return toast.error('Template name is required');
-    if (!description.trim()) return toast.error('Template description is required');
+    if (!name.trim()) return toast.error(t('summaries.templateNameRequired'));
+    if (!description.trim()) return toast.error(t('summaries.templateDescriptionRequired'));
     const cleaned = sections
       .map((s) => ({ ...s, title: s.title.trim(), instruction: s.instruction.trim() }))
       .filter((s) => s.title && s.instruction);
-    if (cleaned.length === 0) return toast.error('Add at least one section with a title and instruction');
+    if (cleaned.length === 0) return toast.error(t('summaries.templateSectionRequired'));
 
     const template = {
       name: name.trim(),
@@ -81,16 +83,16 @@ export function TemplateEditorModal({
     };
 
     const id = slugify(name);
-    if (!id) return toast.error('Template name must contain letters or numbers');
+    if (!id) return toast.error(t('summaries.templateNameInvalid'));
 
     setSaving(true);
     try {
       await onSave(id, JSON.stringify(template, null, 2));
-      toast.success(`Template "${name}" saved`);
+      toast.success(t('summaries.templateSaved', { name }));
       reset();
       onClose();
     } catch (e) {
-      toast.error(typeof e === 'string' ? e : 'Failed to save template');
+      toast.error(typeof e === 'string' ? e : t('summaries.failedToSaveTemplate'));
     } finally {
       setSaving(false);
     }
@@ -99,11 +101,11 @@ export function TemplateEditorModal({
   const del = async (id: string, tname: string) => {
     try {
       await onDelete(id);
-      toast.success(`Deleted "${tname}"`);
+      toast.success(t('summaries.templateDeleted', { name: tname }));
     } catch (e) {
-      const msg = typeof e === 'string' ? e : 'Failed to delete';
+      const msg = typeof e === 'string' ? e : t('summaries.failedToDeleteTemplate');
       // Built-in templates aren't deletable and the backend returns "not found"
-      toast.error(msg.includes('not found') ? 'Built-in templates cannot be deleted' : msg);
+      toast.error(msg.includes('not found') ? t('summaries.builtInCannotDelete') : msg);
     }
   };
 
@@ -111,36 +113,36 @@ export function TemplateEditorModal({
     <Dialog open={open} onOpenChange={(next) => !next && !saving && onClose()}>
       <DialogContent className="max-w-2xl gap-5">
         <DialogHeader>
-          <DialogTitle>Custom summary templates</DialogTitle>
-          <DialogDescription>Choose the sections a summary has and how the model writes each one.</DialogDescription>
+          <DialogTitle>{t('summaries.customTemplatesTitle')}</DialogTitle>
+          <DialogDescription>{t('summaries.customTemplatesDescription')}</DialogDescription>
         </DialogHeader>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <label htmlFor="template-name" className="text-xs font-medium text-af-text-2">
-              Template name
+              {t('summaries.templateName')}
             </label>
-            <Input id="template-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Client discovery call" />
+            <Input id="template-name" value={name} onChange={(e) => setName(e.target.value)} placeholder={t('summaries.templateNamePlaceholder')} />
           </div>
           <div className="space-y-1.5">
             <label htmlFor="template-description" className="text-xs font-medium text-af-text-2">
-              Description
+              {t('summaries.description')}
             </label>
             <Input
               id="template-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="What is this template for?"
+              placeholder={t('summaries.descriptionPlaceholder')}
             />
           </div>
         </div>
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-af-text-2">Sections</span>
+            <span className="text-xs font-medium text-af-text-2">{t('summaries.sections')}</span>
             <Button variant="ghost" size="xs" onClick={() => setSections((p) => [...p, emptySection()])}>
               <Plus />
-              Add section
+              {t('summaries.addSection')}
             </Button>
           </div>
 
@@ -150,25 +152,25 @@ export function TemplateEditorModal({
                 <Input
                   value={s.title}
                   onChange={(e) => updateSection(i, { title: e.target.value })}
-                  placeholder="Section title, e.g. Action items"
-                  aria-label="Section title"
+                  placeholder={t('summaries.sectionTitlePlaceholder')}
+                  aria-label={t('summaries.sectionTitle')}
                   className="flex-1"
                 />
                 <Select value={s.format} onValueChange={(value) => updateSection(i, { format: value as Format })}>
-                  <SelectTrigger className="w-36 shrink-0" aria-label="Section format">
+                  <SelectTrigger className="w-36 shrink-0" aria-label={t('summaries.sectionFormat')}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {FORMATS.map((format) => (
                       <SelectItem key={format.value} value={format.value}>
-                        {format.label}
+                        {t(format.label)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
                 {sections.length > 1 && (
                   <IconButton
-                    label="Remove section"
+                    label={t('summaries.removeSection')}
                     icon={<X />}
                     tooltip={false}
                     className="shrink-0 text-af-text-3"
@@ -180,8 +182,8 @@ export function TemplateEditorModal({
                 value={s.instruction}
                 onChange={(e) => updateSection(i, { instruction: e.target.value })}
                 rows={2}
-                placeholder="What should the model write here? e.g. List each action item with its owner."
-                aria-label="Section instruction"
+                placeholder={t('summaries.sectionInstructionPlaceholder')}
+                aria-label={t('summaries.sectionInstruction')}
                 className="resize-none"
               />
             </div>
@@ -190,37 +192,37 @@ export function TemplateEditorModal({
 
         <DialogFooter>
           <Button variant="ghost" onClick={reset} disabled={saving}>
-            Clear
+            {t('summaries.clear')}
           </Button>
           <Button onClick={save} loading={saving}>
-            Save template
+            {t('summaries.saveTemplate')}
           </Button>
         </DialogFooter>
 
         {availableTemplates.length > 0 && (
           <div className="border-t border-af-border pt-4">
-            <h3 className="mb-1.5 text-[13px] font-semibold text-af-text">Your templates</h3>
+            <h3 className="mb-1.5 text-[13px] font-semibold text-af-text">{t('summaries.yourTemplates')}</h3>
             <ul className="-mx-2">
-              {availableTemplates.map((t) => (
-                <li key={t.id} className="group/row flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-af-hover/60">
+              {availableTemplates.map((tpl) => (
+                <li key={tpl.id} className="group/row flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-af-hover/60">
                   <div className="min-w-0">
-                    <div className="truncate text-sm text-af-text">{t.name}</div>
-                    <div className="truncate text-xs text-af-text-3">{t.description}</div>
+                    <div className="truncate text-sm text-af-text">{tpl.name}</div>
+                    <div className="truncate text-xs text-af-text-3">{tpl.description}</div>
                   </div>
                   <IconButton
-                    label={`Delete ${t.name}`}
+                    label={t('summaries.deleteTemplate', { name: tpl.name })}
                     icon={<Trash2 />}
                     variant="danger-ghost"
                     size="icon-xs"
                     tooltip={false}
                     className="shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover/row:opacity-100"
-                    onClick={() => del(t.id, t.name)}
+                    onClick={() => del(tpl.id, tpl.name)}
                   />
                 </li>
               ))}
             </ul>
             <p className="mt-2 text-xs text-af-text-4">
-              Built-in templates can&apos;t be deleted. Saving a template with the same name as a built-in replaces it.
+              {t('summaries.builtInTemplatesNote')}
             </p>
           </div>
         )}

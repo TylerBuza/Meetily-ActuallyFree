@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { useI18n } from "@/i18n"
 
 export interface ConfirmDialogProps {
   open: boolean
@@ -31,11 +32,14 @@ export function ConfirmDialog({
   onOpenChange,
   title,
   description,
-  confirmLabel = "Confirm",
-  cancelLabel = "Cancel",
+  confirmLabel,
+  cancelLabel,
   variant = "default",
   onConfirm,
 }: ConfirmDialogProps) {
+  const { t } = useI18n()
+  const confirmText = confirmLabel ?? t('ui.confirm')
+  const cancelText = cancelLabel ?? t('ui.cancel')
   const [working, setWorking] = React.useState(false)
 
   const confirm = async () => {
@@ -66,10 +70,10 @@ export function ConfirmDialog({
         </DialogHeader>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={working}>
-            {cancelLabel}
+            {cancelText}
           </Button>
           <Button variant={variant === "danger" ? "danger" : "primary"} onClick={confirm} loading={working} autoFocus>
-            {confirmLabel}
+            {confirmText}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -8,8 +8,10 @@ import { toast } from "sonner"
 import Analytics from "@/lib/analytics"
 import { useConfig, NotificationSettings } from "@/contexts/ConfigContext"
 import { ThemePicker } from "@/components/settings/ThemePicker"
+import { useI18n } from "@/i18n"
 
 export function PreferenceSettings() {
+  const { t } = useI18n();
   const {
     notificationSettings,
     storageLocations,
@@ -165,11 +167,11 @@ export function PreferenceSettings() {
         preferences: { ...preferences, save_folder: selectedFolder },
       });
       updateRecordingsLocation(selectedFolder);
-      toast.success('Recordings folder updated');
+      toast.success(t('settings.recordingsFolderUpdated'));
       Analytics.track('recordings_folder_changed', { source: 'preferences' }).catch(console.error);
     } catch (error) {
       console.error('Failed to change recordings folder:', error);
-      toast.error('Could not update recordings folder', {
+      toast.error(t('settings.couldNotUpdateRecordingsFolder'), {
         description: String(error),
       });
     } finally {
@@ -179,12 +181,12 @@ export function PreferenceSettings() {
 
   // Show loading only if we're actually loading and don't have cached data
   if (isLoadingPreferences && !notificationSettings && !storageLocations) {
-    return <div className="max-w-2xl mx-auto p-6">Loading Preferences...</div>
+    return <div className="max-w-2xl mx-auto p-6">{t('settings.loadingPreferences')}</div>
   }
 
   // Show loading if notificationsEnabled hasn't been determined yet
   if (notificationsEnabled === null && !isLoadingPreferences) {
-    return <div className="max-w-2xl mx-auto p-6">Loading Preferences...</div>
+    return <div className="max-w-2xl mx-auto p-6">{t('settings.loadingPreferences')}</div>
   }
 
   // Ensure we have a boolean value for the Switch component
@@ -194,24 +196,24 @@ export function PreferenceSettings() {
     <div className="space-y-6">
       {/* Appearance / Theme Section */}
       <div className="rounded-2xl border border-af-border bg-af-panel-2/40 p-5">
-        <h3 className="text-[15px] font-semibold text-af-text mb-1">Theme</h3>
-        <p className="text-sm text-af-text-2 mb-4">Applies to every window, including the floating recording bar.</p>
+        <h3 className="text-[15px] font-semibold text-af-text mb-1">{t('settings.themeTitle')}</h3>
+        <p className="text-sm text-af-text-2 mb-4">{t('settings.themeDescription')}</p>
         <ThemePicker />
       </div>
 
       {/* Your Name Section */}
       <div className="rounded-2xl border border-af-border bg-af-panel-2/40 p-5">
-        <h3 className="text-[15px] font-semibold text-af-text mb-2">Your Name</h3>
+        <h3 className="text-[15px] font-semibold text-af-text mb-2">{t('settings.yourNameTitle')}</h3>
         <p className="text-sm text-af-text-2 mb-3">
-          Labels your microphone in transcripts as <strong>You ({userName || 'Name'})</strong>. Your audio is
-          always tagged as you; other participants are labelled separately (&quot;Guest&quot;, and Speaker 1/2/3 once
-          voice diarization is enabled).
+          {t('settings.yourNameDescription')}
+          <strong>{t('settings.youLabel', { name: userName || t('settings.nameFallback') })}</strong>
+          {t('settings.yourNameDescriptionTail')}
         </p>
         <input
           type="text"
           value={userName}
           onChange={(e) => saveUserName(e.target.value)}
-          placeholder="e.g. Tyler"
+          placeholder={t('settings.yourNamePlaceholder')}
           className="w-full max-w-sm rounded-lg border border-af-border px-3 py-2 text-sm focus:border-af-accent/40 focus:outline-none"
         />
       </div>
@@ -220,8 +222,8 @@ export function PreferenceSettings() {
       <div className="rounded-2xl border border-af-border bg-af-panel-2/40 p-5">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-[15px] font-semibold text-af-text mb-2">Notifications</h3>
-            <p className="text-sm text-af-text-2">Enable or disable notifications of start and end of meeting</p>
+            <h3 className="text-[15px] font-semibold text-af-text mb-2">{t('settings.notificationsTitle')}</h3>
+            <p className="text-sm text-af-text-2">{t('settings.notificationsDescription')}</p>
           </div>
           <Switch checked={notificationsEnabledValue} onCheckedChange={setNotificationsEnabled} />
         </div>
@@ -229,9 +231,9 @@ export function PreferenceSettings() {
 
       {/* Data Storage Locations Section */}
       <div className="rounded-2xl border border-af-border bg-af-panel-2/40 p-5">
-        <h3 className="text-[15px] font-semibold text-af-text mb-4">Data Storage Locations</h3>
+        <h3 className="text-[15px] font-semibold text-af-text mb-4">{t('settings.dataStorageLocations')}</h3>
         <p className="text-sm text-af-text-2 mb-6">
-          View and access where Meetily stores your data
+          {t('settings.dataStorageLocationsDescription')}
         </p>
 
         <div className="space-y-4">
@@ -267,9 +269,9 @@ export function PreferenceSettings() {
 
           {/* Recordings Location */}
           <div className="p-4 border rounded-lg bg-af-panel-2">
-            <div className="font-medium mb-2">Meeting Recordings</div>
+            <div className="font-medium mb-2">{t('settings.meetingRecordings')}</div>
             <div className="text-sm text-af-text-2 mb-3 break-all font-mono text-xs">
-              {storageLocations?.recordings || 'Loading...'}
+              {storageLocations?.recordings || t('settings.loadingData')}
             </div>
             <div className="flex flex-wrap gap-2">
               <button
@@ -278,14 +280,14 @@ export function PreferenceSettings() {
                 className="flex items-center gap-2 px-3 py-2 text-sm border border-af-border-strong rounded-md hover:bg-af-panel-2 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <FolderCog className="w-4 h-4" />
-                {isChoosingRecordingsFolder ? 'Choosing...' : 'Change Folder'}
+                {isChoosingRecordingsFolder ? t('settings.choosingFolder') : t('settings.changeFolder')}
               </button>
               <button
                 onClick={() => handleOpenFolder('recordings')}
                 className="flex items-center gap-2 px-3 py-2 text-sm border border-af-border-strong rounded-md hover:bg-af-panel-2 transition-colors"
               >
                 <FolderOpen className="w-4 h-4" />
-                Open Folder
+                {t('settings.openFolder')}
               </button>
             </div>
           </div>
@@ -293,9 +295,8 @@ export function PreferenceSettings() {
 
         <div className="mt-4 p-3 bg-af-accent/10 rounded-md">
           <p className="text-xs text-af-accent">
-            <strong>Portable core data:</strong> Models, database, and templates use Meetily&apos;s app data
-            folder. Recordings stay in the user-facing folder shown above so they remain easy to find,
-            play, and back up.
+            <strong>{t('settings.portableCoreData')}</strong>
+            {t('settings.portableCoreDataDescription')}
           </p>
         </div>
       </div>

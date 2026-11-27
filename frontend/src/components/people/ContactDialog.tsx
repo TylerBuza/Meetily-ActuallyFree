@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Avatar } from '@/components/ui/avatar';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { announceChange, createPerson, updatePerson, type ContactRow, type PersonInput } from '@/lib/workspace-api';
+import { useI18n } from '@/i18n';
 
 const EMPTY: PersonInput = { displayName: '', role: '', company: '', email: '', phone: '' };
 
@@ -35,6 +36,7 @@ export function ContactDialog({
 }) {
   const [form, setForm] = useState<PersonInput>(EMPTY);
   const [saving, setSaving] = useState(false);
+  const { t } = useI18n();
   const editing = !!contact;
 
   useEffect(() => {
@@ -69,11 +71,11 @@ export function ContactDialog({
       };
       const saved = editing ? await updatePerson(contact!.id, input) : await createPerson(input);
       announceChange('people');
-      toast.success(editing ? 'Contact updated' : `${name} added to contacts`);
+      toast.success(editing ? t('people.contactUpdated') : t('people.contactAdded', { name }));
       onSaved?.(saved);
       onOpenChange(false);
     } catch (error) {
-      toast.error(editing ? 'Could not update the contact' : 'Could not add the contact', {
+      toast.error(editing ? t('people.couldNotUpdateContact') : t('people.couldNotAddContact'), {
         description: error instanceof Error ? error.message : String(error),
       });
     } finally {
@@ -87,12 +89,10 @@ export function ContactDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
             <Avatar name={form.displayName.trim() || '?'} size="md" />
-            {editing ? 'Edit contact' : 'New contact'}
+            {editing ? t('people.editContact') : t('people.newContact')}
           </DialogTitle>
           <DialogDescription>
-            {editing
-              ? 'Renaming updates every meeting where they are a named speaker.'
-              : 'Add someone before you meet, so you can pick them when naming speakers.'}
+            {editing ? t('people.editContactDescription') : t('people.newContactDescription')}
           </DialogDescription>
         </DialogHeader>
         <form
@@ -102,23 +102,23 @@ export function ContactDialog({
             void save();
           }}
         >
-          <Field label="Name">
-            <Input autoFocus value={form.displayName} onChange={set('displayName')} placeholder="Full name" />
+          <Field label={t('people.name')}>
+            <Input autoFocus value={form.displayName} onChange={set('displayName')} placeholder={t('people.fullNamePlaceholder')} />
           </Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Role">
-              <Input value={form.role ?? ''} onChange={set('role')} placeholder="e.g. Product manager" />
+            <Field label={t('people.role')}>
+              <Input value={form.role ?? ''} onChange={set('role')} placeholder={t('people.rolePlaceholder')} />
             </Field>
-            <Field label="Company">
-              <Input value={form.company ?? ''} onChange={set('company')} placeholder="e.g. Acme" />
+            <Field label={t('people.company')}>
+              <Input value={form.company ?? ''} onChange={set('company')} placeholder={t('people.companyPlaceholder')} />
             </Field>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Email">
+            <Field label={t('people.email')}>
               <Input type="email" value={form.email ?? ''} onChange={set('email')} placeholder="name@company.com" />
             </Field>
-            <Field label="Phone">
-              <Input type="tel" value={form.phone ?? ''} onChange={set('phone')} placeholder="Optional" />
+            <Field label={t('people.phone')}>
+              <Input type="tel" value={form.phone ?? ''} onChange={set('phone')} placeholder={t('common.optional')} />
             </Field>
           </div>
           {/* Lets Enter submit from any field. */}
@@ -126,10 +126,10 @@ export function ContactDialog({
         </form>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button onClick={() => void save()} loading={saving} disabled={!form.displayName.trim()}>
-            {editing ? 'Save' : 'Add contact'}
+            {editing ? t('common.save') : t('people.addContact')}
           </Button>
         </DialogFooter>
       </DialogContent>

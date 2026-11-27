@@ -15,6 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Spinner } from '@/components/ui/spinner';
 import type { PerAppTarget } from '@/components/RecordingSettings';
+import { useI18n, type MessageKey } from '@/i18n';
 
 /** Per-app capture exists on Windows and macOS. */
 export function useAppAudioSupported(): boolean {
@@ -29,16 +30,17 @@ const STATUS_DOT: Record<ReturnType<AppAudioChoice['statusOf']>, string> = {
   unknown: 'bg-af-text-4/50',
 };
 
-const STATUS_LABEL: Record<ReturnType<AppAudioChoice['statusOf']>, string> = {
-  playing: 'playing sound',
-  open: 'open',
-  closed: 'not open',
+const STATUS_LABEL: Record<ReturnType<AppAudioChoice['statusOf']>, MessageKey | ''> = {
+  playing: 'recording.statusPlaying',
+  open: 'recording.statusOpen',
+  closed: 'recording.statusClosed',
   unknown: '',
 };
 
 function ModeSwitch({ choice, disabled }: { choice: AppAudioChoice; disabled?: boolean }) {
+  const { t } = useI18n();
   return (
-    <div role="radiogroup" aria-label="Computer audio to record" className="inline-flex w-full rounded-lg border border-af-border bg-af-panel-2 p-[3px]">
+    <div role="radiogroup" aria-label={t('recording.computerAudioToRecord')} className="inline-flex w-full rounded-lg border border-af-border bg-af-panel-2 p-[3px]">
       {([false, true] as const).map((onlyApps) => {
         const selected = choice.onlyApps === onlyApps;
         return (
@@ -54,7 +56,7 @@ function ModeSwitch({ choice, disabled }: { choice: AppAudioChoice; disabled?: b
               selected ? 'bg-af-raised text-af-text shadow-sm' : 'text-af-text-3 hover:text-af-text disabled:hover:text-af-text-3',
             )}
           >
-            {onlyApps ? 'Only chosen apps' : 'All computer audio'}
+            {onlyApps ? t('recording.onlyChosenApps') : t('recording.allComputerAudio')}
           </button>
         );
       })}
@@ -63,6 +65,7 @@ function ModeSwitch({ choice, disabled }: { choice: AppAudioChoice; disabled?: b
 }
 
 function AddAppButton({ choice, disabled }: { choice: AppAudioChoice; disabled?: boolean }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const available = useMemo(
     () =>
@@ -105,22 +108,22 @@ function AddAppButton({ choice, disabled }: { choice: AppAudioChoice; disabled?:
           className="inline-flex h-7 items-center gap-1 rounded-full border border-dashed border-af-border-strong px-2.5 text-xs font-medium text-af-text-2 transition-colors hover:border-af-accent/50 hover:text-af-accent disabled:pointer-events-none disabled:opacity-50"
         >
           <Plus className="h-3.5 w-3.5" />
-          Add app
+          {t('recording.addApp')}
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 overflow-hidden p-0">
         <Command>
-          <CommandInput placeholder="Search open apps" />
+          <CommandInput placeholder={t('recording.searchOpenApps')} />
           <CommandList className="max-h-72 p-1">
             {choice.scanning && available.length === 0 ? (
               <div className="flex items-center gap-2 px-3 py-4 text-xs text-af-text-3">
-                <Spinner size={12} /> Looking for open apps…
+                <Spinner size={12} /> {t('recording.lookingForApps')}
               </div>
             ) : (
-              <CommandEmpty>No matching open apps.</CommandEmpty>
+              <CommandEmpty>{t('recording.noMatchingApps')}</CommandEmpty>
             )}
-            {playing.length > 0 && <CommandGroup heading="Playing sound now">{playing.map(row)}</CommandGroup>}
-            {others.length > 0 && <CommandGroup heading="Open apps">{others.map(row)}</CommandGroup>}
+            {playing.length > 0 && <CommandGroup heading={t('recording.playingSoundNow')}>{playing.map(row)}</CommandGroup>}
+            {others.length > 0 && <CommandGroup heading={t('recording.openApps')}>{others.map(row)}</CommandGroup>}
           </CommandList>
           <div className="border-t border-af-border p-1">
             <button
@@ -132,7 +135,7 @@ function AddAppButton({ choice, disabled }: { choice: AppAudioChoice; disabled?:
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] text-af-text-2 transition-colors hover:bg-af-hover hover:text-af-text"
             >
               <FolderOpen className="h-4 w-4 text-af-text-3" />
-              Choose an app that is not open…
+              {t('recording.chooseAppNotOpen')}
             </button>
           </div>
         </Command>
@@ -142,20 +145,22 @@ function AddAppButton({ choice, disabled }: { choice: AppAudioChoice; disabled?:
 }
 
 function AppChip({ target, choice, disabled }: { target: PerAppTarget; choice: AppAudioChoice; disabled?: boolean }) {
+  const { t } = useI18n();
   const status = choice.statusOf(target);
+  const statusLabel = STATUS_LABEL[status];
   return (
     <li className="flex h-7 max-w-full items-center gap-1.5 rounded-full border border-af-border bg-af-panel pl-2.5 pr-1 text-xs text-af-text">
       <span
         className={cn('h-2 w-2 shrink-0 rounded-full', STATUS_DOT[status])}
         role="img"
-        aria-label={STATUS_LABEL[status] || undefined}
+        aria-label={statusLabel ? t(statusLabel) : undefined}
       />
       <span className="min-w-0 truncate">{target.name}</span>
       <button
         type="button"
         onClick={() => choice.removeApp(target.executable)}
         disabled={disabled}
-        aria-label={`Stop recording ${target.name}`}
+        aria-label={t('recording.stopRecordingApp', { app: target.name })}
         className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-af-text-4 transition-colors hover:bg-af-hover hover:text-af-text disabled:pointer-events-none"
       >
         <X className="h-3 w-3" />
@@ -180,17 +185,18 @@ export function AppAudioSource({
 }) {
   const platform = usePlatform();
   const compact = variant === 'compact';
+  const { t } = useI18n();
 
   if (!choice.loaded) return <div className="af-skeleton h-8 rounded-lg" />;
 
   const hint = live
-    ? 'Applies from your next recording.'
+    ? t('recording.appsHintNextRecording')
     : choice.onlyApps && choice.targets.length === 0
-      ? 'Add an app before starting, or choose all computer audio.'
+      ? t('recording.appsHintAddFirst')
       : choice.onlyApps && platform === 'macos'
-        ? 'On macOS choose one app, start audio in it, then start recording.'
+        ? t('recording.appsHintMac')
         : choice.onlyApps
-          ? "Only these apps are recorded. If none is open when you start, the recording can't start."
+          ? t('recording.appsHintOnly')
           : null;
 
   return (
@@ -210,13 +216,13 @@ export function AppAudioSource({
       {choice.onlyApps && !compact && choice.targets.length > 0 && (
         <p className="flex items-center gap-3 text-[11px] text-af-text-4">
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-af-success" /> Playing sound
+            <span className="h-2 w-2 rounded-full bg-af-success" /> {t('recording.legendPlaying')}
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-af-text-4" /> Open
+            <span className="h-2 w-2 rounded-full bg-af-text-4" /> {t('recording.legendOpen')}
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full border border-af-text-4" /> Not open
+            <span className="h-2 w-2 rounded-full border border-af-text-4" /> {t('recording.legendNotOpen')}
           </span>
         </p>
       )}
@@ -226,6 +232,7 @@ export function AppAudioSource({
 
 /** Settings > Recording card. */
 export function AppAudioCard() {
+  const { t } = useI18n();
   const supported = useAppAudioSupported();
   const choice = useAppAudio();
   if (!supported) return null;
@@ -234,10 +241,9 @@ export function AppAudioCard() {
       <div className="mb-3 flex items-start gap-3">
         <AppWindow className="mt-0.5 h-4 w-4 shrink-0 text-af-accent" />
         <div className="min-w-0">
-          <h3 className="text-[15px] font-semibold text-af-text">Computer audio</h3>
+          <h3 className="text-[15px] font-semibold text-af-text">{t('recording.computerAudioTitle')}</h3>
           <p className="mt-0.5 text-[13px] leading-relaxed text-af-text-3">
-            Record everything your computer plays, or only the apps you choose, such as just the call without music or
-            notification sounds. You can also change this from the record card.
+            {t('recording.computerAudioDescription')}
           </p>
         </div>
       </div>

@@ -1,30 +1,32 @@
 import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Lock, Sparkles, Cpu, RefreshCw } from 'lucide-react';
+import { Lock, Sparkles, Cpu, RefreshCw, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { OnboardingContainer } from '../OnboardingContainer';
 import { useOnboarding } from '@/contexts/OnboardingContext';
 import { usePlatform } from '@/hooks/usePlatform';
+import { useI18n, type MessageKey } from '@/i18n';
 
 export function WelcomeStep() {
   const { goNext } = useOnboarding();
   const platform = usePlatform();
+  const { t } = useI18n();
   const updatesSupported = platform !== 'macos';
   const [checkUpdates, setCheckUpdates] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const features = [
+  const features: Array<{ icon: LucideIcon; titleKey: MessageKey }> = [
     {
       icon: Lock,
-      title: 'Your data never leaves your device',
+      titleKey: 'onboarding.welcomeFeaturePrivacy',
     },
     {
       icon: Sparkles,
-      title: 'Intelligent summaries & insights',
+      titleKey: 'onboarding.welcomeFeatureInsights',
     },
     {
       icon: Cpu,
-      title: 'Works offline, no cloud required',
+      titleKey: 'onboarding.welcomeFeatureOffline',
     },
   ];
 
@@ -46,8 +48,8 @@ export function WelcomeStep() {
 
   return (
     <OnboardingContainer
-      title="Welcome to Meetily"
-      description="Record. Transcribe. Summarize. All on your device."
+      title={t('onboarding.welcomeTitle')}
+      description={t('onboarding.welcomeDescription')}
       step={1}
       hideProgress={true}
     >
@@ -66,7 +68,7 @@ export function WelcomeStep() {
                     <Icon className="w-3 h-3 text-af-text-2" />
                   </div>
                 </div>
-                <p className="text-sm text-af-text-2 leading-relaxed">{feature.title}</p>
+                <p className="text-sm text-af-text-2 leading-relaxed">{t(feature.titleKey)}</p>
               </div>
             );
           })}
@@ -78,9 +80,9 @@ export function WelcomeStep() {
               <RefreshCw className="h-3.5 w-3.5 text-af-text-2" />
             </div>
             <div>
-              <h2 className="text-sm font-medium text-af-text">Check for updates when Meetily starts?</h2>
+              <h2 className="text-sm font-medium text-af-text">{t('onboarding.updatesTitle')}</h2>
               <p className="mt-1 text-xs leading-relaxed text-af-text-3">
-                This checks this fork&apos;s GitHub releases. No analytics or usage data is sent.
+                {t('onboarding.updatesDescription')}
               </p>
             </div>
           </div>
@@ -95,7 +97,7 @@ export function WelcomeStep() {
                   : 'border-af-border text-af-text-2 hover:border-af-border-strong'
               }`}
             >
-              Yes, check on launch
+              {t('onboarding.updatesYes')}
             </button>
             <button
               type="button"
@@ -107,7 +109,7 @@ export function WelcomeStep() {
                   : 'border-af-border text-af-text-2 hover:border-af-border-strong'
               }`}
             >
-              No, I&apos;ll check manually
+              {t('onboarding.updatesNo')}
             </button>
           </div>
         </div>}
@@ -120,10 +122,10 @@ export function WelcomeStep() {
               disabled={saving}
               className="w-full h-11 bg-af-elevated hover:bg-af-elevated text-white"
             >
-              {saving ? 'Saving…' : 'Get Started'}
+              {saving ? t('common.saving') : t('onboarding.welcomeGetStarted')}
             </Button>
           )}
-          <p className="text-xs text-center text-af-text-3">Takes less than 3 minutes</p>
+          <p className="text-xs text-center text-af-text-3">{t('onboarding.welcomeTimeEstimate')}</p>
         </div>
       </div>
     </OnboardingContainer>

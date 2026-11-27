@@ -24,18 +24,20 @@ import { LocalStackStatus } from '@/components/LocalStackStatus';
 import { AboutSettings } from '@/components/AboutSettings';
 import { LabsSettings } from '@/components/LabsSettings';
 import { AppAudioCard } from '@/components/recording/AppAudioSource';
+import { UiLanguagePicker } from '@/components/settings/UiLanguagePicker';
+import { useI18n, type MessageKey } from '@/i18n';
 
 type SectionId = 'general' | 'recording' | 'transcription' | 'summaries' | 'detection' | 'local' | 'labs' | 'about';
 
-const SECTIONS: Array<{ id: SectionId; label: string; hint: string; description: string; icon: LucideIcon }> = [
-  { id: 'general', label: 'General', hint: 'Theme, name, notifications', description: 'How Meetily looks, what it calls you, and where it keeps your files.', icon: Settings2 },
-  { id: 'recording', label: 'Recording', hint: 'Saving, computer audio', description: 'How recordings are saved, and which computer audio they capture.', icon: Mic },
-  { id: 'transcription', label: 'Transcription', hint: 'Speech models, speakers', description: 'The speech models that write the transcript, and telling voices apart.', icon: AudioLines },
-  { id: 'summaries', label: 'Summaries', hint: 'Model, language', description: 'Which AI model writes summaries and answers Ask AI, and in what language.', icon: Sparkles },
-  { id: 'detection', label: 'Meeting detection', hint: 'Prompt to record', description: 'Get a prompt to record when a call starts in another app.', icon: Radar },
-  { id: 'local', label: 'Local AI', hint: 'Runtime status', description: 'The on-device engines that run transcription and summaries.', icon: Cpu },
-  { id: 'labs', label: 'Labs', hint: 'Experimental features', description: 'Experimental features. Each stays off until you turn it on, and may change in later versions.', icon: FlaskConical },
-  { id: 'about', label: 'About', hint: 'Version, updates', description: 'Version, updates and links.', icon: Info },
+const SECTIONS: Array<{ id: SectionId; label: MessageKey; hint: MessageKey; description: MessageKey; icon: LucideIcon }> = [
+  { id: 'general', label: 'settings.generalLabel', hint: 'settings.generalHint', description: 'settings.generalDescription', icon: Settings2 },
+  { id: 'recording', label: 'settings.recordingLabel', hint: 'settings.recordingHint', description: 'settings.recordingDescription', icon: Mic },
+  { id: 'transcription', label: 'settings.transcriptionLabel', hint: 'settings.transcriptionHint', description: 'settings.transcriptionDescription', icon: AudioLines },
+  { id: 'summaries', label: 'settings.summariesLabel', hint: 'settings.summariesHint', description: 'settings.summariesDescription', icon: Sparkles },
+  { id: 'detection', label: 'settings.detectionLabel', hint: 'settings.detectionHint', description: 'settings.detectionDescription', icon: Radar },
+  { id: 'local', label: 'settings.localLabel', hint: 'settings.localHint', description: 'settings.localDescription', icon: Cpu },
+  { id: 'labs', label: 'settings.labsLabel', hint: 'settings.labsHint', description: 'settings.labsDescription', icon: FlaskConical },
+  { id: 'about', label: 'settings.aboutLabel', hint: 'settings.aboutHint', description: 'settings.aboutDescription', icon: Info },
 ];
 
 /** Older links used tab names. */
@@ -54,19 +56,20 @@ const isSection = (value: string | null): value is SectionId => !!value && SECTI
 
 function ImportCard() {
   const { openImportDialog } = useImportDialog();
+  const { t } = useI18n();
   return (
     <div className="flex flex-wrap items-center gap-4 rounded-2xl border border-af-border bg-af-panel-2/40 p-5">
       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-af-accent/[0.12] text-af-accent">
         <FileAudio className="h-5 w-5" />
       </span>
       <div className="min-w-0 flex-1">
-        <h3 className="text-[15px] font-semibold text-af-text">Import a recording</h3>
+        <h3 className="text-[15px] font-semibold text-af-text">{t('settings.importTitle')}</h3>
         <p className="mt-0.5 text-[13px] leading-relaxed text-af-text-3">
-          Transcribe an audio file you already have. You can also drop a file anywhere in the window.
+          {t('settings.importDescription')}
         </p>
       </div>
       <Button variant="secondary" size="sm" onClick={() => openImportDialog()}>
-        Choose a file
+        {t('common.chooseFile')}
       </Button>
     </div>
   );
@@ -76,6 +79,7 @@ function SettingsInner() {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
+  const { t } = useI18n();
   const { transcriptModelConfig, setTranscriptModelConfig } = useConfig();
   const [active, setActive] = useState<SectionId>('general');
 
@@ -115,8 +119,8 @@ function SettingsInner() {
 
   return (
     <div className="flex h-full min-h-0 bg-af-panel">
-      <nav aria-label="Settings sections" className="w-60 shrink-0 overflow-y-auto border-r border-af-border px-3 pb-6 pt-8">
-        <h1 className="px-3 text-lg font-semibold tracking-tight text-af-text">Settings</h1>
+      <nav aria-label={t('settings.navLabel')} className="w-60 shrink-0 overflow-y-auto border-r border-af-border px-3 pb-6 pt-8">
+        <h1 className="px-3 text-lg font-semibold tracking-tight text-af-text">{t('settings.title')}</h1>
         <ul className="mt-4 space-y-0.5">
           {SECTIONS.map(({ id, label, hint, icon: Icon }) => {
             const selected = id === active;
@@ -133,8 +137,8 @@ function SettingsInner() {
                 >
                   <Icon className={cn('h-4 w-4 shrink-0 transition-colors', selected ? 'text-af-accent' : 'text-af-text-3 group-hover/nav:text-af-text-2')} />
                   <span className="min-w-0">
-                    <span className="block truncate text-[13px] font-medium">{label}</span>
-                    <span className="block truncate text-[11px] text-af-text-4">{hint}</span>
+                    <span className="block truncate text-[13px] font-medium">{t(label)}</span>
+                    <span className="block truncate text-[11px] text-af-text-4">{t(hint)}</span>
                   </span>
                 </button>
               </li>
@@ -146,11 +150,16 @@ function SettingsInner() {
       <main className="min-w-0 flex-1 overflow-y-auto">
         <div key={section.id} className="mx-auto w-full max-w-3xl px-8 pb-24 pt-10 animate-af-rise">
           <header className="mb-6">
-            <h2 className="text-xl font-semibold tracking-tight text-af-text">{section.label}</h2>
-            <p className="mt-1 text-sm text-af-text-3">{section.description}</p>
+            <h2 className="text-xl font-semibold tracking-tight text-af-text">{t(section.label)}</h2>
+            <p className="mt-1 text-sm text-af-text-3">{t(section.description)}</p>
           </header>
           <div className="af-settings space-y-5">
-            {active === 'general' && <PreferenceSettings />}
+            {active === 'general' && (
+              <>
+                <UiLanguagePicker />
+                <PreferenceSettings />
+              </>
+            )}
             {active === 'recording' && (
               <>
                 <RecordingSettings />

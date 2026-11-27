@@ -4,115 +4,118 @@ import Analytics from '@/lib/analytics';
 import { toast } from 'sonner';
 import { useConfig } from '@/contexts/ConfigContext';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useI18n, type MessageKey } from '@/i18n';
 
 export interface Language {
   code: string;
+  /** English name kept for analytics payloads; `labelKey` is the display name. */
   name: string;
+  labelKey: MessageKey;
 }
 
 // ISO 639-1 language codes supported by Whisper
 const LANGUAGES: Language[] = [
-  { code: 'auto', name: 'Auto Detect (Original Language)' },
-  { code: 'auto-translate', name: 'Auto Detect (Translate to English)' },
-  { code: 'en', name: 'English' },
-  { code: 'zh', name: 'Chinese' },
-  { code: 'de', name: 'German' },
-  { code: 'es', name: 'Spanish' },
-  { code: 'ru', name: 'Russian' },
-  { code: 'ko', name: 'Korean' },
-  { code: 'fr', name: 'French' },
-  { code: 'ja', name: 'Japanese' },
-  { code: 'pt', name: 'Portuguese' },
-  { code: 'tr', name: 'Turkish' },
-  { code: 'pl', name: 'Polish' },
-  { code: 'ca', name: 'Catalan' },
-  { code: 'nl', name: 'Dutch' },
-  { code: 'ar', name: 'Arabic' },
-  { code: 'sv', name: 'Swedish' },
-  { code: 'it', name: 'Italian' },
-  { code: 'id', name: 'Indonesian' },
-  { code: 'hi', name: 'Hindi' },
-  { code: 'fi', name: 'Finnish' },
-  { code: 'vi', name: 'Vietnamese' },
-  { code: 'he', name: 'Hebrew' },
-  { code: 'uk', name: 'Ukrainian' },
-  { code: 'el', name: 'Greek' },
-  { code: 'ms', name: 'Malay' },
-  { code: 'cs', name: 'Czech' },
-  { code: 'ro', name: 'Romanian' },
-  { code: 'da', name: 'Danish' },
-  { code: 'hu', name: 'Hungarian' },
-  { code: 'ta', name: 'Tamil' },
-  { code: 'no', name: 'Norwegian' },
-  { code: 'th', name: 'Thai' },
-  { code: 'ur', name: 'Urdu' },
-  { code: 'hr', name: 'Croatian' },
-  { code: 'bg', name: 'Bulgarian' },
-  { code: 'lt', name: 'Lithuanian' },
-  { code: 'la', name: 'Latin' },
-  { code: 'mi', name: 'Maori' },
-  { code: 'ml', name: 'Malayalam' },
-  { code: 'cy', name: 'Welsh' },
-  { code: 'sk', name: 'Slovak' },
-  { code: 'te', name: 'Telugu' },
-  { code: 'fa', name: 'Persian' },
-  { code: 'lv', name: 'Latvian' },
-  { code: 'bn', name: 'Bengali' },
-  { code: 'sr', name: 'Serbian' },
-  { code: 'az', name: 'Azerbaijani' },
-  { code: 'sl', name: 'Slovenian' },
-  { code: 'kn', name: 'Kannada' },
-  { code: 'et', name: 'Estonian' },
-  { code: 'mk', name: 'Macedonian' },
-  { code: 'br', name: 'Breton' },
-  { code: 'eu', name: 'Basque' },
-  { code: 'is', name: 'Icelandic' },
-  { code: 'hy', name: 'Armenian' },
-  { code: 'ne', name: 'Nepali' },
-  { code: 'mn', name: 'Mongolian' },
-  { code: 'bs', name: 'Bosnian' },
-  { code: 'kk', name: 'Kazakh' },
-  { code: 'sq', name: 'Albanian' },
-  { code: 'sw', name: 'Swahili' },
-  { code: 'gl', name: 'Galician' },
-  { code: 'mr', name: 'Marathi' },
-  { code: 'pa', name: 'Punjabi' },
-  { code: 'si', name: 'Sinhala' },
-  { code: 'km', name: 'Khmer' },
-  { code: 'sn', name: 'Shona' },
-  { code: 'yo', name: 'Yoruba' },
-  { code: 'so', name: 'Somali' },
-  { code: 'af', name: 'Afrikaans' },
-  { code: 'oc', name: 'Occitan' },
-  { code: 'ka', name: 'Georgian' },
-  { code: 'be', name: 'Belarusian' },
-  { code: 'tg', name: 'Tajik' },
-  { code: 'sd', name: 'Sindhi' },
-  { code: 'gu', name: 'Gujarati' },
-  { code: 'am', name: 'Amharic' },
-  { code: 'yi', name: 'Yiddish' },
-  { code: 'lo', name: 'Lao' },
-  { code: 'uz', name: 'Uzbek' },
-  { code: 'fo', name: 'Faroese' },
-  { code: 'ht', name: 'Haitian Creole' },
-  { code: 'ps', name: 'Pashto' },
-  { code: 'tk', name: 'Turkmen' },
-  { code: 'nn', name: 'Norwegian Nynorsk' },
-  { code: 'mt', name: 'Maltese' },
-  { code: 'sa', name: 'Sanskrit' },
-  { code: 'lb', name: 'Luxembourgish' },
-  { code: 'my', name: 'Myanmar' },
-  { code: 'bo', name: 'Tibetan' },
-  { code: 'tl', name: 'Tagalog' },
-  { code: 'mg', name: 'Malagasy' },
-  { code: 'as', name: 'Assamese' },
-  { code: 'tt', name: 'Tatar' },
-  { code: 'haw', name: 'Hawaiian' },
-  { code: 'ln', name: 'Lingala' },
-  { code: 'ha', name: 'Hausa' },
-  { code: 'ba', name: 'Bashkir' },
-  { code: 'jw', name: 'Javanese' },
-  { code: 'su', name: 'Sundanese' },
+  { code: 'auto', name: 'Auto Detect (Original Language)', labelKey: 'models.languages.auto' },
+  { code: 'auto-translate', name: 'Auto Detect (Translate to English)', labelKey: 'models.languages.autoTranslate' },
+  { code: 'en', name: 'English', labelKey: 'models.languages.en' },
+  { code: 'zh', name: 'Chinese', labelKey: 'models.languages.zh' },
+  { code: 'de', name: 'German', labelKey: 'models.languages.de' },
+  { code: 'es', name: 'Spanish', labelKey: 'models.languages.es' },
+  { code: 'ru', name: 'Russian', labelKey: 'models.languages.ru' },
+  { code: 'ko', name: 'Korean', labelKey: 'models.languages.ko' },
+  { code: 'fr', name: 'French', labelKey: 'models.languages.fr' },
+  { code: 'ja', name: 'Japanese', labelKey: 'models.languages.ja' },
+  { code: 'pt', name: 'Portuguese', labelKey: 'models.languages.pt' },
+  { code: 'tr', name: 'Turkish', labelKey: 'models.languages.tr' },
+  { code: 'pl', name: 'Polish', labelKey: 'models.languages.pl' },
+  { code: 'ca', name: 'Catalan', labelKey: 'models.languages.ca' },
+  { code: 'nl', name: 'Dutch', labelKey: 'models.languages.nl' },
+  { code: 'ar', name: 'Arabic', labelKey: 'models.languages.ar' },
+  { code: 'sv', name: 'Swedish', labelKey: 'models.languages.sv' },
+  { code: 'it', name: 'Italian', labelKey: 'models.languages.it' },
+  { code: 'id', name: 'Indonesian', labelKey: 'models.languages.id' },
+  { code: 'hi', name: 'Hindi', labelKey: 'models.languages.hi' },
+  { code: 'fi', name: 'Finnish', labelKey: 'models.languages.fi' },
+  { code: 'vi', name: 'Vietnamese', labelKey: 'models.languages.vi' },
+  { code: 'he', name: 'Hebrew', labelKey: 'models.languages.he' },
+  { code: 'uk', name: 'Ukrainian', labelKey: 'models.languages.uk' },
+  { code: 'el', name: 'Greek', labelKey: 'models.languages.el' },
+  { code: 'ms', name: 'Malay', labelKey: 'models.languages.ms' },
+  { code: 'cs', name: 'Czech', labelKey: 'models.languages.cs' },
+  { code: 'ro', name: 'Romanian', labelKey: 'models.languages.ro' },
+  { code: 'da', name: 'Danish', labelKey: 'models.languages.da' },
+  { code: 'hu', name: 'Hungarian', labelKey: 'models.languages.hu' },
+  { code: 'ta', name: 'Tamil', labelKey: 'models.languages.ta' },
+  { code: 'no', name: 'Norwegian', labelKey: 'models.languages.no' },
+  { code: 'th', name: 'Thai', labelKey: 'models.languages.th' },
+  { code: 'ur', name: 'Urdu', labelKey: 'models.languages.ur' },
+  { code: 'hr', name: 'Croatian', labelKey: 'models.languages.hr' },
+  { code: 'bg', name: 'Bulgarian', labelKey: 'models.languages.bg' },
+  { code: 'lt', name: 'Lithuanian', labelKey: 'models.languages.lt' },
+  { code: 'la', name: 'Latin', labelKey: 'models.languages.la' },
+  { code: 'mi', name: 'Maori', labelKey: 'models.languages.mi' },
+  { code: 'ml', name: 'Malayalam', labelKey: 'models.languages.ml' },
+  { code: 'cy', name: 'Welsh', labelKey: 'models.languages.cy' },
+  { code: 'sk', name: 'Slovak', labelKey: 'models.languages.sk' },
+  { code: 'te', name: 'Telugu', labelKey: 'models.languages.te' },
+  { code: 'fa', name: 'Persian', labelKey: 'models.languages.fa' },
+  { code: 'lv', name: 'Latvian', labelKey: 'models.languages.lv' },
+  { code: 'bn', name: 'Bengali', labelKey: 'models.languages.bn' },
+  { code: 'sr', name: 'Serbian', labelKey: 'models.languages.sr' },
+  { code: 'az', name: 'Azerbaijani', labelKey: 'models.languages.az' },
+  { code: 'sl', name: 'Slovenian', labelKey: 'models.languages.sl' },
+  { code: 'kn', name: 'Kannada', labelKey: 'models.languages.kn' },
+  { code: 'et', name: 'Estonian', labelKey: 'models.languages.et' },
+  { code: 'mk', name: 'Macedonian', labelKey: 'models.languages.mk' },
+  { code: 'br', name: 'Breton', labelKey: 'models.languages.br' },
+  { code: 'eu', name: 'Basque', labelKey: 'models.languages.eu' },
+  { code: 'is', name: 'Icelandic', labelKey: 'models.languages.is' },
+  { code: 'hy', name: 'Armenian', labelKey: 'models.languages.hy' },
+  { code: 'ne', name: 'Nepali', labelKey: 'models.languages.ne' },
+  { code: 'mn', name: 'Mongolian', labelKey: 'models.languages.mn' },
+  { code: 'bs', name: 'Bosnian', labelKey: 'models.languages.bs' },
+  { code: 'kk', name: 'Kazakh', labelKey: 'models.languages.kk' },
+  { code: 'sq', name: 'Albanian', labelKey: 'models.languages.sq' },
+  { code: 'sw', name: 'Swahili', labelKey: 'models.languages.sw' },
+  { code: 'gl', name: 'Galician', labelKey: 'models.languages.gl' },
+  { code: 'mr', name: 'Marathi', labelKey: 'models.languages.mr' },
+  { code: 'pa', name: 'Punjabi', labelKey: 'models.languages.pa' },
+  { code: 'si', name: 'Sinhala', labelKey: 'models.languages.si' },
+  { code: 'km', name: 'Khmer', labelKey: 'models.languages.km' },
+  { code: 'sn', name: 'Shona', labelKey: 'models.languages.sn' },
+  { code: 'yo', name: 'Yoruba', labelKey: 'models.languages.yo' },
+  { code: 'so', name: 'Somali', labelKey: 'models.languages.so' },
+  { code: 'af', name: 'Afrikaans', labelKey: 'models.languages.af' },
+  { code: 'oc', name: 'Occitan', labelKey: 'models.languages.oc' },
+  { code: 'ka', name: 'Georgian', labelKey: 'models.languages.ka' },
+  { code: 'be', name: 'Belarusian', labelKey: 'models.languages.be' },
+  { code: 'tg', name: 'Tajik', labelKey: 'models.languages.tg' },
+  { code: 'sd', name: 'Sindhi', labelKey: 'models.languages.sd' },
+  { code: 'gu', name: 'Gujarati', labelKey: 'models.languages.gu' },
+  { code: 'am', name: 'Amharic', labelKey: 'models.languages.am' },
+  { code: 'yi', name: 'Yiddish', labelKey: 'models.languages.yi' },
+  { code: 'lo', name: 'Lao', labelKey: 'models.languages.lo' },
+  { code: 'uz', name: 'Uzbek', labelKey: 'models.languages.uz' },
+  { code: 'fo', name: 'Faroese', labelKey: 'models.languages.fo' },
+  { code: 'ht', name: 'Haitian Creole', labelKey: 'models.languages.ht' },
+  { code: 'ps', name: 'Pashto', labelKey: 'models.languages.ps' },
+  { code: 'tk', name: 'Turkmen', labelKey: 'models.languages.tk' },
+  { code: 'nn', name: 'Norwegian Nynorsk', labelKey: 'models.languages.nn' },
+  { code: 'mt', name: 'Maltese', labelKey: 'models.languages.mt' },
+  { code: 'sa', name: 'Sanskrit', labelKey: 'models.languages.sa' },
+  { code: 'lb', name: 'Luxembourgish', labelKey: 'models.languages.lb' },
+  { code: 'my', name: 'Myanmar', labelKey: 'models.languages.my' },
+  { code: 'bo', name: 'Tibetan', labelKey: 'models.languages.bo' },
+  { code: 'tl', name: 'Tagalog', labelKey: 'models.languages.tl' },
+  { code: 'mg', name: 'Malagasy', labelKey: 'models.languages.mg' },
+  { code: 'as', name: 'Assamese', labelKey: 'models.languages.as' },
+  { code: 'tt', name: 'Tatar', labelKey: 'models.languages.tt' },
+  { code: 'haw', name: 'Hawaiian', labelKey: 'models.languages.haw' },
+  { code: 'ln', name: 'Lingala', labelKey: 'models.languages.ln' },
+  { code: 'ha', name: 'Hausa', labelKey: 'models.languages.ha' },
+  { code: 'ba', name: 'Bashkir', labelKey: 'models.languages.ba' },
+  { code: 'jw', name: 'Javanese', labelKey: 'models.languages.jw' },
+  { code: 'su', name: 'Sundanese', labelKey: 'models.languages.su' },
 ];
 
 import type { TranscriptModelProps } from './TranscriptSettings';
@@ -130,6 +133,7 @@ export function LanguageSelection({
   disabled = false,
   provider = 'localWhisper'
 }: LanguageSelectionProps) {
+  const { t } = useI18n();
   const [saving, setSaving] = useState(false);
   const { setSelectedLanguage } = useConfig();
 
@@ -157,13 +161,13 @@ export function LanguageSelection({
       });
 
       // Show success toast
-      const languageName = selectedLang?.name || languageCode;
-      toast.success("Language preference saved", {
-        description: `Transcription language set to ${languageName}`
+      const languageName = selectedLang ? t(selectedLang.labelKey) : languageCode;
+      toast.success(t('models.languagePreferenceSaved'), {
+        description: t('models.languageSetTo', { language: languageName })
       });
     } catch (error) {
       console.error('Failed to save language preference:', error);
-      toast.error("Failed to save language preference", {
+      toast.error(t('models.failedToSaveLanguagePreference'), {
         description: error instanceof Error ? error.message : String(error)
       });
     } finally {
@@ -172,28 +176,31 @@ export function LanguageSelection({
   };
 
   // Find the selected language name for display
-  const selectedLanguageName = LANGUAGES.find(
+  const selectedLanguageEntry = LANGUAGES.find(
     lang => lang.code === selectedLanguage
-  )?.name || 'Auto Detect (Original Language)';
+  );
+  const selectedLanguageLabel = selectedLanguageEntry
+    ? t(selectedLanguageEntry.labelKey)
+    : t('models.languages.auto');
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Globe className="h-4 w-4 text-af-text-2" />
-          <h4 className="text-sm font-medium text-af-text">Transcription Language</h4>
+          <h4 className="text-sm font-medium text-af-text">{t('models.transcriptionLanguageTitle')}</h4>
         </div>
       </div>
 
       <div className="space-y-2">
         <Select value={selectedLanguage} onValueChange={handleLanguageChange} disabled={disabled || saving}>
-          <SelectTrigger aria-label="Transcription language">
+          <SelectTrigger aria-label={t('models.transcriptionLanguageAria')}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             {availableLanguages.map((language) => (
               <SelectItem key={language.code} value={language.code}>
-                {language.name}
+                {t(language.labelKey)}
                 {language.code !== 'auto' && language.code !== 'auto-translate' && (
                   <span className="ml-1.5 text-af-text-4">{language.code}</span>
                 )}
@@ -207,8 +214,8 @@ export function LanguageSelection({
           <div className="flex gap-2.5 rounded-lg border border-af-border bg-af-panel-2 px-3 py-2.5 text-xs text-af-text-2">
             <Info className="mt-px h-4 w-4 shrink-0 text-af-text-3" />
             <div>
-              <p className="font-medium text-af-text">Parakeet detects the language itself</p>
-              <p className="mt-0.5">It can't be set to a particular language. Use Whisper if you need to choose one.</p>
+              <p className="font-medium text-af-text">{t('models.parakeetDetectsLanguage')}</p>
+              <p className="mt-0.5">{t('models.parakeetLanguageOnlyAuto')}</p>
             </div>
           </div>
         )}
@@ -216,14 +223,14 @@ export function LanguageSelection({
         {/* Info text */}
         <div className="text-xs space-y-2 pt-2">
           <p className="text-af-text-2">
-            <strong>Current:</strong> {selectedLanguageName}
+            <strong>{t('models.currentLabel')}</strong> {selectedLanguageLabel}
           </p>
           {selectedLanguage === 'auto' && (
             <div className="flex gap-2.5 rounded-lg border border-af-warning/35 bg-af-warning/10 px-3 py-2.5 text-af-text-2">
               <AlertTriangle className="mt-px h-4 w-4 shrink-0 text-af-warning" />
               <div>
-                <p className="font-medium text-af-text">Auto detect can pick the wrong language</p>
-                <p className="mt-0.5">For the best accuracy, choose the language people speak.</p>
+                <p className="font-medium text-af-text">{t('models.autoDetectWarningTitle')}</p>
+                <p className="mt-0.5">{t('models.autoDetectWarningDesc')}</p>
               </div>
             </div>
           )}
@@ -231,14 +238,14 @@ export function LanguageSelection({
             <div className="flex gap-2.5 rounded-lg border border-af-accent/35 bg-af-accent/10 px-3 py-2.5 text-af-text-2">
               <Languages className="mt-px h-4 w-4 shrink-0 text-af-accent" />
               <div>
-                <p className="font-medium text-af-text">Transcripts are translated to English</p>
-                <p className="mt-0.5">Useful for meetings in several languages when you want English notes.</p>
+                <p className="font-medium text-af-text">{t('models.translatedToEnglishTitle')}</p>
+                <p className="mt-0.5">{t('models.translatedToEnglishDesc')}</p>
               </div>
             </div>
           )}
           {selectedLanguage !== 'auto' && selectedLanguage !== 'auto-translate' && (
             <p className="text-af-text-2">
-              Transcription will be optimized for <strong>{selectedLanguageName}</strong>
+              {t('models.transcriptionOptimizedFor', { language: selectedLanguageLabel })}
             </p>
           )}
         </div>

@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/command"
 import { fieldClass } from "@/components/ui/input"
 import { groupColorVar } from "@/lib/group-colors"
+import { useI18n } from "@/i18n"
 
 export interface ComboboxOption {
   value: string
@@ -73,12 +74,12 @@ export function Combobox({
   value,
   onChange,
   options,
-  placeholder = "Select…",
-  searchPlaceholder = "Search…",
-  emptyText = "Nothing found",
+  placeholder,
+  searchPlaceholder,
+  emptyText,
   clearLabel,
   onCreate,
-  createLabel = (query) => `Create “${query}”`,
+  createLabel,
   trigger,
   triggerClassName,
   contentClassName,
@@ -90,6 +91,10 @@ export function Combobox({
   onOpenChange,
   "aria-label": ariaLabel,
 }: ComboboxProps) {
+  const { t } = useI18n()
+  const placeholderText = placeholder ?? t('ui.selectPlaceholder')
+  const emptyTextValue = emptyText ?? t('ui.nothingFound')
+  const createLabelText = createLabel ?? ((query: string) => t('ui.createOption', { query }))
   const [openState, setOpenState] = React.useState(false)
   const open = openProp ?? openState
   const setOpen = (next: boolean) => {
@@ -130,16 +135,16 @@ export function Combobox({
             className={cn(fieldClass, "flex items-center gap-2 text-left", !selected && "text-af-text-4", triggerClassName)}
           >
             {selected && <OptionVisual option={selected} />}
-            <span className="min-w-0 flex-1 truncate">{selected?.label ?? placeholder}</span>
+            <span className="min-w-0 flex-1 truncate">{selected?.label ?? placeholderText}</span>
             <ChevronDown className={cn("h-4 w-4 shrink-0 text-af-text-3 transition-transform duration-200", open && "rotate-180")} />
           </button>
         )}
       </PopoverTrigger>
       <PopoverContent align={align} side={side} className={cn("w-72 overflow-hidden p-0", contentClassName)}>
         <Command>
-          <CommandInput value={query} onValueChange={setQuery} placeholder={searchPlaceholder} />
+          <CommandInput value={query} onValueChange={setQuery} placeholder={searchPlaceholder ?? t('ui.searchPlaceholder')} />
           <CommandList className="max-h-72 p-1">
-            <CommandEmpty>{onCreate && trimmed ? "No match yet." : emptyText}</CommandEmpty>
+            <CommandEmpty>{onCreate && trimmed ? t('ui.noMatchYet') : emptyTextValue}</CommandEmpty>
             {clearLabel && !trimmed && (
               <CommandGroup className="p-0">
                 <CommandItem value="__clear__" onSelect={() => choose(null)}>
@@ -175,7 +180,7 @@ export function Combobox({
                 <CommandGroup className="p-0" forceMount>
                   <CommandItem value={`__create__ ${trimmed}`} onSelect={create} forceMount disabled={creating}>
                     <Plus className="text-af-accent" />
-                    <span className="truncate text-af-accent">{createLabel(trimmed)}</span>
+                    <span className="truncate text-af-accent">{createLabelText(trimmed)}</span>
                   </CommandItem>
                 </CommandGroup>
               </>

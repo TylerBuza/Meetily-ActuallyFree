@@ -12,8 +12,11 @@ import * as React from 'react';
 import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { Check } from 'lucide-react';
+import { en as blockNoteEn, zh as blockNoteZh } from '@blocknote/core/locales';
+import type { Dictionary } from '@blocknote/core';
 import type { BlockNoteView } from '@blocknote/shadcn';
 import { cn } from '@/lib/utils';
+import type { Locale } from '@/i18n';
 import { TooltipProvider, tooltipMotion, tooltipSurface } from '@/components/ui/tooltip';
 import {
   DropdownMenu,
@@ -30,6 +33,15 @@ import {
 
 const LAYER_ID = 'af-blocknote-layer';
 const LayerContext = React.createContext<HTMLElement | null>(null);
+
+/**
+ * BlockNote draws its own block-type labels, slash-menu entries and toolbar
+ * tooltips from a dictionary; it ships translated ones. Use the dictionary
+ * that matches the interface language (ids and command names are not shown).
+ */
+export function blockNoteDictionary(locale: Locale): Dictionary {
+  return locale === 'zh-CN' ? blockNoteZh : blockNoteEn;
+}
 
 export const BlockNoteLayerProvider = LayerContext.Provider;
 

@@ -18,84 +18,79 @@ import { useLabs } from '@/hooks/useLabs';
 import { useVoiceProfiles } from '@/hooks/useVoiceProfiles';
 import { setLabsFeature, syncLabsFromBackend, type LabsFeature } from '@/lib/labs-features';
 import { describeVoiceError, describeVoiceSource, forgetVoice } from '@/lib/voice-profiles';
+import { useI18n, type MessageKey } from '@/i18n';
 
 interface Feature {
   key: LabsFeature;
   icon: LucideIcon;
-  title: string;
-  description: string;
+  title: MessageKey;
+  description: MessageKey;
   /** Where it shows up or applies once on. */
-  where: string;
+  where: MessageKey;
   windowsOnly?: boolean;
 }
 
-const GROUPS: Array<{ title: string; features: Feature[] }> = [
+const GROUPS: Array<{ title: MessageKey; features: Feature[] }> = [
   {
-    title: 'Meetings',
+    title: 'labs.groupMeetings',
     features: [
       {
         key: 'meetingAutomation',
         icon: Workflow,
-        title: 'Meeting automation',
-        description:
-          'Start recording when meeting detection sees a call using your microphone or camera, and stop and save it when the call ends. Recordings you start yourself are never stopped.',
-        where: 'Turns on meeting detection. A notice says when a call starts or ends a recording.',
+        title: 'labs.meetingAutomationTitle',
+        description: 'labs.meetingAutomationDescription',
+        where: 'labs.meetingAutomationWhere',
       },
     ],
   },
   {
-    title: 'Playback and transcript',
+    title: 'labs.groupPlaybackTranscript',
     features: [
       {
         key: 'transcriptScrubbing',
         icon: AudioWaveform,
-        title: 'Waveform scrubbing',
-        description:
-          "Show the recording's waveform in the meeting player, so you can see where people talk and jump straight there. Adds 0.5× and 0.75× speeds.",
-        where: "In the player under a meeting's transcript.",
+        title: 'labs.waveformScrubbingTitle',
+        description: 'labs.waveformScrubbingDescription',
+        where: 'labs.waveformScrubbingWhere',
       },
       {
         key: 'cleanTranscript',
         icon: Eraser,
-        title: 'Clean transcript',
-        description:
-          'Hide hesitations and stutters ("um", "we we") in the transcript, and write new summaries from the clean text. The saved transcript stays word for word.',
-        where: 'Switch between Clean and Verbatim in the meeting player.',
+        title: 'labs.cleanTranscriptTitle',
+        description: 'labs.cleanTranscriptDescription',
+        where: 'labs.cleanTranscriptWhere',
       },
     ],
   },
   {
-    title: 'Speech recognition',
+    title: 'labs.groupSpeechRecognition',
     features: [
       {
         key: 'whisperSilenceGuard',
         icon: VolumeX,
-        title: 'Whisper silence guard',
-        description:
-          'Filter silence and background noise more strictly when Whisper transcribes, so quiet stretches do not turn into made-up lines. Very quiet speech may be skipped.',
-        where: 'Applies whenever Whisper transcribes.',
+        title: 'labs.whisperSilenceGuardTitle',
+        description: 'labs.whisperSilenceGuardDescription',
+        where: 'labs.whisperSilenceGuardWhere',
       },
       {
         key: 'parakeetGpu',
         icon: Gauge,
-        title: 'Parakeet on the GPU',
-        description:
-          "Run Parakeet's encoder on your graphics card through DirectML. Switching reloads the model; if the GPU cannot load it, Parakeet stays on the CPU.",
-        where: 'Applies to Parakeet transcription.',
+        title: 'labs.parakeetGpuTitle',
+        description: 'labs.parakeetGpuDescription',
+        where: 'labs.parakeetGpuWhere',
         windowsOnly: true,
       },
     ],
   },
   {
-    title: 'Voices',
+    title: 'labs.groupVoices',
     features: [
       {
         key: 'voiceProfiles',
         icon: Fingerprint,
-        title: 'Voice profiles',
-        description:
-          "Learn a contact's voice from the meetings they spoke in. When speakers are identified in later meetings, a matching voice gets their name.",
-        where: "Learn, update or forget a voice on a contact's page, or add one meeting's audio from its speaker card.",
+        title: 'labs.voiceProfilesTitle',
+        description: 'labs.voiceProfilesDescription',
+        where: 'labs.voiceProfilesWhere',
       },
     ],
   },
@@ -114,6 +109,7 @@ function FeatureRow({
   onChange: (value: boolean) => void;
   children?: ReactNode;
 }) {
+  const { t } = useI18n();
   const Icon = feature.icon;
   return (
     <div className="px-5 py-4">
@@ -122,13 +118,13 @@ function FeatureRow({
           <Icon className="h-[18px] w-[18px]" />
         </span>
         <div className="min-w-0 flex-1">
-          <h4 className="text-sm font-semibold text-af-text">{feature.title}</h4>
-          <p className="mt-0.5 text-[13px] leading-relaxed text-af-text-3">{feature.description}</p>
-          <p className="mt-1.5 text-[11px] leading-relaxed text-af-text-4">{feature.where}</p>
+          <h4 className="text-sm font-semibold text-af-text">{t(feature.title)}</h4>
+          <p className="mt-0.5 text-[13px] leading-relaxed text-af-text-3">{t(feature.description)}</p>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-af-text-4">{t(feature.where)}</p>
         </div>
         <span className="mt-1 flex shrink-0 items-center gap-2">
           {busy && <Spinner size={14} className="text-af-text-3" />}
-          <Switch checked={checked} disabled={busy} onCheckedChange={onChange} aria-label={feature.title} />
+          <Switch checked={checked} disabled={busy} onCheckedChange={onChange} aria-label={t(feature.title)} />
         </span>
       </div>
       {children && <div className="mt-3 sm:pl-[52px]">{children}</div>}
@@ -138,6 +134,7 @@ function FeatureRow({
 
 /** The learned voices, each linked to its contact. */
 function LearnedVoices() {
+  const { t } = useI18n();
   const profiles = useVoiceProfiles();
   const [modelsReady, setModelsReady] = useState<boolean | null>(null);
 
@@ -151,22 +148,22 @@ function LearnedVoices() {
     <div className="space-y-2">
       {modelsReady === false && (
         <p className="rounded-lg border border-af-warning/30 bg-af-warning/[0.08] px-3 py-2 text-xs text-af-text-2">
-          Voice profiles need the speaker models.{' '}
+          {t('labs.voiceProfilesNeedModels')}
           <Link href="/settings?section=transcription" className="font-medium text-af-accent hover:underline">
-            Download them in Transcription
+            {t('labs.downloadThemInTranscription')}
           </Link>
-          .
+          {t('labs.sentencePeriod')}
         </p>
       )}
       {profiles === null ? (
         <div className="af-skeleton h-10 rounded-lg" />
       ) : profiles.length === 0 ? (
         <p className="text-xs leading-relaxed text-af-text-3">
-          No voices yet. Open a contact from{' '}
+          {t('labs.noVoicesYet')}
           <Link href="/contacts" className="font-medium text-af-accent hover:underline">
-            Contacts
-          </Link>{' '}
-          and choose Learn voice.
+            {t('labs.contactsLink')}
+          </Link>
+          {t('labs.noVoicesYetTail')}
         </p>
       ) : (
         <ul className="divide-y divide-af-border overflow-hidden rounded-xl border border-af-border bg-af-panel">
@@ -184,11 +181,11 @@ function LearnedVoices() {
               </span>
               <button
                 type="button"
-                aria-label={`Forget ${profile.name}'s voice`}
+                aria-label={t('labs.forgetVoiceAria', { name: profile.name })}
                 onClick={() =>
                   forgetVoice(profile.person_id)
-                    .then(() => toast.success(`Forgot ${profile.name}'s voice`))
-                    .catch((error) => toast.error('Could not forget the voice', { description: describeVoiceError(error) }))
+                    .then(() => toast.success(t('labs.forgotVoice', { name: profile.name })))
+                    .catch((error) => toast.error(t('labs.couldNotForgetVoice'), { description: describeVoiceError(error) }))
                 }
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-af-text-4 transition-colors hover:bg-af-danger/10 hover:text-af-danger"
               >
@@ -203,6 +200,7 @@ function LearnedVoices() {
 }
 
 export function LabsSettings() {
+  const { t } = useI18n();
   const platform = usePlatform();
   const { labs } = useLabs();
   const [busy, setBusy] = useState<LabsFeature | null>(null);
@@ -217,12 +215,17 @@ export function LabsSettings() {
     try {
       await setLabsFeature(feature.key, value);
       if (feature.key === 'meetingAutomation' && value) {
-        toast.success('Meeting automation is on', { description: 'Meeting detection is on too, so calls can start recordings.' });
+        toast.success(t('labs.meetingAutomationOn'), { description: t('labs.meetingAutomationOnDescription') });
       }
     } catch (error) {
-      toast.error(`Could not ${value ? 'turn on' : 'turn off'} ${feature.title.toLowerCase()}`, {
-        description: error instanceof Error ? error.message : String(error),
-      });
+      toast.error(
+        value
+          ? t('labs.couldNotTurnOn', { feature: t(feature.title).toLowerCase() })
+          : t('labs.couldNotTurnOff', { feature: t(feature.title).toLowerCase() }),
+        {
+          description: error instanceof Error ? error.message : String(error),
+        }
+      );
     } finally {
       setBusy(null);
     }
@@ -235,7 +238,7 @@ export function LabsSettings() {
         if (features.length === 0) return null;
         return (
           <section key={group.title}>
-            <h3 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-af-text-4">{group.title}</h3>
+            <h3 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-af-text-4">{t(group.title)}</h3>
             <div className="divide-y divide-af-border overflow-hidden rounded-2xl border border-af-border bg-af-panel-2/40">
               {features.map((feature) => (
                 <FeatureRow

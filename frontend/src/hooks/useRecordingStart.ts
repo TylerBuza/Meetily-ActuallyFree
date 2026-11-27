@@ -14,6 +14,7 @@ import Analytics from '@/lib/analytics';
 import { showRecordingNotification } from '@/lib/recordingNotification';
 import { toast } from 'sonner';
 import { describeStartError } from '@/lib/recording-start-errors';
+import { tNow } from '@/i18n/translate';
 
 interface UseRecordingStartReturn {
   handleRecordingStart: () => Promise<void>;
@@ -59,9 +60,9 @@ export function useRecordingStart(
     try {
       await invoke('check_transcription_runtime');
     } catch (error) {
-      const message = transcriptionRuntimeMessage(error) || 'Could not check the speech runtime. Restart Meetily and try again.';
+      const message = transcriptionRuntimeMessage(error) || tNow('feedback.couldNotCheckSpeechRuntime');
       runtimeErrorRef.current = message;
-      toast.error('Speech recognition unavailable', { description: message });
+      toast.error(tNow('feedback.speechRecognitionUnavailable'), { description: message });
       return false;
     }
     const provider = (transcriptModelConfig?.provider || 'parakeet').toLowerCase();
@@ -131,17 +132,17 @@ export function useRecordingStart(
       return;
     }
     if (await checkIfModelDownloading()) {
-      toast.info('Model download in progress', {
-        description: 'Recording can start once the transcription model finishes downloading.',
+      toast.info(tNow('feedback.modelDownloadInProgress'), {
+        description: tNow('feedback.recordingWaitsForModel'),
         duration: 5000,
       });
       Analytics.trackButtonClick('start_recording_blocked_downloading', source);
     } else {
-      toast.error('Transcription model not ready', {
-        description: 'Download a transcription model (Parakeet is best for live) before recording.',
+      toast.error(tNow('feedback.transcriptionModelNotReady'), {
+        description: tNow('feedback.transcriptionModelNotReadyHint'),
         duration: 5000,
       });
-      showModal?.('modelSelector', 'Transcription model setup required');
+      showModal?.('modelSelector', tNow('feedback.transcriptionModelSetupRequired'));
       Analytics.trackButtonClick('start_recording_blocked_missing', source);
     }
     setStatus(RecordingStatus.IDLE);
@@ -155,7 +156,7 @@ export function useRecordingStart(
     const call = source === 'home_page' ? null : automated;
     // Readying the model can take several seconds (it loads a large model
     // into memory), so say so from the first step.
-    setStatus(RecordingStatus.STARTING, 'Preparing transcription model…');
+    setStatus(RecordingStatus.STARTING, tNow('feedback.preparingTranscriptionModel'));
     const sttReady = await prefetchSttModel();
     if (!sttReady) {
       await reportModelNotReady(source);
@@ -167,7 +168,7 @@ export function useRecordingStart(
       const group = readPendingGroup();
       const title = automaticTitle(new Date(startedAt), group?.name, meetings.map((meeting) => meeting.title));
       setMeetingTitle(title);
-      setStatus(RecordingStatus.STARTING, 'Starting audio capture…');
+      setStatus(RecordingStatus.STARTING, tNow('feedback.startingAudioCapture'));
 
       await recordingService.startRecordingWithDevices(
         selectedDevices?.micDevice || null,
@@ -184,10 +185,10 @@ export function useRecordingStart(
       Analytics.trackButtonClick('start_recording', source);
       if (call) {
         beginAutomatedRecording(call);
-        toast(`Recording your ${call.app} call`, {
-          description: 'Meeting automation started it, and stops and saves it when the call ends.',
+        toast(tNow('feedback.recordingAppCall', { app: call.app }), {
+          description: tNow('feedback.automationStartedDescription'),
           duration: 10000,
-          action: { label: "Don't stop it", onClick: () => endAutomatedRecording() },
+          action: { label: tNow('feedback.dontStopIt'), onClick: () => endAutomatedRecording() },
         });
       }
       await showRecordingNotification();
@@ -198,10 +199,13 @@ export function useRecordingStart(
       const runtimeMessage = transcriptionRuntimeMessage(error);
       if (runtimeMessage) {
         setStatus(RecordingStatus.ERROR, runtimeMessage);
-        toast.error('Speech recognition unavailable', { description: runtimeMessage });
+        toast.error(tNow('feedback.speechRecognitionUnavailable'), { description: runtimeMessage });
         return false;
       }
-      setStatus(RecordingStatus.ERROR, error instanceof Error ? error.message : 'Failed to start recording');
+      setStatus(
+        RecordingStatus.ERROR,
+        error instanceof Error ? error.message : tNow('feedback.failedToStartRecording'),
+      );
       const { title, message } = describeStartError(error);
       toast.error(title, { description: message, duration: 8000 });
       Analytics.trackButtonClick('start_recording_error', source);

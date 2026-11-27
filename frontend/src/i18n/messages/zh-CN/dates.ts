@@ -1,0 +1,48 @@
+import type { Messages } from '../en'
+
+/** 简体中文：相对日期、星期名称与日程表述。 */
+const dates: Messages['dates'] = {
+  today: '今天',
+  yesterday: '昨天',
+  previous7Days: '过去 7 天',
+  earlierThisMonth: '本月早些时候',
+  now: '现在',
+  earlier: '更早',
+  tomorrow: '明天',
+  inMinutes: '{minutes} 分钟后',
+  inHoursOne: '{hours} 小时后',
+  inHoursOther: '{hours} 小时后',
+  inDaysOne: '{days} 天后',
+  inDaysOther: '{days} 天后',
+  daysAgoOne: '{days} 天前',
+  daysAgoOther: '{days} 天前',
+  weeksAgoOne: '{weeks} 周前',
+  weeksAgoOther: '{weeks} 周前',
+  todayWithTime: '今天 {time}',
+  yesterdayWithTime: '昨天 {time}',
+  durationHoursMinutes: '{hours}小时{minutes}分',
+  durationMinutes: '{minutes}分钟',
+  durationSeconds: '{seconds}秒',
+  // 日程表述（“每周四 12:00”“每两周的周一、周三 09:30”）。
+  scheduleWeekly: '每{days} {time}',
+  scheduleBiweekly: '每两周的{days} {time}',
+  scheduleWeeklyWeekday: '每个工作日 {time}',
+  scheduleWeekday: '工作日',
+  weekdayListSeparator: '、',
+  weekdayLongSunday: '周日',
+  weekdayLongMonday: '周一',
+  weekdayLongTuesday: '周二',
+  weekdayLongWednesday: '周三',
+  weekdayLongThursday: '周四',
+  weekdayLongFriday: '周五',
+  weekdayLongSaturday: '周六',
+  weekdayShortSunday: '周日',
+  weekdayShortMonday: '周一',
+  weekdayShortTuesday: '周二',
+  weekdayShortWednesday: '周三',
+  weekdayShortThursday: '周四',
+  weekdayShortFriday: '周五',
+  weekdayShortSaturday: '周六',
+}
+
+export default dates

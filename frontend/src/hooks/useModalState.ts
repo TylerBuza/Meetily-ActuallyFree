@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import { TranscriptModelProps } from '@/components/TranscriptSettings';
+import { tNow } from '@/i18n/translate';
 
 export type ModalType =
   | 'languageSettings'
@@ -166,7 +167,7 @@ export function useModalState(transcriptModelConfig?: TranscriptModelProps): Use
         unlistenFn = await listen<string>('transcription-warning', (event) => {
           if (disposed) return;
           console.warn('Recoverable transcription warning:', event.payload);
-          toast.warning('Some speech could not be transcribed', {
+          toast.warning(tNow('feedback.someSpeechNotTranscribed'), {
             id: 'transcription-warning',
             description: event.payload,
             duration: 5000,
@@ -198,7 +199,7 @@ export function useModalState(transcriptModelConfig?: TranscriptModelProps): Use
 
         // Auto-close modal if the downloaded model matches the selected one
         if (transcriptModelConfig?.provider === 'localWhisper' && transcriptModelConfig?.model === modelName) {
-          toast.success('Model ready! Closing window...', { duration: 1500 });
+          toast.success(tNow('feedback.modelReadyClosingWindow'), { duration: 1500 });
           setTimeout(() => hideModal('modelSelector'), 1500);
         }
       });

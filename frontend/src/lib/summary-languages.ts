@@ -1,6 +1,11 @@
+import type { MessageKey } from '@/i18n'
+
 export interface LanguageOption {
   code: string;
+  /** English name, kept for logs and as the source text for translations. */
   label: string;
+  /** Interface-catalogue key for the name shown in the pickers. */
+  labelKey: MessageKey;
 }
 
 /**
@@ -9,36 +14,36 @@ export interface LanguageOption {
  * `frontend/src-tauri/src/summary/processor.rs`.
  */
 export const LANGUAGE_OPTIONS: LanguageOption[] = [
-  { code: 'en', label: 'English' },
-  { code: 'zh', label: 'Chinese' },
-  { code: 'zh-tw', label: 'Traditional Chinese' },
-  { code: 'de', label: 'German' },
-  { code: 'es', label: 'Spanish' },
-  { code: 'ru', label: 'Russian' },
-  { code: 'ko', label: 'Korean' },
-  { code: 'fr', label: 'French' },
-  { code: 'ja', label: 'Japanese' },
-  { code: 'pt', label: 'Portuguese' },
-  { code: 'it', label: 'Italian' },
-  { code: 'nl', label: 'Dutch' },
-  { code: 'pl', label: 'Polish' },
-  { code: 'ar', label: 'Arabic' },
-  { code: 'hi', label: 'Hindi' },
-  { code: 'ta', label: 'Tamil' },
-  { code: 'tr', label: 'Turkish' },
-  { code: 'vi', label: 'Vietnamese' },
-  { code: 'th', label: 'Thai' },
-  { code: 'id', label: 'Indonesian' },
-  { code: 'sv', label: 'Swedish' },
-  { code: 'cs', label: 'Czech' },
-  { code: 'da', label: 'Danish' },
-  { code: 'fi', label: 'Finnish' },
-  { code: 'el', label: 'Greek' },
-  { code: 'he', label: 'Hebrew' },
-  { code: 'hu', label: 'Hungarian' },
-  { code: 'no', label: 'Norwegian' },
-  { code: 'ro', label: 'Romanian' },
-  { code: 'uk', label: 'Ukrainian' },
+  { code: 'en', label: 'English', labelKey: 'models.languages.en' },
+  { code: 'zh', label: 'Chinese', labelKey: 'models.languages.zh' },
+  { code: 'zh-tw', label: 'Traditional Chinese', labelKey: 'models.languages.zhTw' },
+  { code: 'de', label: 'German', labelKey: 'models.languages.de' },
+  { code: 'es', label: 'Spanish', labelKey: 'models.languages.es' },
+  { code: 'ru', label: 'Russian', labelKey: 'models.languages.ru' },
+  { code: 'ko', label: 'Korean', labelKey: 'models.languages.ko' },
+  { code: 'fr', label: 'French', labelKey: 'models.languages.fr' },
+  { code: 'ja', label: 'Japanese', labelKey: 'models.languages.ja' },
+  { code: 'pt', label: 'Portuguese', labelKey: 'models.languages.pt' },
+  { code: 'it', label: 'Italian', labelKey: 'models.languages.it' },
+  { code: 'nl', label: 'Dutch', labelKey: 'models.languages.nl' },
+  { code: 'pl', label: 'Polish', labelKey: 'models.languages.pl' },
+  { code: 'ar', label: 'Arabic', labelKey: 'models.languages.ar' },
+  { code: 'hi', label: 'Hindi', labelKey: 'models.languages.hi' },
+  { code: 'ta', label: 'Tamil', labelKey: 'models.languages.ta' },
+  { code: 'tr', label: 'Turkish', labelKey: 'models.languages.tr' },
+  { code: 'vi', label: 'Vietnamese', labelKey: 'models.languages.vi' },
+  { code: 'th', label: 'Thai', labelKey: 'models.languages.th' },
+  { code: 'id', label: 'Indonesian', labelKey: 'models.languages.id' },
+  { code: 'sv', label: 'Swedish', labelKey: 'models.languages.sv' },
+  { code: 'cs', label: 'Czech', labelKey: 'models.languages.cs' },
+  { code: 'da', label: 'Danish', labelKey: 'models.languages.da' },
+  { code: 'fi', label: 'Finnish', labelKey: 'models.languages.fi' },
+  { code: 'el', label: 'Greek', labelKey: 'models.languages.el' },
+  { code: 'he', label: 'Hebrew', labelKey: 'models.languages.he' },
+  { code: 'hu', label: 'Hungarian', labelKey: 'models.languages.hu' },
+  { code: 'no', label: 'Norwegian', labelKey: 'models.languages.no' },
+  { code: 'ro', label: 'Romanian', labelKey: 'models.languages.ro' },
+  { code: 'uk', label: 'Ukrainian', labelKey: 'models.languages.uk' },
 ];
 
 export const AUTO_VALUE = '__auto__' as const;
@@ -62,4 +67,9 @@ export function normaliseLanguageCode(raw: string | null | undefined): string | 
 
 export function labelForCode(code: string): string {
   return LANGUAGE_OPTIONS.find((l) => l.code === code)?.label ?? code;
+}
+
+/** Catalogue key for the picker label; falls back to the English label. */
+export function labelKeyForCode(code: string): MessageKey | null {
+  return LANGUAGE_OPTIONS.find((l) => l.code === code)?.labelKey ?? null;
 }

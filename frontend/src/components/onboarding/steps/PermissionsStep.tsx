@@ -6,9 +6,11 @@ import { Button } from '@/components/ui/button';
 import { OnboardingContainer } from '../OnboardingContainer';
 import { PermissionRow } from '../shared';
 import { useOnboarding } from '@/contexts/OnboardingContext';
+import { useI18n } from '@/i18n';
 
 export function PermissionsStep() {
   const { setPermissionStatus, setPermissionsSkipped, permissions, completeOnboarding } = useOnboarding();
+  const { t } = useI18n();
   const [isPending, setIsPending] = useState(false);
 
   // Check permissions - only logs current state, doesn't auto-authorize
@@ -33,8 +35,8 @@ export function PermissionsStep() {
       try {
         await invoke('open_system_settings');
       } catch {
-        toast.info('Allow microphone access', {
-          description: 'Open System Settings → Privacy & Security → Microphone and turn on Meetily.',
+        toast.info(t('onboarding.allowMicrophoneToast'), {
+          description: t('onboarding.allowMicrophoneToastDescription'),
         });
       }
       return;
@@ -67,8 +69,8 @@ export function PermissionsStep() {
       try {
         await invoke('open_system_settings');
       } catch {
-        toast.info('Allow Audio Capture', {
-          description: 'Open System Settings → Privacy & Security → Audio Capture and turn on Meetily.',
+        toast.info(t('onboarding.allowAudioCaptureToast'), {
+          description: t('onboarding.allowAudioCaptureToastDescription'),
         });
       }
       return;
@@ -118,8 +120,8 @@ export function PermissionsStep() {
 
   return (
     <OnboardingContainer
-      title="Grant Permissions"
-      description="Meetily needs access to your microphone and system audio to record meetings"
+      title={t('onboarding.permissionsTitle')}
+      description={t('onboarding.permissionsDescription')}
       step={4}
       hideProgress={true}
       showNavigation={allPermissionsGranted}
@@ -131,8 +133,8 @@ export function PermissionsStep() {
           {/* Microphone */}
           <PermissionRow
             icon={<Mic className="w-5 h-5" />}
-            title="Microphone"
-            description="Required to capture your voice during meetings"
+            title={t('onboarding.microphone')}
+            description={t('onboarding.microphonePermissionDescription')}
             status={permissions.microphone}
             isPending={isPending}
             onAction={handleMicrophoneAction}
@@ -141,8 +143,8 @@ export function PermissionsStep() {
           {/* System Audio */}
           <PermissionRow
             icon={<Volume2 className="w-5 h-5" />}
-            title="System Audio"
-            description="Click Enable to grant Audio Capture permission"
+            title={t('onboarding.systemAudio')}
+            description={t('onboarding.systemAudioPermissionDescription')}
             status={permissions.systemAudio}
             isPending={isPending}
             onAction={handleSystemAudioAction}
@@ -152,19 +154,19 @@ export function PermissionsStep() {
         {/* Action Buttons */}
         <div className="flex flex-col gap-3 pt-4">
           <Button onClick={handleFinish} disabled={!allPermissionsGranted} className="w-full h-11">
-            Finish Setup
+            {t('onboarding.finishSetup')}
           </Button>
 
           <button
             onClick={handleSkip}
             className="text-sm text-af-text-3 hover:text-af-text-2 transition-colors"
           >
-            I'll do this later
+            {t('onboarding.doThisLater')}
           </button>
 
           {!allPermissionsGranted && (
             <p className="text-xs text-center text-muted-foreground">
-              Recording won't work without permissions. You can grant them later in settings.
+              {t('onboarding.permissionsRequiredWarning')}
             </p>
           )}
         </div>

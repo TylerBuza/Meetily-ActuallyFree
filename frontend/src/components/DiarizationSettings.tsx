@@ -19,6 +19,7 @@ import {
 import { Button } from "./ui/button"
 import { OPTIONAL_MODEL_PREFERENCES_CHANGED } from '@/lib/optional-model-activation';
 import { useOptionalModelDownloads } from '@/contexts/OptionalModelDownloadsContext';
+import { useI18n } from '@/i18n';
 
 interface DownloadProgress {
   file: string;
@@ -55,6 +56,7 @@ function formatMB(bytes: number): string {
  * Fully themed for both light and dark mode using Meetily semantic variables.
  */
 export function DiarizationSettings() {
+  const { t } = useI18n();
   const [status, setStatus] = useState<DiarizationEngineStatus | null>(null);
   const [isPyannoteDownloading, setIsDownloading] = useState(false);
   const { jobs, startDownload } = useOptionalModelDownloads();
@@ -107,11 +109,11 @@ export function DiarizationSettings() {
     try {
       await invoke('set_diarization_engine', { engine });
       window.dispatchEvent(new Event(OPTIONAL_MODEL_PREFERENCES_CHANGED));
-      toast.success(`Diarization engine switched to ${engine === 'nemotron' ? 'NVIDIA Nemotron-3' : 'Pyannote'}`);
+      toast.success(t('models.engineSwitched', { engine: engine === 'nemotron' ? 'NVIDIA Nemotron-3' : 'Pyannote' }));
       refreshStatus();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      toast.error('Failed to switch engine', { description: msg });
+      toast.error(t('models.failedToSwitchEngine'), { description: msg });
     } finally {
       setIsSwitching(false);
     }
@@ -133,7 +135,7 @@ export function DiarizationSettings() {
       refreshStatus();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      toast.error('Failed to update configuration', { description: msg });
+      toast.error(t('models.failedToUpdateConfiguration'), { description: msg });
     }
   };
 
@@ -159,16 +161,16 @@ export function DiarizationSettings() {
       await invoke('download_diarization_models', { engine: eng });
       downloaded = true;
       toast.success(
-        eng === 'nemotron' ? 'Nemotron-3 installed and enabled' : 'Speaker models installed',
+        eng === 'nemotron' ? t('models.nemotronInstalled') : t('models.speakerModelsInstalled'),
         {
-          description: 'You can now use Speakers on any meeting with a recording.',
+          description: t('models.speakersAvailable'),
         }
       );
       refreshStatus();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       downloaded ||= msg.startsWith('Model downloaded, but could not enable it:');
-      toast.error(downloaded ? 'Model downloaded, but could not enable it' : 'Model download failed', { description: msg });
+      toast.error(downloaded ? t('models.modelDownloadedNotEnabled') : t('models.modelDownloadFailed'), { description: msg });
       refreshStatus();
     } finally {
       if (unlistenRef.current) {
@@ -178,13 +180,13 @@ export function DiarizationSettings() {
       setIsDownloading(false);
       setProgress(null);
     }
-  }, [isDownloading, status, refreshStatus, startDownload]);
+  }, [isDownloading, status, refreshStatus, startDownload, t]);
 
   const handleOpenFolder = async () => {
     try {
       await invoke('open_diarization_model_directory');
     } catch (e) {
-      toast.error('Could not open folder', { description: String(e) });
+      toast.error(t('models.couldNotOpenFolder'), { description: String(e) });
     }
   };
 
@@ -207,12 +209,14 @@ export function DiarizationSettings() {
         <div className="min-w-0 flex-1 basis-64">
           <h3 className="text-[15px] font-semibold text-af-text mb-2 flex items-center gap-2">
             <Users className="w-5 h-5 text-af-accent" />
-            Speaker Identification
+            {t('models.speakerIdentification')}
           </h3>
           <p className="text-sm text-af-text-2">
-            Labels your transcript with <strong>Speaker 1/2/3…</strong> by analyzing voices in the
-            recording. Runs entirely on-device. Open a meeting and click{' '}
-            <strong>Speakers</strong> above the transcript to run it.
+            {t('models.speakerIdDescriptionBefore')}
+            <strong>{t('models.speakerIdExample')}</strong>
+            {t('models.speakerIdDescriptionMiddle')}
+            <strong>{t('models.speakersLabel')}</strong>
+            {t('models.speakerIdDescriptionAfter')}
           </p>
         </div>
         {status !== null && (
@@ -222,7 +226,7 @@ export function DiarizationSettings() {
             }`}
           >
             {currentAvailable ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
-            {currentAvailable ? 'Ready' : 'Models missing'}
+            {currentAvailable ? t('models.ready') : t('models.modelsMissing')}
           </span>
         )}
       </div>
@@ -230,7 +234,7 @@ export function DiarizationSettings() {
       {/* Engine Selection: Pyannote vs Nemotron-3 */}
       <div className="mt-4 mb-5">
         <label className="text-[11px] font-semibold text-af-text-3 mb-2.5 block uppercase tracking-wider">
-          Diarization Engine
+          {t('models.diarizationEngine')}
         </label>
         <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
           {/* Pyannote card */}
@@ -260,36 +264,36 @@ export function DiarizationSettings() {
                     </span>
                     {status?.pyannote_available && (
                       <span className="rounded-full bg-af-success/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-af-success">
-                        Ready
+                        {t('models.ready')}
                       </span>
                     )}
                   </div>
                   <span className="text-[11px] text-af-text-3 font-medium">
-                    Clustering Diarization
+                    {t('models.clusteringDiarization')}
                   </span>
                 </div>
               </div>
               <div className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap">
                 {isPyannote ? (
                   <span className="inline-flex items-center gap-1 rounded-full border border-af-accent/40 bg-af-accent/10 px-2.5 py-1 text-[11px] font-medium text-af-accent">
-                    <Check className="w-3.5 h-3.5" /> Active
+                    <Check className="w-3.5 h-3.5" /> {t('models.active')}
                   </span>
                 ) : (
                   <span className="inline-flex items-center rounded-full border border-af-border-strong px-2.5 py-1 text-[11px] font-medium text-af-text-2 transition-colors group-hover:text-af-text">
-                    Select
+                    {t('models.select')}
                   </span>
                 )}
               </div>
             </div>
             <p className="text-xs text-af-text-2 leading-relaxed mt-1">
-              Bundled segmentation-3.0 with WeSpeaker ResNet34 embeddings & agglomerative clustering.
+              {t('models.pyannoteDescription')}
             </p>
             <div className="mt-3.5 pt-2.5 border-t border-af-border flex flex-wrap items-center justify-between gap-2 text-[11px]">
               <span className="px-2 py-0.5 rounded bg-af-panel text-af-text-3 border border-af-border font-medium">
-                Bundled with app
+                {t('models.bundledWithApp')}
               </span>
               <span className="font-medium text-af-accent px-2 py-0.5 rounded bg-af-accent/10">
-                  Local CPU
+                  {t('models.localCpu')}
               </span>
             </div>
           </button>
@@ -321,51 +325,54 @@ export function DiarizationSettings() {
                     </span>
                     {status?.nemotron_available && !isNemotronDownloading && (
                       <span className="rounded-full bg-af-success/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-af-success">
-                        Ready
+                        {t('models.ready')}
                       </span>
                     )}
                   </div>
                   <span className="text-[11px] text-af-text-3 font-medium">
-                    Sortformer v3 Neural
+                    {t('models.sortformerV3Neural')}
                   </span>
                 </div>
               </div>
               <div className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap">
                 {isNemotron ? (
                   <span className="inline-flex items-center gap-1 rounded-full border border-af-accent/40 bg-af-accent/10 px-2.5 py-1 text-[11px] font-medium text-af-accent">
-                    <Check className="w-3.5 h-3.5" /> Active
+                    <Check className="w-3.5 h-3.5" /> {t('models.active')}
                   </span>
                 ) : (
                   <span className="inline-flex items-center rounded-full border border-af-border-strong px-2.5 py-1 text-[11px] font-medium text-af-text-2 transition-colors group-hover:text-af-text">
-                    Select
+                    {t('models.select')}
                   </span>
                 )}
               </div>
             </div>
             <p className="text-xs text-af-text-2 leading-relaxed mt-1">
-                Post-call speaker detection with overlapping speech support. Windows uses DirectML GPU acceleration when available, with CPU fallback.
+                {t('models.nemotronCardDescription')}
             </p>
             <div className="mt-3.5 pt-2.5 border-t border-af-border flex flex-wrap items-center justify-between gap-2 text-[11px]">
               <span className="px-2 py-0.5 rounded bg-af-panel text-af-text-3 border border-af-border font-medium">
                 Sortformer v3
               </span>
               <span className="font-medium text-af-accent px-2 py-0.5 rounded bg-af-accent/10">
-                Overlap detection
+                {t('models.overlapDetection')}
               </span>
             </div>
             {isNemotronDownloading && (
               <div className="mt-4 border-t border-af-border pt-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-medium text-af-text">
-                  <span>{nemotronJob.status === 'activating' ? 'Enabling model…' : nemotronJob.detail ?? 'Downloading…'}</span>
+                  <span>{nemotronJob.status === 'activating' ? t('models.enablingModel') : nemotronJob.detail ?? t('models.downloadingEllipsis')}</span>
                   <span className="tabular-nums">{Math.round(nemotronJob.progress)}%</span>
                 </div>
                 {nemotronJob.file && <p className="mt-1 break-all text-[11px] text-af-text-3">{nemotronJob.file}</p>}
                 {nemotronJob.totalBytes !== undefined && nemotronJob.totalBytes > 0 && nemotronJob.downloadedBytes !== undefined && (
                   <p className="mt-1 text-[11px] text-af-text-3">
-                    Current file: {(nemotronJob.downloadedBytes / 1024 / 1024).toFixed(1)} / {(nemotronJob.totalBytes / 1024 / 1024).toFixed(1)} MiB
+                    {t('models.currentFile', {
+                      downloaded: (nemotronJob.downloadedBytes / 1024 / 1024).toFixed(1),
+                      total: (nemotronJob.totalBytes / 1024 / 1024).toFixed(1),
+                    })}
                   </p>
                 )}
-                <div role="progressbar" aria-label="Nemotron download progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={nemotronJob.progress} className="mt-2 h-1.5 overflow-hidden rounded-full bg-af-hover">
+                <div role="progressbar" aria-label={t('models.nemotronDownloadProgress')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={nemotronJob.progress} className="mt-2 h-1.5 overflow-hidden rounded-full bg-af-hover">
                   <div className="h-full rounded-full bg-af-accent transition-[width] duration-150" style={{ width: `${nemotronJob.progress}%` }} />
                 </div>
               </div>
@@ -380,7 +387,7 @@ export function DiarizationSettings() {
         <>
           {status?.pyannote_available === true && (
             <p className="mt-2 text-sm text-af-text-3">
-              Models ship with the app — nothing to download.
+              {t('models.modelsShipWithApp')}
             </p>
           )}
 
@@ -388,13 +395,13 @@ export function DiarizationSettings() {
           {status?.pyannote_available === false && !isDownloading && (
             <div className="mt-4 rounded-xl bg-af-warning/10 p-4">
               <p className="text-sm text-af-text mb-3 leading-relaxed">
-                The bundled speaker models couldn&apos;t be found. You can re-download them
-                {downloadBytes > 0 && <> (~{formatMB(downloadBytes)})</>} from this app&apos;s GitHub
-                release — files are verified with SHA-256.
+                {downloadBytes > 0
+                  ? t('models.bundledModelsMissingWithSize', { size: formatMB(downloadBytes) })
+                  : t('models.bundledModelsMissing')}
               </p>
               <Button size="sm" onClick={() => handleDownload('pyannote')} className="bg-af-accent text-af-on-accent hover:bg-af-accent-hover">
                 <Download size={16} className="mr-1.5" />
-                Re-download models
+                {t('models.redownloadModels')}
               </Button>
             </div>
           )}
@@ -406,7 +413,7 @@ export function DiarizationSettings() {
           {status?.nemotron_available === true && (
             <div className="text-sm text-af-text-2 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-af-success" />
-              <span>Nemotron-3 Sortformer model ready on-device.</span>
+              <span>{t('models.nemotronReady')}</span>
             </div>
           )}
 
@@ -414,12 +421,11 @@ export function DiarizationSettings() {
           {status?.nemotron_available === false && !isDownloading && (
             <div className="mt-4 rounded-xl bg-af-warning/10 p-4">
               <p className="text-sm text-af-text mb-3 leading-relaxed">
-                The Nemotron-3 Diarization model (~{formatMB(downloadBytes)}) runs fully on-device.
-                Download once to install the SHA-256 verified model and its license.
+                {t('models.nemotronMissingDescription', { size: formatMB(downloadBytes) })}
               </p>
               <Button size="sm" onClick={() => handleDownload('nemotron')} className="h-auto min-h-9 whitespace-normal bg-af-accent text-af-on-accent hover:bg-af-accent-hover">
                 <Download size={16} className="mr-1.5" />
-                Download Nemotron-3 models (~{formatMB(downloadBytes)})
+                {t('models.downloadNemotronModels', { size: formatMB(downloadBytes) })}
               </Button>
             </div>
           )}
@@ -428,23 +434,23 @@ export function DiarizationSettings() {
           <div className="mt-3.5 p-4 border border-af-border rounded-xl bg-af-panel-2 space-y-4">
             <div className="text-[11px] font-semibold text-af-text-3 flex items-center gap-2 uppercase tracking-wider">
               <Sliders className="w-4 h-4 text-af-accent" />
-              Nemotron-3 Detection Settings
+              {t('models.nemotronDetectionSettings')}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs font-medium text-af-text-2">Speaker channels</span>
+                  <span className="text-xs font-medium text-af-text-2">{t('models.speakerChannels')}</span>
                   <span className="text-xs font-mono font-medium px-2 py-0.5 rounded-md bg-af-active text-af-text tabular-nums">
                     8
                   </span>
                 </div>
                 <span className="text-[11px] text-af-text-3 block mt-1">
-                  Nemotron tracks up to 8 remote speakers live and refines labels after recording. Microphone audio remains labeled You. Live engine changes apply to the next recording.
+                  {t('models.nemotronChannelsDescription')}
                 </span>
               </div>
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs font-medium text-af-text-2">Speech Threshold</span>
+                  <span className="text-xs font-medium text-af-text-2">{t('models.speechThreshold')}</span>
                   <span className="text-xs font-mono font-medium px-2 py-0.5 rounded-md bg-af-active text-af-text tabular-nums">
                     {(status?.nemotron_threshold ?? 0.50).toFixed(2)}
                   </span>
@@ -460,7 +466,7 @@ export function DiarizationSettings() {
                   style={{ '--fill': `${(((status?.nemotron_threshold ?? 0.50) - 0.10) / 0.80) * 100}%` } as React.CSSProperties}
                 />
                 <span className="text-[11px] text-af-text-3 block mt-1">
-                  Sensitivity for active speech frames (default: 0.50).
+                  {t('models.speechThresholdDescription')}
                 </span>
               </div>
             </div>
@@ -474,10 +480,10 @@ export function DiarizationSettings() {
           <div className="flex items-center gap-2 text-sm font-medium text-af-accent">
             <Spinner className="w-4 h-4" />
             {progress?.status === 'verifying'
-              ? `Verifying ${progress.file}…`
+              ? t('models.verifyingFile', { file: progress.file })
               : progress?.file
-                ? `Downloading ${progress.file} (${progress.file_index}/${progress.file_count})`
-                : 'Starting download…'}
+                ? t('models.downloadingFile', { file: progress.file, index: progress.file_index, count: progress.file_count })
+                : t('models.startingDownload')}
           </div>
 
           <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-af-accent/10">
@@ -504,7 +510,7 @@ export function DiarizationSettings() {
           <div className="flex items-center justify-between mb-1.5">
             <div className="text-xs font-medium text-af-text-2 flex items-center gap-1.5">
               <FolderOpen className="w-3.5 h-3.5" />
-              Model Directory
+              {t('models.modelDirectory')}
             </div>
             <button
               type="button"
@@ -512,7 +518,7 @@ export function DiarizationSettings() {
               className="text-xs text-af-accent hover:text-af-accent-hover flex items-center gap-1 font-medium cursor-pointer transition-colors"
             >
               <ExternalLink className="w-3.5 h-3.5" />
-              Open in Explorer
+              {t('models.openInExplorer')}
             </button>
           </div>
           <div className="text-xs text-af-text-2 break-all font-mono p-2 rounded-lg bg-af-panel border border-af-border">
@@ -521,14 +527,12 @@ export function DiarizationSettings() {
           <div className="mt-2 text-xs text-af-text-3 leading-relaxed">
             {isPyannote ? (
               <>
-                Drop your own <code>segmentation-3.0-fp16.onnx</code>,{' '}
-                <code>wespeaker-resnet34-LM.onnx</code> and <code>xvec_transform.npz</code> here to
-                override the bundled models.
+                {t('models.dropOwnModelsPrefix')}<code>segmentation-3.0-fp16.onnx</code>{t('models.dropModelsSeparator')}
+                <code>wespeaker-resnet34-LM.onnx</code>{t('models.dropModelsAnd')}<code>xvec_transform.npz</code>{t('models.dropPyannoteModelsSuffix')}
               </>
             ) : (
               <>
-                Drop your own <code>nemotron3_diar_v3.onnx</code> and <code>nemo128.onnx</code> here to
-                override the downloaded models.
+                {t('models.dropOwnModelsPrefix')}<code>nemotron3_diar_v3.onnx</code>{t('models.dropModelsAnd')}<code>nemo128.onnx</code>{t('models.dropNemotronModelsSuffix')}
               </>
             )}
           </div>
@@ -539,13 +543,11 @@ export function DiarizationSettings() {
       <p className="mt-4 text-xs text-af-text-4 leading-relaxed">
         {isPyannote ? (
           <>
-            Models: pyannote <code>segmentation-3.0</code> (MIT) · WeSpeaker ResNet34 (Apache-2.0) · VBx
-            x-vector transform (Apache-2.0). Credit to their respective authors.
+            {t('models.attributionPyannotePrefix')}<code>segmentation-3.0</code>{t('models.attributionPyannoteSuffix')}
           </>
         ) : (
           <>
-            Models: NVIDIA Nemotron-3 Diarization (Sortformer v3) · NeMo 128 Mel-spectrogram. Credit to
-            NVIDIA Corporation.
+            {t('models.attributionNemotron')}
           </>
         )}
       </p>

@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Spinner } from '@/components/ui/spinner';
 import { Download, AlertCircle} from 'lucide-react';
@@ -14,6 +16,7 @@ import { UpdateInfo, UpdateProgress } from '@/services/updateService';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
+import { useI18n } from '@/i18n';
 
 interface UpdateDialogProps {
   open: boolean;
@@ -29,6 +32,7 @@ type UpdateDownloadEvent =
 type UpdatePhase = 'idle' | 'preparing' | 'downloading' | 'installing';
 
 export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogProps) {
+  const { t } = useI18n();
   const [progress, setProgress] = useState<UpdateProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<UpdatePhase>('idle');
@@ -142,7 +146,7 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
       await invoke('install_downloaded_app_update', { requestId });
 
       console.log('[UpdateDialog] Update installed successfully');
-      toast.success('Update installed successfully. The app will restart...');
+      toast.success(t('importing.updateInstalledToast'));
 
       // Mark download as complete before closing
       updatePhase('idle');
@@ -164,9 +168,9 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
       }
       await invoke('cancel_app_update_download', { requestId }).catch(() => {});
       console.error('Update failed:', err);
-      setError(message || 'Failed to download or install update');
+      setError(message || t('importing.failedToInstallUpdate'));
       updatePhase('idle');
-      toast.error('Update failed: ' + (message || 'Unknown error'));
+      toast.error(t('importing.updateFailedWithMessage', { message: message || t('importing.unknownError') }));
     }
   };
 
@@ -224,34 +228,34 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
                 <span className="flex h-9 w-9 items-center justify-center rounded-full border border-af-accent/40 bg-af-accent/10">
                   <Spinner className="h-5 w-5 text-af-accent" />
                 </span>
-                {phase === 'installing' ? 'Installing Update' : 'Downloading Update'}
+                {phase === 'installing' ? t('importing.installingUpdate') : t('importing.downloadingUpdate')}
               </>
             ) : error ? (
               <>
                 <span className="flex h-9 w-9 items-center justify-center rounded-full border border-af-danger/35 bg-af-danger/10">
                   <AlertCircle className="h-5 w-5 text-af-danger" />
                 </span>
-                Update Error
+                {t('importing.updateError')}
               </>
             ) : (
               <>
                 <span className="flex h-9 w-9 items-center justify-center rounded-full border border-af-accent/40 bg-af-accent/10">
                   <Download className="h-5 w-5 text-af-accent" />
                 </span>
-                Update Available
+                {t('importing.updateAvailable')}
               </>
             )}
           </DialogTitle>
           <DialogDescription className="pl-12 text-af-text-4">
             {isDownloading
               ? phase === 'installing'
-                ? 'Download complete. Verifying and installing the update.'
+                ? t('importing.downloadCompleteInstalling')
                 : phase === 'preparing'
-                  ? 'Preparing the secure download...'
-                  : 'Downloading the signed update package from GitHub.'
+                  ? t('importing.preparingSecureDownload')
+                  : t('importing.downloadingSignedPackage')
               : error
-              ? 'An error occurred while updating'
-              : `A new version (${updateInfo.version}) is available`}
+              ? t('importing.updateErrorDescription')
+              : t('importing.newVersionAvailable', { version: updateInfo.version ?? '' })}
           </DialogDescription>
         </DialogHeader>
         </div>
@@ -261,16 +265,16 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
             <>
               <div className="grid grid-cols-2 gap-3 rounded-xl border border-af-border-strong bg-af-elevated/40 p-4">
                 <div className="flex justify-between text-sm">
-                  <span className="text-af-text-3">Installed</span>
+                  <span className="text-af-text-3">{t('importing.installed')}</span>
                   <span className="font-mono font-medium text-af-text-4">v{updateInfo.currentVersion}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-af-text-3">Available</span>
+                  <span className="text-af-text-3">{t('importing.available')}</span>
                   <span className="font-mono font-semibold text-af-accent">v{updateInfo.version}</span>
                 </div>
                 {updateInfo.date && (
                   <div className="col-span-2 flex justify-between border-t border-af-border-strong pt-3 text-sm">
-                    <span className="text-af-text-3">Released</span>
+                    <span className="text-af-text-3">{t('importing.released')}</span>
                     <span className="font-medium text-af-text-4">{formatDate(updateInfo.date)}</span>
                   </div>
                 )}
@@ -296,7 +300,7 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
                   />
                 </div>
                 <div className="mt-2 flex justify-between font-mono text-xs text-af-text-4">
-                  <span>{phase === 'installing' ? 'Installing' : `${Math.round(progress.percentage)}%`}</span>
+                  <span>{phase === 'installing' ? t('importing.installing') : `${Math.round(progress.percentage)}%`}</span>
                   {progress.total > 0 && (
                     <span>
                       {formatBytes(progress.downloaded)} / {formatBytes(progress.total)}
@@ -305,7 +309,7 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
                 </div>
               </div>
               <p className="text-center text-sm text-af-text-4">
-                Meetily will restart automatically when the update is installed.
+                {t('importing.restartWhenInstalled')}
               </p>
             </div>
           )}
@@ -321,17 +325,17 @@ export function UpdateDialog({ open, onOpenChange, updateInfo }: UpdateDialogPro
           {!isDownloading && !error && (
             <>
               <Button variant="outline" className="border-af-border-strong bg-transparent text-af-text-4 hover:bg-af-elevated hover:text-white" onClick={() => handleOpenChange(false)}>
-                Later
+                {t('importing.later')}
               </Button>
               <Button onClick={handleDownloadAndInstall} className="bg-af-success text-af-text hover:bg-af-success">
                 <Download className="h-4 w-4 mr-2" />
-                Download & Install
+                {t('importing.downloadAndInstall')}
               </Button>
             </>
           )}
           {error && (
             <Button variant="outline" className="border-af-border-strong bg-transparent text-af-text-4 hover:bg-af-elevated hover:text-white" onClick={() => handleOpenChange(false)}>
-              Close
+              {t('common.close')}
             </Button>
           )}
         </DialogFooter>

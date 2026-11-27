@@ -8,7 +8,13 @@
  *
  * Rust records titles starting with DEFAULT_PREFIX as automatic (see
  * is_default_meeting_title). Summaries never rename a meeting; only the user does.
+ *
+ * The generated prefix and date wording stay in their original form on purpose:
+ * the native side recognises DEFAULT_PREFIX, and a stored title is data rather
+ * than interface copy. Only the empty-title fallback is translated.
  */
+
+import { tNow } from '@/i18n/translate'
 
 export const DEFAULT_PREFIX = 'Meeting · ';
 
@@ -67,7 +73,7 @@ export function isDefaultTitle(title: string): boolean {
  */
 export function displayTitle(title: string | null | undefined, createdAt?: string | null): string {
   const trimmed = (title ?? '').trim();
-  if (!trimmed) return 'Untitled meeting';
+  if (!trimmed) return tNow('common.untitledMeeting');
   if (LEGACY_DEFAULT.some((pattern) => pattern.test(trimmed)) && createdAt) {
     const date = new Date(createdAt);
     if (!Number.isNaN(date.getTime())) return defaultMeetingTitle(date);

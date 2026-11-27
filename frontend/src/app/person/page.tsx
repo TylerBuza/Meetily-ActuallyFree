@@ -59,19 +59,22 @@ import {
 import { formatRelativePast, formatShortDate, formatWhen, parseDate } from '@/lib/dates';
 import { displayTitle } from '@/lib/meeting-titles';
 import type { PersonProfile } from '@/types';
+import { tNow, useI18n } from '@/i18n';
 
-const OVERVIEW_LABEL = 'Give me an overview of our history';
 const OVERVIEW_PROMPT =
   'Create a concise profile overview of this person based only on their meeting records. Cover recurring topics, decisions, commitments, collaboration patterns, and recent changes. Cite the meeting title and date for every substantive point, and keep recorded facts apart from inference.';
 
 function speakingTime(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds <= 0) return '0 min';
+  if (!Number.isFinite(seconds) || seconds <= 0) return tNow('people.durationZero');
   const minutes = Math.max(1, Math.round(seconds / 60));
   const hours = Math.floor(minutes / 60);
-  return hours > 0 ? `${hours} h ${minutes % 60} min` : `${minutes} min`;
+  return hours > 0
+    ? tNow('people.durationHours', { hours, minutes: minutes % 60 })
+    : tNow('people.durationMinutes', { minutes });
 }
 
 function PrivateNotes({ personId, initial }: { personId: string; initial: string }) {
+  const { t } = useI18n();
   const [notes, setNotes] = useState(initial);
   const saver = useAutosave<string>(async (value) => {
     await updatePersonNotes(personId, value);
@@ -79,7 +82,7 @@ function PrivateNotes({ personId, initial }: { personId: string; initial: string
   useEffect(() => setNotes(initial), [initial]);
   return (
     <Panel
-      title="Private notes"
+      title={t('people.privateNotes')}
       action={saver.state !== 'idle' ? <span className="text-[11px] text-af-text-4">{saveStateLabel(saver.state)}</span> : undefined}
     >
       <Textarea
@@ -89,10 +92,10 @@ function PrivateNotes({ personId, initial }: { personId: string; initial: string
           saver.schedule(event.target.value);
         }}
         rows={5}
-        placeholder="Context, preferences, follow-ups…"
+        placeholder={t('people.notesPlaceholder')}
         className="resize-y text-[13px] leading-relaxed"
       />
-      <p className="mt-2 text-[11px] leading-relaxed text-af-text-4">Only for you. Saved as you type, and never sent to AI.</p>
+      <p className="mt-2 text-[11px] leading-relaxed text-af-text-4">{t('people.notesHint')}</p>
     </Panel>
   );
 }
@@ -103,11 +106,12 @@ function PrivateNotes({ personId, initial }: { personId: string; initial: string
  * switch is on, or when a voice was learned before it was turned off.
  */
 function VoicePanel({ personId, first, meetingCount }: { personId: string; first: string; meetingCount: number }) {
+  const { t } = useI18n();
   const { labs } = useLabs();
   const voices = useVoiceProfiles();
   const voice = voices?.find((profile) => profile.person_id === personId);
   const [busy, setBusy] = useState<'learn' | 'forget' | null>(null);
-  const who = first || 'them';
+  const who = first || t('people.them');
 
   if (!labs.voiceProfiles && !voice) return null;
 
@@ -117,11 +121,11 @@ function VoicePanel({ personId, first, meetingCount }: { personId: string; first
     setBusy('learn');
     try {
       const learned = await learnContactVoice(personId);
-      toast.success(`${updating ? 'Updated' : 'Learned'} ${first || learned.name}'s voice`, {
-        description: `From ${describeVoiceSource(learned)}.`,
+      toast.success(t(updating ? 'people.updatedVoice' : 'people.learnedVoice', { name: first || learned.name }), {
+        description: t('people.voiceFromSource', { source: describeVoiceSource(learned) }),
       });
     } catch (error) {
-      toast.error(`Could not ${updating ? 'update' : 'learn'} ${who}'s voice`, { description: describeVoiceError(error) });
+      toast.error(t(updating ? 'people.couldNotUpdateVoice' : 'people.couldNotLearnVoice', { name: who }), { description: describeVoiceError(error) });
     } finally {
       setBusy(null);
     }
@@ -131,38 +135,38 @@ function VoicePanel({ personId, first, meetingCount }: { personId: string; first
     setBusy('forget');
     try {
       await forgetVoice(personId);
-      toast.success(`Forgot ${who}'s voice`);
+      toast.success(t('people.forgotVoice', { name: who }));
     } catch (error) {
-      toast.error('Could not forget the voice', { description: describeVoiceError(error) });
+      toast.error(t('people.couldNotForgetVoice'), { description: describeVoiceError(error) });
     } finally {
       setBusy(null);
     }
   };
 
   return (
-    <Panel title="Voice" action={<Badge variant="accent" size="xs">Labs</Badge>}>
+    <Panel title={t('people.voice')} action={<Badge variant="accent" size="xs">{t('people.labsBadge')}</Badge>}>
       {voices === null ? (
         <Skeleton className="h-16" />
       ) : voice ? (
         <>
           <p className="flex items-center gap-2 text-[13px] font-medium text-af-text">
             <Fingerprint className="h-4 w-4 shrink-0 text-af-accent" />
-            Meetily knows {who === 'them' ? 'their' : `${who}'s`} voice
+            {first ? t('people.knowsVoiceNamed', { name: first }) : t('people.knowsVoiceTheir')}
           </p>
           <p className="mt-1 text-xs leading-relaxed text-af-text-3">
             {labs.voiceProfiles
-              ? `Learned from ${describeVoiceSource(voice)}. When speakers are identified in a new meeting, a matching voice is named ${first || voice.name}. Update relearns it from all their recent meetings.`
-              : 'Voice profiles are off in Settings > Labs, so this voice is not used right now.'}
+              ? t('people.voiceLearnedDescription', { source: describeVoiceSource(voice), name: first || voice.name })
+              : t('people.voiceProfilesOff')}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {labs.voiceProfiles && (
               <Button size="sm" variant="secondary" onClick={() => void learn()} loading={busy === 'learn'} disabled={busy !== null}>
                 <Fingerprint />
-                Update voice
+                {t('people.updateVoice')}
               </Button>
             )}
             <Button size="sm" variant="danger-ghost" onClick={() => void forget()} loading={busy === 'forget'} disabled={busy !== null}>
-              Forget voice
+              {t('people.forgetVoice')}
             </Button>
           </div>
         </>
@@ -170,12 +174,14 @@ function VoicePanel({ personId, first, meetingCount }: { personId: string; first
         <>
           <p className="text-[13px] leading-relaxed text-af-text-3">
             {meetingCount > 0
-              ? `Learn ${who === 'them' ? 'their' : `${who}'s`} voice from their recent meetings where they spoke on the call. Later meetings then name a matching voice for you.`
-              : `Once ${who} is named in a recorded meeting, Meetily can learn their voice from it.`}
+              ? first
+                ? t('people.learnVoiceHintNamed', { name: first })
+                : t('people.learnVoiceHintTheir')
+              : t('people.learnVoiceOnce', { name: who })}
           </p>
           <Button className="mt-3" size="sm" onClick={() => void learn()} loading={busy === 'learn'} disabled={meetingCount === 0 || busy !== null}>
             <Fingerprint />
-            Learn voice
+            {t('people.learnVoice')}
           </Button>
         </>
       )}
@@ -185,6 +191,7 @@ function VoicePanel({ personId, first, meetingCount }: { personId: string; first
 
 function PersonPageInner() {
   const router = useRouter();
+  const { t } = useI18n();
   const personId = useSearchParams().get('id');
   const { personById } = useWorkspace();
   const [profile, setProfile] = useState<PersonProfile | null>(null);
@@ -238,7 +245,7 @@ function PersonPageInner() {
     return (
       <div className="h-full overflow-y-auto bg-af-panel">
         <div className="mx-auto max-w-3xl px-8 pt-16">
-          <EmptyState icon={<UserRound />} title="No one selected" description="Open a contact from Contacts or search." />
+          <EmptyState icon={<UserRound />} title={t('people.noOneSelected')} description={t('people.noOneSelectedDescription')} />
         </div>
       </div>
     );
@@ -250,15 +257,15 @@ function PersonPageInner() {
         <div className="mx-auto max-w-3xl px-8 pt-16">
           <EmptyState
             icon={<UserRound />}
-            title="This contact can't be shown"
+            title={t('people.contactCantBeShown')}
             description={error}
             action={
               <div className="flex gap-2">
                 <Button variant="secondary" onClick={() => void load()}>
-                  Try again
+                  {t('common.tryAgain')}
                 </Button>
                 <Button variant="ghost" onClick={() => router.push('/contacts')}>
-                  All contacts
+                  {t('people.allContacts')}
                 </Button>
               </div>
             }
@@ -271,9 +278,10 @@ function PersonPageInner() {
   const first = profile?.displayName.split(/\s+/)[0] ?? '';
   const last = parseDate(profile?.lastSeenAt);
   const since = parseDate(profile?.firstSeenAt);
+  const overviewSuggestion = t('people.overviewSuggestion');
 
   const ask = async (question: string) => {
-    const prompt = question === OVERVIEW_LABEL ? OVERVIEW_PROMPT : question;
+    const prompt = question === overviewSuggestion ? OVERVIEW_PROMPT : question;
     return invoke<string>('ask_person', { personId, question: prompt });
   };
 
@@ -282,7 +290,7 @@ function PersonPageInner() {
       <div className="mx-auto w-full max-w-5xl px-8 pb-24 pt-8 animate-af-rise">
         <Link href="/contacts" className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-af-text-3 transition-colors hover:bg-af-hover hover:text-af-text">
           <ArrowLeft className="h-3.5 w-3.5" />
-          Contacts
+          {t('people.contactsTitle')}
         </Link>
 
         <header className="mt-3 flex flex-wrap items-start gap-4">
@@ -308,11 +316,17 @@ function PersonPageInner() {
                     </span>
                   )}
                   <span>
-                    {profile.meetingCount > 0
-                      ? `${profile.meetingCount} meeting${profile.meetingCount === 1 ? '' : 's'} together${last ? ` · last ${formatRelativePast(last)}` : ''}${since ? ` · since ${formatShortDate(since)}` : ''}`
-                      : 'Not in a meeting yet'}
+                    {profile.meetingCount > 0 ? (
+                      <>
+                        {t(profile.meetingCount === 1 ? 'people.meetingsTogetherOne' : 'people.meetingsTogetherMany', { count: profile.meetingCount })}
+                        {last ? ` · ${t('people.lastSeen', { when: formatRelativePast(last) })}` : ''}
+                        {since ? ` · ${t('people.sinceDate', { when: formatShortDate(since) })}` : ''}
+                      </>
+                    ) : (
+                      t('people.notInMeetingYet')
+                    )}
                   </span>
-                  {profile.totalSpeakingSeconds > 0 && <span>{speakingTime(profile.totalSpeakingSeconds)} speaking</span>}
+                  {profile.totalSpeakingSeconds > 0 && <span>{t('people.speaking', { duration: speakingTime(profile.totalSpeakingSeconds) })}</span>}
                 </div>
                 {(profile.groups ?? []).length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-1.5">
@@ -332,23 +346,23 @@ function PersonPageInner() {
           <div className="flex shrink-0 items-center gap-1.5">
             <Button variant="secondary" size="sm" onClick={() => setEditing(true)} disabled={!profile}>
               <Pencil />
-              Edit
+              {t('common.edit')}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon-sm" aria-label="More contact actions" disabled={!profile}>
+                <Button variant="ghost" size="icon-sm" aria-label={t('people.moreContactActions')} disabled={!profile}>
                   <MoreHorizontal />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-52">
                 <DropdownMenuItem onSelect={() => setMerging(true)}>
                   <GitMerge />
-                  Merge into…
+                  {t('people.mergeIntoEllipsis')}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem variant="danger" onSelect={() => setConfirmDelete(true)}>
                   <Trash2 />
-                  Delete contact…
+                  {t('people.deleteContactEllipsis')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -358,7 +372,7 @@ function PersonPageInner() {
         <div className="mt-6 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
           <div className="flex min-w-0 flex-col gap-4">
             <Panel
-              title="Action items"
+              title={t('people.actionItems')}
               action={
                 doneCount > 0 ? (
                   <button
@@ -366,7 +380,7 @@ function PersonPageInner() {
                     onClick={() => setShowDone((value) => !value)}
                     className="rounded-md px-1.5 py-1 text-xs text-af-text-3 transition-colors hover:bg-af-hover hover:text-af-text"
                   >
-                    {showDone ? 'Hide done' : `Show ${doneCount} done`}
+                    {showDone ? t('people.hideDone') : t('people.showDone', { count: doneCount })}
                   </button>
                 ) : undefined
               }
@@ -375,9 +389,7 @@ function PersonPageInner() {
                 <Skeleton className="h-16" />
               ) : shownItems.length === 0 ? (
                 <p className="py-2 text-[13px] leading-relaxed text-af-text-3">
-                  {items.length === 0
-                    ? `Nothing assigned to ${first || 'them'} yet. Items from meeting summaries show up here when they are the owner.`
-                    : 'Everything is done.'}
+                  {items.length === 0 ? t('people.nothingAssigned', { name: first || t('people.them') }) : t('people.everythingDone')}
                 </p>
               ) : (
                 <ActionItemsList
@@ -396,7 +408,7 @@ function PersonPageInner() {
             </Panel>
 
             <Panel
-              title="Meetings together"
+              title={t('people.meetingsTogether')}
               action={
                 profile && profile.meetings.length > 0 ? (
                   <Link
@@ -404,7 +416,7 @@ function PersonPageInner() {
                     className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-af-text-3 transition-colors hover:bg-af-hover hover:text-af-text"
                   >
                     <span className="tabular-nums text-af-text-4">{profile.meetings.length}</span>
-                    Open in All meetings
+                    {t('people.openInAllMeetings')}
                   </Link>
                 ) : undefined
               }
@@ -412,7 +424,7 @@ function PersonPageInner() {
               {!profile ? (
                 <Skeleton className="h-24" />
               ) : profile.meetings.length === 0 ? (
-                <p className="py-2 text-[13px] text-af-text-3">Meetings appear here once {first || 'they'} are named as a speaker.</p>
+                <p className="py-2 text-[13px] text-af-text-3">{t('people.meetingsAppearOnce', { name: first || t('people.they') })}</p>
               ) : (
                 <ul className="af-appear -mx-1.5">
                   {profile.meetings.map((meeting) => {
@@ -428,7 +440,10 @@ function PersonPageInner() {
                             <span className="shrink-0 text-[11px] tabular-nums text-af-text-4">{date ? formatWhen(date) : ''}</span>
                           </span>
                           <span className="mt-0.5 block text-xs text-af-text-3">
-                            {meeting.messageCount} line{meeting.messageCount === 1 ? '' : 's'} · {speakingTime(meeting.speakingSeconds)} speaking
+                            {t(meeting.messageCount === 1 ? 'people.linesAndSpeakingOne' : 'people.linesAndSpeakingMany', {
+                              count: meeting.messageCount,
+                              duration: speakingTime(meeting.speakingSeconds),
+                            })}
                           </span>
                           {meeting.excerpt && (
                             <span className="mt-1.5 block border-l-2 border-af-border-strong pl-2.5 text-xs leading-relaxed text-af-text-2">
@@ -447,16 +462,16 @@ function PersonPageInner() {
           <div className="flex min-w-0 flex-col gap-4">
             {profile && <PrivateNotes personId={profile.id} initial={profile.notes ?? ''} />}
             {profile && <VoicePanel personId={profile.id} first={first} meetingCount={profile.meetingCount} />}
-            <Panel title={`Ask about ${first || 'them'}`} className="flex h-[28rem] flex-col p-0 pt-4 [&>header]:px-4">
+            <Panel title={t('people.askAbout', { name: first || t('people.them') })} className="flex h-[28rem] flex-col p-0 pt-4 [&>header]:px-4">
               <ChatThread
                 historyKey={`person:${personId}`}
                 ask={ask}
                 compact
-                emptyTitle="Ask across your meetings together"
-                emptyHint="Answers use their lines and the summaries of meetings you shared, with the meeting cited."
-                suggestions={[OVERVIEW_LABEL, 'What have they committed to?', 'What did we talk about last time?']}
-                placeholder={`Ask about ${first || 'them'}…`}
-                footnote="Uses your summary model. Cloud providers receive their lines and meeting summaries to answer."
+                emptyTitle={t('people.personAskEmptyTitle')}
+                emptyHint={t('people.personAskEmptyHint')}
+                suggestions={[overviewSuggestion, t('people.suggestionCommitments'), t('people.suggestionLastTime')]}
+                placeholder={t('people.askAboutPlaceholder', { name: first || t('people.them') })}
+                footnote={t('people.personAskFootnote')}
                 className="min-h-0 flex-1"
               />
             </Panel>
@@ -480,19 +495,19 @@ function PersonPageInner() {
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
         variant="danger"
-        title={`Delete ${profile?.displayName ?? 'this contact'}?`}
-        description="Their lines in meetings go back to generic speaker labels, and their action items lose an owner. Meetings are kept."
-        confirmLabel="Delete contact"
+        title={t('people.deleteContactTitle', { name: profile?.displayName ?? t('people.thisContact') })}
+        description={t('people.deleteContactDescription')}
+        confirmLabel={t('people.deleteContact')}
         onConfirm={async () => {
           if (!profile) return;
           try {
             await deletePerson(profile.id);
             announceChange('people');
             announceChange('actions');
-            toast.success('Contact deleted');
+            toast.success(t('people.contactDeleted'));
             router.push('/contacts');
           } catch (reason) {
-            toast.error('Could not delete the contact', { description: reason instanceof Error ? reason.message : String(reason) });
+            toast.error(t('people.couldNotDeleteTheContact'), { description: reason instanceof Error ? reason.message : String(reason) });
           }
         }}
       />

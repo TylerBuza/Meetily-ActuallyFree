@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { AlertTriangle, Mic, RefreshCw, Speaker } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
@@ -5,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { useIsLinux } from '@/hooks/usePlatform';
 import type { SystemAudioPermission } from '@/hooks/usePermissionCheck';
+import { useI18n } from '@/i18n';
 
 interface PermissionWarningProps {
   hasMicrophone: boolean;
@@ -24,6 +27,7 @@ export function PermissionWarning({
   isRechecking = false,
   className,
 }: PermissionWarningProps) {
+  const { t } = useI18n();
   const isLinux = useIsLinux();
 
   // Linux has no permission prompts; nothing to explain when both work.
@@ -36,19 +40,21 @@ export function PermissionWarning({
     );
 
   const title = !hasMicrophone && !hasSystemAudio
-    ? 'Meetily can’t hear your microphone or computer audio'
+    ? t('importing.micAndAudioUnavailable')
     : !hasMicrophone
-      ? 'Meetily can’t hear your microphone'
-      : 'Meetily can’t record computer audio';
+      ? t('importing.micUnavailable')
+      : t('importing.systemAudioUnavailable');
 
   // What to do on macOS depends on what TCC reports; 'granted' with no output
   // device needs no permission advice.
-  const macOSSystemAudioHint = {
-    denied: ' Audio Capture is turned off for Meetily. Turn it on in System Settings, then check again.',
-    not_determined: ' macOS hasn’t confirmed access yet. Click Check again and allow Meetily to record system audio. If you already allowed it, restart Meetily or play some audio and check again.',
-    granted: '',
-    unknown: ' On macOS, allow Audio Capture for Meetily, play some audio, then check again. Restart Meetily if it stays silent.',
-  }[systemAudioPermission];
+  const macOSSystemAudioHint =
+    systemAudioPermission === 'denied'
+      ? t('importing.macAudioCaptureDenied')
+      : systemAudioPermission === 'not_determined'
+        ? t('importing.macAccessNotConfirmed')
+        : systemAudioPermission === 'granted'
+          ? ''
+          : t('importing.macAudioCaptureUnknown');
 
   return (
     <Alert variant="warning" className={className}>
@@ -57,15 +63,14 @@ export function PermissionWarning({
       <AlertDescription className="space-y-2 text-af-text-2">
         {!hasMicrophone && (
           <p>
-            No microphone was found. Check that one is connected, that Meetily is allowed to use it in your system settings, and that no other
-            app has taken it over.
+            {t('importing.noMicrophoneFound')}
           </p>
         )}
         {!hasSystemAudio && (
           <p>
             {hasMicrophone
-              ? 'You can still record your microphone, but the other side of the call won’t be captured.'
-              : 'Computer audio capture is unavailable too.'}
+              ? t('importing.canStillRecordMic')
+              : t('importing.computerAudioUnavailable')}
             {isMacOS && macOSSystemAudioHint}
           </p>
         )}
@@ -73,18 +78,18 @@ export function PermissionWarning({
           {isMacOS && !hasMicrophone && (
             <Button size="sm" variant="secondary" onClick={() => openSettings('Privacy_Microphone')}>
               <Mic />
-              Microphone settings
+              {t('importing.microphoneSettings')}
             </Button>
           )}
           {isMacOS && !hasSystemAudio && (
             <Button size="sm" variant="secondary" onClick={() => openSettings('Privacy_AudioCapture')}>
               <Speaker />
-              Audio Capture settings
+              {t('importing.audioCaptureSettings')}
             </Button>
           )}
           <Button size="sm" variant="ghost" onClick={onRecheck} disabled={isRechecking}>
             <RefreshCw className={isRechecking ? 'animate-spin' : undefined} />
-            Check again
+            {t('importing.checkAgain')}
           </Button>
         </div>
       </AlertDescription>

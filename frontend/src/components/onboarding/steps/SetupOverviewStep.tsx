@@ -13,6 +13,7 @@ import {
 import { OnboardingContainer } from '../OnboardingContainer';
 import { useOnboarding } from '@/contexts/OnboardingContext';
 import { useOptionalModelDownloads } from '@/contexts/OptionalModelDownloadsContext';
+import { useI18n, type MessageKey } from '@/i18n';
 import {
   Tooltip,
   TooltipContent,
@@ -23,6 +24,7 @@ import {
 export function SetupOverviewStep() {
   const { goNext } = useOnboarding();
   const { jobs, startDownload } = useOptionalModelDownloads();
+  const { t } = useI18n();
   const [installWhisper, setInstallWhisper] = useState(false);
   const [installNemotron, setInstallNemotron] = useState(false);
   const [isMac, setIsMac] = useState(false);
@@ -61,16 +63,16 @@ export function SetupOverviewStep() {
     void checkAcceleration();
   }, []);
 
-  const steps = [
+  const steps: Array<{ number: number; type: 'transcription' | 'summarization'; titleKey: MessageKey }> = [
     {
       number: 1,
       type: 'transcription',
-      title: 'Download Transcription Engine',
+      titleKey: 'onboarding.setupStepDownloadTranscription',
     },
     {
       number: 2,
       type: 'summarization',
-      title: 'Download Summarization Engine',
+      titleKey: 'onboarding.setupStepDownloadSummarization',
     },
   ];
 
@@ -100,27 +102,27 @@ export function SetupOverviewStep() {
   };
 
   const accelerationLabel = cudaStatus?.reconfigurationRequired
-    ? 'NVIDIA CUDA available — setup required'
+    ? t('onboarding.accelerationCudaSetupRequired')
     : whisperBackend === undefined
-    ? 'Detecting...'
+    ? t('onboarding.accelerationDetecting')
     : whisperBackend === null
-      ? 'Could not determine'
-      : `${formatWhisperBackend(whisperBackend)} selected`;
+      ? t('onboarding.accelerationUnknown')
+      : t('onboarding.accelerationSelected', { backend: formatWhisperBackend(whisperBackend) });
   const accelerationDescription = whisperBackend === undefined
-    ? 'Checking the acceleration selected for this installation.'
+    ? t('onboarding.accelerationChecking')
     : whisperBackend === null
-      ? 'You can review the acceleration backend later in Local Stack settings.'
+      ? t('onboarding.accelerationReviewLater')
       : whisperBackend === 'CPU'
-        ? 'Whisper post-call enhancement will use CPU processing.'
-        : 'Whisper post-call enhancement will use this automatically selected backend.';
+        ? t('onboarding.accelerationCpu')
+        : t('onboarding.accelerationAuto');
   const showCudaNotice = cudaStatus?.driverUpdateRequired || cudaStatus?.reconfigurationRequired;
   const cudaProbeFailed = cudaStatus?.driverState === 'query-failed';
   const cudaBuildInstalled = cudaStatus?.compiledBackend.toLowerCase() === 'cuda';
 
   return (
     <OnboardingContainer
-      title="Setup Overview"
-      description="Meetily requires that you download the Transcription & Summarization AI models for the software to work."
+      title={t('onboarding.setupOverviewTitle')}
+      description={t('onboarding.setupOverviewDescription')}
       step={2}
       totalSteps={isMac ? 4 : 3}
     >
@@ -136,8 +138,7 @@ export function SetupOverviewStep() {
                 >
                   <div className="flex-1 ml-1">
                     <h3 className="font-medium text-af-text flex items-center gap-2">
-                        Step {step.number} :  {step.title}
-
+                        {t('onboarding.setupStepLabel', { number: step.number, title: t(step.titleKey) })}
                         {step.type === 'summarization' && (
                             <TooltipProvider>
                             <Tooltip>
@@ -147,8 +148,7 @@ export function SetupOverviewStep() {
                                 </button>
                                 </TooltipTrigger>
                                 <TooltipContent className="max-w-xs text-sm">
-                                You can also select external AI providers like OpenAI, Claude, or
-                                Ollama for summary generation in settings.
+                                {t('onboarding.setupExternalProviders')}
                                 </TooltipContent>
                             </Tooltip>
                             </TooltipProvider>
@@ -167,12 +167,12 @@ export function SetupOverviewStep() {
               {whisperBackend === 'CPU' ? <Cpu className="h-4 w-4" /> : <Zap className="h-4 w-4" />}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-af-text">Transcription acceleration</p>
+              <p className="text-sm font-medium text-af-text">{t('onboarding.accelerationTitle')}</p>
               <p className="mt-1 text-sm font-semibold text-af-accent">
                 {accelerationLabel}
               </p>
               <p className="mt-1 text-xs leading-5 text-af-text-2">
-                {accelerationDescription} Live Parakeet uses the CPU by default; DirectML acceleration is optional in Labs.
+                {accelerationDescription} {t('onboarding.accelerationParakeetNote')}
               </p>
             </div>
           </div>
@@ -188,19 +188,21 @@ export function SetupOverviewStep() {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold">
                   {cudaStatus?.reconfigurationRequired
-                    ? 'CUDA is ready now'
+                    ? t('onboarding.cudaReady')
                     : cudaProbeFailed
-                      ? 'CUDA support could not be verified'
-                      : 'Your NVIDIA GPU needs a current driver'}
+                      ? t('onboarding.cudaUnverified')
+                      : t('onboarding.cudaDriverNeeded')}
                 </p>
                 <p className="mt-1 text-xs leading-5 text-af-text">
                   {cudaStatus?.reconfigurationRequired
-                    ? `This installation is still using ${formatWhisperBackend(whisperBackend ?? 'CPU')}. Rerun the latest Meetily setup and it will select NVIDIA CUDA automatically.`
+                    ? t('onboarding.cudaStillUsing', { backend: formatWhisperBackend(whisperBackend ?? 'CPU') })
                     : cudaProbeFailed
-                      ? `Meetily could not read your NVIDIA driver details. Update or reinstall the driver, then recheck here.${cudaBuildInstalled ? '' : ' The current backend remains selected until setup is rerun.'}`
+                      ? t('onboarding.cudaProbeFailed', {
+                          extra: cudaBuildInstalled ? '' : t('onboarding.cudaBackendRemains'),
+                        })
                       : cudaBuildInstalled
-                        ? 'This CUDA installation cannot use acceleration until NVIDIA driver 580.00 or newer is installed.'
-                        : 'Install NVIDIA driver 580.00 or newer to enable CUDA acceleration. Meetily will keep using its current fallback safely until you rerun setup.'}
+                        ? t('onboarding.cudaDriverRequired')
+                        : t('onboarding.cudaInstallDriverHint')}
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Button
@@ -210,7 +212,7 @@ export function SetupOverviewStep() {
                     onClick={cudaStatus?.reconfigurationRequired ? openLatestSetup : openNvidiaDrivers}
                     className="border-af-warning/35 bg-af-panel text-af-text hover:bg-af-warning/10"
                   >
-                    {cudaStatus?.reconfigurationRequired ? 'Download CUDA setup' : 'Get NVIDIA driver'}
+                    {cudaStatus?.reconfigurationRequired ? t('onboarding.cudaDownloadSetup') : t('onboarding.cudaGetDriver')}
                   </Button>
                   <Button
                     type="button"
@@ -221,7 +223,7 @@ export function SetupOverviewStep() {
                     className="text-af-text hover:bg-af-warning/10"
                   >
                     <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${checkingAcceleration ? 'animate-spin' : ''}`} />
-                    Recheck
+                    {t('onboarding.cudaRecheck')}
                   </Button>
                 </div>
               </div>
@@ -230,20 +232,20 @@ export function SetupOverviewStep() {
         )}
 
         <div className="w-full max-w-md space-y-3 rounded-lg border border-af-border bg-af-panel p-4 text-af-text">
-          <h3 className="text-sm font-medium">Optional upgrades</h3>
+          <h3 className="text-sm font-medium">{t('onboarding.optionalUpgrades')}</h3>
           <label className="flex cursor-pointer items-start gap-3 text-sm">
             <Checkbox checked={installWhisper} onCheckedChange={checked => setInstallWhisper(checked === true)} className="mt-0.5" />
-            <span>Whisper for retranscription <span className="rounded-full bg-af-accent/10 px-1.5 py-0.5 text-[11px] font-medium text-af-accent">Recommended</span> <span className="text-af-text-3">{jobs.whisper.status === 'ready' ? '· Installed; enable it' : '· ~547 MB'}</span>
-              <span className="mt-0.5 block text-xs leading-5 text-af-text-2">Large v3 Turbo Q5 for post-call enhancement and retranscribing recordings. Parakeet remains the live transcription engine.</span>
+            <span>{t('onboarding.whisperOption')}{' '}<span className="rounded-full bg-af-accent/10 px-1.5 py-0.5 text-[11px] font-medium text-af-accent">{t('onboarding.recommended')}</span> <span className="text-af-text-3">{jobs.whisper.status === 'ready' ? t('onboarding.installedEnableIt') : '· ~547 MB'}</span>
+              <span className="mt-0.5 block text-xs leading-5 text-af-text-2">{t('onboarding.whisperOptionDescription')}</span>
             </span>
           </label>
           <label className="flex cursor-pointer items-start gap-3 text-sm">
             <Checkbox checked={installNemotron} onCheckedChange={checked => setInstallNemotron(checked === true)} className="mt-0.5" />
-            <span>Nemotron for speaker identification <span className="rounded-full bg-af-accent/10 px-1.5 py-0.5 text-[11px] font-medium text-af-accent">Recommended</span> <span className="text-af-text-3">{jobs.nemotron.status === 'ready' ? '· Installed; enable it' : '· ~382 MB'}</span>
-              <span className="mt-0.5 block text-xs leading-5 text-af-text-2">Auto-detect speakers after recording. Windows supports DirectML GPU acceleration with CPU fallback.</span>
+            <span>{t('onboarding.nemotronOption')}{' '}<span className="rounded-full bg-af-accent/10 px-1.5 py-0.5 text-[11px] font-medium text-af-accent">{t('onboarding.recommended')}</span> <span className="text-af-text-3">{jobs.nemotron.status === 'ready' ? t('onboarding.installedEnableIt') : '· ~382 MB'}</span>
+              <span className="mt-0.5 block text-xs leading-5 text-af-text-2">{t('onboarding.nemotronOptionDescription')}</span>
             </span>
           </label>
-          <p className="text-xs leading-5 text-af-text-3">Selected models download in the background and enable automatically when ready. You can finish setup immediately and track progress or retry in Settings.</p>
+          <p className="text-xs leading-5 text-af-text-3">{t('onboarding.optionalModelsNote')}</p>
         </div>
 
         {/* CTA Section */}
@@ -252,7 +254,7 @@ export function SetupOverviewStep() {
             onClick={handleContinue}
             className="w-full h-11 bg-af-elevated hover:bg-af-elevated text-white"
           >
-            Let's Go
+            {t('onboarding.setupLetsGo')}
           </Button>
           <div className="text-center">
             <button
@@ -260,7 +262,7 @@ export function SetupOverviewStep() {
               onClick={openIssues}
               className="text-xs text-af-text-2 hover:underline"
             >
-              View project on GitHub
+              {t('onboarding.viewProjectOnGithub')}
             </button>
           </div>
         </div>

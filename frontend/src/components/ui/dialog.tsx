@@ -5,6 +5,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { useI18n } from "@/i18n"
 
 const Dialog = DialogPrimitive.Root
 
@@ -37,41 +38,44 @@ const DialogContent = React.forwardRef<
     /** "top" keeps the dialog in place while its content grows and shrinks (search). */
     anchor?: "center" | "top"
   }
->(({ className, children, showCloseButton = true, anchor = "center", ...props }, ref) => (
-  <DialogPortal>
-    <DialogOverlay />
-    <DialogPrimitive.Content
-      ref={ref}
-      className={cn(
-        "fixed left-[50%] z-50 grid max-h-[calc(100vh-3rem)] w-[calc(100vw-2rem)] max-w-lg translate-x-[-50%] gap-4 overflow-y-auto",
-        anchor === "top" ? "top-[12vh] max-h-[80vh]" : "top-[50%] translate-y-[-50%]",
-        "rounded-2xl border border-af-border-strong bg-af-elevated p-6 text-af-text shadow-2xl",
-        "duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-        "data-[state=closed]:zoom-out-[0.97] data-[state=open]:zoom-in-[0.97]",
-        anchor === "top"
-          ? "data-[state=open]:slide-in-from-top-2 data-[state=closed]:slide-out-to-top-2"
-          : "data-[state=open]:slide-in-from-top-[49%] data-[state=closed]:slide-out-to-top-[49%]",
-        "data-[state=open]:slide-in-from-left-1/2 data-[state=closed]:slide-out-to-left-1/2",
-        className
-      )}
-      {...props}
-    >
-      {children}
-      {showCloseButton && (
-        <DialogPrimitive.Close
-          className={cn(
-            "absolute right-3.5 top-3.5 inline-flex h-8 w-8 items-center justify-center rounded-lg text-af-text-3",
-            "transition-colors hover:bg-af-hover hover:text-af-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60",
-            "disabled:pointer-events-none"
-          )}
-        >
-          <X className="h-4 w-4" />
-          <span className="sr-only">Close</span>
-        </DialogPrimitive.Close>
-      )}
-    </DialogPrimitive.Content>
-  </DialogPortal>
-))
+>(({ className, children, showCloseButton = true, anchor = "center", ...props }, ref) => {
+  const { t } = useI18n()
+  return (
+    <DialogPortal>
+      <DialogOverlay />
+      <DialogPrimitive.Content
+        ref={ref}
+        className={cn(
+          "fixed left-[50%] z-50 grid max-h-[calc(100vh-3rem)] w-[calc(100vw-2rem)] max-w-lg translate-x-[-50%] gap-4 overflow-y-auto",
+          anchor === "top" ? "top-[12vh] max-h-[80vh]" : "top-[50%] translate-y-[-50%]",
+          "rounded-2xl border border-af-border-strong bg-af-elevated p-6 text-af-text shadow-2xl",
+          "duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+          "data-[state=closed]:zoom-out-[0.97] data-[state=open]:zoom-in-[0.97]",
+          anchor === "top"
+            ? "data-[state=open]:slide-in-from-top-2 data-[state=closed]:slide-out-to-top-2"
+            : "data-[state=open]:slide-in-from-top-[49%] data-[state=closed]:slide-out-to-top-[49%]",
+          "data-[state=open]:slide-in-from-left-1/2 data-[state=closed]:slide-out-to-left-1/2",
+          className
+        )}
+        {...props}
+      >
+        {children}
+        {showCloseButton && (
+          <DialogPrimitive.Close
+            className={cn(
+              "absolute right-3.5 top-3.5 inline-flex h-8 w-8 items-center justify-center rounded-lg text-af-text-3",
+              "transition-colors hover:bg-af-hover hover:text-af-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60",
+              "disabled:pointer-events-none"
+            )}
+          >
+            <X className="h-4 w-4" />
+            <span className="sr-only">{t('ui.closeDialog')}</span>
+          </DialogPrimitive.Close>
+        )}
+      </DialogPrimitive.Content>
+    </DialogPortal>
+  )
+})
 DialogContent.displayName = DialogPrimitive.Content.displayName
 
 const DialogHeader = ({

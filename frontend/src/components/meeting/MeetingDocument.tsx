@@ -52,6 +52,8 @@ import { extractActionItems } from '@/lib/action-items';
 import { completeSummaryMarkdown } from '@/lib/summary-markdown';
 import { labelForCode } from '@/lib/summary-languages';
 import { readMeetingSummaryLanguage, saveMeetingSummaryLanguage } from '@/lib/summary-language-preferences';
+import { useI18n } from '@/i18n';
+import type { MessageKey } from '@/i18n';
 
 type SummaryStatus = 'idle' | 'processing' | 'summarizing' | 'regenerating' | 'completed' | 'error';
 
@@ -81,7 +83,12 @@ export interface MeetingDocumentProps {
   onRegenerateRequestHandled: () => void;
 }
 
-const SUGGESTIONS = ['Focus on decisions and owners', 'Keep it to five bullets', 'Highlight open questions', 'Use a more formal tone'];
+const SUGGESTIONS: MessageKey[] = [
+  'meeting.suggestionFocus',
+  'meeting.suggestionBullets',
+  'meeting.suggestionQuestions',
+  'meeting.suggestionFormal',
+];
 
 function SectionTitle({ icon: Icon, children, aside }: { icon: typeof FileText; children: React.ReactNode; aside?: React.ReactNode }) {
   return (
@@ -102,6 +109,7 @@ function SaveIndicator({ state }: { state: SaveState }) {
 }
 
 export function MeetingDocument(props: MeetingDocumentProps) {
+  const { t } = useI18n();
   const [tab, setTab] = useState<'notes' | 'ask'>('notes');
   return (
     <Tabs value={tab} onValueChange={(value) => setTab(value as 'notes' | 'ask')} className="flex h-full min-h-0 flex-col">
@@ -109,11 +117,11 @@ export function MeetingDocument(props: MeetingDocumentProps) {
         <TabsList className="h-8">
           <TabsTrigger value="notes" className="text-xs">
             <NotebookPen className="!size-3.5" />
-            Notes
+            {t('meeting.notesTab')}
           </TabsTrigger>
           <TabsTrigger value="ask" className="text-xs">
             <Sparkles className="!size-3.5" />
-            Ask AI
+            {t('meeting.askAiTab')}
           </TabsTrigger>
         </TabsList>
       </div>
@@ -124,11 +132,16 @@ export function MeetingDocument(props: MeetingDocumentProps) {
         <ChatThread
           historyKey={`meeting:${props.meetingId}`}
           ask={(question, history) => askMeeting(props.meetingId, question, history)}
-          suggestions={['What was decided?', 'Who owns what?', 'What questions are still open?', 'Summarize the last ten minutes']}
-          placeholder="Ask about this meeting…"
-          emptyTitle="Ask about this meeting"
-          emptyHint="Answers use the whole transcript, your notes, the summary, and the action items, with links to the moment."
-          footnote="Uses your configured AI model. Cloud providers receive the parts of this meeting needed to answer."
+          suggestions={[
+            t('meeting.suggestionDecided'),
+            t('meeting.suggestionOwnsWhat'),
+            t('meeting.suggestionOpenQuestions'),
+            t('meeting.suggestionLastTen'),
+          ]}
+          placeholder={t('meeting.askAboutMeetingPlaceholder')}
+          emptyTitle={t('meeting.askAboutMeetingTitle')}
+          emptyHint={t('meeting.askAboutMeetingHint')}
+          footnote={t('meeting.askAboutMeetingFootnote')}
           onSeek={props.onSeek}
         />
       </TabsContent>
@@ -160,6 +173,7 @@ function NotesTab({
   regenerateRequest,
   onRegenerateRequestHandled,
 }: MeetingDocumentProps) {
+  const { t } = useI18n();
   // ---- Notes ---------------------------------------------------------------
   const [notes, setNotes] = useState<{ loaded: boolean; json: unknown[] | null; markdown: string | null }>({
     loaded: false,
@@ -272,12 +286,12 @@ function NotesTab({
       setLanguage(saved.language);
     } catch (error) {
       setLanguage(previous);
-      toast.error('Could not save the summary language');
+      toast.error(t('meeting.couldNotSaveSummaryLanguage'));
     }
   };
-  const templateName = templates.find((template) => template.id === selectedTemplate)?.name ?? 'Standard';
-  const modelLabel = modelConfig?.model ? modelConfig.model : 'No model';
-  const languageLabel = language ? labelForCode(language) : 'Auto language';
+  const templateName = templates.find((template) => template.id === selectedTemplate)?.name ?? t('meeting.standardTemplate');
+  const modelLabel = modelConfig?.model ? modelConfig.model : t('meeting.noModel');
+  const languageLabel = language ? labelForCode(language) : t('meeting.autoLanguage');
 
   // ---- Regenerate ------------------------------------------------------------
   const [regenerateOpen, setRegenerateOpen] = useState(false);
@@ -310,14 +324,14 @@ function NotesTab({
         {/* Notes */}
         <section>
           <SectionTitle icon={NotebookPen} aside={<SaveIndicator state={notesSaver.state} />}>
-            Your notes
+            {t('meeting.yourNotes')}
           </SectionTitle>
           {notes.loaded ? (
             <NotesEditor
               key={`notes-${meetingId}`}
               initialBlocks={notes.json}
               initialMarkdown={notes.markdown}
-              placeholder="Write your own notes. They stay yours: summaries never overwrite them."
+              placeholder={t('meeting.writeYourNotesPlaceholder')}
               onChange={notesSaver.schedule}
             />
           ) : (
@@ -332,12 +346,15 @@ function NotesTab({
             aside={
               items.length > 0 ? (
                 <span className="text-[11px] tabular-nums text-af-text-4">
-                  {items.filter((item) => item.done).length} of {items.length} done
+                  {t('meeting.actionItemsDoneCount', {
+                    done: items.filter((item) => item.done).length,
+                    total: items.length,
+                  })}
                 </span>
               ) : undefined
             }
           >
-            Action items
+            {t('meeting.actionItems')}
           </SectionTitle>
           {itemsLoaded ? (
             <ActionItemsList
@@ -345,7 +362,7 @@ function NotesTab({
               onItemsChange={setItems}
               meetingId={meetingId}
               onSeek={onSeek}
-              emptyText={hasSummary ? 'No action items were found.' : 'Items from the summary appear here. You can add your own any time.'}
+              emptyText={hasSummary ? t('meeting.noActionItemsFound') : t('meeting.actionItemsFromSummary')}
             />
           ) : (
             <div className="space-y-2">
@@ -361,9 +378,9 @@ function NotesTab({
             <div className="min-w-0">
               <h2 className="flex items-center gap-2 text-[13px] font-semibold text-af-text">
                 <Sparkles className="h-4 w-4 text-af-accent" />
-                AI summary
+                {t('meeting.aiSummary')}
                 {userEdited && hasSummary && (
-                  <span className="rounded-full bg-af-panel-2 px-1.5 py-0.5 text-[10px] font-medium text-af-text-3">Edited</span>
+                  <span className="rounded-full bg-af-panel-2 px-1.5 py-0.5 text-[10px] font-medium text-af-text-3">{t('meeting.edited')}</span>
                 )}
               </h2>
               <p className="mt-0.5 truncate text-[11px] text-af-text-4">
@@ -376,29 +393,29 @@ function NotesTab({
                 <PopoverTrigger asChild>
                   <Button variant="ghost" size="sm" className="h-7 px-2 text-xs">
                     <Settings2 />
-                    Options
+                    {t('meeting.options')}
                     <ChevronDown className="!size-3" />
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent align="end" className="w-80 space-y-3 p-3.5">
-                  <p className="text-xs font-semibold text-af-text">Summary options</p>
+                  <p className="text-xs font-semibold text-af-text">{t('meeting.summaryOptions')}</p>
                   <div className="space-y-1">
-                    <span className="text-[11px] text-af-text-3">Model</span>
+                    <span className="text-[11px] text-af-text-3">{t('meeting.modelLabel')}</span>
                     <div className="flex items-center justify-between gap-2 rounded-lg border border-af-border bg-af-panel-2 px-3 py-2">
                       <span className="min-w-0 truncate text-xs text-af-text">
                         {modelConfig?.provider ? `${modelConfig.provider} · ` : ''}
                         {modelLabel}
                       </span>
                       <Button variant="ghost" size="xs" onClick={() => setModelOpen(true)}>
-                        Change
+                        {t('meeting.change')}
                       </Button>
                     </div>
                   </div>
                   <div className="space-y-1">
-                    <span className="text-[11px] text-af-text-3">Template</span>
+                    <span className="text-[11px] text-af-text-3">{t('meeting.templateLabel')}</span>
                     <Select value={selectedTemplate} onValueChange={(id) => onTemplateSelect(id, templates.find((t) => t.id === id)?.name ?? id)}>
                       <SelectTrigger className="h-8 text-xs">
-                        <SelectValue placeholder="Standard" />
+                        <SelectValue placeholder={t('meeting.standardTemplate')} />
                       </SelectTrigger>
                       <SelectContent>
                         {templates.map((template) => (
@@ -409,11 +426,11 @@ function NotesTab({
                       </SelectContent>
                     </Select>
                     <button type="button" onClick={onManageTemplates} className="text-[11px] text-af-accent hover:underline">
-                      Create or edit templates…
+                      {t('meeting.createOrEditTemplates')}
                     </button>
                   </div>
                   <div className="space-y-1">
-                    <span className="text-[11px] text-af-text-3">Language</span>
+                    <span className="text-[11px] text-af-text-3">{t('meeting.languageLabel')}</span>
                     <Popover open={languageOpen} onOpenChange={setLanguageOpen}>
                       <PopoverTrigger asChild>
                         <button
@@ -422,7 +439,7 @@ function NotesTab({
                         >
                           <span className="flex items-center gap-2">
                             <Languages className="h-3.5 w-3.5 text-af-text-3" />
-                            {language ? labelForCode(language) : 'Auto (match the transcript)'}
+                            {language ? labelForCode(language) : t('meeting.autoMatchTranscript')}
                           </span>
                           <ChevronDown className="h-3.5 w-3.5 text-af-text-3" />
                         </button>
@@ -432,7 +449,7 @@ function NotesTab({
                           value={language}
                           onChange={(code) => void changeLanguage(code)}
                           onClose={() => setLanguageOpen(false)}
-                          autoSubtitle="Uses the transcript's main language"
+                          autoSubtitle={t('meeting.autoLanguageSubtitle')}
                         />
                       </PopoverContent>
                     </Popover>
@@ -442,12 +459,12 @@ function NotesTab({
               {generating ? (
                 <Button variant="soft" size="sm" className="h-7 text-xs" onClick={onStop}>
                   <Square className="!size-3" fill="currentColor" />
-                  Stop
+                  {t('meeting.stop')}
                 </Button>
               ) : hasSummary ? (
                 <Button variant="secondary" size="sm" className="h-7 text-xs" onClick={() => setRegenerateOpen(true)} disabled={!hasTranscript}>
                   <RefreshCw />
-                  Regenerate
+                  {t('meeting.regenerate')}
                 </Button>
               ) : null}
             </div>
@@ -457,11 +474,11 @@ function NotesTab({
             <div role="alert" className="mb-3 flex items-start gap-3 rounded-xl border border-af-danger/30 bg-af-danger/[0.07] px-3.5 py-3">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-af-danger" />
               <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-medium text-af-text">The summary could not be generated</p>
+                <p className="text-[13px] font-medium text-af-text">{t('meeting.summaryCouldNotBeGenerated')}</p>
                 <p className="mt-0.5 break-words text-xs text-af-text-2">{summaryError}</p>
               </div>
               <Button size="xs" variant="secondary" onClick={() => (hasSummary ? setRegenerateOpen(true) : onGenerate())}>
-                Try again
+                {t('meeting.tryAgain')}
               </Button>
             </div>
           )}
@@ -470,7 +487,7 @@ function NotesTab({
             <div className="space-y-3 rounded-xl border border-af-border p-4">
               <p className="flex items-center gap-2 text-xs text-af-text-2">
                 <Wand2 className="h-3.5 w-3.5 animate-af-breathe text-af-accent" />
-                {statusMessage(summaryStatus) || 'Writing the summary…'}
+                {statusMessage(summaryStatus) || t('meeting.writingSummary')}
               </p>
               <Skeleton className="h-3.5 w-11/12" />
               <Skeleton className="h-3.5 w-4/5" />
@@ -481,7 +498,7 @@ function NotesTab({
               key={`summary-${meetingId}-${revision}`}
               initialBlocks={blocks}
               initialMarkdown={blocks ? null : markdown}
-              placeholder="The summary is empty."
+              placeholder={t('meeting.summaryEmptyPlaceholder')}
               onChange={(content) => {
                 lastEditorMarkdown.current = completeSummaryMarkdown({ markdown: content.markdown });
                 onSummaryChange({ markdown: content.markdown, summary_json: content.json }, 'user');
@@ -493,16 +510,16 @@ function NotesTab({
               <span className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-af-accent/[0.12] text-af-accent">
                 <Sparkles className="h-4 w-4" />
               </span>
-              <p className="text-sm font-medium text-af-text">{hasTranscript ? 'No summary yet' : 'Nothing to summarize yet'}</p>
+              <p className="text-sm font-medium text-af-text">{hasTranscript ? t('meeting.noSummaryYet') : t('meeting.nothingToSummarize')}</p>
               <p className="mx-auto mt-1 max-w-sm text-xs leading-relaxed text-af-text-3">
                 {hasTranscript
-                  ? `Uses ${modelLabel} with the ${templateName} template. Action items it finds are added to the list above.`
-                  : 'A summary can be written once the meeting has a transcript.'}
+                  ? t('meeting.summaryUsesTemplate', { model: modelLabel, template: templateName })
+                  : t('meeting.summaryNeedsTranscript')}
               </p>
               {hasTranscript && (
                 <Button className="mt-4" onClick={onGenerate}>
                   <Sparkles />
-                  Generate summary
+                  {t('meeting.generateSummary')}
                 </Button>
               )}
             </div>
@@ -515,17 +532,18 @@ function NotesTab({
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <RefreshCw className="h-4 w-4 text-af-accent" />
-              Regenerate the summary
+              {t('meeting.regenerateSummaryTitle')}
             </DialogTitle>
             <DialogDescription>
-              {regenerateReason ?? 'Add one-off instructions for this run if you like. Your saved settings stay the same.'}
+              {regenerateReason ?? t('meeting.regenerateDialogDescription')}
             </DialogDescription>
           </DialogHeader>
           {userEdited && (
             <div className="flex items-start gap-2.5 rounded-xl border border-af-warning/30 bg-af-warning/[0.08] px-3.5 py-3 text-xs text-af-text-2">
               <AlertTriangle className="mt-px h-4 w-4 shrink-0 text-af-warning" />
               <span>
-                You edited this summary. Regenerating replaces those edits. <strong className="text-af-text">Your notes and action items are kept.</strong>
+                {t('meeting.editedSummaryWarning')}{' '}
+                <strong className="text-af-text">{t('meeting.notesAndActionItemsKept')}</strong>
               </span>
             </div>
           )}
@@ -533,7 +551,7 @@ function NotesTab({
             value={instructions}
             onChange={(event) => setInstructions(event.target.value)}
             rows={3}
-            placeholder="e.g. Focus on decisions and next steps"
+            placeholder={t('meeting.regeneratePlaceholder')}
             onKeyDown={(event) => {
               if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void submitRegenerate();
             }}
@@ -543,19 +561,19 @@ function NotesTab({
               <button
                 key={suggestion}
                 type="button"
-                onClick={() => setInstructions((current) => (current.trim() ? `${current.trim()}\n${suggestion}` : suggestion))}
+                onClick={() => setInstructions((current) => (current.trim() ? `${current.trim()}\n${t(suggestion)}` : t(suggestion)))}
                 className="rounded-full border border-af-border px-2.5 py-1 text-[11px] text-af-text-2 transition-colors hover:border-af-accent/40 hover:text-af-text"
               >
-                + {suggestion}
+                + {t(suggestion)}
               </button>
             ))}
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setRegenerateOpen(false)} disabled={regenerating}>
-              Cancel
+              {t('meeting.cancel')}
             </Button>
             <Button onClick={() => void submitRegenerate()} loading={regenerating}>
-              {userEdited ? 'Replace and regenerate' : 'Regenerate'}
+              {userEdited ? t('meeting.replaceAndRegenerate') : t('meeting.regenerate')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -564,7 +582,7 @@ function NotesTab({
       <Dialog open={modelOpen} onOpenChange={setModelOpen}>
         <DialogContent className="max-w-2xl" aria-describedby={undefined}>
           <VisuallyHidden>
-            <DialogTitle>Summary model</DialogTitle>
+            <DialogTitle>{t('meeting.summaryModel')}</DialogTitle>
           </VisuallyHidden>
           <ModelSettingsModal
             onSave={async (config) => {
