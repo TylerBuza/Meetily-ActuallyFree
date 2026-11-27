@@ -38,6 +38,8 @@ import { CHROME_BOOT_SCRIPT } from '@/lib/window-chrome'
 import { RecordingPill } from '@/components/recording/RecordingPill'
 import { GroupEditorHost } from '@/components/groups/GroupEditor'
 import { RecordingNotice } from '@/components/RecordingNotice'
+import { I18nProvider, tNow, useI18n } from '@/i18n'
+import type { MessageKey } from '@/i18n'
 
 // Development only: in a plain browser (no Tauri bridge) serve sample data so
 // screens can be reviewed at http://localhost:3118. Stripped from production.
@@ -138,21 +140,63 @@ function ConditionalImportDialog({
 
 // export { metadata } from './metadata'
 
+/**
+ * The compact recorder is its own window: it renders the page bare, with no
+ * app chrome. Both windows are wrapped in the interface-language provider so
+ * the language choice applies everywhere.
+ */
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
   const pathname = usePathname()
+  const isMinibar = (pathname ?? '').startsWith('/minibar')
+
+  if (isMinibar) {
+    return (
+      <html lang="en" data-theme="midnight" className="dark minibar-window" suppressHydrationWarning>
+        <head>
+          <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
+          <script dangerouslySetInnerHTML={{ __html: inlineChunkErrorHandler }} />
+        </head>
+        <body className="font-sans antialiased bg-transparent">
+          <I18nProvider>{children}</I18nProvider>
+        </body>
+      </html>
+    )
+  }
+
+  return (
+    <html lang="en" data-theme="midnight" className="dark" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
+        <script dangerouslySetInnerHTML={{ __html: CHROME_BOOT_SCRIPT }} />
+        <script dangerouslySetInnerHTML={{ __html: inlineChunkErrorHandler }} />
+      </head>
+      <body className="font-sans antialiased">
+        <I18nProvider>
+          <AppShell>{children}</AppShell>
+        </I18nProvider>
+      </body>
+    </html>
+  )
+}
+
+/**
+ * Main-window chrome: startup gating, onboarding, the sidebar/content split and
+ * the app-wide providers. Mounted only outside the compact recorder window.
+ */
+function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter()
+  const { t } = useI18n()
   // Tray, notification and meeting-detection starts work from any page.
   const startRecordingAnywhere = useRef<() => void>(() => undefined)
-  const isMinibar = (pathname ?? '').startsWith('/minibar')
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [onboardingCompleted, setOnboardingCompleted] = useState(false)
   // Paint a retryable startup screen until native setup status is known.
   const [startupResolved, setStartupResolved] = useState(false)
-  const [startupError, setStartupError] = useState<string | null>(null)
+  const [startupError, setStartupError] = useState<MessageKey | null>(null)
   const [startupAttempt, setStartupAttempt] = useState(0)
   const [pendingCrashReport, setPendingCrashReport] = useState<PendingCrashReport | null>(null)
   const [recordingNoticeAcknowledged, setRecordingNoticeAcknowledged] = useState(false)
@@ -178,7 +222,6 @@ export default function RootLayout({
   // Keep the window wide enough for the expanded rail, its collapse control,
   // the recording card, and the speakers panel without those overlapping.
   useEffect(() => {
-    if (isMinibar) return
     let cancelled = false
     void (async () => {
       try {
@@ -197,12 +240,12 @@ export default function RootLayout({
     return () => {
       cancelled = true
     }
-  }, [isMinibar])
+  }, [])
 
   useEffect(() => {
     let cancelled = false
     const timer = window.setTimeout(() => {
-      if (!cancelled) setStartupError('Setup status is taking longer than expected.')
+      if (!cancelled) setStartupError('app.startupSlow')
     }, 8000)
 
     const initializeStartup = async () => {
@@ -228,7 +271,7 @@ export default function RootLayout({
         console.warn('[Layout] Could not resolve Tauri startup state:', error)
         if (cancelled) return
         window.clearTimeout(timer)
-        setStartupError('Unable to check setup status. Please retry.')
+        setStartupError('app.startupError')
       }
     }
 
@@ -244,7 +287,7 @@ export default function RootLayout({
     let disposed = false;
     let stop: UnlistenFn | undefined;
     void listen<string>('live-diarization-error', event => {
-      toast.error('Live speaker labeling unavailable', { description: event.payload, duration: 10000 });
+      toast.error(tNow('app.liveSpeakerLabelingUnavailable'), { description: event.payload, duration: 10000 });
     }).then(unlisten => { if (disposed) unlisten(); else stop = unlisten; });
     return () => { disposed = true; stop?.(); };
   }, []);
@@ -263,8 +306,8 @@ export default function RootLayout({
       console.log('[Layout] Received request-recording-toggle from tray');
 
       if (showOnboarding) {
-        toast.error("Please complete setup first", {
-          description: "You need to finish onboarding before you can start recording."
+        toast.error(tNow('app.completeSetupFirst'), {
+          description: tNow('app.completeSetupFirstTray')
         });
       } else {
         // If in main app, forward to useRecordingStart via window event
@@ -304,7 +347,7 @@ export default function RootLayout({
   // camera starts a recording instead, and that recording stops when the call
   // ends. The compact bar's window never starts or stops recordings.
   useEffect(() => {
-    if (!startupResolved || startupError || pendingCrashReport || isMinibar || !recordingNoticeAcknowledged) return
+    if (!startupResolved || startupError || pendingCrashReport || !recordingNoticeAcknowledged) return
     const unlisten = listen<{ app: string; process: string; notify: boolean; active_media: boolean }>(
       'meeting-detected',
       (event) => {
@@ -313,8 +356,8 @@ export default function RootLayout({
 
         const startRecording = () => {
           if (showOnboarding) {
-            toast.error('Please complete setup first', {
-              description: 'Finish onboarding before you can start recording.',
+            toast.error(tNow('app.completeSetupFirst'), {
+              description: tNow('app.completeSetupFirstDetection'),
             });
             return;
           }
@@ -333,17 +376,17 @@ export default function RootLayout({
         // OS toast with a Start recording button (Windows native path).
         if (notify) {
           invoke('show_simple_notification', {
-            title: `${app} meeting detected`,
-            body: 'Start recording this meeting now?',
+            title: tNow('app.meetingDetectedTitle', { app }),
+            body: tNow('app.meetingDetectedNotificationBody'),
           }).catch(() => {});
         }
 
         // In-app prompt with a one-click start action.
-        toast(`${app} meeting detected`, {
-          description: 'Capture mic + system audio in Meetily.',
+        toast(tNow('app.meetingDetectedTitle', { app }), {
+          description: tNow('app.meetingDetectedDescription'),
           duration: 20000,
           action: {
-            label: 'Start recording',
+            label: tNow('app.startRecording'),
             onClick: startRecording,
           },
         });
@@ -353,8 +396,8 @@ export default function RootLayout({
     // OS notification button → same start path as sidebar / in-app toast.
     const unlistenStart = listen('start-recording-from-notification', () => {
       if (showOnboarding) {
-        toast.error('Please complete setup first', {
-          description: 'Finish onboarding before you can start recording.',
+        toast.error(tNow('app.completeSetupFirst'), {
+          description: tNow('app.completeSetupFirstDetection'),
         });
         return;
       }
@@ -370,7 +413,7 @@ export default function RootLayout({
           endAutomatedRecording();
           return;
         }
-        toast(`${call.app} call ended`, { description: 'Meeting automation is stopping and saving the recording.' });
+        toast(tNow('app.meetingEndedTitle', { app: call.app }), { description: tNow('app.meetingEndedDescription') });
         requestRecordingStop((href) => router.push(href));
       }).catch((error) => console.error('Could not check recording state for meeting automation:', error));
     });
@@ -380,7 +423,7 @@ export default function RootLayout({
       unlistenStart.then((fn) => fn());
       unlistenEnd.then((fn) => fn());
     };
-  }, [showOnboarding, startupResolved, startupError, pendingCrashReport, isMinibar, router, recordingNoticeAcknowledged]);
+  }, [showOnboarding, startupResolved, startupError, pendingCrashReport, router, recordingNoticeAcknowledged]);
 
   // Handle file drop for audio import
   const handleFileDrop = useCallback((paths: string[]) => {
@@ -395,8 +438,8 @@ export default function RootLayout({
       setImportFilePath(audioFile);
       setShowImportDialog(true);
     } else if (paths.length > 0) {
-      toast.error('Please drop an audio file', {
-        description: `Supported formats: ${getAudioFormatsDisplayList()}`
+      toast.error(tNow('app.dropAudioFile'), {
+        description: tNow('app.dropAudioFileDescription', { formats: getAudioFormatsDisplayList() })
       });
     }
   }, []);
@@ -473,122 +516,99 @@ export default function RootLayout({
     window.location.reload()
   }
 
-  // The compact bar is its own window. Render it bare on the server and the
-  // client so the full app chrome never mounts there and then unmounts.
-  if (isMinibar) {
-    return (
-      <html lang="en" data-theme="midnight" className="dark minibar-window" suppressHydrationWarning>
-        <head>
-          <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
-          <script dangerouslySetInnerHTML={{ __html: inlineChunkErrorHandler }} />
-        </head>
-        <body className="font-sans antialiased bg-transparent">
-          {children}
-        </body>
-      </html>
-    )
-  }
-
   return (
-    <html lang="en" data-theme="midnight" className="dark" suppressHydrationWarning>
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
-        <script dangerouslySetInnerHTML={{ __html: CHROME_BOOT_SCRIPT }} />
-        <script dangerouslySetInnerHTML={{ __html: inlineChunkErrorHandler }} />
-      </head>
-      <body className="font-sans antialiased">
-        {!startupResolved || startupError ? (
-          <main className="flex h-screen flex-col items-center justify-center gap-4 bg-[var(--af-bg)] text-af-text">
-            <p role="status">{startupError ?? 'Checking setup…'}</p>
-            {startupError && <button onClick={() => { setStartupError(null); setStartupAttempt(value => value + 1); }}>Retry</button>}
-          </main>
-        ) : pendingCrashReport ? (
-          <>
-            <div className="h-screen bg-[var(--af-bg)]" />
-            <CrashReportDialog
-              report={pendingCrashReport}
-              onResolved={() => setPendingCrashReport(null)}
-            />
-          </>
-        ) : (
-          <AnalyticsProvider>
-            <RecordingStateProvider>
-              <TranscriptProvider>
-                <ConfigProvider>
-                  <OllamaDownloadProvider>
-                    <OnboardingProvider>
-                      <WorkspaceProvider>
-                      <OptionalModelDownloadsProvider>
-                      <SidebarProvider>
-                        <TooltipProvider>
-                          <AppTooltipGuard />
-                          <RecordingPostProcessingProvider>
-                            <UpdateCheckProvider onboardingCompleted={onboardingCompleted}>
-                              <ImportDialogProvider onOpen={handleOpenImportDialog}>
-                                {onboardingCompleted && !showOnboarding && <GlobalSearchDialog />}
-                                {onboardingCompleted && !showOnboarding && <RouteWarmup />}
-                                {/* Download progress toast provider - listens for background downloads */}
-                                <DownloadProgressToastProvider />
+    <>
+      {!startupResolved || startupError ? (
+        <main className="flex h-screen flex-col items-center justify-center gap-4 bg-[var(--af-bg)] text-af-text">
+          <p role="status">{startupError ? t(startupError) : t('app.checkingSetup')}</p>
+          {startupError && <button onClick={() => { setStartupError(null); setStartupAttempt(value => value + 1); }}>{t('common.retry')}</button>}
+        </main>
+      ) : pendingCrashReport ? (
+        <>
+          <div className="h-screen bg-[var(--af-bg)]" />
+          <CrashReportDialog
+            report={pendingCrashReport}
+            onResolved={() => setPendingCrashReport(null)}
+          />
+        </>
+      ) : (
+        <AnalyticsProvider>
+          <RecordingStateProvider>
+            <TranscriptProvider>
+              <ConfigProvider>
+                <OllamaDownloadProvider>
+                  <OnboardingProvider>
+                    <WorkspaceProvider>
+                    <OptionalModelDownloadsProvider>
+                    <SidebarProvider>
+                      <TooltipProvider>
+                        <AppTooltipGuard />
+                        <RecordingPostProcessingProvider>
+                          <UpdateCheckProvider onboardingCompleted={onboardingCompleted}>
+                            <ImportDialogProvider onOpen={handleOpenImportDialog}>
+                              {onboardingCompleted && !showOnboarding && <GlobalSearchDialog />}
+                              {onboardingCompleted && !showOnboarding && <RouteWarmup />}
+                              {/* Download progress toast provider - listens for background downloads */}
+                              <DownloadProgressToastProvider />
 
-                                {/* Show onboarding or main app */}
-                                {showOnboarding ? (
-                                  <OnboardingFlow onComplete={handleOnboardingComplete} />
-                                ) : (
-                                  <div className="flex min-h-0 min-w-0 h-screen overflow-hidden">
-                                    <Sidebar />
-                                    <MainContent>{children}</MainContent>
-                                    <RecordingPill />
-                                    <GroupEditorHost />
-                                    <RecordingNotice onAcknowledged={acknowledgeRecordingNotice} />
-                                  </div>
-                                )}
-                                {/* Import audio overlay and dialog */}
-                                <ImportDropOverlay visible={showDropOverlay} />
-                                <ConditionalImportDialog
-                                  showImportDialog={showImportDialog}
-                                  handleImportDialogClose={handleImportDialogClose}
-                                  importFilePath={importFilePath}
+                              {/* Show onboarding or main app */}
+                              {showOnboarding ? (
+                                <OnboardingFlow onComplete={handleOnboardingComplete} />
+                              ) : (
+                                <div className="flex min-h-0 min-w-0 h-screen overflow-hidden">
+                                  <Sidebar />
+                                  <MainContent>{children}</MainContent>
+                                  <RecordingPill />
+                                  <GroupEditorHost />
+                                  <RecordingNotice onAcknowledged={acknowledgeRecordingNotice} />
+                                </div>
+                              )}
+                              {/* Import audio overlay and dialog */}
+                              <ImportDropOverlay visible={showDropOverlay} />
+                              <ConditionalImportDialog
+                                showImportDialog={showImportDialog}
+                                handleImportDialogClose={handleImportDialogClose}
+                                importFilePath={importFilePath}
+                              />
+                              {/* Non-blocking crash report overlay */}
+                              {pendingCrashReport && (
+                                <CrashReportDialog
+                                  report={pendingCrashReport}
+                                  onResolved={() => setPendingCrashReport(null)}
                                 />
-                                {/* Non-blocking crash report overlay */}
-                                {pendingCrashReport && (
-                                  <CrashReportDialog
-                                    report={pendingCrashReport}
-                                    onResolved={() => setPendingCrashReport(null)}
-                                  />
-                                )}
-                              </ImportDialogProvider>
-                            </UpdateCheckProvider>
-                          </RecordingPostProcessingProvider>
-                        </TooltipProvider>
-                      </SidebarProvider>
-                      </OptionalModelDownloadsProvider>
-                      </WorkspaceProvider>
-                    </OnboardingProvider>
-                  </OllamaDownloadProvider>
-                </ConfigProvider>
-              </TranscriptProvider>
-            </RecordingStateProvider>
-          </AnalyticsProvider>
-        )}
+                              )}
+                            </ImportDialogProvider>
+                          </UpdateCheckProvider>
+                        </RecordingPostProcessingProvider>
+                      </TooltipProvider>
+                    </SidebarProvider>
+                    </OptionalModelDownloadsProvider>
+                    </WorkspaceProvider>
+                  </OnboardingProvider>
+                </OllamaDownloadProvider>
+              </ConfigProvider>
+            </TranscriptProvider>
+          </RecordingStateProvider>
+        </AnalyticsProvider>
+      )}
 
-        {/* Minimize, maximize and close, drawn by the app on Windows. */}
-        <WindowControls />
+      {/* Minimize, maximize and close, drawn by the app on Windows. */}
+      <WindowControls />
 
-        <Toaster
-          position="top-center"
-          theme={themeInfo(appTheme).dark ? 'dark' : 'light'}
-          closeButton
-          offset="calc(var(--af-chrome-h) + 16px)"
-          icons={{ close: <X className="h-4 w-4" /> }}
-          toastOptions={{
-            classNames: {
-              toast: 'af-toast',
-              title: 'text-sm font-medium text-af-text',
-              description: 'text-xs text-af-text-2',
-            },
-          }}
-        />
-      </body>
-    </html>
+      <Toaster
+        position="top-center"
+        theme={themeInfo(appTheme).dark ? 'dark' : 'light'}
+        closeButton
+        offset="calc(var(--af-chrome-h) + 16px)"
+        icons={{ close: <X className="h-4 w-4" /> }}
+        toastOptions={{
+          classNames: {
+            toast: 'af-toast',
+            title: 'text-sm font-medium text-af-text',
+            description: 'text-xs text-af-text-2',
+          },
+        }}
+      />
+    </>
   )
 }

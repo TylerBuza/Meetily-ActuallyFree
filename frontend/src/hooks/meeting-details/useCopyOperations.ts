@@ -10,10 +10,12 @@ import Analytics from '@/lib/analytics';
 import { exportSummaryAs, type ExportFormat } from '@/lib/exportSummary';
 import { completeSummaryMarkdown, parseSummaryData } from '@/lib/summary-markdown';
 import { displayTitle } from '@/lib/meeting-titles';
+import { formatDocumentDate } from '@/lib/dates';
 import { useUserName } from '@/hooks/useUserName';
 import { displaySpeaker, splitSpeakerLabel } from '@/utils/speakerUtils';
 import { buildFrontmatter, formatSpeakerMention, type LinkStyle } from '@/lib/exportMarkdownFrontmatter';
 import { isLinkableSpeakerName } from '@/lib/speakerLabels';
+import { tNow } from '@/i18n/translate';
 import type { Summary, Transcript } from '@/types';
 
 export type MeetingExportContent = 'transcript' | 'summary' | 'both';
@@ -46,12 +48,7 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 export function useCopyOperations({ meeting, meetingTitle, aiSummary }: UseCopyOperationsProps) {
   const userName = useUserName();
   const title = displayTitle(meetingTitle || meeting.title, meeting.created_at);
-  const dateLine = new Date(meeting.created_at).toLocaleDateString(undefined, {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
+  const dateLine = formatDocumentDate(new Date(meeting.created_at));
 
   const transcriptBody = useCallback(async (linkStyle?: LinkStyle, sourceRows?: Transcript[]): Promise<string | null> => {
     const rows = sourceRows ?? await allTranscripts(meeting.id);
@@ -81,14 +78,14 @@ export function useCopyOperations({ meeting, meetingTitle, aiSummary }: UseCopyO
     try {
       const body = await transcriptBody();
       if (!body) {
-        toast.error('There is no transcript to copy yet');
+        toast.error(tNow('feedback.noTranscriptToCopy'));
         return;
       }
-      await navigator.clipboard.writeText(document([['Transcript', body]]));
-      toast.success('Transcript copied');
+      await navigator.clipboard.writeText(document([[tNow('exportDoc.transcriptHeading'), body]]));
+      toast.success(tNow('feedback.transcriptCopied'));
       await Analytics.trackCopy('transcript', { meeting_id: meeting.id }).catch(() => undefined);
     } catch (error) {
-      toast.error('Could not copy the transcript', { description: message(error) });
+      toast.error(tNow('feedback.couldNotCopyTranscript'), { description: message(error) });
     }
   }, [transcriptBody, document, meeting.id]);
 
@@ -96,14 +93,14 @@ export function useCopyOperations({ meeting, meetingTitle, aiSummary }: UseCopyO
     try {
       const body = summaryBody();
       if (!body) {
-        toast.error('There is no summary to copy yet');
+        toast.error(tNow('feedback.noSummaryToCopy'));
         return;
       }
-      await navigator.clipboard.writeText(document([['Summary', body]]));
-      toast.success('Summary copied');
+      await navigator.clipboard.writeText(document([[tNow('exportDoc.summarySectionHeading'), body]]));
+      toast.success(tNow('feedback.summaryCopied'));
       await Analytics.trackCopy('summary', { meeting_id: meeting.id }).catch(() => undefined);
     } catch (error) {
-      toast.error('Could not copy the summary', { description: message(error) });
+      toast.error(tNow('feedback.couldNotCopySummary'), { description: message(error) });
     }
   }, [summaryBody, document, meeting.id]);
 
@@ -117,18 +114,18 @@ export function useCopyOperations({ meeting, meetingTitle, aiSummary }: UseCopyO
         if (content !== 'transcript') {
           const body = summaryBody();
           if (!body) {
-            toast.error('There is no summary to export yet');
+            toast.error(tNow('feedback.noSummaryToExport'));
             return false;
           }
-          sections.push(['Summary', body.replace(/^(#{1,5})(\s)/gm, '#$1$2')]);
+          sections.push([tNow('exportDoc.summarySectionHeading'), body.replace(/^(#{1,5})(\s)/gm, '#$1$2')]);
         }
         if (content !== 'summary') {
           const body = await transcriptBody(format === 'markdown' ? linkStyle : undefined, rows);
           if (!body) {
-            toast.error('There is no transcript to export yet');
+            toast.error(tNow('feedback.noTranscriptToExport'));
             return false;
           }
-          sections.push(['Transcript', body]);
+          sections.push([tNow('exportDoc.transcriptHeading'), body]);
         }
         let markdown = document(sections);
         if (format === 'markdown') {
@@ -138,16 +135,26 @@ export function useCopyOperations({ meeting, meetingTitle, aiSummary }: UseCopyO
         }
         if (format === 'clipboard') {
           await navigator.clipboard.writeText(markdown);
-          toast.success(content === 'both' ? 'Transcript and summary copied' : `${content === 'summary' ? 'Summary' : 'Transcript'} copied`);
+          toast.success(
+            content === 'both'
+              ? tNow('feedback.transcriptAndSummaryCopied')
+              : content === 'summary'
+                ? tNow('feedback.summaryCopied')
+                : tNow('feedback.transcriptCopied'),
+          );
         } else {
           const saved = await exportSummaryAs(format, markdown, `${title} ${content === 'both' ? '' : content}`.trim());
           if (!saved) return false;
-          toast.success(`Exported as ${format === 'markdown' ? 'Markdown' : format.toUpperCase()}`);
+          toast.success(
+            tNow('feedback.exportedAs', {
+              format: format === 'markdown' ? 'Markdown' : format.toUpperCase(),
+            }),
+          );
         }
         await Analytics.trackFeatureUsed(`export_meeting_${content}_${format}`).catch(() => undefined);
         return true;
       } catch (error) {
-        toast.error('Export failed', { description: message(error) });
+        toast.error(tNow('feedback.exportFailed'), { description: message(error) });
         return false;
       }
     },

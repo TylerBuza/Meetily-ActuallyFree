@@ -17,6 +17,7 @@ import { displaySpeaker, isUserSpeaker, speakerDot, speakerKey } from '@/utils/s
 import { buildLiveContext, lineAt, type LiveLine } from '@/lib/live-context';
 import { readLiveNotes, writeLiveNotes } from '@/lib/live-session';
 import type { DetectedSpeaker } from '@/types';
+import { useI18n } from '@/i18n';
 
 export type LivePanelTab = 'speakers' | 'notes' | 'ask';
 
@@ -31,6 +32,7 @@ function SpeakersTab({
   onIdentify: (speaker: string) => void;
   onMarkMe: (speaker: string) => void;
 }) {
+  const { t } = useI18n();
   const userName = useUserName();
   const total = speakers.reduce((sum, speaker) => sum + speaker.segmentCount, 0);
   // One row per person: labels that all mean the user, or differ only in case, share a row.
@@ -55,8 +57,8 @@ function SpeakersTab({
         <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl border border-af-border bg-af-panel-2 text-af-text-3">
           <Users className="h-4 w-4" />
         </span>
-        <p className="text-[13px] font-medium text-af-text">No voices yet</p>
-        <p className="mt-1 max-w-[15rem] text-xs leading-relaxed text-af-text-3">Each person shows up here as they start talking.</p>
+        <p className="text-[13px] font-medium text-af-text">{t('recording.noVoicesYet')}</p>
+        <p className="mt-1 max-w-[15rem] text-xs leading-relaxed text-af-text-3">{t('recording.noVoicesHint')}</p>
       </div>
     );
   }
@@ -89,11 +91,11 @@ function SpeakersTab({
                 </span>
               </button>
               {!you && (
-                <Hint label="This is me">
+                <Hint label={t('recording.thisIsMe')}>
                   <button
                     type="button"
                     onClick={() => onMarkMe(speaker.name)}
-                    aria-label={`${speaker.name} is me`}
+                    aria-label={t('recording.isMeAria', { name: speaker.name })}
                     className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg bg-af-panel text-af-text-3 opacity-0 shadow-sm ring-1 ring-af-border transition-[opacity,color] hover:text-af-accent focus-visible:opacity-100 group-hover/speaker:opacity-100"
                   >
                     <UserCheck className="h-3.5 w-3.5" />
@@ -105,13 +107,14 @@ function SpeakersTab({
         })}
       </ul>
       <p className="shrink-0 border-t border-af-border px-4 py-3 text-[11px] leading-relaxed text-af-text-4">
-        Click a speaker to name them from your contacts or add someone new. Names are saved as contacts when the recording ends.
+        {t('recording.speakersFooter')}
       </p>
     </div>
   );
 }
 
 function NotesTab() {
+  const { t } = useI18n();
   // Read once: the editor owns the content after that.
   const [initial] = useState(() => readLiveNotes());
   const timer = useRef<number | null>(null);
@@ -130,7 +133,7 @@ function NotesTab() {
       <NotesEditor
         initialBlocks={initial?.json ?? null}
         initialMarkdown={initial?.json ? null : initial?.markdown ?? null}
-        placeholder="Type notes as the call goes. They are saved to this meeting when you stop."
+        placeholder={t('recording.notesPlaceholder')}
         onChange={(content) => {
           latest.current = content;
           if (timer.current !== null) window.clearTimeout(timer.current);
@@ -162,6 +165,7 @@ export function LivePanel({
   /** A cited moment was clicked. */
   onJumpTo: (lineId: string) => void;
 }) {
+  const { t } = useI18n();
   const userName = useUserName();
   const linesRef = useRef(lines);
   linesRef.current = lines;
@@ -184,7 +188,7 @@ export function LivePanel({
       ]
         .filter(Boolean)
         .join('\n\n');
-      if (!context.trim()) throw new Error('Nothing has been said yet. Ask again once the transcript has some lines.');
+      if (!context.trim()) throw new Error(t('recording.askNoTranscript'));
       return invoke<string>('ask_live_assistant', { question, transcriptContext: context, persona: guidance });
     },
     [userName],
@@ -196,16 +200,16 @@ export function LivePanel({
         <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="speakers">
             <Users />
-            Speakers
+            {t('recording.speakersTab')}
             {speakers.length > 0 && <span className="text-[11px] tabular-nums text-af-text-4">{speakers.length}</span>}
           </TabsTrigger>
           <TabsTrigger value="notes">
             <NotebookPen />
-            Notes
+            {t('recording.notesTab')}
           </TabsTrigger>
           <TabsTrigger value="ask">
             <Sparkles />
-            Ask AI
+            {t('recording.askAiTab')}
           </TabsTrigger>
         </TabsList>
       </div>
@@ -221,11 +225,11 @@ export function LivePanel({
           historyKey={`live:${sessionKey}`}
           ask={ask}
           compact
-          emptyTitle="Ask about this call"
-          emptyHint="Answers come from what has been said so far and your notes."
-          suggestions={['What did I miss in the last 5 minutes?', 'What has been decided?', 'Which action items came up?', 'What questions are still open?']}
-          placeholder="Ask about the call…"
-          footnote="Uses your summary model. Cloud providers receive the parts of the transcript needed to answer."
+          emptyTitle={t('recording.askEmptyTitle')}
+          emptyHint={t('recording.askEmptyHint')}
+          suggestions={[t('recording.askSuggestionMissed'), t('recording.askSuggestionDecided'), t('recording.askSuggestionActionItems'), t('recording.askSuggestionOpenQuestions')]}
+          placeholder={t('recording.askPlaceholder')}
+          footnote={t('recording.askFootnote')}
           onSeek={(seconds) => {
             const target = lineAt(linesRef.current, seconds);
             if (target) onJumpTo(target.id);

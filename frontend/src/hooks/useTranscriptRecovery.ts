@@ -13,6 +13,7 @@ import { applyPinnedSummaryLanguageToMeeting } from '@/lib/summary-language-pref
 import { toast } from 'sonner';
 import { announceChange } from '@/lib/workspace-api';
 import { editedSpeaker } from '@/lib/live-speaker-edits';
+import { tNow } from '@/i18n/translate';
 
 interface AudioRecoveryStatus {
   status: string; // "success" | "partial" | "failed" | "none"
@@ -115,13 +116,13 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
       // 1. Load meeting metadata
       const metadata = await indexedDBService.getMeetingMetadata(meetingId);
       if (!metadata) {
-        throw new Error('Meeting metadata not found');
+        throw new Error(tNow('feedback.meetingMetadataNotFound'));
       }
 
       // 2. Load all transcripts
       const transcripts = await loadMeetingTranscripts(meetingId);
       if (transcripts.length === 0) {
-        throw new Error('No transcripts found for this meeting');
+        throw new Error(tNow('feedback.noTranscriptsFoundForMeeting'));
       }
 
       // 3. Check for folder path
@@ -195,8 +196,8 @@ export function useTranscriptRecovery(): UseTranscriptRecoveryReturn {
         await applyPinnedSummaryLanguageToMeeting(savedMeetingId);
       } catch (error) {
         console.warn('Failed to apply pinned summary language to recovered meeting:', error);
-        toast.warning('Could not apply default summary language', {
-          description: 'The recovered meeting was saved, but the default summary language was not applied.',
+        toast.warning(tNow('feedback.couldNotApplyDefaultSummaryLanguage'), {
+          description: tNow('feedback.defaultSummaryLanguageNotAppliedAfterRecovery'),
         });
       }
 

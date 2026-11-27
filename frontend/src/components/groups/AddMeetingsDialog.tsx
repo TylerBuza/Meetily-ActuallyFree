@@ -14,6 +14,7 @@ import { GroupChip } from '@/components/groups/GroupBits';
 import { moveMeetingsToGroup } from '@/lib/meeting-actions';
 import { displayTitle } from '@/lib/meeting-titles';
 import { formatDuration, formatShortDate, parseDate } from '@/lib/dates';
+import { useI18n } from '@/i18n';
 
 export function AddMeetingsDialog({
   open,
@@ -26,6 +27,7 @@ export function AddMeetingsDialog({
 }) {
   const { meetings } = useSidebar();
   const { groupById } = useWorkspace();
+  const { t } = useI18n();
   const [query, setQuery] = useState('');
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
@@ -66,19 +68,19 @@ export function AddMeetingsDialog({
     <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}>
       <DialogContent className="max-w-lg gap-0 p-0">
         <DialogHeader className="px-6 pb-3 pt-6">
-          <DialogTitle>Add meetings to {group.name}</DialogTitle>
-          <DialogDescription>A meeting belongs to one group. Picking one that is already in another group moves it here.</DialogDescription>
+          <DialogTitle>{t('people.addMeetingsTitle', { name: group.name })}</DialogTitle>
+          <DialogDescription>{t('people.addMeetingsDescription')}</DialogDescription>
         </DialogHeader>
         <div className="px-6 pb-3">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-af-text-4" />
-            <Input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find meetings" className="pl-9" />
+            <Input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('people.findMeetings')} className="pl-9" />
           </div>
         </div>
         <ul className="max-h-[50vh] overflow-y-auto border-y border-af-border px-3 py-2">
           {candidates.length === 0 ? (
             <li className="px-3 py-8 text-center text-[13px] text-af-text-3">
-              {query.trim() ? 'No meetings match.' : 'Every meeting is already in this group.'}
+              {query.trim() ? t('people.noMeetingsMatch') : t('people.everyMeetingInGroup')}
             </li>
           ) : (
             candidates.map((meeting) => {
@@ -110,14 +112,16 @@ export function AddMeetingsDialog({
         <DialogFooter className="px-6 py-4">
           {moving > 0 && (
             <p className="mr-auto self-center text-xs text-af-text-3">
-              {moving} will move from another group
+              {t('people.moveFromAnotherGroup', { count: moving })}
             </p>
           )}
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button onClick={() => void add()} loading={saving} disabled={picked.size === 0}>
-            {picked.size > 0 ? `Add ${picked.size} meeting${picked.size === 1 ? '' : 's'}` : 'Add meetings'}
+            {picked.size > 0
+              ? t(picked.size === 1 ? 'people.addMeetingsCountOne' : 'people.addMeetingsCountMany', { count: picked.size })
+              : t('people.addMeetings')}
           </Button>
         </DialogFooter>
       </DialogContent>

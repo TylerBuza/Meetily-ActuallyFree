@@ -6,13 +6,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import Analytics from '@/lib/analytics';
 import { announceChange, setMeetingsGroup } from '@/lib/workspace-api';
+import { tNow } from '@/i18n/translate';
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export async function renameMeeting(meetingId: string, title: string): Promise<boolean> {
   const next = title.trim();
   if (!next) {
-    toast.error('A meeting needs a title');
+    toast.error(tNow('feedback.meetingNeedsTitle'));
     return false;
   }
   try {
@@ -20,7 +21,7 @@ export async function renameMeeting(meetingId: string, title: string): Promise<b
     announceChange('meetings', { meetingId });
     return true;
   } catch (error) {
-    toast.error('Could not rename the meeting', { description: message(error) });
+    toast.error(tNow('feedback.couldNotRenameMeeting'), { description: message(error) });
     return false;
   }
 }
@@ -35,11 +36,25 @@ export async function moveMeetingsToGroup(
     await setMeetingsGroup(meetingIds, groupId);
     announceChange('meetings', { meetingIds });
     announceChange('groups');
-    const count = meetingIds.length === 1 ? 'Meeting' : `${meetingIds.length} meetings`;
-    toast.success(groupId ? `${count} moved to ${groupName ?? 'the group'}` : `${count} removed from its group`);
+    const count = meetingIds.length;
+    const movedTo = groupName != null
+      ? tNow(count === 1 ? 'feedback.singleMeetingMovedToGroup' : 'feedback.meetingsMovedToGroup', {
+          count,
+          group: groupName,
+        })
+      : count === 1
+        ? tNow('feedback.singleMeetingMovedToGroupDefault')
+        : tNow('feedback.meetingsMovedToGroupDefault', { count });
+    toast.success(
+      groupId
+        ? movedTo
+        : count === 1
+          ? tNow('feedback.singleMeetingRemovedFromGroup')
+          : tNow('feedback.meetingsRemovedFromGroup', { count }),
+    );
     return true;
   } catch (error) {
-    toast.error('Could not move the meetings', { description: message(error) });
+    toast.error(tNow('feedback.couldNotMoveMeetings'), { description: message(error) });
     return false;
   }
 }
@@ -59,11 +74,15 @@ export async function deleteMeetings(meetingIds: string[]): Promise<number> {
     announceChange('meetings', { meetingIds });
     announceChange('groups');
     announceChange('actions');
-    toast.success(deleted === 1 ? 'Meeting deleted' : `${deleted} meetings deleted`);
+    toast.success(deleted === 1 ? tNow('feedback.meetingDeleted') : tNow('feedback.meetingsDeleted', { count: deleted }));
   }
   if (deleted < meetingIds.length) {
     const failed = meetingIds.length - deleted;
-    toast.error(`Could not delete ${failed} meeting${failed === 1 ? '' : 's'}`);
+    toast.error(
+      failed === 1
+        ? tNow('feedback.couldNotDeleteMeeting', { count: failed })
+        : tNow('feedback.couldNotDeleteMeetings', { count: failed }),
+    );
   }
   return deleted;
 }

@@ -19,6 +19,7 @@ import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { useUserName } from '@/hooks/useUserName';
 import { announceChange } from '@/lib/workspace-api';
 import { displaySpeaker, isUserSpeaker, speakerDot, splitSpeakerLabel } from '@/utils/speakerUtils';
+import { useI18n } from '@/i18n';
 
 export interface SpeakerRenameResult {
   from: string;
@@ -60,6 +61,7 @@ export function SpeakerIdentityDialog({
   colorIndexOf,
 }: SpeakerIdentityDialogProps) {
   const { people } = useWorkspace();
+  const { t } = useI18n();
   const userName = useUserName();
   const [query, setQuery] = useState('');
   const [scope, setScope] = useState<'all' | 'line'>('all');
@@ -88,9 +90,14 @@ export function SpeakerIdentityDialog({
     try {
       if (!meetingId) {
         await onRenameLive?.(current, next, scope);
-        toast.success(scope === 'line' ? 'Speaker on this line changed' : `${current} is now ${next === 'You' ? displaySpeaker('You', userName) : next}`, {
-          description: next && next !== 'You' ? 'Saved as a contact when the recording ends.' : undefined,
-        });
+        toast.success(
+          scope === 'line'
+            ? t('people.speakerLineChanged')
+            : t('people.speakerNow', { previous: current, name: next === 'You' ? displaySpeaker('You', userName) : next }),
+          {
+            description: next && next !== 'You' ? t('people.savedAsContactWhenEnds') : undefined,
+          },
+        );
         await onRenamed?.({ from: current, to: next, count: 0, removedName: !next });
         onOpenChange(false);
         return;
@@ -102,19 +109,27 @@ export function SpeakerIdentityDialog({
       announceChange('people');
       if (result.removedName) {
         const kept = people.some((person) => person.displayName.toLowerCase() === current.toLowerCase());
-        toast.success('Name removed', {
-          description: `Lines are now labelled ${result.speaker}.${kept ? ` ${current} is still in your contacts.` : ''}`,
+        toast.success(t('people.nameRemoved'), {
+          description: `${t('people.linesNowLabelled', { speaker: result.speaker })}${kept ? ` ${t('people.stillInContacts', { name: current })}` : ''}`,
         });
       } else {
         const shown = result.speaker === 'You' ? displaySpeaker('You', userName) : result.speaker;
-        toast.success(scope === 'line' ? `Speaker on this line is now ${shown}` : `${current} is now ${shown}`, {
-          description: scope === 'line' ? undefined : `${result.count} line${result.count === 1 ? '' : 's'} updated.`,
-        });
+        toast.success(
+          scope === 'line'
+            ? t('people.speakerLineNow', { name: shown })
+            : t('people.speakerNow', { previous: current, name: shown }),
+          {
+            description:
+              scope === 'line'
+                ? undefined
+                : t(result.count === 1 ? 'people.linesUpdatedOne' : 'people.linesUpdatedMany', { count: result.count }),
+          },
+        );
       }
       await onRenamed?.({ from: current, to: result.speaker, count: result.count, removedName: result.removedName });
       onOpenChange(false);
     } catch (error) {
-      toast.error('Could not update the speaker', { description: error instanceof Error ? error.message : String(error) });
+      toast.error(t('people.couldNotUpdateSpeaker'), { description: error instanceof Error ? error.message : String(error) });
     } finally {
       setSaving(false);
     }
@@ -137,20 +152,20 @@ export function SpeakerIdentityDialog({
         <div className="space-y-1 px-5 pb-3 pt-5 pr-12">
           <DialogTitle className="flex items-center gap-2">
             <span aria-hidden className={cn('h-2.5 w-2.5 rounded-full', speakerDot(current, colorIndexOf?.(current)))} />
-            {transcriptId && scope === 'line' ? 'Who said this line?' : `Who is ${displaySpeaker(current, userName)}?`}
+            {transcriptId && scope === 'line' ? t('people.whoSaidLine') : t('people.whoIsName', { name: displaySpeaker(current, userName) })}
           </DialogTitle>
-          <DialogDescription>Pick a contact, type a new name, or merge with another voice.</DialogDescription>
+          <DialogDescription>{t('people.speakerDialogDescription')}</DialogDescription>
         </div>
 
         {components.length > 1 && (
           <div className="px-5 pb-3">
             <label className="block text-xs text-af-text-3">
-              Speaker to change
-              <select aria-label="Speaker to change" value={current} onChange={event => setSelectedSpeaker(event.target.value)} disabled={saving} className="mt-1 w-full rounded border border-af-border bg-af-panel p-2 text-af-text">
+              {t('people.speakerToChange')}
+              <select aria-label={t('people.speakerToChange')} value={current} onChange={event => setSelectedSpeaker(event.target.value)} disabled={saving} className="mt-1 w-full rounded border border-af-border bg-af-panel p-2 text-af-text">
                 {components.map(part => <option key={part} value={part}>{displaySpeaker(part, userName)}</option>)}
               </select>
             </label>
-            <p className="mt-1 text-xs text-af-text-3">The other speakers on this line will be kept.</p>
+            <p className="mt-1 text-xs text-af-text-3">{t('people.otherSpeakersKept')}</p>
           </div>
         )}
 
@@ -167,7 +182,7 @@ export function SpeakerIdentityDialog({
                     scope === value ? 'bg-af-raised text-af-text shadow-sm' : 'text-af-text-3 hover:text-af-text',
                   )}
                 >
-                  {value === 'all' ? `Every line from ${displaySpeaker(current, userName)}` : 'Just this line'}
+                  {value === 'all' ? t('people.everyLineFrom', { name: displaySpeaker(current, userName) }) : t('people.justThisLine')}
                 </button>
               ))}
             </div>
@@ -178,7 +193,7 @@ export function SpeakerIdentityDialog({
           <CommandInput
             value={query}
             onValueChange={setQuery}
-            placeholder="Search contacts or type a name"
+            placeholder={t('people.searchContactsOrType')}
             onKeyDown={(event) => {
               // Enter with no highlighted match adds the typed name.
               if (event.key === 'Enter' && trimmed && !exact && !document.querySelector('[cmdk-item][data-selected="true"]')) {
@@ -188,17 +203,17 @@ export function SpeakerIdentityDialog({
             }}
           />
           <CommandList className="max-h-[min(22rem,50vh)] p-1.5">
-            <CommandEmpty>No matching contacts.</CommandEmpty>
+            <CommandEmpty>{t('people.noMatchingContacts')}</CommandEmpty>
             {!isUserSpeaker(current) && (
-              <CommandGroup heading="You">
+              <CommandGroup heading={t('people.you')}>
                 <CommandItem value={`me you ${userName}`} onSelect={() => apply('You')} disabled={saving}>
-                  <Avatar name={userName || 'You'} size="sm" />
-                  <span className="flex-1 truncate text-af-text">This is me{userName ? ` · ${userName}` : ''}</span>
+                  <Avatar name={userName || t('people.you')} size="sm" />
+                  <span className="flex-1 truncate text-af-text">{t('people.thisIsMe')}{userName ? ` · ${userName}` : ''}</span>
                 </CommandItem>
               </CommandGroup>
             )}
             {people.length > 0 && (
-              <CommandGroup heading="Contacts">
+              <CommandGroup heading={t('people.contactsTitle')}>
                 {people.map((person) => (
                   <CommandItem
                     key={person.id}
@@ -217,29 +232,29 @@ export function SpeakerIdentityDialog({
                       )}
                     </span>
                     <span className="text-[11px] tabular-nums text-af-text-4">
-                      {person.meetingCount} meeting{person.meetingCount === 1 ? '' : 's'}
+                      {t(person.meetingCount === 1 ? 'people.meetingCountOne' : 'people.meetingCountMany', { count: person.meetingCount })}
                     </span>
                   </CommandItem>
                 ))}
               </CommandGroup>
             )}
             {trimmed && !exact && (
-              <CommandGroup heading="New contact" forceMount>
+              <CommandGroup heading={t('people.newContact')} forceMount>
                 <CommandItem value={`__new__ ${trimmed}`} onSelect={() => apply(trimmed)} disabled={saving} forceMount>
                   <span className="flex h-6 w-6 items-center justify-center rounded-full bg-af-accent/[0.12] text-af-accent">
                     <UserPlus className="!size-3.5" />
                   </span>
-                  <span className="truncate text-af-accent">Add “{trimmed}” as a new contact</span>
+                  <span className="truncate text-af-accent">{t('people.addAsNewContact', { name: trimmed })}</span>
                 </CommandItem>
               </CommandGroup>
             )}
             {onMerge && mergeTargets.length > 0 && scope === 'all' && (
-              <CommandGroup heading="Same person as another voice?">
+              <CommandGroup heading={t('people.samePersonHeading')}>
                 {mergeTargets.map((label) => (
                   <CommandItem key={label} value={`merge ${label}`} onSelect={() => merge(label)} disabled={saving}>
                     <GitMerge className="text-af-text-3" />
                     <span className={cn('h-2 w-2 shrink-0 rounded-full', speakerDot(label, colorIndexOf?.(label)))} />
-                    <span className="flex-1 truncate">Merge into {displaySpeaker(label, userName)}</span>
+                    <span className="flex-1 truncate">{t('people.mergeIntoNamed', { name: displaySpeaker(label, userName) })}</span>
                   </CommandItem>
                 ))}
               </CommandGroup>
@@ -251,16 +266,16 @@ export function SpeakerIdentityDialog({
           {canRemove ? (
             <Button variant="danger-ghost" size="sm" onClick={() => apply('')} disabled={saving}>
               <Unlink />
-              Remove name
+              {t('people.removeName')}
             </Button>
           ) : (
             <span className="flex items-center gap-1.5 text-[11px] text-af-text-4">
               <UserRound className="h-3.5 w-3.5" />
-              Names you add become contacts.
+              {t('people.namesBecomeContacts')}
             </span>
           )}
           <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)} disabled={saving}>
-            Cancel
+            {t('common.cancel')}
           </Button>
         </div>
       </DialogContent>

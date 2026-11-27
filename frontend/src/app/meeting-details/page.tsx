@@ -11,12 +11,14 @@ import { Spinner } from "@/components/ui/spinner";
 import { useConfig } from "@/contexts/ConfigContext";
 import { usePaginatedTranscripts } from "@/hooks/usePaginatedTranscripts";
 import { shouldSetUpAutoSummary } from "@/lib/meeting-summary-policy";
+import { useI18n } from "@/i18n";
 
 interface MeetingDetailsResponse extends MeetingMetadata {
   transcripts: Transcript[];
 }
 
 function MeetingDetailsContent() {
+  const { t } = useI18n();
   const searchParams = useSearchParams();
   const meetingId = searchParams.get('id');
   const source = searchParams.get('source'); // Check if navigated from recording
@@ -202,7 +204,7 @@ function MeetingDetailsContent() {
 
     if (!meetingId || meetingId === 'intro-call') {
       console.warn('No valid meeting ID in URL - meetingId:', meetingId);
-      setError("No meeting selected");
+      setError(t('meeting.noMeetingSelected'));
       setIsLoading(false);
       Analytics.trackPageView('meeting_details');
       return;
@@ -373,7 +375,7 @@ function MeetingDetailsContent() {
             onClick={() => router.push('/')}
             className="px-4 py-2 bg-af-accent text-af-on-accent rounded hover:bg-af-accent-hover"
           >
-            Go Back
+            {t('meeting.goBack')}
           </button>
         </div>
       </div>
@@ -391,8 +393,8 @@ function MeetingDetailsContent() {
         {source === 'recording' ? (
           <PostCallHandoffCard
             busy
-            title="Opening your meeting"
-            detail="Getting the transcript ready."
+            title={t('meeting.openingMeeting')}
+            detail={t('meeting.gettingTranscriptReady')}
           />
         ) : (
           // Shown only if loading takes a moment; quick loads go straight to the meeting.

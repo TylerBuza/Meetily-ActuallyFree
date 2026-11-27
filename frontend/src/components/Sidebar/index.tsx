@@ -44,7 +44,7 @@ import { useImportDialog } from '@/contexts/ImportDialogContext';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { useRecordingClock } from '@/components/recording/RecordingPill';
 import { cn } from '@/lib/utils';
-import { dateSection, formatClock, formatDuration, formatShortDate, formatTime, parseDate } from '@/lib/dates';
+import { dateSection, formatClock, formatDuration, formatShortDate, formatTime, isRecentDateSection, parseDate } from '@/lib/dates';
 import { displayTitle } from '@/lib/meeting-titles';
 import { writePendingGroup } from '@/lib/groups';
 import { deleteMeetings, moveMeetingsToGroup, renameMeeting } from '@/lib/meeting-actions';
@@ -60,6 +60,7 @@ import { Kbd } from '@/components/ui/surface';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Combobox } from '@/components/ui/combobox';
 import { ExportMeetingsDialog } from '@/components/meetings/ExportMeetingsDialog';
+import { useI18n } from '@/i18n';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -84,6 +85,8 @@ interface Section {
   title: string;
   color?: string | null;
   groupId?: string;
+  /** Date grouping only: the meeting falls in Today or Yesterday. */
+  recent?: boolean;
   meetings: CurrentMeeting[];
 }
 
@@ -144,6 +147,7 @@ function useStoredGroupBy(): [GroupBy, (next: GroupBy) => void] {
 }
 
 const Sidebar: React.FC = () => {
+  const { t } = useI18n();
   const router = useRouter();
   const pathname = usePathname();
   const { currentMeeting, setCurrentMeeting, isCollapsed, sidebarWidth, setSidebarWidth, toggleRail, previewSidebar, meetings } =
@@ -182,20 +186,25 @@ const Sidebar: React.FC = () => {
         byGroup.set(group.id, section);
       }
       const ordered = [...byGroup.values()];
-      if (loose.length) ordered.push({ key: 'no-group', title: 'No group', meetings: loose });
+      if (loose.length) ordered.push({ key: 'no-group', title: t('shell.noGroup'), meetings: loose });
       return ordered;
     }
     const byDate = new Map<string, Section>();
     const now = new Date();
     for (const meeting of sorted) {
       const date = parseDate(meeting.created_at);
-      const title = date ? dateSection(date, now) : 'Older';
-      const section = byDate.get(title) ?? { key: title, title, meetings: [] };
+      const title = date ? dateSection(date, now) : t('shell.older');
+      const section = byDate.get(title) ?? {
+        key: title,
+        title,
+        recent: date ? isRecentDateSection(date, now) : false,
+        meetings: [],
+      };
       section.meetings.push(meeting);
       byDate.set(title, section);
     }
     return [...byDate.values()];
-  }, [meetings, groupBy, groupById]);
+  }, [meetings, groupBy, groupById, t]);
 
   const orderedIds = useMemo(() => sections.flatMap((section) => section.meetings.map((meeting) => meeting.id)), [sections]);
 
@@ -311,7 +320,7 @@ const Sidebar: React.FC = () => {
       <div
         role="separator"
         aria-orientation="vertical"
-        aria-label="Resize sidebar"
+        aria-label={t('shell.resizeSidebar')}
         aria-valuemin={64}
         aria-valuemax={384}
         aria-valuenow={sidebarWidth}
@@ -331,7 +340,7 @@ const Sidebar: React.FC = () => {
             <DialogTrigger asChild>
               <button
                 type="button"
-                aria-label="About Meetily"
+                aria-label={t('shell.aboutMeetily')}
                 tabIndex={expanded ? undefined : -1}
                 aria-hidden={expanded ? undefined : true}
                 className={cn(
@@ -347,16 +356,16 @@ const Sidebar: React.FC = () => {
             </DialogTrigger>
             <DialogContent>
               <VisuallyHidden>
-                <DialogTitle>About Meetily</DialogTitle>
+                <DialogTitle>{t('shell.aboutMeetily')}</DialogTitle>
               </VisuallyHidden>
               <About />
             </DialogContent>
           </Dialog>
-          <RailTip show={!expanded} label="Expand sidebar">
+          <RailTip show={!expanded} label={t('shell.expandSidebar')}>
             <button
               type="button"
               onClick={toggleRail}
-              aria-label={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+              aria-label={expanded ? t('shell.collapseSidebar') : t('shell.expandSidebar')}
               aria-expanded={expanded}
               className={cn(
                 'absolute right-3 top-1/2 flex h-9 w-10 -translate-y-1/2 items-center justify-center rounded-lg text-af-text-3 transition-colors hover:bg-af-hover hover:text-af-text',
@@ -378,11 +387,11 @@ const Sidebar: React.FC = () => {
         <div className="flex shrink-0 flex-col gap-1.5 px-3">
           {/* Recording action */}
           {isRecording ? (
-            <RailTip show={!expanded} label={`Back to recording · ${formatClock(elapsed)}`}>
+            <RailTip show={!expanded} label={t('shell.backToRecordingWithTime', { time: formatClock(elapsed) })}>
               <button
                 type="button"
                 onClick={() => router.push('/')}
-                aria-label="Back to recording"
+                aria-label={t('shell.backToRecording')}
                 className={cn(
                   'group flex h-10 w-full items-center overflow-hidden rounded-xl text-sm font-semibold text-white shadow-sm transition-[background-color,transform] duration-150 active:scale-[0.98]',
                   'bg-af-record hover:bg-af-record/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-record/50',
@@ -395,25 +404,25 @@ const Sidebar: React.FC = () => {
                   </span>
                 </RailIcon>
                 <RailLabel expanded={expanded} className="justify-between pr-3">
-                  <span className="truncate">{isPaused ? 'Paused' : 'Back to recording'}</span>
+                  <span className="truncate">{isPaused ? t('shell.paused') : t('shell.backToRecording')}</span>
                   <span className="ml-2 font-medium tabular-nums text-white/85">{formatClock(elapsed)}</span>
                 </RailLabel>
               </button>
             </RailTip>
           ) : (
             <div className="flex h-10 w-full items-stretch overflow-hidden rounded-xl bg-af-record text-white shadow-sm">
-              <RailTip show={!expanded} label="New recording">
+              <RailTip show={!expanded} label={t('shell.newRecording')}>
                 <button
                   type="button"
                   onClick={() => router.push('/')}
-                  aria-label="New recording"
+                  aria-label={t('shell.newRecording')}
                   className="flex min-w-0 flex-1 items-center text-sm font-semibold transition-colors hover:bg-black/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/60"
                 >
                   <RailIcon>
                     <Mic />
                   </RailIcon>
                   <RailLabel expanded={expanded}>
-                    <span className="truncate">New recording</span>
+                    <span className="truncate">{t('shell.newRecording')}</span>
                   </RailLabel>
                 </button>
               </RailTip>
@@ -422,7 +431,7 @@ const Sidebar: React.FC = () => {
                   <DropdownMenuTrigger asChild>
                     <button
                       type="button"
-                      aria-label="More ways to start"
+                      aria-label={t('shell.moreWaysToStart')}
                       className="flex w-9 shrink-0 items-center justify-center border-l border-white/20 transition-colors hover:bg-black/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/60 data-[state=open]:bg-black/15"
                     >
                       <ChevronDown className="h-4 w-4" />
@@ -431,13 +440,13 @@ const Sidebar: React.FC = () => {
                   <DropdownMenuContent align="end" className="w-60">
                     <DropdownMenuItem onSelect={() => openImportDialog()}>
                       <Upload />
-                      Import an audio file…
+                      {t('shell.importAudioFile')}
                     </DropdownMenuItem>
                     {groups.length > 0 && (
                       <DropdownMenuSub>
                         <DropdownMenuSubTrigger>
                           <Layers />
-                          Record for a group
+                          {t('shell.recordForGroup')}
                         </DropdownMenuSubTrigger>
                         <DropdownMenuSubContent className="max-h-72 w-56 overflow-y-auto">
                           {groups.map((group) => (
@@ -456,46 +465,46 @@ const Sidebar: React.FC = () => {
           )}
 
           {/* Search / command bar */}
-          <RailTip show={!expanded} label="Search or run a command" shortcut="Ctrl K">
+          <RailTip show={!expanded} label={t('shell.searchCommand')} shortcut="Ctrl K">
             <button
               type="button"
               onClick={openSearch}
-              aria-label="Search or run a command"
+              aria-label={t('shell.searchCommand')}
               className="flex h-9 w-full items-center overflow-hidden rounded-lg border border-af-border bg-af-panel-2 text-af-text-3 transition-colors hover:border-af-border-strong hover:text-af-text-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60"
             >
               <RailIcon>
                 <Search />
               </RailIcon>
               <RailLabel expanded={expanded} className="justify-between pr-2">
-                <span className="truncate text-[13px]">Search or jump to…</span>
+                <span className="truncate text-[13px]">{t('shell.searchOrJump')}</span>
                 <Kbd>Ctrl K</Kbd>
               </RailLabel>
             </button>
           </RailTip>
 
-          <nav className="mt-1 flex flex-col gap-0.5" aria-label="Sections">
-            <RailTip show={!expanded} label="Contacts">
+          <nav className="mt-1 flex flex-col gap-0.5" aria-label={t('shell.sectionsLabel')}>
+            <RailTip show={!expanded} label={t('shell.contacts')}>
               <button type="button" onClick={() => router.push('/contacts')} className={navClass(isContacts)} aria-current={isContacts ? 'page' : undefined}>
                 <RailIcon>
                   <Contact />
                 </RailIcon>
-                <RailLabel expanded={expanded}>Contacts</RailLabel>
+                <RailLabel expanded={expanded}>{t('shell.contacts')}</RailLabel>
               </button>
             </RailTip>
-            <RailTip show={!expanded} label="Groups">
+            <RailTip show={!expanded} label={t('shell.groups')}>
               <button type="button" onClick={() => router.push('/groups')} className={navClass(isGroups)} aria-current={isGroups ? 'page' : undefined}>
                 <RailIcon>
                   <Layers />
                 </RailIcon>
-                <RailLabel expanded={expanded}>Groups</RailLabel>
+                <RailLabel expanded={expanded}>{t('shell.groups')}</RailLabel>
               </button>
             </RailTip>
-            <RailTip show={!expanded} label="All meetings">
+            <RailTip show={!expanded} label={t('shell.allMeetings')}>
               <button type="button" onClick={() => router.push('/meetings')} className={navClass(isLibrary)} aria-current={isLibrary ? 'page' : undefined}>
                 <RailIcon>
                   <Library />
                 </RailIcon>
-                <RailLabel expanded={expanded}>All meetings</RailLabel>
+                <RailLabel expanded={expanded}>{t('shell.allMeetings')}</RailLabel>
               </button>
             </RailTip>
           </nav>
@@ -512,31 +521,31 @@ const Sidebar: React.FC = () => {
           )}
         >
           <div className="flex shrink-0 items-center justify-between px-4 pb-1">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-af-text-4">Meetings</span>
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-af-text-4">{t('shell.meetingsHeading')}</span>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  aria-label="Meeting list options"
+                  aria-label={t('shell.meetingListOptions')}
                   className="flex h-6 w-6 items-center justify-center rounded-md text-af-text-3 transition-colors hover:bg-af-hover hover:text-af-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60 data-[state=open]:bg-af-hover"
                 >
                   <ListFilter className="h-3.5 w-3.5" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-52">
-                <DropdownMenuLabel>Arrange by</DropdownMenuLabel>
+                <DropdownMenuLabel>{t('shell.arrangeBy')}</DropdownMenuLabel>
                 <DropdownMenuRadioGroup value={groupBy} onValueChange={(value) => setGroupBy(value as GroupBy)}>
-                  <DropdownMenuRadioItem value="date">Date</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="group">Group</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="date">{t('shell.sortByDate')}</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="group">{t('shell.sortByGroup')}</DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => orderedIds[0] && setSelectedIds(new Set([orderedIds[0]]))} disabled={orderedIds.length === 0}>
                   <Check />
-                  Select meetings
+                  {t('shell.selectMeetings')}
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => router.push('/meetings')}>
                   <Library />
-                  Open the library
+                  {t('shell.openLibrary')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -546,8 +555,8 @@ const Sidebar: React.FC = () => {
             {sections.length === 0 ? (
               <div className="mx-2 mt-2 rounded-xl border border-dashed border-af-border-strong px-3 py-5 text-center">
                 <CalendarDays className="mx-auto h-5 w-5 text-af-text-4" />
-                <p className="mt-2 text-xs font-medium text-af-text-2">No meetings yet</p>
-                <p className="mt-0.5 text-[11px] leading-relaxed text-af-text-4">Your recordings will show up here.</p>
+                <p className="mt-2 text-xs font-medium text-af-text-2">{t('shell.noMeetingsYet')}</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-af-text-4">{t('shell.noMeetingsHint')}</p>
               </div>
             ) : (
               sections.map((section) => (
@@ -571,7 +580,7 @@ const Sidebar: React.FC = () => {
                       key={meeting.id}
                       meeting={meeting}
                       groupName={groupBy === 'date' ? groupById(meeting.group_id)?.name ?? null : null}
-                      showTimeOnly={groupBy === 'date' && (section.title === 'Today' || section.title === 'Yesterday')}
+                      showTimeOnly={groupBy === 'date' && section.recent === true}
                       active={meeting.id === activeMeetingId}
                       selected={selectedIds.has(meeting.id)}
                       selecting={selecting}
@@ -599,19 +608,19 @@ const Sidebar: React.FC = () => {
           {selecting && (
             <div className="mx-2 mb-2 shrink-0 animate-af-rise rounded-xl border border-af-border-strong bg-af-elevated p-1.5 shadow-lg">
               <div className="flex items-center justify-between px-1.5 pb-1">
-                <span className="text-xs font-medium text-af-text">{selectedIds.size} selected</span>
+                <span className="text-xs font-medium text-af-text">{t('shell.selectedCount', { count: selectedIds.size })}</span>
                 <div className="flex items-center gap-0.5">
                   <button
                     type="button"
                     onClick={() => setSelectedIds(new Set(orderedIds))}
                     className="rounded px-1.5 py-0.5 text-[11px] text-af-text-3 transition-colors hover:bg-af-hover hover:text-af-text"
                   >
-                    All
+                    {t('shell.selectAll')}
                   </button>
                   <button
                     type="button"
                     onClick={() => setSelectedIds(new Set())}
-                    aria-label="Clear selection"
+                    aria-label={t('shell.clearSelection')}
                     className="flex h-6 w-6 items-center justify-center rounded-md text-af-text-3 transition-colors hover:bg-af-hover hover:text-af-text"
                   >
                     <X className="h-3.5 w-3.5" />
@@ -628,10 +637,10 @@ const Sidebar: React.FC = () => {
                     if (ok) setSelectedIds(new Set());
                   }}
                   options={groupOptions(groups)}
-                  clearLabel="Remove from group"
-                  searchPlaceholder="Move to group…"
+                  clearLabel={t('shell.removeFromGroup')}
+                  searchPlaceholder={t('shell.moveToGroupPlaceholder')}
                   onCreate={createGroupFromPicker}
-                  createLabel={(query) => `Create group “${query}”`}
+                  createLabel={(query) => t('shell.createGroupOption', { query })}
                   side="top"
                   trigger={
                     <button
@@ -639,15 +648,15 @@ const Sidebar: React.FC = () => {
                       className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg bg-af-panel-2 text-xs font-medium text-af-text transition-colors hover:bg-af-hover"
                     >
                       <FolderInput className="h-3.5 w-3.5" />
-                      Move to group
+                      {t('shell.moveToGroup')}
                     </button>
                   }
                 />
-                <Hint label="Export">
+                <Hint label={t('shell.export')}>
                   <button
                     type="button"
                     onClick={() => setExportOpen(true)}
-                    aria-label="Export selected meetings"
+                    aria-label={t('shell.exportSelected')}
                     className="flex h-8 w-9 items-center justify-center rounded-lg bg-af-panel-2 text-af-text-2 transition-colors hover:bg-af-hover hover:text-af-text"
                   >
                     <Download className="h-3.5 w-3.5" />
@@ -656,7 +665,7 @@ const Sidebar: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setPendingDelete([...selectedIds])}
-                  aria-label="Delete selected meetings"
+                  aria-label={t('shell.deleteSelected')}
                   className="flex h-8 w-9 items-center justify-center rounded-lg bg-af-danger/[0.12] text-af-danger transition-colors hover:bg-af-danger/20"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -669,12 +678,12 @@ const Sidebar: React.FC = () => {
         {/* Footer */}
         {/* h-14 matches the meeting page's playback bar, so their top borders line up. */}
         <div className={cn('mx-3 mt-auto flex h-14 shrink-0 flex-col justify-center border-t transition-colors', expanded ? 'border-af-border' : 'border-transparent')}>
-          <RailTip show={!expanded} label="Settings">
+          <RailTip show={!expanded} label={t('common.settings')}>
             <button type="button" onClick={() => router.push('/settings')} className={navClass(isSettings)} aria-current={isSettings ? 'page' : undefined}>
               <RailIcon>
                 <Settings />
               </RailIcon>
-              <RailLabel expanded={expanded}>Settings</RailLabel>
+              <RailLabel expanded={expanded}>{t('common.settings')}</RailLabel>
             </button>
           </RailTip>
         </div>
@@ -692,9 +701,11 @@ const Sidebar: React.FC = () => {
         open={pendingDelete !== null}
         onOpenChange={(open) => !open && setPendingDelete(null)}
         variant="danger"
-        title={pendingDelete && pendingDelete.length > 1 ? `Delete ${pendingDelete.length} meetings?` : 'Delete this meeting?'}
-        description="The transcript, summary, notes, and action items are removed. Audio files stay in your recordings folder."
-        confirmLabel="Delete"
+        title={pendingDelete && pendingDelete.length > 1
+          ? t('shell.deleteMeetingsTitle', { count: pendingDelete.length })
+          : t('shell.deleteMeetingTitle')}
+        description={t('shell.deleteMeetingDescription')}
+        confirmLabel={t('common.delete')}
         onConfirm={confirmDelete}
       />
     </div>
@@ -735,6 +746,7 @@ function MeetingRow({
   onMove,
   onDelete,
 }: MeetingRowProps) {
+  const { t } = useI18n();
   const { groups } = useWorkspace();
   const date = parseDate(meeting.created_at);
   const title = displayTitle(meeting.title, meeting.created_at);
@@ -782,7 +794,7 @@ function MeetingRow({
             event.stopPropagation();
             onToggle(event.shiftKey);
           }}
-          aria-label={selected ? `Deselect ${title}` : `Select ${title}`}
+          aria-label={selected ? t('shell.deselectMeeting', { title }) : t('shell.selectMeeting', { title })}
           className={cn('transition-opacity', selecting || selected ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100')}
         />
       </span>
@@ -800,7 +812,7 @@ function MeetingRow({
               if (event.key === 'Escape') onRenameEnd(null);
             }}
             onBlur={() => onRenameEnd(draft)}
-            aria-label="Meeting title"
+            aria-label={t('shell.meetingTitleLabel')}
             className="af-bare -mx-1 h-6 w-[calc(100%+0.5rem)] rounded-md !border !border-af-accent !bg-af-panel-2 px-1 text-[13px] text-af-text outline-none"
           />
         ) : (
@@ -817,7 +829,7 @@ function MeetingRow({
             <button
               type="button"
               onClick={(event) => event.stopPropagation()}
-              aria-label={`Actions for ${title}`}
+              aria-label={t('shell.meetingActions', { title })}
               className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-af-text-3 opacity-0 transition-[opacity,background-color] hover:bg-af-active hover:text-af-text focus-visible:opacity-100 group-hover/row:opacity-100 data-[state=open]:bg-af-active data-[state=open]:opacity-100"
             >
               <MoreHorizontal className="h-3.5 w-3.5" />
@@ -826,16 +838,16 @@ function MeetingRow({
           <DropdownMenuContent align="start" side="right" className="w-52" onClick={(event) => event.stopPropagation()}>
             <DropdownMenuItem onSelect={onOpen}>
               <ArrowUpRight />
-              Open
+              {t('shell.open')}
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={onRenameStart}>
               <Pencil />
-              Rename
+              {t('common.rename')}
             </DropdownMenuItem>
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <FolderInput />
-                Move to group
+                {t('shell.moveToGroup')}
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="max-h-72 w-56 overflow-y-auto">
                 {groups.map((group) => (
@@ -851,12 +863,12 @@ function MeetingRow({
                 {groups.length > 0 && <DropdownMenuSeparator />}
                 <DropdownMenuItem onSelect={() => openGroupEditor({ assignMeetingIds: [meeting.id] })}>
                   <Plus />
-                  New group…
+                  {t('shell.newGroupEllipsis')}
                 </DropdownMenuItem>
                 {meeting.group_id && (
                   <DropdownMenuItem onSelect={() => onMove(null)}>
                     <X />
-                    Remove from group
+                    {t('shell.removeFromGroup')}
                   </DropdownMenuItem>
                 )}
               </DropdownMenuSubContent>
@@ -864,7 +876,7 @@ function MeetingRow({
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="danger" onSelect={onDelete}>
               <Trash2 />
-              Delete…
+              {t('shell.deleteEllipsis')}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

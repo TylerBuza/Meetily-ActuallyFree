@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import { OPTIONAL_MODEL_PREFERENCES_CHANGED } from '@/lib/optional-model-activation';
+import { tNow } from '@/i18n/translate';
 
 export const OPTIONAL_WHISPER_MODEL = 'large-v3-turbo-q5_0';
 export type OptionalModel = 'whisper' | 'nemotron';
@@ -83,11 +84,11 @@ export function OptionalModelDownloadsProvider({ children }: { children: React.R
           update('nemotron', {
             status: p.status === 'error' ? 'error' : activating ? 'activating' : 'downloading',
             progress: p.percent,
-            detail: p.status === 'verifying' ? 'Verifying download…' : undefined,
+            detail: p.status === 'verifying' ? tNow('feedback.verifyingDownload') : undefined,
             file: p.file,
             downloadedBytes: p.downloaded,
             totalBytes: p.total,
-            error: p.status === 'error' ? p.message ?? 'Download failed' : undefined,
+            error: p.status === 'error' ? p.message ?? tNow('feedback.downloadFailed') : undefined,
           });
         }
       }),
@@ -147,12 +148,21 @@ export function OptionalModelDownloadsProvider({ children }: { children: React.R
       update(model, { status: 'activating', progress: 100 });
       // Both native download tasks own the required preference save.
       update(model, { status: 'ready', progress: 100, enabled: true });
-      toast.success(`${model === 'whisper' ? 'Whisper' : 'Nemotron'} is enabled`, { description: model === 'whisper' ? 'Whisper is now the default for post-call enhancement and retranscription.' : 'Nemotron will label speakers live on your next recording and refine them afterward.' });
+      toast.success(tNow('feedback.modelEnabled', { model: model === 'whisper' ? 'Whisper' : 'Nemotron' }), {
+        description: model === 'whisper'
+          ? tNow('feedback.whisperNowDefault')
+          : tNow('feedback.nemotronLiveLabeling'),
+      });
     })().catch(error => {
       const message = error instanceof Error ? error.message : String(error);
       downloaded ||= message.startsWith('Model downloaded, but could not enable it:');
       update(model, { status: downloaded ? 'activation-error' : 'error', progress: downloaded ? 100 : 0, error: message });
-      toast.error(downloaded ? 'Model downloaded, but could not enable it' : `${model === 'whisper' ? 'Whisper' : 'Nemotron'} download failed`, { description: 'You can keep using Meetily and retry from Settings.' });
+      toast.error(
+        downloaded
+          ? tNow('feedback.modelDownloadedCouldNotEnable')
+          : tNow('feedback.modelDownloadFailed', { model: model === 'whisper' ? 'Whisper' : 'Nemotron' }),
+        { description: tNow('feedback.keepUsingMeetilyRetryInSettings') },
+      );
     }).finally(() => {
       active.current.delete(model);
     });
@@ -165,7 +175,7 @@ export function OptionalModelDownloadsProvider({ children }: { children: React.R
     void invoke('uninstall_optional_model', { model }).then(() => {
       update(model, { status: 'idle', progress: 0, enabled: false });
       window.dispatchEvent(new Event(OPTIONAL_MODEL_PREFERENCES_CHANGED));
-      toast.success(`${model === 'whisper' ? 'Whisper' : 'Nemotron'} uninstalled`);
+      toast.success(tNow('feedback.modelUninstalled', { model: model === 'whisper' ? 'Whisper' : 'Nemotron' }));
     }).catch(async error => {
       // Removal may have disabled the selection before a filesystem error.
       // Re-read native state rather than showing the previous Enabled badge.
@@ -182,7 +192,7 @@ export function OptionalModelDownloadsProvider({ children }: { children: React.R
         update(model, { status: 'error', progress: 0, error: String(error) });
       }
       window.dispatchEvent(new Event(OPTIONAL_MODEL_PREFERENCES_CHANGED));
-      toast.error('Could not uninstall model', { description: String(error) });
+      toast.error(tNow('feedback.couldNotUninstallModel'), { description: String(error) });
     }).finally(() => active.current.delete(model));
   }, [update]);
 

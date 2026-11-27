@@ -39,6 +39,7 @@ import { Hint } from '@/components/ui/tooltip';
 import { Spinner } from '@/components/ui/spinner';
 import { STOP_RECORDING_EVENT, STOP_REQUEST_KEY } from '@/lib/recording-launch';
 import { formatClock } from '@/lib/dates';
+import { useI18n } from '@/i18n';
 
 interface RecordingControlsProps {
   isRecording: boolean;
@@ -62,6 +63,7 @@ const sideButton =
 
 /** "No group ▾" under "Start recording": which group the next meeting is filed in. */
 function NextGroupPicker() {
+  const { t } = useI18n();
   const [pending, choose] = usePendingGroup();
   return (
     <GroupPicker
@@ -75,7 +77,7 @@ function NextGroupPicker() {
           className="mt-0.5 inline-flex max-w-[10rem] items-center gap-1.5 rounded-md text-[11px] font-medium text-af-text-3 transition-colors hover:text-af-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60"
         >
           <Layers className="h-3 w-3 shrink-0" />
-          <span className="truncate">{pending ? pending.name : 'No group'}</span>
+          <span className="truncate">{pending ? pending.name : t('recording.noGroup')}</span>
           <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
         </button>
       }
@@ -92,6 +94,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   isRecordingDisabled,
   selectedDevices,
 }) => {
+  const { t } = useI18n();
   // Pause and mute live in the shared context so the tray and minibar agree.
   const recordingState = useRecordingState();
   const isPaused = recordingState.isPaused;
@@ -151,7 +154,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   useEffect(() => {
     invoke('is_recording').catch((error) => {
       console.error('Tauri initialization error:', error);
-      toast.error('Recording is unavailable', { description: 'Restart Meetily. If this keeps happening, check the logs.' });
+      toast.error(t('recording.recordingUnavailable'), { description: t('recording.recordingUnavailableHint') });
     });
   }, []);
 
@@ -168,7 +171,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       });
     }).catch((error) => {
       console.error('Failed to save recording devices:', error);
-      toast.error('Could not save the audio device', { description: errorText(error) });
+      toast.error(t('recording.couldNotSaveDevice'), { description: errorText(error) });
     });
   }, [setSelectedDevices]);
 
@@ -188,7 +191,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       });
     }).catch((error) => {
       console.error('Failed to save audio sensitivity:', error);
-      toast.error('Could not save sensitivity');
+      toast.error(t('recording.couldNotSaveSensitivity'));
     });
   }, []);
 
@@ -206,14 +209,14 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
     saveDevices(next);
     if (!isRecording || value === 'default') return;
     const failed = (description: string) => {
-      toast.error(kind === 'Microphone' ? 'Could not switch microphone' : 'Could not switch system audio', { description });
+      toast.error(kind === 'Microphone' ? t('recording.couldNotSwitchMicrophone') : t('recording.couldNotSwitchSystemAudio'), { description });
       saveDevices(previous);
     };
     void invoke<boolean>('attempt_device_reconnect', {
       deviceName: deviceDisplayName(value),
       deviceType: kind,
     }).then((ok) => {
-      if (!ok) failed('The recording is still using the previous device.');
+      if (!ok) failed(t('recording.stillUsingPreviousDevice'));
     }).catch((error) => {
       console.error('Failed to switch audio device while recording:', error);
       failed(errorText(error));
@@ -332,7 +335,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       await invoke('pause_recording');
     } catch (error) {
       console.error('Failed to pause recording:', error);
-      toast.error('Could not pause the recording', { description: errorText(error) });
+      toast.error(t('recording.couldNotPause'), { description: errorText(error) });
     } finally {
       setIsPausing(false);
     }
@@ -345,7 +348,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       await invoke('resume_recording');
     } catch (error) {
       console.error('Failed to resume recording:', error);
-      toast.error('Could not resume the recording', { description: errorText(error) });
+      toast.error(t('recording.couldNotResume'), { description: errorText(error) });
     } finally {
       setIsResuming(false);
     }
@@ -428,7 +431,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
     >
       <div className={cn('flex min-w-0 items-center gap-4', isRecording || isProcessing ? 'w-full' : 'w-max')}>
         <div className="flex shrink-0 items-center pl-0.5">
-          <Hint label={isRecording ? 'Stop recording' : 'Start recording'}>
+          <Hint label={isRecording ? t('recording.stopRecording') : t('recording.startRecording')}>
             <button
               type="button"
               onClick={() => {
@@ -445,7 +448,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
                 (!isRecording && isRecordingDisabled) ||
                 (isRecording && (isStopping || isPausing || isResuming))
               }
-              aria-label={isRecording ? 'Stop recording' : 'Start recording'}
+              aria-label={isRecording ? t('recording.stopRecording') : t('recording.startRecording')}
               data-loading={busy ? 'true' : undefined}
               className="af-record-button relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full transition-[background,transform] duration-200 active:scale-95 disabled:active:scale-100"
             >
@@ -472,7 +475,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
 
           <div className={cn('ml-3 shrink-0 whitespace-nowrap text-left leading-tight', isRecording ? 'w-[5.25rem]' : 'min-w-[7.75rem]')}>
             <div className="text-sm font-semibold tabular-nums tracking-tight text-af-text">
-              {isRecording ? elapsed : isProcessing ? 'Processing…' : isStarting ? 'Starting…' : 'Start recording'}
+              {isRecording ? elapsed : isProcessing ? t('recording.statusProcessingEllipsis') : isStarting ? t('recording.statusStartingEllipsis') : t('recording.startRecording')}
             </div>
             {isRecording ? (
               <div
@@ -481,10 +484,10 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
                   isStopping ? 'text-af-text-3' : isPaused ? 'text-af-warning' : 'text-af-record',
                 )}
               >
-                {isStopping ? 'Stopping…' : isPaused ? 'Paused' : 'Recording'}
+                {isStopping ? t('recording.statusStoppingEllipsis') : isPaused ? t('recording.statusPaused') : t('recording.statusRecording')}
               </div>
             ) : busy ? (
-              <div className="max-w-[11rem] truncate text-[11px] text-af-text-3">{startupMessage || 'One moment'}</div>
+              <div className="max-w-[11rem] truncate text-[11px] text-af-text-3">{startupMessage || t('recording.oneMoment')}</div>
             ) : (
               <NextGroupPicker />
             )}
@@ -497,7 +500,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
             )}
           >
             <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
-              <Hint label={isPaused ? 'Resume recording' : 'Pause recording'}>
+              <Hint label={isPaused ? t('recording.resumeRecording') : t('recording.pauseRecording')}>
                 <button
                   type="button"
                   onClick={() => {
@@ -505,18 +508,18 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
                     void (isPaused ? handleResumeRecording() : handlePauseRecording());
                   }}
                   disabled={isPausing || isResuming || isStopping}
-                  aria-label={isPaused ? 'Resume recording' : 'Pause recording'}
+                  aria-label={isPaused ? t('recording.resumeRecording') : t('recording.pauseRecording')}
                   className={sideButton}
                 >
                   {isPaused ? <Play size={14} /> : <Pause size={14} />}
                 </button>
               </Hint>
-              <Hint label="Shrink to floating bar">
+              <Hint label={t('recording.shrinkToFloatingBar')}>
                 <button
                   type="button"
                   onClick={collapseToBar}
                   disabled={isStopping}
-                  aria-label="Shrink to floating bar"
+                  aria-label={t('recording.shrinkToFloatingBar')}
                   className={sideButton}
                 >
                   <Minimize2 size={14} />

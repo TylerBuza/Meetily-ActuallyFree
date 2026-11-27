@@ -5,6 +5,7 @@
  * current name and forgets it when the contact is deleted.
  */
 import { invoke } from '@tauri-apps/api/core';
+import { tNow } from '@/i18n/translate';
 
 export interface VoiceProfile {
   person_id: string;
@@ -18,7 +19,15 @@ export interface VoiceProfile {
 /** "14 clear turns in 3 meetings" */
 export function describeVoiceSource(profile: Pick<VoiceProfile, 'samples' | 'meetings'>): string {
   const meetings = Math.max(1, profile.meetings);
-  return `${profile.samples} clear turn${profile.samples === 1 ? '' : 's'} in ${meetings} meeting${meetings === 1 ? '' : 's'}`;
+  const key =
+    profile.samples === 1
+      ? meetings === 1
+        ? 'modelCatalog.voiceSourceOneOne'
+        : 'modelCatalog.voiceSourceOneOther'
+      : meetings === 1
+        ? 'modelCatalog.voiceSourceOtherOne'
+        : 'modelCatalog.voiceSourceOtherOther';
+  return tNow(key, { samples: profile.samples, meetings });
 }
 
 export const VOICE_PROFILES_CHANGED_EVENT = 'meetily-voice-profiles-changed';

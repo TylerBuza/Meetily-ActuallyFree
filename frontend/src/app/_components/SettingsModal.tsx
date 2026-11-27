@@ -13,6 +13,7 @@ import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useConfig } from '@/contexts/ConfigContext';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
+import { useI18n } from '@/i18n';
 
 type ModalName = 'languageSettings' | 'modelSelector' | 'errorAlert' | 'chunkDropWarning';
 
@@ -23,6 +24,7 @@ interface SettingsModalsProps {
 }
 
 export function SettingsModals({ modals, messages, onClose }: SettingsModalsProps) {
+  const { t } = useI18n();
   const {
     selectedLanguage,
     setSelectedLanguage,
@@ -40,9 +42,9 @@ export function SettingsModals({ modals, messages, onClose }: SettingsModalsProp
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Globe className="h-4 w-4 text-af-accent" />
-              Transcription language
+              {t('recording.transcriptionLanguageTitle')}
             </DialogTitle>
-            <DialogDescription>The language people speak in your meetings. Auto-detect works for most calls.</DialogDescription>
+            <DialogDescription>{t('recording.transcriptionLanguageDescription')}</DialogDescription>
           </DialogHeader>
           <LanguageSelection
             selectedLanguage={selectedLanguage}
@@ -51,7 +53,7 @@ export function SettingsModals({ modals, messages, onClose }: SettingsModalsProp
             provider={transcriptModelConfig.provider}
           />
           <DialogFooter>
-            <Button onClick={() => onClose('languageSettings')}>Done</Button>
+            <Button onClick={() => onClose('languageSettings')}>{t('common.done')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -61,12 +63,12 @@ export function SettingsModals({ modals, messages, onClose }: SettingsModalsProp
           <DialogHeader className="border-b border-af-border px-6 pb-4 pt-6">
             <DialogTitle className="flex items-center gap-2">
               <AudioLines className="h-4 w-4 text-af-accent" />
-              {messages.modelSelector ? 'Set up transcription to record' : 'Transcription models'}
+              {messages.modelSelector ? t('recording.setupTranscriptionTitle') : t('recording.transcriptionModelsTitle')}
             </DialogTitle>
             <DialogDescription>
               {messages.modelSelector
-                ? 'Meetily needs a speech model on this computer before it can transcribe. Parakeet is fast and works well for live meetings.'
-                : 'Choose the speech model used while recording and after the call.'}
+                ? t('recording.setupTranscriptionDescription')
+                : t('recording.transcriptionModelsDescription')}
             </DialogDescription>
           </DialogHeader>
           <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
@@ -80,12 +82,12 @@ export function SettingsModals({ modals, messages, onClose }: SettingsModalsProp
             <label className="flex cursor-pointer items-center gap-3">
               <Switch checked={showConfidenceIndicator} onCheckedChange={toggleConfidenceIndicator} />
               <span>
-                <span className="block text-[13px] font-medium text-af-text">Show confidence</span>
-                <span className="block text-xs text-af-text-3">Mark transcript lines the model was unsure about</span>
+                <span className="block text-[13px] font-medium text-af-text">{t('recording.showConfidence')}</span>
+                <span className="block text-xs text-af-text-3">{t('recording.showConfidenceDescription')}</span>
               </span>
             </label>
             <Button variant="secondary" onClick={() => onClose('modelSelector')}>
-              {messages.modelSelector ? 'Not now' : 'Done'}
+              {messages.modelSelector ? t('common.notNow') : t('common.done')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -96,12 +98,12 @@ export function SettingsModals({ modals, messages, onClose }: SettingsModalsProp
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <OctagonAlert className="h-4 w-4 text-af-danger" />
-              The recording stopped
+              {t('recording.recordingStoppedTitle')}
             </DialogTitle>
             <DialogDescription className="whitespace-pre-line">{messages.errorAlert}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button onClick={() => onClose('errorAlert')}>OK</Button>
+            <Button onClick={() => onClose('errorAlert')}>{t('common.ok')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -111,13 +113,13 @@ export function SettingsModals({ modals, messages, onClose }: SettingsModalsProp
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-af-warning" />
-              Transcription is falling behind
+              {t('recording.fallingBehindTitle')}
             </DialogTitle>
             <DialogDescription className="whitespace-pre-line">{messages.chunkDropWarning}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="secondary" onClick={() => onClose('chunkDropWarning')}>
-              Got it
+              {t('common.gotIt')}
             </Button>
           </DialogFooter>
         </DialogContent>

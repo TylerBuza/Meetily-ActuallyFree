@@ -15,7 +15,8 @@ import '@blocknote/shadcn/style.css';
 import { cn } from '@/lib/utils';
 import { themeInfo, useAppTheme } from '@/lib/app-theme';
 import { blocksToMarkdownSafely } from '@/lib/blocknote-markdown';
-import { BlockNoteLayerProvider, blockNoteMenus, useBlockNoteLayer } from '@/components/editor/blocknote-menus';
+import { useI18n } from '@/i18n';
+import { BlockNoteLayerProvider, blockNoteDictionary, blockNoteMenus, useBlockNoteLayer } from '@/components/editor/blocknote-menus';
 
 /** Space between a menu and the line, and between a menu and the window's edge. */
 const MENU_GAP = 10;
@@ -93,12 +94,13 @@ export interface NotesEditorProps {
 export function NotesEditor({
   initialBlocks,
   initialMarkdown,
-  placeholder = 'Write your notes…',
+  placeholder,
   editable = true,
   onChange,
   className,
   onReady,
 }: NotesEditorProps) {
+  const { t, locale } = useI18n();
   const [theme] = useAppTheme();
   const dark = themeInfo(theme).dark;
   const menuLayer = useBlockNoteLayer(dark);
@@ -108,7 +110,11 @@ export function NotesEditor({
 
   const editor = useCreateBlockNote({
     initialContent: initialBlocks && initialBlocks.length > 0 ? (initialBlocks as PartialBlock[]) : undefined,
-    placeholders: { emptyDocument: placeholder, default: "Type '/' for headings, lists, and checklists" },
+    dictionary: blockNoteDictionary(locale),
+    placeholders: {
+      emptyDocument: placeholder ?? t('meeting.writeYourNotes'),
+      default: t('meeting.editorSlashPlaceholder'),
+    },
   });
 
   // Markdown-only content is parsed after the editor exists.

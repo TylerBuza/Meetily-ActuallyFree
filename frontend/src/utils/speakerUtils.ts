@@ -7,6 +7,7 @@
 
 import { colorForName, type GroupColor } from '@/lib/group-colors';
 import type { SpeakerLabelCount } from '@/types';
+import { tNow } from '@/i18n/translate';
 
 // Speaker colors come from the theme's group palette (--af-c-*), which each
 // theme tunes for its own background. The class strings stay literal so
@@ -127,7 +128,7 @@ export function replaceSpeakerComponent(label: string, from: string, to: string)
 
 export function displaySpeaker(speaker: string, userName: string): string {
   return splitSpeakerLabel(speaker).map(part => isUserSpeaker(part)
-    ? (userName ? `${userName} (You)` : 'You') : part).join(' + ');
+    ? (userName ? tNow('common.youWithName', { name: userName }) : tNow('common.youLabel')) : part).join(' + ');
 }
 
 /** Normalize speaker keys so "You" / "you" / empty compare cleanly. */

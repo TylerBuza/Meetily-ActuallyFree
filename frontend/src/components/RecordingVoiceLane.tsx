@@ -13,6 +13,7 @@ import {
   toDeviceOptionValue,
   type AudioDeviceOption,
 } from '@/lib/audio-devices';
+import { useI18n } from '@/i18n';
 
 let levelMonitorQueue: Promise<void> = Promise.resolve();
 
@@ -69,6 +70,7 @@ export function RecordingVoiceLane({
   source?: React.ReactNode;
   hideDevice?: boolean;
 }) {
+  const { t } = useI18n();
   const [listOpen, setListOpen] = useState(false);
   const [meter, setMeter] = useState({ rms: 0, peak: 0, tick: 0 });
   const optionsRef = useRef(options);
@@ -76,8 +78,8 @@ export function RecordingVoiceLane({
   const Icon = kind === 'mic' ? Mic : Volume2;
   const chosen = options.find((device) => toDeviceOptionValue(device) === savedValue);
   const summary = macDefaultOutput
-    ? 'System default'
-    : chosen?.name || (savedValue ? deviceDisplayName(savedValue) : kind === 'mic' ? 'Default microphone' : 'Default output');
+    ? t('recording.systemDefault')
+    : chosen?.name || (savedValue ? deviceDisplayName(savedValue) : kind === 'mic' ? t('recording.defaultMicrophone') : t('recording.defaultOutput'));
 
   useEffect(() => {
     if (!open) setListOpen(false);
@@ -136,10 +138,10 @@ export function RecordingVoiceLane({
 
   // macOS has no output to pick, but the panel still opens for `source`.
   const canOpen = !macDefaultOutput || !!source;
-  const settingsLabel = kind === 'mic' ? 'Input settings' : 'Output settings';
+  const settingsLabel = kind === 'mic' ? t('recording.inputSettings') : t('recording.outputSettings');
   const muteLabel = kind === 'mic'
-    ? (muted ? 'Unmute microphone' : 'Mute microphone')
-    : (muted ? 'Unmute output' : 'Mute output');
+    ? (muted ? t('recording.unmuteMicrophone') : t('recording.muteMicrophone'))
+    : (muted ? t('recording.unmuteOutput') : t('recording.muteOutput'));
   const OffIcon = kind === 'mic' ? MicOff : VolumeX;
 
   const ease = 'duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none';
@@ -224,9 +226,9 @@ export function RecordingVoiceLane({
         >
           <AudioDeviceCard
             kind={kind === 'mic' ? 'mic' : 'system'}
-            label={kind === 'mic' ? 'Microphone' : 'System audio'}
-            volumeLabel={kind === 'mic' ? 'Mic volume' : 'System volume'}
-            levelLabel={kind === 'mic' ? 'Input level' : 'System level'}
+            label={kind === 'mic' ? t('recording.microphoneLabel') : t('recording.systemAudioLabel')}
+            volumeLabel={kind === 'mic' ? t('recording.micVolume') : t('recording.systemVolume')}
+            levelLabel={kind === 'mic' ? t('recording.inputLevel') : t('recording.systemLevel')}
             deviceName={summary}
             devices={macDefaultOutput ? [] : options}
             selectedValue={macDefaultOutput ? null : savedValue}
@@ -240,7 +242,7 @@ export function RecordingVoiceLane({
               setListOpen(false);
             }}
             disabled={macDefaultOutput}
-            note={macDefaultOutput && !hideDevice ? 'macOS records the current system output.' : null}
+            note={macDefaultOutput && !hideDevice ? t('recording.macOutputNote') : null}
             unavailable={
               !macDefaultOutput && savedValue && options.length > 0 && !options.some((device) => toDeviceOptionValue(device) === savedValue)
                 ? deviceDisplayName(savedValue)

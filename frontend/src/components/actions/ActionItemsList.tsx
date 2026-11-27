@@ -28,9 +28,20 @@ import {
 } from '@/lib/workspace-api';
 import { formatShortDate, parseDate } from '@/lib/dates';
 import { displayTitle } from '@/lib/meeting-titles';
+import { useI18n } from '@/i18n';
+import type { MessageKey } from '@/i18n';
 import { formatPlayback } from '@/components/meeting/AudioPlayerBar';
 
 const DUE_PICKS = ['Today', 'Tomorrow', 'Friday', 'Next week', 'End of month'];
+
+/** Display labels for the quick due-date picks; the stored value stays canonical English. */
+const DUE_PICK_LABELS: Record<string, MessageKey> = {
+  Today: 'meeting.dueToday',
+  Tomorrow: 'meeting.dueTomorrow',
+  Friday: 'meeting.dueFriday',
+  'Next week': 'meeting.dueNextWeek',
+  'End of month': 'meeting.dueEndOfMonth',
+};
 
 const error = (message: string) => (reason: unknown) =>
   toast.error(message, { description: reason instanceof Error ? reason.message : String(reason) });
@@ -55,10 +66,11 @@ export function ActionItemsList({
   meetingId,
   onSeek,
   showOwner = true,
-  emptyText = 'No action items.',
+  emptyText,
   allowAdd = !!meetingId,
   className,
 }: ActionItemsListProps) {
+  const { t } = useI18n();
   const [adding, setAdding] = useState(false);
 
   const replace = (next: ActionItem) => onItemsChange(items.map((item) => (item.id === next.id ? next : item)));
@@ -72,7 +84,7 @@ export function ActionItemsList({
       announceChange('actions', { meetingId: item.meetingId, source: 'list' });
     } catch (reason) {
       replace(item);
-      error('Could not update the action item')(reason);
+      error(t('meeting.couldNotUpdateActionItem'))(reason);
     }
   };
 
@@ -83,7 +95,7 @@ export function ActionItemsList({
       announceChange('actions', { meetingId: item.meetingId, source: 'list' });
     } catch (reason) {
       onItemsChange(items);
-      error('Could not delete the action item')(reason);
+      error(t('meeting.couldNotDeleteActionItem'))(reason);
     }
   };
 
@@ -94,13 +106,13 @@ export function ActionItemsList({
       onItemsChange([...items, created]);
       announceChange('actions', { meetingId, source: 'list' });
     } catch (reason) {
-      error('Could not add the action item')(reason);
+      error(t('meeting.couldNotAddActionItem'))(reason);
     }
   };
 
   return (
     <div className={cn('space-y-0.5', className)}>
-      {items.length === 0 && !adding && <p className="py-2 text-[13px] text-af-text-3">{emptyText}</p>}
+      {items.length === 0 && !adding && <p className="py-2 text-[13px] text-af-text-3">{emptyText ?? t('meeting.noActionItems')}</p>}
       {items.map((item) => (
         <ActionItemRow
           key={item.id}
@@ -126,7 +138,7 @@ export function ActionItemsList({
           className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2 text-[13px] text-af-text-3 transition-colors hover:bg-af-hover hover:text-af-text"
         >
           <Plus className="h-4 w-4" />
-          Add an action item
+          {t('meeting.addActionItem')}
         </button>
       ))}
     </div>
@@ -134,6 +146,7 @@ export function ActionItemsList({
 }
 
 function AddRow({ onSubmit, onDone }: { onSubmit: (text: string) => Promise<void>; onDone: () => void }) {
+  const { t } = useI18n();
   const [text, setText] = useState('');
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => ref.current?.focus(), []);
@@ -154,7 +167,7 @@ function AddRow({ onSubmit, onDone }: { onSubmit: (text: string) => Promise<void
           if (event.key === 'Escape') onDone();
         }}
         onBlur={() => !text.trim() && onDone()}
-        placeholder="What needs doing? Press Enter to add"
+        placeholder={t('meeting.actionItemPlaceholder')}
         className="af-bare h-7 min-w-0 flex-1 bg-transparent text-[13px] text-af-text outline-none placeholder:text-af-text-4"
       />
     </div>
@@ -176,6 +189,7 @@ function ActionItemRow({
   onSave: (patch: Partial<ActionItem>) => void;
   onDelete: () => void;
 }) {
+  const { t } = useI18n();
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(item.text);
@@ -206,7 +220,7 @@ function ActionItemRow({
         round
         checked={item.done}
         onCheckedChange={(checked) => onSave({ done: checked === true })}
-        aria-label={item.done ? 'Mark as not done' : 'Mark as done'}
+        aria-label={item.done ? t('meeting.markAsNotDone') : t('meeting.markAsDone')}
         className="mt-0.5 h-[18px] w-[18px]"
       />
       <div className="min-w-0 flex-1">
@@ -245,7 +259,7 @@ function ActionItemRow({
           {showOwner && <OwnerChip item={item} onSave={onSave} />}
           <DueChip value={item.dueText ?? null} onChange={(dueText) => onSave({ dueText })} />
           {inMeeting && item.audioTime != null && onSeek && (
-            <Hint label="Play where this came up">
+            <Hint label={t('meeting.playWhereItCameUp')}>
               <button
                 type="button"
                 onClick={() => onSeek(item.audioTime!)}
@@ -274,11 +288,11 @@ function ActionItemRow({
           )}
         </div>
       </div>
-      <Hint label="Delete">
+      <Hint label={t('meeting.delete')}>
         <button
           type="button"
           onClick={onDelete}
-          aria-label="Delete action item"
+          aria-label={t('meeting.deleteActionItem')}
           className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-af-text-4 opacity-0 transition-[opacity,color,background-color] hover:bg-af-danger/10 hover:text-af-danger focus-visible:opacity-100 group-hover/item:opacity-100"
         >
           <Trash2 className="h-3.5 w-3.5" />
@@ -289,15 +303,16 @@ function ActionItemRow({
 }
 
 function OwnerChip({ item, onSave }: { item: ActionItem; onSave: (patch: Partial<ActionItem>) => void }) {
+  const { t } = useI18n();
   const { people } = useWorkspace();
   const userName = useUserName();
   const owner = item.personName ?? item.ownerLabel ?? null;
   const isYou = !!owner && /^you$/i.test(owner);
-  const shown = isYou ? 'You' : owner;
+  const shown = isYou ? t('meeting.you') : owner;
   const value = item.personId ? `person:${item.personId}` : isYou ? 'you' : owner ? `label:${owner}` : null;
 
   const options = [
-    { value: 'you', label: userName ? `${userName} (you)` : 'You', icon: <Avatar name={userName || 'You'} size="xs" /> },
+    { value: 'you', label: userName ? t('meeting.assignToWithName', { name: userName }) : t('meeting.you'), icon: <Avatar name={userName || t('meeting.you')} size="xs" /> },
     ...people.map((person) => ({
       value: `person:${person.id}`,
       label: person.displayName,
@@ -311,10 +326,10 @@ function OwnerChip({ item, onSave }: { item: ActionItem; onSave: (patch: Partial
     <Combobox
       value={value}
       options={options}
-      clearLabel="No owner"
-      searchPlaceholder="Assign to…"
+      clearLabel={t('meeting.noOwner')}
+      searchPlaceholder={t('meeting.assignToSearch')}
       onCreate={(name) => ({ value: `label:${name}`, label: name })}
-      createLabel={(name) => `Assign to “${name}”`}
+      createLabel={(name) => t('meeting.assignToNamed', { name })}
       onChange={(next, option) => {
         if (!next) return onSave({ ownerLabel: null, personId: null, personName: null });
         if (next === 'you') return onSave({ ownerLabel: 'You', personId: null, personName: null });
@@ -329,8 +344,8 @@ function OwnerChip({ item, onSave }: { item: ActionItem; onSave: (patch: Partial
             shown ? 'text-af-text-2 hover:bg-af-hover hover:text-af-text' : 'text-af-text-4 opacity-0 hover:bg-af-hover hover:text-af-text-2 group-hover/item:opacity-100 focus-visible:opacity-100',
           )}
         >
-          {shown ? <Avatar name={isYou ? userName || 'You' : shown} size="xs" /> : <UserRound className="h-3 w-3" />}
-          <span className="truncate">{shown ?? 'Assign'}</span>
+          {shown ? <Avatar name={isYou ? userName || t('meeting.you') : shown} size="xs" /> : <UserRound className="h-3 w-3" />}
+          <span className="truncate">{shown ?? t('meeting.assign')}</span>
         </button>
       }
     />
@@ -338,6 +353,7 @@ function OwnerChip({ item, onSave }: { item: ActionItem; onSave: (patch: Partial
 }
 
 function DueChip({ value, onChange }: { value: string | null; onChange: (value: string | null) => void }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
   useEffect(() => {
@@ -347,6 +363,7 @@ function DueChip({ value, onChange }: { value: string | null; onChange: (value: 
     onChange(next && next.trim() ? next.trim() : null);
     setOpen(false);
   };
+  const shownDue = value ? (DUE_PICK_LABELS[value] ? t(DUE_PICK_LABELS[value]) : value) : t('meeting.due');
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -358,7 +375,7 @@ function DueChip({ value, onChange }: { value: string | null; onChange: (value: 
           )}
         >
           <CalendarDays className="h-3 w-3" />
-          {value ?? 'Due'}
+          {shownDue}
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-60 p-2">
@@ -367,7 +384,7 @@ function DueChip({ value, onChange }: { value: string | null; onChange: (value: 
           autoFocus
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => event.key === 'Enter' && set(draft)}
-          placeholder="Friday, Oct 3, next week…"
+          placeholder={t('meeting.duePlaceholder')}
           className="h-8 text-xs"
         />
         <div className="mt-2 flex flex-wrap gap-1">
@@ -382,13 +399,13 @@ function DueChip({ value, onChange }: { value: string | null; onChange: (value: 
               )}
             >
               {value === pick && <Check className="mr-1 inline h-3 w-3" />}
-              {pick}
+              {DUE_PICK_LABELS[pick] ? t(DUE_PICK_LABELS[pick]) : pick}
             </button>
           ))}
         </div>
         {value && (
           <button type="button" onClick={() => set(null)} className="mt-2 w-full rounded-md py-1 text-[11px] text-af-text-3 transition-colors hover:bg-af-hover hover:text-af-danger">
-            Clear due date
+            {t('meeting.clearDueDate')}
           </button>
         )}
       </PopoverContent>

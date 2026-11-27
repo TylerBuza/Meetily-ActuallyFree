@@ -10,6 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { fieldClass } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { displayTime, formatTime, parseTime, parseTypedTime, usesTwelveHourClock } from '@/lib/schedule';
+import { useI18n } from '@/i18n';
 
 const STEP = 15;
 const ROW_HEIGHT = 32;
@@ -23,6 +24,7 @@ export interface TimePickerProps {
 }
 
 export function TimePicker({ value, onChange, disabled, className, 'aria-label': ariaLabel }: TimePickerProps) {
+  const { t } = useI18n();
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState('');
   const [active, setActive] = React.useState(0);
@@ -143,11 +145,11 @@ export function TimePicker({ value, onChange, disabled, className, 'aria-label':
             aria-controls={listId}
             aria-activedescendant={`${listId}-${active}`}
             aria-invalid={invalid}
-            aria-label="Type a time"
+            aria-label={t('ui.typeATime')}
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Type a time"
+            placeholder={t('ui.typeATime')}
             className="h-8 min-w-0 flex-1 bg-transparent text-[13px] text-af-text outline-none placeholder:text-af-text-4"
           />
           {query.trim() && (
@@ -161,7 +163,7 @@ export function TimePicker({ value, onChange, disabled, className, 'aria-label':
           ref={attachList}
           id={listId}
           role="listbox"
-          aria-label="Times"
+          aria-label={t('ui.timeSuggestions')}
           className="relative max-h-56 overflow-y-auto overscroll-contain"
         >
           {slots.map((minutes, index) => {

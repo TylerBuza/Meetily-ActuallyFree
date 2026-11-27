@@ -50,11 +50,12 @@ import {
 import { createGroupFromPicker, GroupChip, GroupDot, groupOptions } from '@/components/groups/GroupBits';
 import { openGroupEditor } from '@/components/groups/GroupEditor';
 import { ExportMeetingsDialog } from '@/components/meetings/ExportMeetingsDialog';
-import { dateSection, formatDuration, parseDate } from '@/lib/dates';
+import { dateSection, formatClockTime, formatDuration, formatMonthDay, parseDate } from '@/lib/dates';
 import { displayTitle } from '@/lib/meeting-titles';
 import { deleteMeetings, moveMeetingsToGroup, renameMeeting } from '@/lib/meeting-actions';
 import { onWorkspaceChange } from '@/lib/workspace-api';
 import type { PersonProfile } from '@/types';
+import { tNow, useI18n } from '@/i18n';
 
 type Sort = 'newest' | 'oldest' | 'longest';
 type Range = 'any' | 'week' | 'month' | 'year';
@@ -66,12 +67,15 @@ const NO_GROUP = '__none__';
 function totalDuration(meetings: CurrentMeeting[]): string {
   const seconds = meetings.reduce((sum, meeting) => sum + (meeting.duration_seconds ?? 0), 0);
   const hours = Math.floor(seconds / 3600);
-  if (hours >= 1) return `${hours} hour${hours === 1 ? '' : 's'} recorded`;
+  if (hours >= 1) {
+    return hours === 1 ? tNow('home.hoursRecordedOne', { count: hours }) : tNow('home.hoursRecordedMany', { count: hours });
+  }
   const minutes = Math.round(seconds / 60);
-  return minutes > 0 ? `${minutes} min recorded` : '';
+  return minutes > 0 ? tNow('home.minutesRecorded', { count: minutes }) : '';
 }
 
 export default function MeetingsPage() {
+  const { t } = useI18n();
   const router = useRouter();
   const { meetings, setCurrentMeeting, currentMeeting } = useSidebar();
   const { groups, groupById, people } = useWorkspace();
@@ -131,13 +135,19 @@ export default function MeetingsPage() {
         .map((person) => ({
           value: person.id,
           label: person.displayName,
-          description: [person.role, person.company, `${person.meetingCount} meeting${person.meetingCount === 1 ? '' : 's'}`]
+          description: [
+            person.role,
+            person.company,
+            person.meetingCount === 1
+              ? t('home.meetingCountOne', { count: person.meetingCount })
+              : t('home.meetingCountMany', { count: person.meetingCount }),
+          ]
             .filter(Boolean)
             .join(' · '),
           keywords: [person.company ?? '', person.role ?? '', person.email ?? ''].filter(Boolean),
           icon: <Avatar name={person.displayName} size="xs" />,
         })),
-    [people, personFilter],
+    [people, personFilter, t],
   );
 
   const personLoading = personFilter !== null && personMeetings === null;
@@ -169,16 +179,16 @@ export default function MeetingsPage() {
   }, [meetings, query, groupFilter, personFilter, personMeetings, range, sort, groupById]);
 
   const sections = useMemo(() => {
-    if (sort === 'longest') return [{ title: 'Longest first', meetings: filtered }];
+    if (sort === 'longest') return [{ title: t('home.longestFirst'), meetings: filtered }];
     const now = new Date();
     const map = new Map<string, CurrentMeeting[]>();
     for (const meeting of filtered) {
       const date = parseDate(meeting.created_at);
-      const title = date ? dateSection(date, now) : 'Undated';
+      const title = date ? dateSection(date, now) : t('home.undated');
       map.set(title, [...(map.get(title) ?? []), meeting]);
     }
     return [...map.entries()].map(([title, items]) => ({ title, meetings: items }));
-  }, [filtered, sort]);
+  }, [filtered, sort, t]);
 
   const orderedIds = useMemo(() => filtered.map((meeting) => meeting.id), [filtered]);
   const selecting = selected.size > 0;
@@ -242,9 +252,15 @@ export default function MeetingsPage() {
       .map((meeting) => ({ ...meeting, groupName: groupById(meeting.group_id)?.name ?? null }));
 
   const summaryLine = [
-    `${meetings.length} meeting${meetings.length === 1 ? '' : 's'}`,
+    meetings.length === 1
+      ? t('home.meetingCountOne', { count: meetings.length })
+      : t('home.meetingCountMany', { count: meetings.length }),
     totalDuration(meetings),
-    groups.length > 0 ? `${groups.length} group${groups.length === 1 ? '' : 's'}` : null,
+    groups.length > 0
+      ? groups.length === 1
+        ? t('home.groupCountOne', { count: groups.length })
+        : t('home.groupCountMany', { count: groups.length })
+      : null,
   ]
     .filter(Boolean)
     .join(' · ');
@@ -253,12 +269,12 @@ export default function MeetingsPage() {
     <div className="h-full overflow-y-auto bg-af-panel">
       <div className="mx-auto w-full max-w-5xl px-8 pb-32 pt-10 animate-af-rise">
         <PageHeader
-          title="All meetings"
+          title={t('home.allMeetings')}
           description={summaryLine}
           actions={
             <Button variant="secondary" size="sm" onClick={() => openImportDialog()}>
               <FileAudio />
-              Import a recording
+              {t('home.importRecording')}
             </Button>
           }
         />
@@ -269,18 +285,18 @@ export default function MeetingsPage() {
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Filter by title or group"
+              placeholder={t('home.filterByTitleOrGroup')}
               className="pl-9"
-              aria-label="Filter meetings"
+              aria-label={t('home.filterMeetings')}
             />
           </div>
           <Select value={groupFilter} onValueChange={setGroupFilter}>
-            <SelectTrigger className="w-44" aria-label="Group">
+            <SelectTrigger className="w-44" aria-label={t('home.groupLabel')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={ALL_GROUPS}>All groups</SelectItem>
-              <SelectItem value={NO_GROUP}>Not in a group</SelectItem>
+              <SelectItem value={ALL_GROUPS}>{t('home.allGroups')}</SelectItem>
+              <SelectItem value={NO_GROUP}>{t('home.notInAGroup')}</SelectItem>
               {groups.map((group) => (
                 <SelectItem key={group.id} value={group.id}>
                   <span className="flex items-center gap-2">
@@ -295,32 +311,32 @@ export default function MeetingsPage() {
             value={personFilter}
             onChange={(value) => choosePerson(value)}
             options={personOptions}
-            placeholder="Anyone"
-            clearLabel="Anyone"
-            searchPlaceholder="Find a contact"
-            emptyText="No contacts with meetings yet"
+            placeholder={t('home.anyone')}
+            clearLabel={t('home.anyone')}
+            searchPlaceholder={t('home.findContact')}
+            emptyText={t('home.noContactsWithMeetings')}
             triggerClassName="w-44 text-af-text"
-            aria-label="Contact"
+            aria-label={t('home.contactLabel')}
           />
           <Select value={range} onValueChange={(value) => setRange(value as Range)}>
-            <SelectTrigger className="w-36" aria-label="Date range">
+            <SelectTrigger className="w-36" aria-label={t('home.dateRange')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="any">Any time</SelectItem>
-              <SelectItem value="week">Past week</SelectItem>
-              <SelectItem value="month">Past month</SelectItem>
-              <SelectItem value="year">Past year</SelectItem>
+              <SelectItem value="any">{t('home.anyTime')}</SelectItem>
+              <SelectItem value="week">{t('home.pastWeek')}</SelectItem>
+              <SelectItem value="month">{t('home.pastMonth')}</SelectItem>
+              <SelectItem value="year">{t('home.pastYear')}</SelectItem>
             </SelectContent>
           </Select>
           <Select value={sort} onValueChange={(value) => setSort(value as Sort)}>
-            <SelectTrigger className="w-36" aria-label="Sort">
+            <SelectTrigger className="w-36" aria-label={t('home.sortLabel')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="newest">Newest first</SelectItem>
-              <SelectItem value="oldest">Oldest first</SelectItem>
-              <SelectItem value="longest">Longest first</SelectItem>
+              <SelectItem value="newest">{t('home.newestFirst')}</SelectItem>
+              <SelectItem value="oldest">{t('home.oldestFirst')}</SelectItem>
+              <SelectItem value="longest">{t('home.longestFirst')}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -329,13 +345,13 @@ export default function MeetingsPage() {
           {meetings.length === 0 ? (
             <EmptyState
               icon={<Library />}
-              title="No meetings yet"
-              description="Recordings and imported audio show up here, ready to sort into groups."
+              title={t('home.noMeetingsYet')}
+              description={t('home.noMeetingsYetDescription')}
               action={
                 <div className="flex gap-2">
-                  <Button onClick={() => router.push('/')}>Start recording</Button>
+                  <Button onClick={() => router.push('/')}>{t('home.startRecording')}</Button>
                   <Button variant="secondary" onClick={() => openImportDialog()}>
-                    Import a recording
+                    {t('home.importRecording')}
                   </Button>
                 </div>
               }
@@ -349,11 +365,11 @@ export default function MeetingsPage() {
           ) : filtered.length === 0 ? (
             <EmptyState
               icon={<Search />}
-              title="No meetings match"
-              description="Try a different word, group, contact or time range."
+              title={t('home.noMeetingsMatch')}
+              description={t('home.noMeetingsMatchDescription')}
               action={
                 <Button variant="secondary" onClick={clearFilters}>
-                  Clear filters
+                  {t('home.clearFilters')}
                 </Button>
               }
             />
@@ -363,14 +379,16 @@ export default function MeetingsPage() {
                 <Checkbox
                   checked={selected.size > 0 && orderedIds.every((id) => selected.has(id)) ? true : selected.size > 0 ? 'indeterminate' : false}
                   onCheckedChange={(checked) => setSelected(checked === true ? new Set(orderedIds) : new Set())}
-                  aria-label="Select all shown"
+                  aria-label={t('home.selectAllShown')}
                 />
                 <span className="flex-1">
-                  {filtersActive ? `${filtered.length} of ${meetings.length} shown` : `${filtered.length} meetings`}
+                  {filtersActive
+                    ? t('home.shownOfTotal', { shown: filtered.length, total: meetings.length })
+                    : t('home.meetingCountMany', { count: filtered.length })}
                 </span>
                 {filtersActive && (
                   <button type="button" onClick={clearFilters} className="rounded px-1.5 py-0.5 transition-colors hover:bg-af-hover hover:text-af-text-2">
-                    Clear filters
+                    {t('home.clearFilters')}
                   </button>
                 )}
               </div>
@@ -414,7 +432,7 @@ export default function MeetingsPage() {
       {selecting && (
         <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center" style={{ paddingLeft: 'var(--af-sidebar-width, 16rem)' }}>
           <div className="pointer-events-auto flex animate-af-rise items-center gap-1.5 rounded-2xl border border-af-border-strong bg-af-elevated/95 p-1.5 pl-4 shadow-2xl backdrop-blur-xl">
-            <span className="mr-2 text-[13px] font-medium tabular-nums text-af-text">{selected.size} selected</span>
+            <span className="mr-2 text-[13px] font-medium tabular-nums text-af-text">{t('home.selectedCount', { count: selected.size })}</span>
             <Combobox
               value={null}
               open={moveOpen}
@@ -424,27 +442,27 @@ export default function MeetingsPage() {
                 if (ok) setSelected(new Set());
               }}
               options={groupOptions(groups)}
-              clearLabel="Remove from group"
-              searchPlaceholder="Move to group…"
+              clearLabel={t('home.removeFromGroup')}
+              searchPlaceholder={t('home.moveToGroupEllipsis')}
               onCreate={createGroupFromPicker}
-              createLabel={(name) => `Create group “${name}”`}
+              createLabel={(name) => t('home.createGroupNamed', { name })}
               side="top"
               trigger={
                 <Button variant="secondary" size="sm">
                   <FolderInput />
-                  Move to group
+                  {t('home.moveToGroup')}
                 </Button>
               }
             />
             <Button variant="secondary" size="sm" onClick={() => setExportIds([...selected])}>
               <Download />
-              Export
+              {t('home.export')}
             </Button>
             <Button variant="danger-ghost" size="sm" onClick={() => setPendingDelete([...selected])}>
               <Trash2 />
-              Delete
+              {t('common.delete')}
             </Button>
-            <Button variant="ghost" size="icon-sm" onClick={() => setSelected(new Set())} aria-label="Clear selection">
+            <Button variant="ghost" size="icon-sm" onClick={() => setSelected(new Set())} aria-label={t('home.clearSelection')}>
               <X />
             </Button>
           </div>
@@ -457,9 +475,9 @@ export default function MeetingsPage() {
         open={pendingDelete !== null}
         onOpenChange={(next) => !next && setPendingDelete(null)}
         variant="danger"
-        title={pendingDelete && pendingDelete.length > 1 ? `Delete ${pendingDelete.length} meetings?` : 'Delete this meeting?'}
-        description="The transcript, summary, notes, and action items are removed. Audio files stay in your recordings folder."
-        confirmLabel="Delete"
+        title={pendingDelete && pendingDelete.length > 1 ? t('home.deleteMeetingsTitle', { count: pendingDelete.length }) : t('home.deleteMeetingTitle')}
+        description={t('home.deleteMeetingDescription')}
+        confirmLabel={t('common.delete')}
         onConfirm={async () => {
           if (!pendingDelete) return;
           const deleted = await deleteMeetings(pendingDelete);
@@ -496,6 +514,7 @@ function LibraryRow({
   onDelete: () => void;
 }) {
   const { groups, groupById } = useWorkspace();
+  const { t } = useI18n();
   const group = groupById(meeting.group_id);
   const date = parseDate(meeting.created_at);
   const title = displayTitle(meeting.title, meeting.created_at);
@@ -528,7 +547,7 @@ function LibraryRow({
             event.stopPropagation();
             onToggle(event.shiftKey);
           }}
-          aria-label={selected ? `Deselect ${title}` : `Select ${title}`}
+          aria-label={selected ? t('home.deselectNamed', { title }) : t('home.selectNamed', { title })}
           className={cn('transition-opacity', selecting || selected ? 'opacity-100' : 'opacity-40 group-hover/row:opacity-100')}
         />
       </span>
@@ -545,7 +564,7 @@ function LibraryRow({
               if (event.key === 'Escape') onRenameEnd(null);
             }}
             onBlur={() => onRenameEnd(draft)}
-            aria-label="Meeting title"
+            aria-label={t('home.meetingTitleLabel')}
             className="af-bare h-7 w-full rounded-md !border !border-af-accent !bg-af-panel-2 px-2 text-[13px] text-af-text outline-none"
           />
         ) : (
@@ -554,7 +573,7 @@ function LibraryRow({
           </p>
         )}
         <p className="truncate text-[11px] text-af-text-4 sm:hidden">
-          {[group?.name, date?.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), formatDuration(meeting.duration_seconds)]
+          {[group?.name, date ? formatMonthDay(date) : undefined, formatDuration(meeting.duration_seconds)]
             .filter(Boolean)
             .join(' · ')}
         </p>
@@ -562,7 +581,7 @@ function LibraryRow({
 
       <div className="hidden min-w-0 sm:block">{group && <GroupChip group={group} size="xs" />}</div>
       <span className="hidden truncate text-xs tabular-nums text-af-text-3 sm:block">
-        {date ? `${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : ''}
+        {date ? `${formatMonthDay(date)}, ${formatClockTime(date)}` : ''}
       </span>
       <span className="hidden text-right text-xs tabular-nums text-af-text-3 sm:block">{formatDuration(meeting.duration_seconds)}</span>
 
@@ -571,7 +590,7 @@ function LibraryRow({
           <button
             type="button"
             onClick={(event) => event.stopPropagation()}
-            aria-label={`Actions for ${title}`}
+            aria-label={t('home.actionsFor', { title })}
             className="flex h-7 w-7 items-center justify-center rounded-md text-af-text-3 opacity-0 transition-[opacity,background-color] hover:bg-af-active hover:text-af-text focus-visible:opacity-100 group-hover/row:opacity-100 data-[state=open]:bg-af-active data-[state=open]:opacity-100"
           >
             <MoreHorizontal className="h-4 w-4" />
@@ -580,16 +599,16 @@ function LibraryRow({
         <DropdownMenuContent align="end" className="w-52" onClick={(event) => event.stopPropagation()}>
           <DropdownMenuItem onSelect={onOpen}>
             <ArrowUpRight />
-            Open
+            {t('home.open')}
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={onRenameStart}>
             <Pencil />
-            Rename
+            {t('common.rename')}
           </DropdownMenuItem>
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
               <Layers />
-              Move to group
+              {t('home.moveToGroup')}
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent className="max-h-72 w-56 overflow-y-auto">
               {groups.map((entry) => (
@@ -602,24 +621,24 @@ function LibraryRow({
               {groups.length > 0 && <DropdownMenuSeparator />}
               <DropdownMenuItem onSelect={() => openGroupEditor({ assignMeetingIds: [meeting.id] })}>
                 <Plus />
-                New group…
+                {t('home.newGroupEllipsis')}
               </DropdownMenuItem>
               {meeting.group_id && (
                 <DropdownMenuItem onSelect={() => onMove(null)}>
                   <X />
-                  Remove from group
+                  {t('home.removeFromGroup')}
                 </DropdownMenuItem>
               )}
             </DropdownMenuSubContent>
           </DropdownMenuSub>
           <DropdownMenuItem onSelect={onExport}>
             <Download />
-            Export…
+            {t('home.exportEllipsis')}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="danger" onSelect={onDelete}>
             <Trash2 />
-            Delete…
+            {t('home.deleteEllipsis')}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

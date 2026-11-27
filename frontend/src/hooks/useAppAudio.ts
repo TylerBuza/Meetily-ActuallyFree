@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import type { PerAppTarget, RecordableApp, RecordingPreferences } from '@/components/RecordingSettings';
+import { tNow } from '@/i18n/translate';
 
 const APP_AUDIO_CHANGED_EVENT = 'meetily-app-audio-changed';
 
@@ -87,7 +88,7 @@ export function useAppAudio(): AppAudioChoice {
         window.dispatchEvent(new CustomEvent(APP_AUDIO_CHANGED_EVENT, { detail: instance.current }));
       })
       .catch((error) => {
-        toast.error('Could not save which audio to record', { description: error instanceof Error ? error.message : String(error) });
+        toast.error(tNow('feedback.couldNotSaveAudioChoice'), { description: error instanceof Error ? error.message : String(error) });
         void load();
       });
   }, [load]);
@@ -131,7 +132,7 @@ export function useAppAudio(): AppAudioChoice {
       const app = await invoke<RecordableApp | null>('select_custom_app_executable');
       if (app) addApp(app);
     } catch (error) {
-      toast.error('Could not add that app', { description: error instanceof Error ? error.message : String(error) });
+      toast.error(tNow('feedback.couldNotAddApp'), { description: error instanceof Error ? error.message : String(error) });
     }
   }, [addApp]);
 

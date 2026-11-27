@@ -1,5 +1,6 @@
 // Readable reasons for a failed recording start. Kept free of React and
 // Tauri imports so it can be unit tested.
+import { tNow } from '@/i18n/translate'
 
 /** The text of a rejected `invoke`: usually a string, but may be an Error or a serialized object. */
 function errorText(error: unknown): string {
@@ -23,33 +24,32 @@ export function describeStartError(error: unknown): { title: string; message: st
   // failures fall through to the backend's own reason below.
   if (text.includes('target application') && text.includes('currently running')) {
     return {
-      title: 'None of your chosen apps is open',
-      message: 'Computer audio is set to record only chosen apps. Open one of them, or switch the record card back to all computer audio.',
+      title: tNow('feedback.noChosenAppsOpen'),
+      message: tNow('feedback.noChosenAppsOpenMessage'),
     };
   }
   if (text.includes('microphone') || text.includes('mic') || text.includes('input')) {
     return {
-      title: 'Microphone not available',
-      message: 'Check that the microphone is connected, that Meetily may use it, and that no other app has taken it.',
+      title: tNow('feedback.microphoneNotAvailable'),
+      message: tNow('feedback.microphoneNotAvailableMessage'),
     };
   }
   if (text.includes('system audio') || text.includes('speaker') || text.includes('output')) {
     return {
-      title: 'System audio not available',
-      message:
-        'On macOS, allow Meetily Audio Capture in Privacy & Security, play some audio, and try again. Elsewhere, check the selected playback device.',
+      title: tNow('feedback.systemAudioNotAvailable'),
+      message: tNow('feedback.systemAudioNotAvailableMessage'),
     };
   }
   if (text.includes('permission')) {
     return {
-      title: 'Permission needed',
-      message: 'Allow microphone access (and Audio Capture on macOS) in your system settings, then restart Meetily.',
+      title: tNow('feedback.permissionNeeded'),
+      message: tNow('feedback.permissionNeededMessage'),
     };
   }
   // Unrecognised: show the backend's own reason rather than hiding it.
   const reason = raw.replace(/^Failed to start recording:\s*/i, '').trim();
   return {
-    title: 'Could not start recording',
-    message: reason || 'Check your audio devices in the recording card and try again.',
+    title: tNow('feedback.couldNotStartRecording'),
+    message: reason || tNow('feedback.couldNotStartRecordingHint'),
   };
 }

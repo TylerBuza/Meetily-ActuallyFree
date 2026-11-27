@@ -29,6 +29,7 @@ import { PostCallHandoffCard } from '@/components/PostCallHandoffCard';
 import type { RawModelInfo } from '@/hooks/useTranscriptionModels';
 import { isVisibleParakeetModel } from '@/lib/parakeet';
 import { announceChange } from '@/lib/workspace-api';
+import { tNow, useI18n } from '@/i18n';
 
 type Stage = 'idle' | 'prompt' | 'enhancing' | 'diarizing' | 'refreshing' | 'error';
 type FailedStage = 'enhancing' | 'diarizing' | 'pre-diarization-refresh' | 'post-diarization-refresh';
@@ -84,13 +85,13 @@ async function resolveEnhancementModel(
   if (normalizedProvider === 'whisper' || normalizedProvider === 'parakeet') {
     const sameProvider = available.find((model) => model.provider === normalizedProvider);
     if (sameProvider) return sameProvider;
-    throw new Error(`No downloaded ${normalizedProvider} model is available for enhancement.`);
+    throw new Error(tNow('meeting.noDownloadedProviderModel', { provider: normalizedProvider }));
   }
   const localDefault = available.find((model) => model.provider === 'parakeet')
     ?? available.find((model) => model.provider === 'whisper')
     ?? available[0];
   if (localDefault) return localDefault;
-  throw new Error('No downloaded transcription model is available for post-call enhancement.');
+  throw new Error(tNow('meeting.noDownloadedTranscriptionModel'));
 }
 
 async function runRetranscription({
@@ -160,7 +161,7 @@ async function runRetranscription({
     ));
 
     try {
-      if (signal.aborted) throw new Error('Post-call processing cancelled.');
+      if (signal.aborted) throw new Error(tNow('meeting.processingCancelled'));
       await invoke('start_retranscription_command', {
         meetingId,
         meetingFolderPath,
@@ -187,7 +188,7 @@ async function runRetranscription({
           if (!active) break;
           await new Promise((resolve) => setTimeout(resolve, 2000));
         }
-        finish(new Error('Enhancement timed out and was cancelled.'));
+        finish(new Error(tNow('meeting.enhancementTimedOut')));
       })();
     }, 30 * 60 * 1000);
     await completion;
@@ -209,13 +210,14 @@ export function PostCallProcessingWorker({
   onRefetchTranscripts?: () => Promise<void>;
   onComplete: () => void;
 }) {
+  const { t } = useI18n();
   const { selectedLanguage, transcriptModelConfig } = useConfig();
   const [stage, setStage] = useState<Stage>(enabled ? 'prompt' : 'idle');
   const { engine, isNemotron, error: engineError } = useDiarizationEngine(stage !== 'idle');
   const [speakerCount, setSpeakerCount] = useState('2');
   const [autoDetectSpeakers, setAutoDetectSpeakers] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [message, setMessage] = useState('Preparing enhanced transcript...');
+  const [message, setMessage] = useState(t('meeting.preparingEnhancedTranscript'));
   const [error, setError] = useState<string | null>(null);
   const [failedStage, setFailedStage] = useState<FailedStage | null>(null);
   const initializedMeetingRef = useRef<string | null>(null);
@@ -226,7 +228,7 @@ export function PostCallProcessingWorker({
   const [cancelling, setCancelling] = useState(false);
 
   const checkCancelled = () => {
-    if (cancellation.current.signal.aborted) throw new Error('Post-call processing cancelled.');
+    if (cancellation.current.signal.aborted) throw new Error(t('meeting.processingCancelled'));
   };
 
   const storageKey = `post-call-processing:${meetingId}`;
@@ -245,10 +247,10 @@ export function PostCallProcessingWorker({
   const completeWorkflow = () => {
     sessionStorage.setItem(storageKey, 'completed');
     setStage('idle');
-    toast.success('Post-call processing complete', {
+    toast.success(t('meeting.postCallComplete'), {
       description: skippedEnhancementRef.current
-        ? 'Speaker labels refreshed from the saved transcript.'
-        : 'Transcript enhanced and speaker labels refreshed.',
+        ? t('meeting.labelsRefreshedFromSaved')
+        : t('meeting.transcriptEnhancedLabelsRefreshed'),
     });
     onComplete();
   };
@@ -258,7 +260,7 @@ export function PostCallProcessingWorker({
   ) => {
     activeStageRef.current = phase;
     setStage('refreshing');
-    setMessage('Refreshing the enhanced transcript...');
+    setMessage(t('meeting.refreshingEnhancedTranscript'));
     await onRefetchTranscripts?.();
     // The rerun links named speakers (and matched voices) to contacts.
     announceChange('people');
@@ -270,8 +272,10 @@ export function PostCallProcessingWorker({
     setStage('diarizing');
     setProgress(100);
     setMessage(count === null
-      ? 'Auto-detecting speakers...'
-      : `Identifying ${count} speaker${count === 1 ? '' : 's'}...`);
+      ? t('meeting.autoDetectingSpeakers')
+      : count === 1
+        ? t('meeting.identifyingOneSpeaker', { count })
+        : t('meeting.identifyingSpeakerCount', { count }));
     await invoke('diarize_meeting', { meetingId, numSpeakers: count });
     checkCancelled();
     await refreshTranscript('post-diarization-refresh');
@@ -280,7 +284,7 @@ export function PostCallProcessingWorker({
 
   const runWorkflow = async (count: number | null) => {
     if (!meetingFolderPath) {
-      throw new Error('The recording folder is unavailable for enhancement.');
+      throw new Error(t('meeting.recordingFolderUnavailable'));
     }
 
     setError(null);
@@ -288,7 +292,7 @@ export function PostCallProcessingWorker({
     activeStageRef.current = 'enhancing';
     setStage('enhancing');
     setProgress(0);
-    setMessage('Preparing enhanced transcript...');
+    setMessage(t('meeting.preparingEnhancedTranscript'));
     const postCallConfig = await invoke<PostCallTranscriptConfig>('api_get_post_call_transcript_config')
       .catch(() => ({ provider: 'live' as const, model: '' }));
     const useLiveDefault = postCallConfig.provider === 'live';
@@ -319,7 +323,7 @@ export function PostCallProcessingWorker({
     if (isNemotron || autoDetectSpeakers) return null;
     const count = Number(speakerCount);
     if (!Number.isInteger(count) || count < 1 || count > 20) {
-      setError('Enter the total number of speakers, from 1 to 20.');
+      setError(t('meeting.enterSpeakerCount'));
       return undefined;
     }
     return count;
@@ -350,7 +354,7 @@ export function PostCallProcessingWorker({
       setFailedStage(activeStageRef.current);
       setError(nextError);
       setStage('error');
-      if (!cancellation.current.signal.aborted) toast.error('Post-call processing failed', { description: nextError });
+      if (!cancellation.current.signal.aborted) toast.error(t('meeting.postCallFailed'), { description: nextError });
     } finally {
       running.current = false;
       setCancelling(false);
@@ -364,8 +368,8 @@ export function PostCallProcessingWorker({
       sessionStorage.setItem(storageKey, 'completed');
       setStage('idle');
       onComplete();
-      toast.info('Using the live transcript', {
-        description: 'Keeping the currently saved transcript without further processing.',
+      toast.info(t('meeting.usingLiveTranscript'), {
+        description: t('meeting.keepingSavedTranscript'),
       });
     } catch (cause) {
       const nextError = cause instanceof Error ? cause.message : String(cause);
@@ -395,24 +399,24 @@ export function PostCallProcessingWorker({
       onDismiss={!isWorking ? () => { void continueWithLiveTranscript(); } : undefined}
       title={
         isWorking
-          ? 'Improving the transcript'
+          ? t('meeting.improvingTranscript')
           : stage === 'error'
-            ? 'Could not finish that step'
+            ? t('meeting.couldNotFinishStep')
             : isNemotron
-              ? 'Identify speakers with Nemotron'
-              : 'How many people spoke?'
+              ? t('meeting.identifyWithNemotron')
+              : t('meeting.howManyPeopleSpokeTitle')
       }
       detail={
         isWorking
           ? message
           : isNemotron
-            ? 'Automatically identify up to 8 speakers from the full recording.'
-            : 'Include yourself. A real count labels speakers more accurately.'
+            ? t('meeting.nemotronAutoUpTo8')
+            : t('meeting.includeYourself')
       }
     >
       {isWorking ? (
         <div className="space-y-2">
-        <Link href={`/meeting-details?id=${encodeURIComponent(meetingId)}`} className="text-xs text-af-accent underline">Open this meeting</Link>
+        <Link href={`/meeting-details?id=${encodeURIComponent(meetingId)}`} className="text-xs text-af-accent underline">{t('meeting.openThisMeeting')}</Link>
         <div className="h-1.5 overflow-hidden rounded-full bg-af-border">
           <div
             className="h-full rounded-full bg-af-accent transition-[width] duration-300"
@@ -422,18 +426,18 @@ export function PostCallProcessingWorker({
         <Button variant="ghost" disabled={cancelling} onClick={() => {
           setCancelling(true);
           cancellation.current.abort();
-          setMessage('Cancelling after the current native operation finishes…');
-        }}>{cancelling ? 'Cancelling…' : 'Cancel processing'}</Button>
+          setMessage(t('meeting.cancellingAfterOperation'));
+        }}>{cancelling ? t('meeting.cancelling') : t('meeting.cancelProcessing')}</Button>
         </div>
       ) : (
         <div className="space-y-3">
           {engineError && <p role="alert" className="text-sm text-af-danger">{engineError}</p>}
           {!engine && !engineError && (
-            <p role="status" className="text-sm text-af-text-3">Loading diarization settings…</p>
+            <p role="status" className="text-sm text-af-text-3">{t('meeting.loadingDiarizationSettings')}</p>
           )}
           {isNemotron && (
             <Button className="w-full" onClick={() => { void start(); }}>
-              {stage === 'error' ? 'Retry auto-detect' : 'Auto-detect & continue'}
+              {stage === 'error' ? t('meeting.retryAutoDetect') : t('meeting.autoDetectAndContinue')}
             </Button>
           )}
           {engine && !isNemotron && (
@@ -461,7 +465,7 @@ export function PostCallProcessingWorker({
                     setError(null);
                   }}
                 >
-                  Auto-detect
+                  {t('meeting.autoDetect')}
                 </button>
               </div>
               <input
@@ -469,24 +473,24 @@ export function PostCallProcessingWorker({
                 min={1}
                 max={20}
                 value={autoDetectSpeakers ? '' : speakerCount}
-                placeholder={autoDetectSpeakers ? 'Speakers will be detected automatically' : undefined}
+                placeholder={autoDetectSpeakers ? t('meeting.speakersDetectedAutomatically') : undefined}
                 onFocus={() => setAutoDetectSpeakers(false)}
                 onChange={(event) => {
                   setSpeakerCount(event.target.value);
                   setAutoDetectSpeakers(false);
                 }}
                 className={cn(fieldClass, 'h-9')}
-                aria-label="Total number of speakers"
+                aria-label={t('meeting.totalNumberOfSpeakers')}
               />
             </>
           )}
           {error && <p className="text-sm text-af-danger">{error}</p>}
           <div className={cn('flex items-center gap-2', isNemotron ? 'justify-center' : 'justify-end')}>
             <Button variant="ghost" onClick={() => { void continueWithLiveTranscript(); }}>
-              Keep live transcript
+              {t('meeting.keepLiveTranscript')}
             </Button>
             {!isNemotron && <Button disabled={!engine} onClick={() => { void start(); }}>
-              {stage === 'error' ? 'Retry' : 'Continue'}
+              {stage === 'error' ? t('meeting.retry') : t('meeting.continue')}
             </Button>}
           </div>
         </div>

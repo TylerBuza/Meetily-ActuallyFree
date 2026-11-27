@@ -7,6 +7,7 @@ import { X, Check, ArrowBigDownDash } from 'lucide-react';
 import { getDownloadTotalMb } from '@/lib/onboarding-summary-model';
 import { useOnboarding } from '@/contexts/OnboardingContext';
 import { useOptionalModelDownloads } from '@/contexts/OptionalModelDownloadsContext';
+import { tNow, useI18n } from '@/i18n';
 
 interface DownloadProgress {
   modelName: string;
@@ -29,21 +30,21 @@ function categorizeError(error: string): string {
     lowerError.includes('connection') ||
     lowerError.includes('timeout') ||
     lowerError.includes('failed to start download')) {
-    return 'Network error - Check your internet connection';
+    return tNow('shell.networkError');
   }
 
   if (lowerError.includes('status:') || lowerError.includes('http')) {
-    return 'Server error - Download temporarily unavailable';
+    return tNow('shell.serverError');
   }
 
   if (lowerError.includes('disk') ||
     lowerError.includes('write') ||
     lowerError.includes('file')) {
-    return 'Storage error - Check available disk space';
+    return tNow('shell.storageError');
   }
 
   if (lowerError.includes('invalid') || lowerError.includes('validation')) {
-    return 'File validation failed - Please retry download';
+    return tNow('shell.validationError');
   }
 
   // Fallback to original error
@@ -58,16 +59,17 @@ function DownloadToastContent({
   download: DownloadProgress;
   collapsible?: boolean;
 }) {
+  const { t } = useI18n();
   const isComplete = download.status === 'completed';
   const hasError = download.status === 'error';
   const isCancelled = download.status === 'cancelled';
   const unitLabel = download.unitLabel ?? 'MB';
-  const detail = download.status === 'activating' ? 'Enabling model…' : download.detail ?? 'Downloading…';
+  const detail = download.status === 'activating' ? t('shell.enablingModel') : download.detail ?? t('common.downloading');
 
   return (
     <div
       tabIndex={collapsible ? 0 : undefined}
-      aria-label={collapsible ? `${download.displayName}: ${detail} ${Math.round(download.progress)}%` : undefined}
+      aria-label={collapsible ? t('shell.downloadAriaLabel', { name: download.displayName, detail, progress: Math.round(download.progress) }) : undefined}
       className={collapsible
         ? 'group pointer-events-auto ml-auto flex max-h-14 w-14 items-center gap-3 overflow-hidden rounded-lg border border-af-border bg-af-panel p-3 shadow-lg transition-[width,max-height] duration-200 hover:max-h-24 hover:w-full focus:max-h-24 focus:w-full focus:outline-none'
         : 'relative flex w-full max-w-sm items-center gap-3 rounded-lg border border-af-border bg-af-panel p-3 shadow-lg'
@@ -99,11 +101,11 @@ function DownloadToastContent({
         </div>
 
         {hasError ? (
-          <p className="text-xs text-af-danger">{download.error || 'Download failed'}</p>
+          <p className="text-xs text-af-danger">{download.error || t('shell.downloadFailed')}</p>
         ) : isComplete ? (
-          <p className="text-xs text-af-success">Download complete</p>
+          <p className="text-xs text-af-success">{t('shell.downloadComplete')}</p>
         ) : isCancelled ? (
-          <p className="text-xs text-af-text-2">Download cancelled</p>
+          <p className="text-xs text-af-text-2">{t('shell.downloadCancelled')}</p>
         ) : (
           <>
             {/* Progress bar */}
@@ -113,7 +115,7 @@ function DownloadToastContent({
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={download.progress}
-              aria-valuetext={`${detail} ${Math.round(download.progress)}%`}
+              aria-valuetext={t('shell.progressAriaText', { detail, progress: Math.round(download.progress) })}
               className="w-full h-1.5 bg-af-hover rounded-full overflow-hidden mb-1.5"
             >
               <div
@@ -232,7 +234,7 @@ export function useDownloadProgressToast() {
 
       const downloadData: DownloadProgress = {
         modelName,
-        displayName: `Transcription Model (${modelName})`,
+        displayName: tNow('shell.transcriptionModel', { model: modelName }),
         progress,
         downloadedMb: downloaded_mb ?? 0,
         totalMb: total_mb ?? 670,
@@ -259,7 +261,7 @@ export function useDownloadProgressToast() {
         const { modelName } = event.payload;
         const downloadData: DownloadProgress = {
           modelName,
-          displayName: `Transcription Model (${modelName})`,
+          displayName: tNow('shell.transcriptionModel', { model: modelName }),
           progress: 100,
           downloadedMb: 670,
           totalMb: 670,
@@ -278,7 +280,7 @@ export function useDownloadProgressToast() {
         const { modelName, error } = event.payload;
         const downloadData: DownloadProgress = {
           modelName,
-          displayName: `Transcription Model (${modelName})`,
+          displayName: tNow('shell.transcriptionModel', { model: modelName }),
           progress: 0,
           downloadedMb: 0,
           totalMb: 670,
@@ -314,7 +316,7 @@ export function useDownloadProgressToast() {
 
       const downloadData: DownloadProgress = {
         modelName: model,
-        displayName: `Summary Model (${model})`,
+        displayName: tNow('shell.summaryModel', { model }),
         progress: progress ?? 0,
         downloadedMb: downloaded_mb ?? 0,
         totalMb: getDownloadTotalMb(total_mb, model),
@@ -327,7 +329,7 @@ export function useDownloadProgressToast() {
             : status === 'error'
               ? 'error'
               : 'downloading',
-        error: status === 'error' ? categorizeError(error || 'Download failed') : undefined,
+        error: status === 'error' ? categorizeError(error || tNow('shell.downloadFailed')) : undefined,
       };
 
       updateDownload(model, downloadData);
@@ -352,6 +354,7 @@ export function useDownloadProgressToast() {
 
 // Component to initialize download toast listeners at app level
 export function DownloadProgressToastProvider() {
+  const { t } = useI18n();
   const { downloads } = useDownloadProgressToast();
   const { jobs } = useOptionalModelDownloads();
   const { currentStep } = useOnboarding();
@@ -363,7 +366,7 @@ export function DownloadProgressToastProvider() {
     if (job.status !== 'downloading' && job.status !== 'activating') return [];
     return [{
       modelName: `optional-${model}`,
-      displayName: model === 'whisper' ? 'Whisper · Post-call transcription' : 'Nemotron · Speaker identification',
+      displayName: model === 'whisper' ? t('shell.whisperDescription') : t('shell.nemotronDescription'),
       progress: job.progress,
       status: job.status,
       detail: job.detail,

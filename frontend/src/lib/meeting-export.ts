@@ -5,6 +5,7 @@
  * single meeting's export.
  */
 import { invoke } from '@tauri-apps/api/core';
+import { tNow } from '@/i18n/translate';
 import { exportSummaryAs, type ExportFormat } from '@/lib/exportSummary';
 import { completeSummaryMarkdown, parseSummaryData } from '@/lib/summary-markdown';
 import { getMeetingNotes, listActionItems } from '@/lib/workspace-api';
@@ -70,7 +71,7 @@ export async function meetingMarkdown(meeting: ExportableMeeting, parts: Set<Exp
 
   if (parts.has('notes')) {
     const notes = await getMeetingNotes(meeting.id).catch(() => null);
-    if (notes?.markdown?.trim()) sections.push(`## Your notes\n\n${demoteHeadings(notes.markdown.trim(), 2)}`);
+    if (notes?.markdown?.trim()) sections.push(`## ${tNow('exportDoc.notesHeading')}\n\n${demoteHeadings(notes.markdown.trim(), 2)}`);
   }
   if (parts.has('actions')) {
     const items = await listActionItems({ meetingId: meeting.id }).catch(() => []);
@@ -80,13 +81,13 @@ export async function meetingMarkdown(meeting: ExportableMeeting, parts: Set<Exp
         const details = [owner, item.dueText].filter(Boolean).join(', ');
         return `- [${item.done ? 'x' : ' '}] ${item.text}${details ? ` (${details})` : ''}`;
       });
-      sections.push(`## Action items\n\n${lines.join('\n')}`);
+      sections.push(`## ${tNow('exportDoc.actionItemsHeading')}\n\n${lines.join('\n')}`);
     }
   }
   if (parts.has('summary')) {
     const response = await invoke<{ data?: unknown }>('api_get_summary', { meetingId: meeting.id }).catch(() => null);
     const summary = completeSummaryMarkdown(parseSummaryData(response?.data)).trim();
-    if (summary) sections.push(`## AI summary\n\n${demoteHeadings(summary, 2)}`);
+    if (summary) sections.push(`## ${tNow('exportDoc.summaryHeading')}\n\n${demoteHeadings(summary, 2)}`);
   }
   if (parts.has('transcript')) {
     const rows = await allTranscripts(meeting.id).catch(() => []);
@@ -96,7 +97,7 @@ export async function meetingMarkdown(meeting: ExportableMeeting, parts: Set<Exp
         const speaker = row.speaker?.trim() ? `**${row.speaker.trim()}:** ` : '';
         return `${time}${speaker}${row.text.trim()}`;
       });
-      sections.push(`## Transcript\n\n${lines.join('\n\n')}`);
+      sections.push(`## ${tNow('exportDoc.transcriptHeading')}\n\n${lines.join('\n\n')}`);
     }
   }
   return sections.join('\n\n');

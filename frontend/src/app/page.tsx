@@ -27,8 +27,10 @@ import { useRecordingStop } from '@/hooks/useRecordingStop';
 import { useTranscriptRecovery } from '@/hooks/useTranscriptRecovery';
 import { TranscriptRecovery } from '@/components/TranscriptRecovery';
 import { indexedDBService } from '@/services/indexedDBService';
+import { useI18n } from '@/i18n';
 
 export default function Home() {
+  const { t } = useI18n();
   const [isRecording, setIsRecordingState] = useState(false);
   const [showRecoveryDialog, setShowRecoveryDialog] = useState(false);
 
@@ -85,10 +87,13 @@ export default function Home() {
     try {
       const result = await recoverMeeting(meetingId);
       if (!result.success) return;
-      toast.success('Meeting recovered', {
-        description: result.audioRecoveryStatus?.status === 'success' ? 'Transcript and audio recovered.' : 'Transcript recovered (no audio was available).',
+      toast.success(t('home.meetingRecovered'), {
+        description:
+          result.audioRecoveryStatus?.status === 'success'
+            ? t('home.transcriptAndAudioRecovered')
+            : t('home.transcriptRecoveredWithoutAudio'),
         action: result.meetingId
-          ? { label: 'Open', onClick: () => router.push(`/meeting-details?id=${result.meetingId}`) }
+          ? { label: t('home.open'), onClick: () => router.push(`/meeting-details?id=${result.meetingId}`) }
           : undefined,
         duration: 10000,
       });
@@ -96,8 +101,8 @@ export default function Home() {
       if (recoverableMeetings.length === 0) sessionStorage.removeItem('recovery_dialog_shown');
       if (result.meetingId) setTimeout(() => router.push(`/meeting-details?id=${result.meetingId}`), 2000);
     } catch (error) {
-      toast.error('Could not recover the meeting', {
-        description: error instanceof Error ? error.message : 'Unknown error',
+      toast.error(t('home.couldNotRecoverMeeting'), {
+        description: error instanceof Error ? error.message : t('home.unknownError'),
       });
       throw error;
     }
@@ -172,12 +177,12 @@ export default function Home() {
             busy
             title={
               status === RecordingStatus.SAVING
-                ? 'Saving your meeting'
+                ? t('home.savingYourMeeting')
                 : status === RecordingStatus.COMPLETED
-                  ? 'Opening your meeting'
-                  : 'Finishing your recording'
+                  ? t('home.openingYourMeeting')
+                  : t('home.finishingYourRecording')
             }
-            detail={recordingState.statusMessage || 'The transcript is being finished and saved.'}
+            detail={recordingState.statusMessage || t('home.transcriptBeingFinished')}
           />
         )}
       </div>

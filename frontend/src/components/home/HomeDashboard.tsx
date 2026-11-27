@@ -14,9 +14,10 @@ import { usePermissionCheck } from '@/hooks/usePermissionCheck';
 import { PermissionWarning } from '@/components/PermissionWarning';
 import { listActionItems, onWorkspaceChange, type ActionItem } from '@/lib/workspace-api';
 import { upcomingGroupMeetings } from '@/lib/schedule';
-import { formatRelativeFuture, formatWhen, parseDate } from '@/lib/dates';
+import { formatClockTime, formatLongDate, formatRelativeFuture, formatWhen, parseDate } from '@/lib/dates';
 import { displayTitle } from '@/lib/meeting-titles';
 import { launchRecording } from '@/lib/recording-launch';
+import { useI18n } from '@/i18n';
 
 const LIST_LENGTH = 3;
 
@@ -67,6 +68,7 @@ function useOpenItems() {
 }
 
 export function HomeDashboard() {
+  const { t } = useI18n();
   const now = useNow();
   const { groups } = useWorkspace();
   const { meetings } = useSidebar();
@@ -87,8 +89,8 @@ export function HomeDashboard() {
     [meetings],
   );
 
-  const time = now.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }).replace(/ /g, ' ');
-  const date = now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  const time = formatClockTime(now);
+  const date = formatLongDate(now);
   const hasHistory = meetings.length > 0;
 
   return (
@@ -113,7 +115,7 @@ export function HomeDashboard() {
         {hasHistory ? (
           <div className="mt-16 grid gap-10 sm:grid-cols-2">
             {upcoming.length > 0 ? (
-              <Column title="Up next">
+              <Column title={t('home.upNext')}>
                 {upcoming.map(({ group, at }, index) => {
                   const soon = at.getTime() - now.getTime() <= 10 * 60_000;
                   return (
@@ -122,20 +124,20 @@ export function HomeDashboard() {
                         type="button"
                         onClick={() => launchRecording(() => undefined, { group: { id: group.id, name: group.name } })}
                         className={`${rowClass} w-full text-left`}
-                        title={`Record a ${group.name} meeting`}
+                        title={t('home.recordGroupMeeting', { group: group.name })}
                       >
                         <span className="min-w-0 flex-1 truncate">{group.name}</span>
                         <span className={`shrink-0 text-xs tabular-nums group-hover/row:hidden ${soon ? 'text-af-accent' : 'text-af-text-4'}`}>
-                          {soon ? 'Now' : formatRelativeFuture(at, now)}
+                          {soon ? t('home.now') : formatRelativeFuture(at, now)}
                         </span>
-                        <span className="hidden shrink-0 text-xs font-medium text-af-record group-hover/row:inline">Record</span>
+                        <span className="hidden shrink-0 text-xs font-medium text-af-record group-hover/row:inline">{t('home.record')}</span>
                       </button>
                     </li>
                   );
                 })}
               </Column>
             ) : (
-              <Column title="Recent">
+              <Column title={t('home.recent')}>
                 {recent.map((meeting, index) => {
                   const started = parseDate(meeting.created_at);
                   return (
@@ -150,9 +152,15 @@ export function HomeDashboard() {
               </Column>
             )}
 
-            <Column title={openItems && openItems.length > LIST_LENGTH ? `Open action items · ${openItems.length}` : 'Open action items'}>
+            <Column
+              title={
+                openItems && openItems.length > LIST_LENGTH
+                  ? t('home.openActionItemsCount', { count: openItems.length })
+                  : t('home.openActionItems')
+              }
+            >
               {openItems === null ? null : openItems.length === 0 ? (
-                <li className="af-appear py-1.5 text-[13px] text-af-text-4">Nothing open</li>
+                <li className="af-appear py-1.5 text-[13px] text-af-text-4">{t('home.nothingOpen')}</li>
               ) : (
                 openItems.slice(0, LIST_LENGTH).map((item, index) => {
                   const params = new URLSearchParams({ id: item.meetingId });
@@ -163,7 +171,7 @@ export function HomeDashboard() {
                     <li key={item.id} {...appearAt(index + 2)}>
                       <Link href={`/meeting-details?${params.toString()}`} className={rowClass} title={displayTitle(item.meetingTitle, item.meetingCreatedAt)}>
                         <span className="min-w-0 flex-1 truncate">{item.text}</span>
-                        {owner && <span className="shrink-0 text-xs text-af-text-4">{/^you$/i.test(owner) ? 'You' : owner}</span>}
+                        {owner && <span className="shrink-0 text-xs text-af-text-4">{/^you$/i.test(owner) ? t('home.you') : owner}</span>}
                       </Link>
                     </li>
                   );
@@ -173,7 +181,7 @@ export function HomeDashboard() {
           </div>
         ) : (
           <p className="af-appear mx-auto mt-14 max-w-sm text-center text-[13px] leading-relaxed text-af-text-3">
-            Press the red button to record your first meeting. Meetily transcribes it on this computer and writes a summary when you stop.
+            {t('home.emptyDashboard')}
           </p>
         )}
       </div>

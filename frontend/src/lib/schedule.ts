@@ -9,6 +9,9 @@
  * occurrence. One-off or irregular meetings never produce a schedule.
  */
 
+import { tNow } from '@/i18n/translate';
+import type { MessageKey } from '@/i18n';
+
 export type Cadence = 'weekly' | 'biweekly';
 
 export interface GroupSchedule {
@@ -38,8 +41,39 @@ const MIN_COVERAGE = 0.6;
 const STALE_AFTER_DAYS: Record<Cadence, number> = { weekly: 17, biweekly: 31 };
 const DAY_MS = 86_400_000;
 
-export const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-export const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+/** Weekday display names, localized at call time instead of stored as constants. */
+const WEEKDAY_LONG_KEYS: readonly MessageKey[] = [
+  'dates.weekdayLongSunday',
+  'dates.weekdayLongMonday',
+  'dates.weekdayLongTuesday',
+  'dates.weekdayLongWednesday',
+  'dates.weekdayLongThursday',
+  'dates.weekdayLongFriday',
+  'dates.weekdayLongSaturday',
+];
+const WEEKDAY_SHORT_KEYS: readonly MessageKey[] = [
+  'dates.weekdayShortSunday',
+  'dates.weekdayShortMonday',
+  'dates.weekdayShortTuesday',
+  'dates.weekdayShortWednesday',
+  'dates.weekdayShortThursday',
+  'dates.weekdayShortFriday',
+  'dates.weekdayShortSaturday',
+];
+
+function weekdayName(day: number): string {
+  const key = WEEKDAY_LONG_KEYS[day];
+  return key ? tNow(key) : '';
+}
+
+function weekdayShortName(day: number): string {
+  const key = WEEKDAY_SHORT_KEYS[day];
+  return key ? tNow(key) : '';
+}
+
+function weekdayList(weekdays: number[]): string {
+  return weekdays.map(weekdayShortName).join(tNow('dates.weekdayListSeparator'));
+}
 
 /** Days since the epoch for the local calendar date: immune to DST shifts. */
 export function localDayNumber(date: Date): number {
@@ -290,13 +324,21 @@ export function nextOccurrence(
 
 /** "Every Thursday at 12:00", "Every other Mon and Wed at 09:30". */
 export function describeSchedule(schedule: GroupSchedule): string {
-  const days = schedule.weekdays.length === 5 && [1, 2, 3, 4, 5].every((d) => schedule.weekdays.includes(d))
-    ? 'weekday'
-    : schedule.weekdays.length === 1
-      ? WEEKDAY_NAMES[schedule.weekdays[0]]
-      : schedule.weekdays.map((day) => WEEKDAY_SHORT[day]).join(', ');
+  const isWorkweek =
+    schedule.weekdays.length === 5 && [1, 2, 3, 4, 5].every((d) => schedule.weekdays.includes(d));
   const time = displayTime(parseTime(schedule.time) ?? 0);
-  return `${schedule.cadence === 'biweekly' ? 'Every other' : 'Every'} ${days} at ${time}`;
+  if (isWorkweek && schedule.cadence === 'weekly') {
+    return tNow('dates.scheduleWeeklyWeekday', { time });
+  }
+  const days = isWorkweek
+    ? tNow('dates.scheduleWeekday')
+    : schedule.weekdays.length === 1
+      ? weekdayName(schedule.weekdays[0])
+      : weekdayList(schedule.weekdays);
+  return tNow(
+    schedule.cadence === 'biweekly' ? 'dates.scheduleBiweekly' : 'dates.scheduleWeekly',
+    { days, time },
+  );
 }
 
 /** The schedule to use: the user's own wins over a detected one. */

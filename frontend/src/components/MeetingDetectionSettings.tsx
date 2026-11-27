@@ -8,6 +8,7 @@ import { Radar, Workflow } from "lucide-react"
 import { toast } from "sonner"
 import { useLabs } from "@/hooks/useLabs"
 import { setLabsFeature } from "@/lib/labs-features"
+import { useI18n } from "@/i18n"
 
 interface MeetingDetectionSettings {
   enabled: boolean;
@@ -23,6 +24,7 @@ interface MeetingDetectionSettings {
  * Fully on-device. Persisted install-locally via Rust.
  */
 export function MeetingDetectionSettings() {
+  const { t } = useI18n();
   const [md, setMd] = useState<MeetingDetectionSettings | null>(null);
   const [ignoredInput, setIgnoredInput] = useState('');
   const { labs } = useLabs();
@@ -55,14 +57,14 @@ export function MeetingDetectionSettings() {
       await setLabsFeature('meetingAutomation', value);
       if (value && md && !md.enabled) setMd({ ...md, enabled: true });
     } catch (error) {
-      toast.error('Could not change meeting automation', { description: error instanceof Error ? error.message : String(error) });
+      toast.error(t('labs.couldNotChangeAutomation'), { description: error instanceof Error ? error.message : String(error) });
     } finally {
       setAutomationBusy(false);
     }
   };
 
   if (!md) {
-    return <div className="max-w-2xl mx-auto p-6 text-af-text-3">Loading…</div>;
+    return <div className="max-w-2xl mx-auto p-6 text-af-text-3">{t('common.loading')}</div>;
   }
 
   return (
@@ -72,11 +74,10 @@ export function MeetingDetectionSettings() {
           <div>
             <h3 className="text-[15px] font-semibold text-af-text mb-2 flex items-center gap-2">
               <Radar className="w-5 h-5 text-af-accent" />
-              Meeting Detection
+              {t('labs.meetingDetectionTitle')}
             </h3>
             <p className="text-sm text-af-text-2">
-              Watch for meeting apps (Zoom, Teams, Slack, Webex, Discord…) and prompt you to start
-              recording when one starts. Runs entirely on-device — no network, no telemetry.
+              {t('labs.meetingDetectionDescription')}
             </p>
           </div>
           <Switch checked={md.enabled} onCheckedChange={(v) => saveMd({ ...md, enabled: v })} />
@@ -85,7 +86,7 @@ export function MeetingDetectionSettings() {
         {md.enabled && (
           <div className="mt-5 space-y-4">
             <div className="flex items-center justify-between gap-4">
-              <label className="text-sm text-af-text-2">Check every</label>
+              <label className="text-sm text-af-text-2">{t('labs.checkEvery')}</label>
               <div className="flex items-center gap-2">
                 <input
                   type="number"
@@ -96,18 +97,18 @@ export function MeetingDetectionSettings() {
                   onBlur={() => saveMd({ ...md, interval_secs: Math.min(3600, Math.max(3, md.interval_secs || 15)) })}
                   className="w-20 rounded-lg border border-af-border px-2 py-1 text-sm focus:border-af-accent/40 focus:outline-none"
                 />
-                <span className="text-sm text-af-text-3">seconds</span>
+                <span className="text-sm text-af-text-3">{t('labs.seconds')}</span>
               </div>
             </div>
 
             <div className="flex items-center justify-between gap-4">
-              <label className="text-sm text-af-text-2">Also send a system notification</label>
+              <label className="text-sm text-af-text-2">{t('labs.alsoSendNotification')}</label>
               <Switch checked={md.notify} onCheckedChange={(v) => saveMd({ ...md, notify: v })} />
             </div>
 
             <div>
               <label className="text-sm text-af-text-2 block mb-1">
-                Ignore these apps (comma-separated)
+                {t('labs.ignoreApps')}
               </label>
               <input
                 type="text"
@@ -122,11 +123,11 @@ export function MeetingDetectionSettings() {
                       .filter(Boolean),
                   })
                 }
-                placeholder="e.g. obs64, teamviewer"
+                placeholder={t('labs.ignoreAppsPlaceholder')}
                 className="w-full rounded-lg border border-af-border px-3 py-2 text-sm focus:border-af-accent/40 focus:outline-none"
               />
               <p className="text-xs text-af-text-3 mt-1">
-                Watched apps: {md.meeting_apps.join(', ')}
+                {t('labs.watchedApps', { apps: md.meeting_apps.join(', ') })}
               </p>
             </div>
           </div>
@@ -139,19 +140,18 @@ export function MeetingDetectionSettings() {
         </span>
         <div className="min-w-0 flex-1">
           <h3 className="flex items-center gap-2 text-[15px] font-semibold text-af-text">
-            Start and stop recordings automatically
-            <Badge variant="accent" size="xs">Labs</Badge>
+            {t('labs.startStopAutomatically')}
+            <Badge variant="accent" size="xs">{t('labs.badgeLabs')}</Badge>
           </h3>
           <p className="mt-0.5 text-[13px] leading-relaxed text-af-text-3">
-            Instead of prompting, record a detected call once it uses your microphone or camera, and stop and save when it
-            ends. Recordings you start yourself are never stopped.
+            {t('labs.startStopAutomaticallyDescription')}
           </p>
         </div>
         <Switch
           checked={labs.meetingAutomation}
           disabled={automationBusy}
           onCheckedChange={(value) => void setAutomation(value)}
-          aria-label="Start and stop recordings automatically"
+          aria-label={t('labs.startStopAutomatically')}
           className="mt-1 shrink-0"
         />
       </div>

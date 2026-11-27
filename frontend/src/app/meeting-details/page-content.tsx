@@ -37,6 +37,7 @@ import { announceChange, getMeetingGroup, setMeetingGroup } from '@/lib/workspac
 import { deleteMeetings, renameMeeting } from '@/lib/meeting-actions';
 import { displayTitle } from '@/lib/meeting-titles';
 import { cn } from '@/lib/utils';
+import { useI18n } from '@/i18n';
 import { displaySpeaker, meetingSpeakerRoster, speakerColorIndexMap, speakerKey } from '@/utils/speakerUtils';
 
 // Page remounts join the same backend-start attempt. Only accepted attempts are
@@ -88,6 +89,7 @@ export default function PageContent({
   focusTranscriptId?: string | null;
   focusTime?: number | null;
 }) {
+  const { t } = useI18n();
   const { setCurrentMeeting } = useSidebar();
   const { modelConfig, setModelConfig } = useConfig();
   const { people } = useWorkspace();
@@ -224,10 +226,10 @@ export default function PageContent({
       });
       const { emit } = await import('@tauri-apps/api/event');
       await emit('model-config-updated', config);
-      toast.success('Summary model saved');
+      toast.success(t('meeting.summaryModelSaved'));
     } catch (error) {
       console.error('Failed to save model config:', error);
-      toast.error('Could not save the summary model');
+      toast.error(t('meeting.couldNotSaveSummaryModel'));
     }
   };
 
@@ -347,32 +349,40 @@ export default function PageContent({
         setRegenerateRequest({
           open: true,
           context: rename.removedName
-            ? `The name "${rename.from}" was removed. Use the meeting-local label "${rename.to}".`
-            : `Use the updated speaker name "${rename.to}" and the other speaker labels from the transcript.`,
-          reason: 'Speaker names changed. Regenerate the summary so it uses them?',
+            ? t('meeting.speakerRemovedContext', { from: rename.from, to: rename.to })
+            : t('meeting.speakerRenamedContext', { to: rename.to }),
+          reason: t('meeting.speakerNamesChangedReason'),
         });
       }
     },
-    [onRefetchTranscripts, meetingData.aiSummary],
+    [onRefetchTranscripts, meetingData.aiSummary, t],
   );
+
+  // "Speaker 2" and "Guest" are app-generated labels; show them in the
+  // interface language without changing the stored value.
+  const shownSpeakerLabel = (label: string) => {
+    const numbered = /^speaker\s+(\d+)$/i.exec(label.trim());
+    if (numbered) return t('meeting.speakerNumber', { number: numbered[1] });
+    return /^guest$/i.test(label.trim()) ? t('meeting.guestSpeaker') : label;
+  };
 
   const mergeSpeakers = async (source: string, target: string) => {
     try {
       await invoke('rename_meeting_speaker', { meetingId: meeting.id, from: source, to: target });
-      toast.success(`Merged ${displaySpeaker(source, userName)} into ${displaySpeaker(target, userName)}`);
+      toast.success(t('meeting.mergedSpeakers', { source: shownSpeakerLabel(displaySpeaker(source, userName)), target: shownSpeakerLabel(displaySpeaker(target, userName)) }));
       await refreshAfterSpeakerChange({ from: source, to: target, removedName: false });
     } catch (error) {
-      toast.error('Could not merge the speakers', { description: error instanceof Error ? error.message : String(error) });
+      toast.error(t('meeting.couldNotMergeSpeakers'), { description: error instanceof Error ? error.message : String(error) });
     }
   };
 
   const markMe = async (speaker: string) => {
     try {
       await invoke('rename_meeting_speaker', { meetingId: meeting.id, from: speaker, to: 'You' });
-      toast.success(`${speaker} is now you`);
+      toast.success(t('meeting.speakerIsNowYou', { speaker: shownSpeakerLabel(speaker) }));
       await refreshAfterSpeakerChange({ from: speaker, to: 'You', removedName: false });
     } catch (error) {
-      toast.error('Could not update the speaker', { description: error instanceof Error ? error.message : String(error) });
+      toast.error(t('meeting.couldNotUpdateSpeaker'), { description: error instanceof Error ? error.message : String(error) });
     }
   };
 
@@ -401,7 +411,7 @@ export default function PageContent({
             announceChange('groups');
           } catch (error) {
             setGroupId(previous);
-            toast.error('Could not change the group', { description: error instanceof Error ? error.message : String(error) });
+            toast.error(t('meeting.couldNotChangeGroup'), { description: error instanceof Error ? error.message : String(error) });
           }
         }}
         onRename={async (next) => {
@@ -429,7 +439,7 @@ export default function PageContent({
         ref={frameRef}
         className={cn('flex min-h-0 min-w-0 flex-1 overflow-hidden', stacked ? 'flex-col' : 'flex-row', draggingSplit && 'select-none')}
       >
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label="Transcript">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={t('meeting.transcript')}>
           <div className="min-h-0 flex-1">
             <VirtualizedTranscriptView
               segments={transcriptSegments}
@@ -444,7 +454,7 @@ export default function PageContent({
               onSeek={audio.status === 'ready' ? (seconds) => audio.seek(seconds, true) : undefined}
               highlightSegmentId={focusLineId}
               onSpeakerClick={(speaker, segmentId, anchor) => setCardTarget({ speaker, segmentId, rect: anchor.getBoundingClientRect() })}
-              emptyState={<p className="mt-16 text-center text-sm text-af-text-3">This meeting has no transcript.</p>}
+              emptyState={<p className="mt-16 text-center text-sm text-af-text-3">{t('meeting.noTranscriptForMeeting')}</p>}
               textMode={labs.cleanTranscript ? textMode : 'tidy'}
               colorIndices={colorIndices}
             />
@@ -464,7 +474,7 @@ export default function PageContent({
           <div
             role="separator"
             aria-orientation="vertical"
-            aria-label="Resize transcript and notes"
+            aria-label={t('meeting.resizeTranscriptAndNotes')}
             aria-valuemin={TRANSCRIPT_MIN}
             aria-valuemax={Math.max(TRANSCRIPT_MIN, (frameRef.current?.clientWidth ?? 0) - 6 - DOCUMENT_MIN)}
             aria-valuenow={Math.max(TRANSCRIPT_MIN, (frameRef.current?.clientWidth ?? 0) - 6 - documentWidth)}
@@ -490,7 +500,7 @@ export default function PageContent({
         <aside
           className={cn('relative z-20 flex min-h-0 min-w-0 flex-col', stacked ? 'flex-1 border-t border-af-border' : 'shrink-0')}
           style={stacked ? undefined : { width: documentWidth }}
-          aria-label="Notes and summary"
+          aria-label={t('meeting.notesAndSummary')}
         >
           <MeetingDocument
             meetingId={meeting.id}

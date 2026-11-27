@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { tNow } from '@/i18n/translate';
 
 export type SaveState = 'idle' | 'pending' | 'saving' | 'saved' | 'error';
 
@@ -53,11 +54,11 @@ export function saveStateLabel(state: SaveState): string {
   switch (state) {
     case 'pending':
     case 'saving':
-      return 'Saving…';
+      return tNow('common.saving');
     case 'saved':
-      return 'Saved';
+      return tNow('common.saved');
     case 'error':
-      return 'Not saved. Retrying on next edit.';
+      return tNow('common.notSavedRetrying');
     default:
       return '';
   }

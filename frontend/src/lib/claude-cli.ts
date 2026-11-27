@@ -8,6 +8,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { tNow } from '@/i18n/translate';
 
 export interface ClaudeCliModel {
   id: string;
@@ -83,12 +84,12 @@ export function isClaudeCliReady(status: ClaudeCliStatus | null): boolean {
 
 /** A short, human explanation of why the provider is not usable yet. */
 export function claudeCliBlockingReason(status: ClaudeCliStatus | null): string | null {
-  if (!status) return 'Checking the Claude Code CLI…';
+  if (!status) return tNow('modelCatalog.claudeCliChecking');
   if (!status.installed) {
-    return status.error ?? 'Claude Code CLI not found.';
+    return status.error ?? tNow('modelCatalog.claudeCliNotFound');
   }
   if (!status.auth?.loggedIn) {
-    return 'The Claude Code CLI is installed but not signed in. Run `claude auth login` in a terminal.';
+    return tNow('modelCatalog.claudeCliNotSignedIn');
   }
   return null;
 }

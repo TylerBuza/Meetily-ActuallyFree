@@ -7,6 +7,7 @@ import { ModelConfig, ModelSettingsModal } from '@/components/ModelSettingsModal
 import { SummaryLanguageSettings } from '@/components/SummaryLanguageSettings';
 import { Switch } from './ui/switch';
 import { useConfig } from '@/contexts/ConfigContext';
+import { useI18n } from '@/i18n';
 
 interface SummaryModelSettingsProps {
   refetchTrigger?: number; // Change this to trigger refetch
@@ -22,6 +23,7 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
   });
 
   const { isAutoSummary, toggleIsAutoSummary } = useConfig();
+  const { t } = useI18n();
 
   // Reusable fetch function
   const fetchModelConfig = useCallback(async () => {
@@ -62,9 +64,9 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
       }
     } catch (error) {
       console.error('Failed to fetch model config:', error);
-      toast.error('Failed to load model settings');
+      toast.error(t('summaries.failedToLoadModelSettings'));
     }
-  }, []);
+  }, [t]);
 
   // Fetch on mount
   useEffect(() => {
@@ -117,10 +119,10 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
       const { emit } = await import('@tauri-apps/api/event');
       await emit('model-config-updated', config);
 
-      toast.success('Model settings saved successfully');
+      toast.success(t('summaries.modelSettingsSaved'));
     } catch (error) {
       console.error('Error saving model config:', error);
-      toast.error('Failed to save model settings');
+      toast.error(t('summaries.failedToSaveModelSettings'));
     }
   };
 
@@ -129,8 +131,8 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
       <div className="rounded-2xl border border-af-border bg-af-panel-2/40 p-5">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h3 className="text-[15px] font-semibold text-af-text">Summarize automatically</h3>
-            <p className="mt-0.5 text-[13px] leading-relaxed text-af-text-3">Write a summary as soon as a recording is saved. When off, generate one from the meeting page whenever you like.</p>
+            <h3 className="text-[15px] font-semibold text-af-text">{t('summaries.summarizeAutomatically')}</h3>
+            <p className="mt-0.5 text-[13px] leading-relaxed text-af-text-3">{t('summaries.summarizeAutomaticallyDescription')}</p>
           </div>
           <Switch checked={isAutoSummary} onCheckedChange={toggleIsAutoSummary} className="shrink-0" />
         </div>
@@ -139,9 +141,9 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
       <SummaryLanguageSettings />
 
       <div className="rounded-2xl border border-af-border bg-af-panel-2/40 p-5">
-        <h3 className="text-[15px] font-semibold text-af-text">Summary model</h3>
+        <h3 className="text-[15px] font-semibold text-af-text">{t('summaries.summaryModel')}</h3>
         <p className="mb-5 mt-0.5 text-[13px] leading-relaxed text-af-text-3">
-          Writes summaries and answers Ask AI. Local models keep everything on this computer; a cloud provider receives the parts of a meeting it needs.
+          {t('summaries.summaryModelDescription')}
         </p>
 
         <ModelSettingsModal

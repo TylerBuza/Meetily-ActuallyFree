@@ -49,11 +49,12 @@ import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
 import { useImportDialog } from '@/contexts/ImportDialogContext';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
-import { THEMES, useAppTheme } from '@/lib/app-theme';
+import { THEMES, useAppTheme, type AppTheme } from '@/lib/app-theme';
 import { formatShortDate, parseDate } from '@/lib/dates';
 import { stamp } from '@/lib/live-context';
 import { displayTitle } from '@/lib/meeting-titles';
 import { launchRecording, requestRecordingStop } from '@/lib/recording-launch';
+import { useI18n, type MessageKey } from '@/i18n';
 import type { GlobalSearchResult } from '@/types';
 
 type ResultKind = GlobalSearchResult['kind'] | 'group' | 'action';
@@ -69,14 +70,21 @@ interface Command {
   run: () => void;
 }
 
-const RESULT_GROUPS: Array<{ kind: ResultKind; heading: string }> = [
-  { kind: 'person', heading: 'People' },
-  { kind: 'group', heading: 'Groups' },
-  { kind: 'meeting', heading: 'Meetings' },
-  { kind: 'action', heading: 'Action items' },
-  { kind: 'transcript', heading: 'Said in a meeting' },
-  { kind: 'summary', heading: 'In a summary' },
+const RESULT_GROUPS: Array<{ kind: ResultKind; heading: MessageKey }> = [
+  { kind: 'person', heading: 'shell.peopleHeading' },
+  { kind: 'group', heading: 'shell.groups' },
+  { kind: 'meeting', heading: 'shell.meetingsHeading' },
+  { kind: 'action', heading: 'shell.actionItemsHeading' },
+  { kind: 'transcript', heading: 'shell.saidInMeetingHeading' },
+  { kind: 'summary', heading: 'shell.inSummaryHeading' },
 ];
+
+/** Theme ids stay untranslated; only the label shown in the command bar is localized. */
+const THEME_LABEL_KEYS: Record<AppTheme, MessageKey> = {
+  midnight: 'settings.themeMidnight',
+  vanilla: 'settings.themeVanilla',
+  charcoal: 'settings.themeCharcoal',
+};
 
 const matches = (command: Command, query: string) => {
   const haystack = `${command.label} ${command.keywords ?? ''}`.toLowerCase();
@@ -95,6 +103,7 @@ function meetingLink(meetingId: string, options: { transcriptId?: string; time?:
 }
 
 export default function GlobalSearchDialog() {
+  const { t } = useI18n();
   const router = useRouter();
   const pathname = usePathname();
   const { isRecording, isPaused } = useRecordingState();
@@ -176,55 +185,55 @@ export default function GlobalSearchDialog() {
     const list: Command[] = [];
     if (isRecording) {
       if (pathname !== '/') {
-        list.push({ id: 'back', label: 'Back to the recording', keywords: 'live transcript recorder', icon: <Mic />, run: () => router.push('/') });
+        list.push({ id: 'back', label: t('shell.backToRecordingCommand'), keywords: 'live transcript recorder', icon: <Mic />, run: () => router.push('/') });
       }
       list.push({
         id: 'pause',
-        label: isPaused ? 'Resume recording' : 'Pause recording',
+        label: isPaused ? t('shell.resumeRecording') : t('shell.pauseRecording'),
         keywords: 'recording pause resume',
         icon: isPaused ? <Play /> : <Pause />,
         run: () => void invoke(isPaused ? 'resume_recording' : 'pause_recording').catch(() => undefined),
       });
       list.push({
         id: 'stop',
-        label: 'Stop and save the recording',
+        label: t('shell.stopAndSaveRecording'),
         keywords: 'end finish recording',
         icon: <Square />,
         run: () => requestRecordingStop((href) => router.push(href)),
       });
     } else {
-      list.push({ id: 'record', label: 'Start recording', keywords: 'new meeting record call', icon: <Mic />, run: () => launchRecording((href) => router.push(href)) });
+      list.push({ id: 'record', label: t('shell.startRecording'), keywords: 'new meeting record call', icon: <Mic />, run: () => launchRecording((href) => router.push(href)) });
     }
     list.push(
-      { id: 'import', label: 'Import a recording', keywords: 'audio file upload transcribe', icon: <FileAudio />, run: () => openImportDialog() },
-      { id: 'new-group', label: 'New group', keywords: 'create series customer team project', icon: <Layers />, run: () => openGroupEditor({}) },
-      { id: 'new-contact', label: 'New contact', keywords: 'create person add people', icon: <UserPlus />, run: () => router.push('/contacts?new=1') },
+      { id: 'import', label: t('shell.importRecording'), keywords: 'audio file upload transcribe', icon: <FileAudio />, run: () => openImportDialog() },
+      { id: 'new-group', label: t('shell.newGroup'), keywords: 'create series customer team project', icon: <Layers />, run: () => openGroupEditor({}) },
+      { id: 'new-contact', label: t('shell.newContact'), keywords: 'create person add people', icon: <UserPlus />, run: () => router.push('/contacts?new=1') },
     );
     return list;
-  }, [isPaused, isRecording, openImportDialog, pathname, router]);
+  }, [isPaused, isRecording, openImportDialog, pathname, router, t]);
 
   const destinations = useMemo<Command[]>(
     () => [
-      { id: 'home', label: 'Home', keywords: 'recorder dashboard start', icon: <Home />, run: () => router.push('/') },
-      { id: 'meetings', label: 'All meetings', keywords: 'library history list', icon: <Library />, run: () => router.push('/meetings') },
-      { id: 'groups', label: 'Groups', keywords: 'series customers teams projects', icon: <Layers />, run: () => router.push('/groups') },
-      { id: 'contacts', label: 'Contacts', keywords: 'people person', icon: <Users />, run: () => router.push('/contacts') },
-      { id: 'settings', label: 'Settings', keywords: 'preferences models options', icon: <Settings2 />, run: () => router.push('/settings') },
+      { id: 'home', label: t('shell.home'), keywords: 'recorder dashboard start', icon: <Home />, run: () => router.push('/') },
+      { id: 'meetings', label: t('shell.allMeetings'), keywords: 'library history list', icon: <Library />, run: () => router.push('/meetings') },
+      { id: 'groups', label: t('shell.groups'), keywords: 'series customers teams projects', icon: <Layers />, run: () => router.push('/groups') },
+      { id: 'contacts', label: t('shell.contacts'), keywords: 'people person', icon: <Users />, run: () => router.push('/contacts') },
+      { id: 'settings', label: t('common.settings'), keywords: 'preferences models options', icon: <Settings2 />, run: () => router.push('/settings') },
     ],
-    [router],
+    [router, t],
   );
 
   const themeCommands = useMemo<Command[]>(
     () =>
       THEMES.map((option) => ({
         id: `theme-${option.id}`,
-        label: `Theme: ${option.label}`,
+        label: t('shell.themeCommand', { theme: t(THEME_LABEL_KEYS[option.id]) }),
         keywords: `appearance color dark light ${option.label}`,
         icon: option.id === theme ? <Check /> : <Palette />,
-        hint: option.id === theme ? 'Current' : undefined,
+        hint: option.id === theme ? t('shell.current') : undefined,
         run: () => setTheme(option.id),
       })),
-    [setTheme, theme],
+    [setTheme, t, theme],
   );
 
   // With a query, groups can also be recorded into directly.
@@ -232,12 +241,12 @@ export default function GlobalSearchDialog() {
     () =>
       groups.map((group) => ({
         id: `record-${group.id}`,
-        label: `Record a ${group.name} meeting`,
+        label: t('shell.recordGroupMeeting', { group: group.name }),
         keywords: `start new ${group.name}`,
         icon: <Mic />,
         run: () => launchRecording((href) => router.push(href), { group: { id: group.id, name: group.name } }),
       })),
-    [groups, router],
+    [groups, router, t],
   );
 
   const trimmed = query.trim();
@@ -283,7 +292,9 @@ export default function GlobalSearchDialog() {
           <span className="min-w-0 flex-1 truncate font-medium text-af-text">{result.title}</span>
           {result.meetingCount != null && (
             <CommandShortcut>
-              {result.meetingCount} meeting{result.meetingCount === 1 ? '' : 's'}
+              {result.meetingCount === 1
+                ? t('shell.meetingCountOne', { count: result.meetingCount })
+                : t('shell.meetingCountMany', { count: result.meetingCount })}
             </CommandShortcut>
           )}
         </CommandItem>
@@ -338,7 +349,7 @@ export default function GlobalSearchDialog() {
     <CommandDialog
       open={open}
       onOpenChange={(next) => (next ? setOpen(true) : close())}
-      title="Search and commands"
+      title={t('shell.searchAndCommands')}
       contentClassName="max-w-2xl"
       anchor="top"
       showCloseButton={false}
@@ -348,7 +359,7 @@ export default function GlobalSearchDialog() {
         <CommandInput
           value={query}
           onValueChange={setQuery}
-          placeholder="Search meetings, people, groups, transcripts… or type a command"
+          placeholder={t('shell.searchPlaceholder')}
           wrapperClassName="h-10 px-1 [&>svg]:text-af-text-3"
           className="text-[15px]"
           endAdornment={loading ? <Spinner size={14} className="text-af-text-3" /> : <Kbd>Esc</Kbd>}
@@ -358,31 +369,31 @@ export default function GlobalSearchDialog() {
       <CommandList className="max-h-[min(64vh,540px)] px-1.5 py-1.5">
         {nothingFound && (
           <div className="px-6 py-12 text-center">
-            <p className="text-sm font-medium text-af-text">Nothing matches “{trimmed}”</p>
-            <p className="mt-1 text-xs text-af-text-3">Try a name, a topic, or fewer words.</p>
+            <p className="text-sm font-medium text-af-text">{t('shell.nothingMatches', { query: trimmed })}</p>
+            <p className="mt-1 text-xs text-af-text-3">{t('shell.searchHint')}</p>
           </div>
         )}
         {error && (
           <div className="px-6 py-6 text-center">
-            <p className="text-sm font-medium text-af-danger">Search is unavailable</p>
+            <p className="text-sm font-medium text-af-danger">{t('shell.searchUnavailable')}</p>
             <p className="mt-1 text-xs text-af-text-3">{error}</p>
           </div>
         )}
 
-        {shownCommands.length > 0 && <CommandGroup heading="Actions">{shownCommands.map(commandItem)}</CommandGroup>}
-        {shownGroupCommands.length > 0 && <CommandGroup heading="Record">{shownGroupCommands.map(commandItem)}</CommandGroup>}
+        {shownCommands.length > 0 && <CommandGroup heading={t('shell.actionsHeading')}>{shownCommands.map(commandItem)}</CommandGroup>}
+        {shownGroupCommands.length > 0 && <CommandGroup heading={t('shell.recordHeading')}>{shownGroupCommands.map(commandItem)}</CommandGroup>}
 
         {RESULT_GROUPS.map(({ kind, heading }) => {
           const items = results.filter((result) => result.kind === kind);
           return items.length > 0 ? (
-            <CommandGroup key={kind} heading={heading}>
+            <CommandGroup key={kind} heading={t(heading)}>
               {items.map(resultItem)}
             </CommandGroup>
           ) : null;
         })}
 
         {recent.length > 0 && (
-          <CommandGroup heading="Recent meetings">
+          <CommandGroup heading={t('shell.recentMeetingsHeading')}>
             {recent.map((meeting) => {
               const date = parseDate(meeting.created_at);
               return (
@@ -396,13 +407,13 @@ export default function GlobalSearchDialog() {
           </CommandGroup>
         )}
 
-        {shownDestinations.length > 0 && <CommandGroup heading="Go to">{shownDestinations.map(commandItem)}</CommandGroup>}
-        {shownThemes.length > 0 && <CommandGroup heading="Theme">{shownThemes.map(commandItem)}</CommandGroup>}
+        {shownDestinations.length > 0 && <CommandGroup heading={t('shell.goToHeading')}>{shownDestinations.map(commandItem)}</CommandGroup>}
+        {shownThemes.length > 0 && <CommandGroup heading={t('shell.themeHeading')}>{shownThemes.map(commandItem)}</CommandGroup>}
 
         {!trimmed && (
           <p className="flex items-center gap-2 px-3 pb-2 pt-3 text-[11px] text-af-text-4">
             <Search className="h-3 w-3" />
-            Search finds names, meeting titles, anything said in a transcript, summaries and action items.
+            {t('shell.searchInfo')}
           </p>
         )}
       </CommandList>
@@ -411,15 +422,15 @@ export default function GlobalSearchDialog() {
         <span className="flex items-center gap-1.5">
           <Kbd>↑</Kbd>
           <Kbd>↓</Kbd>
-          to move
+          {t('shell.moveHint')}
         </span>
         <span className="flex items-center gap-1.5">
           <Kbd>Enter</Kbd>
-          to open
+          {t('shell.openHint')}
         </span>
         <span className="ml-auto flex items-center gap-1.5">
           <Kbd>Ctrl K</Kbd>
-          anywhere
+          {t('shell.anywhereHint')}
         </span>
       </div>
     </CommandDialog>

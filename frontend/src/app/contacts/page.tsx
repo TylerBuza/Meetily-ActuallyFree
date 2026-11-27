@@ -29,12 +29,14 @@ import { ContactDialog } from '@/components/people/ContactDialog';
 import { MergeContactsDialog } from '@/components/people/MergeContactsDialog';
 import { announceChange, deletePerson, type ContactRow } from '@/lib/workspace-api';
 import { formatRelativePast, parseDate } from '@/lib/dates';
+import { useI18n } from '@/i18n';
 
 type Sort = 'recent' | 'name' | 'meetings';
 
 function ContactsInner() {
   const router = useRouter();
   const params = useSearchParams();
+  const { t } = useI18n();
   const { people, peopleLoaded } = useWorkspace();
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<Sort>('recent');
@@ -89,12 +91,12 @@ function ContactsInner() {
     <div className="h-full overflow-y-auto bg-af-panel">
       <div className="mx-auto w-full max-w-5xl px-8 pb-32 pt-10 animate-af-rise">
         <PageHeader
-          title="Contacts"
-          description="Everyone you've named in a meeting, and anyone you add yourself. Pick them when naming speakers, and their meetings and action items gather on their page."
+          title={t('people.contactsTitle')}
+          description={t('people.contactsDescription')}
           actions={
             <Button size="sm" onClick={() => setEditing('new')}>
               <UserPlus />
-              New contact
+              {t('people.newContact')}
             </Button>
           }
         />
@@ -105,19 +107,19 @@ function ContactsInner() {
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search by name, role, company or email"
+              placeholder={t('people.contactsSearchPlaceholder')}
               className="pl-9"
-              aria-label="Search contacts"
+              aria-label={t('people.searchContacts')}
             />
           </div>
           <Select value={sort} onValueChange={(value) => setSort(value as Sort)}>
-            <SelectTrigger className="w-44" aria-label="Sort">
+            <SelectTrigger className="w-44" aria-label={t('people.sortAria')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="recent">Recently met</SelectItem>
-              <SelectItem value="name">Name</SelectItem>
-              <SelectItem value="meetings">Most meetings</SelectItem>
+              <SelectItem value="recent">{t('people.sortRecent')}</SelectItem>
+              <SelectItem value="name">{t('people.name')}</SelectItem>
+              <SelectItem value="meetings">{t('people.sortMostMeetings')}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -132,17 +134,17 @@ function ContactsInner() {
           ) : people.length === 0 ? (
             <EmptyState
               icon={<Contact />}
-              title="No contacts yet"
-              description="Name a speaker in any meeting and they become a contact. You can also add people before you meet them."
+              title={t('people.noContactsYet')}
+              description={t('people.noContactsDescription')}
               action={
                 <Button onClick={() => setEditing('new')}>
                   <UserPlus />
-                  New contact
+                  {t('people.newContact')}
                 </Button>
               }
             />
           ) : shown.length === 0 ? (
-            <EmptyState icon={<Search />} title="No one matches" description="Try part of a name, a company or an email." />
+            <EmptyState icon={<Search />} title={t('people.noOneMatches')} description={t('people.noOneMatchesDescription')} />
           ) : (
             <ul className="af-appear overflow-hidden rounded-xl border border-af-border bg-af-panel-2/40">
               {shown.map((person) => {
@@ -161,7 +163,7 @@ function ContactsInner() {
                       <Checkbox
                         checked={checked}
                         onCheckedChange={() => toggle(person.id)}
-                        aria-label={checked ? `Deselect ${person.displayName}` : `Select ${person.displayName}`}
+                        aria-label={checked ? t('people.deselectContact', { name: person.displayName }) : t('people.selectContact', { name: person.displayName })}
                         className={cn('transition-opacity', selecting || checked ? 'opacity-100' : 'opacity-40 group-hover/row:opacity-100')}
                       />
                     </span>
@@ -170,7 +172,7 @@ function ContactsInner() {
                       <span className="min-w-0">
                         <span className="block truncate text-[13px] font-medium text-af-text">{person.displayName}</span>
                         <span className="block truncate text-xs text-af-text-3">
-                          {[person.role, person.company].filter(Boolean).join(' · ') || person.email || `${person.meetingCount} meeting${person.meetingCount === 1 ? '' : 's'}`}
+                          {[person.role, person.company].filter(Boolean).join(' · ') || person.email || t(person.meetingCount === 1 ? 'people.meetingCountOne' : 'people.meetingCountMany', { count: person.meetingCount })}
                         </span>
                       </span>
                     </span>
@@ -182,15 +184,15 @@ function ContactsInner() {
                     </span>
                     <span className="hidden text-right text-xs tabular-nums text-af-text-3 md:block">
                       {person.meetingCount > 0
-                        ? `${person.meetingCount} meeting${person.meetingCount === 1 ? '' : 's'}${seen ? ` · ${formatRelativePast(seen)}` : ''}`
-                        : 'Not met yet'}
+                        ? `${t(person.meetingCount === 1 ? 'people.meetingCountOne' : 'people.meetingCountMany', { count: person.meetingCount })}${seen ? ` · ${formatRelativePast(seen)}` : ''}`
+                        : t('people.notMetYet')}
                     </span>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
                           type="button"
                           onClick={(event) => event.stopPropagation()}
-                          aria-label={`Actions for ${person.displayName}`}
+                          aria-label={t('people.actionsFor', { name: person.displayName })}
                           className="flex h-7 w-7 items-center justify-center rounded-md text-af-text-3 opacity-0 transition-[opacity,background-color] hover:bg-af-active hover:text-af-text focus-visible:opacity-100 group-hover/row:opacity-100 data-[state=open]:opacity-100"
                         >
                           <MoreHorizontal className="h-4 w-4" />
@@ -199,20 +201,20 @@ function ContactsInner() {
                       <DropdownMenuContent align="end" className="w-48" onClick={(event) => event.stopPropagation()}>
                         <DropdownMenuItem onSelect={() => router.push(`/person?id=${encodeURIComponent(person.id)}`)}>
                           <ArrowUpRight />
-                          Open
+                          {t('people.open')}
                         </DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => setEditing(person)}>
                           <Pencil />
-                          Edit
+                          {t('common.edit')}
                         </DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => setMerging([person.id])}>
                           <GitMerge />
-                          Merge into…
+                          {t('people.mergeIntoEllipsis')}
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem variant="danger" onSelect={() => setDeleting([person.id])}>
                           <Trash2 />
-                          Delete…
+                          {t('people.deleteEllipsis')}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -227,16 +229,16 @@ function ContactsInner() {
       {selecting && (
         <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center" style={{ paddingLeft: 'var(--af-sidebar-width, 16rem)' }}>
           <div className="pointer-events-auto flex animate-af-rise items-center gap-1.5 rounded-2xl border border-af-border-strong bg-af-elevated/95 p-1.5 pl-4 shadow-2xl backdrop-blur-xl">
-            <span className="mr-2 text-[13px] font-medium tabular-nums text-af-text">{selected.size} selected</span>
+            <span className="mr-2 text-[13px] font-medium tabular-nums text-af-text">{t('people.selectedCount', { count: selected.size })}</span>
             <Button variant="secondary" size="sm" onClick={() => setMerging([...selected])} disabled={selected.size < 2}>
               <GitMerge />
-              Merge
+              {t('people.merge')}
             </Button>
             <Button variant="danger-ghost" size="sm" onClick={() => setDeleting([...selected])}>
               <Trash2 />
-              Delete
+              {t('common.delete')}
             </Button>
-            <Button variant="ghost" size="icon-sm" onClick={() => setSelected(new Set())} aria-label="Clear selection">
+            <Button variant="ghost" size="icon-sm" onClick={() => setSelected(new Set())} aria-label={t('people.clearSelection')}>
               <X />
             </Button>
           </div>
@@ -258,9 +260,9 @@ function ContactsInner() {
         open={deleting !== null}
         onOpenChange={(next) => !next && setDeleting(null)}
         variant="danger"
-        title={deleting && deleting.length > 1 ? `Delete ${deleting.length} contacts?` : 'Delete this contact?'}
-        description="Their lines in meetings go back to generic speaker labels, and their action items lose an owner. Meetings are kept."
-        confirmLabel="Delete"
+        title={deleting && deleting.length > 1 ? t('people.deleteContactsTitle', { count: deleting.length }) : t('people.deleteThisContactTitle')}
+        description={t('people.deleteContactDescription')}
+        confirmLabel={t('common.delete')}
         onConfirm={async () => {
           if (!deleting) return;
           let removed = 0;
@@ -269,13 +271,13 @@ function ContactsInner() {
               await deletePerson(id);
               removed += 1;
             } catch (error) {
-              toast.error('Could not delete a contact', { description: error instanceof Error ? error.message : String(error) });
+              toast.error(t('people.couldNotDeleteAContact'), { description: error instanceof Error ? error.message : String(error) });
             }
           }
           if (removed > 0) {
             announceChange('people');
             announceChange('actions');
-            toast.success(removed === 1 ? 'Contact deleted' : `${removed} contacts deleted`);
+            toast.success(removed === 1 ? t('people.contactDeleted') : t('people.contactsDeleted', { count: removed }));
             setSelected(new Set());
           }
         }}

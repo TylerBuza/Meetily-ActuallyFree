@@ -11,6 +11,8 @@ import { Document, Packer, Paragraph, HeadingLevel, TextRun } from 'docx';
 import { jsPDF } from 'jspdf';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
+import { tNow } from '@/i18n/translate';
+import type { MessageKey } from '@/i18n';
 
 function sanitizeFilename(name: string): string {
   return (name || 'summary').replace(/[^\w\-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80) || 'summary';
@@ -154,12 +156,12 @@ function createJson(markdown: string, baseName: string): string {
 
 export type ExportFormat = 'markdown' | 'pdf' | 'docx' | 'json' | 'txt';
 
-const FORMAT_DETAILS: Record<ExportFormat, { extension: string; label: string }> = {
-  markdown: { extension: 'md', label: 'Markdown' },
-  pdf: { extension: 'pdf', label: 'PDF' },
-  docx: { extension: 'docx', label: 'Word document' },
-  json: { extension: 'json', label: 'JSON' },
-  txt: { extension: 'txt', label: 'Text' },
+const FORMAT_DETAILS: Record<ExportFormat, { extension: string; label: MessageKey }> = {
+  markdown: { extension: 'md', label: 'exportDoc.formatMarkdown' },
+  pdf: { extension: 'pdf', label: 'exportDoc.formatPdf' },
+  docx: { extension: 'docx', label: 'exportDoc.formatWordDocument' },
+  json: { extension: 'json', label: 'exportDoc.formatJson' },
+  txt: { extension: 'txt', label: 'exportDoc.formatText' },
 };
 
 export async function exportSummaryAs(
@@ -172,7 +174,7 @@ export async function exportSummaryAs(
   // the fs plugin; the webview only creates bytes and never starts a download.
   const destination = await save({
     defaultPath: `${sanitizeFilename(baseName)}.${details.extension}`,
-    filters: [{ name: details.label, extensions: [details.extension] }],
+    filters: [{ name: tNow(details.label), extensions: [details.extension] }],
   });
   if (!destination) return false;
   const outputPath = destination.toLowerCase().endsWith(`.${details.extension}`)

@@ -5,6 +5,7 @@ import { Pause, Play, RotateCcw, RotateCw, ScrollText, VolumeX } from 'lucide-re
 import { cn } from '@/lib/utils';
 import { Hint } from '@/components/ui/tooltip';
 import { Spinner } from '@/components/ui/spinner';
+import { useI18n } from '@/i18n';
 import { PLAYBACK_RATES, type MeetingAudioControls } from '@/hooks/useMeetingAudio';
 import { waveformBars } from '@/hooks/useWaveform';
 
@@ -104,6 +105,7 @@ export function AudioPlayerBar({
   textMode?: TranscriptTextMode;
   onTextModeChange?: (mode: TranscriptTextMode) => void;
 }) {
+  const { t } = useI18n();
   const { status, playing, currentTime, duration, rate } = audio;
   const trackRef = useRef<HTMLDivElement>(null);
   const [scrubbing, setScrubbing] = useState<number | null>(null);
@@ -124,7 +126,7 @@ export function AudioPlayerBar({
 
   const textSwitch =
     textMode && onTextModeChange ? (
-      <Hint label={textMode === 'clean' ? 'Show every word as spoken' : 'Hide hesitations and repeats'}>
+      <Hint label={textMode === 'clean' ? t('meeting.showEveryWord') : t('meeting.hideHesitations')}>
         <button
           type="button"
           onClick={() => onTextModeChange(textMode === 'clean' ? 'verbatim' : 'clean')}
@@ -136,7 +138,7 @@ export function AudioPlayerBar({
               : 'text-af-text-2 hover:bg-af-hover hover:text-af-text',
           )}
         >
-          {textMode === 'clean' ? 'Clean' : 'Verbatim'}
+          {textMode === 'clean' ? t('meeting.clean') : t('meeting.verbatim')}
         </button>
       </Hint>
     ) : null;
@@ -146,7 +148,7 @@ export function AudioPlayerBar({
       <div className="flex h-14 items-center gap-2 border-t border-af-border px-4 text-xs text-af-text-3">
         <VolumeX className="h-3.5 w-3.5 shrink-0" />
         <span className="min-w-0 flex-1 truncate">
-          {status === 'error' ? 'The recording could not be played.' : 'No audio was saved for this meeting.'}
+          {status === 'error' ? t('meeting.theRecordingCouldNotBePlayed') : t('meeting.noAudioSaved')}
         </span>
         {textSwitch}
       </div>
@@ -182,24 +184,24 @@ export function AudioPlayerBar({
   return (
     // h-14 matches the sidebar footer, so their top borders line up.
     <div className="flex h-14 items-center gap-1 border-t border-af-border bg-af-panel px-3">
-      <Hint label="Back 10 seconds">
-        <button type="button" className={button} onClick={() => audio.skip(-10)} disabled={status !== 'ready'} aria-label="Back 10 seconds">
+      <Hint label={t('meeting.back10Seconds')}>
+        <button type="button" className={button} onClick={() => audio.skip(-10)} disabled={status !== 'ready'} aria-label={t('meeting.back10Seconds')}>
           <RotateCcw className="h-4 w-4" />
         </button>
       </Hint>
-      <Hint label={playing ? 'Pause' : 'Play'} shortcut="Space">
+      <Hint label={playing ? t('meeting.pause') : t('meeting.play')} shortcut={t('meeting.shortcutSpace')}>
         <button
           type="button"
           onClick={audio.toggle}
           disabled={status !== 'ready'}
-          aria-label={playing ? 'Pause' : 'Play'}
+          aria-label={playing ? t('meeting.pause') : t('meeting.play')}
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-af-accent text-af-on-accent shadow-sm transition-[background-color,transform] hover:bg-af-accent-hover active:scale-95 disabled:opacity-50"
         >
           {status === 'loading' ? <Spinner size={14} /> : playing ? <Pause className="h-4 w-4" fill="currentColor" /> : <Play className="ml-0.5 h-4 w-4" fill="currentColor" />}
         </button>
       </Hint>
-      <Hint label="Forward 10 seconds">
-        <button type="button" className={button} onClick={() => audio.skip(10)} disabled={status !== 'ready'} aria-label="Forward 10 seconds">
+      <Hint label={t('meeting.forward10Seconds')}>
+        <button type="button" className={button} onClick={() => audio.skip(10)} disabled={status !== 'ready'} aria-label={t('meeting.forward10Seconds')}>
           <RotateCw className="h-4 w-4" />
         </button>
       </Hint>
@@ -208,7 +210,7 @@ export function AudioPlayerBar({
       <div
         ref={trackRef}
         role="slider"
-        aria-label="Playback position"
+        aria-label={t('meeting.playbackPosition')}
         aria-valuemin={0}
         aria-valuemax={Math.round(duration)}
         aria-valuenow={Math.round(shown)}
@@ -242,7 +244,7 @@ export function AudioPlayerBar({
       </div>
       <span className="w-12 shrink-0 text-[11px] tabular-nums text-af-text-4">{formatPlayback(duration)}</span>
 
-      <Hint label="Playback speed">
+      <Hint label={t('meeting.playbackSpeed')}>
         <button
           type="button"
           onClick={() => audio.setRate(nextRate)}
@@ -253,13 +255,13 @@ export function AudioPlayerBar({
         </button>
       </Hint>
       {textSwitch}
-      <Hint label={follow ? 'Stop following the playback' : 'Follow the playback'}>
+      <Hint label={follow ? t('meeting.stopFollowingPlayback') : t('meeting.followPlayback')}>
         <button
           type="button"
           onClick={() => onFollowChange(!follow)}
           aria-pressed={follow}
           className={cn(button, follow && 'bg-af-accent/[0.12] text-af-accent hover:bg-af-accent/[0.18] hover:text-af-accent')}
-          aria-label="Follow the playback"
+          aria-label={t('meeting.followPlayback')}
         >
           <ScrollText className="h-4 w-4" />
         </button>

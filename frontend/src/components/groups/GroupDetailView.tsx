@@ -38,12 +38,12 @@ import { ActionItemsList } from '@/components/actions/ActionItemsList';
 import { ChatThread } from '@/components/chat/ChatThread';
 import { openGroupEditor } from '@/components/groups/GroupEditor';
 import { AddMeetingsDialog } from '@/components/groups/AddMeetingsDialog';
+import { kindLabelKey } from '@/components/groups/GroupBits';
 import {
   announceChange,
   deleteGroup,
   getGroup,
   getMeetingNotes,
-  kindLabel,
   listActionItems,
   onWorkspaceChange,
   type ActionItem,
@@ -55,6 +55,7 @@ import { formatDuration, formatRelativeFuture, formatShortDate, formatWhen, pars
 import { displayTitle } from '@/lib/meeting-titles';
 import { completeSummaryMarkdown, parseSummaryData } from '@/lib/summary-markdown';
 import { launchRecording } from '@/lib/recording-launch';
+import { useI18n } from '@/i18n';
 
 /** Recent summaries, notes and open items: what Ask AI reads for a group. */
 async function groupContext(detail: GroupDetail, openItems: ActionItem[]): Promise<string> {
@@ -84,6 +85,7 @@ async function groupContext(detail: GroupDetail, openItems: ActionItem[]): Promi
 
 export function GroupDetailView({ groupId }: { groupId: string }) {
   const router = useRouter();
+  const { t } = useI18n();
   const { meetings } = useSidebar();
   const [detail, setDetail] = useState<GroupDetail | null>(null);
   const [missing, setMissing] = useState(false);
@@ -144,9 +146,9 @@ export function GroupDetailView({ groupId }: { groupId: string }) {
         <div className="mx-auto max-w-3xl px-8 pt-16">
           <EmptyState
             icon={<Users />}
-            title="This group no longer exists"
-            description="It may have been deleted. Its meetings are still in your library."
-            action={<Button variant="secondary" onClick={() => router.push('/groups')}>All groups</Button>}
+            title={t('people.groupGoneTitle')}
+            description={t('people.groupGoneDescription')}
+            action={<Button variant="secondary" onClick={() => router.push('/groups')}>{t('people.allGroups')}</Button>}
           />
         </div>
       </div>
@@ -160,10 +162,10 @@ export function GroupDetailView({ groupId }: { groupId: string }) {
   ];
 
   const ask = async (question: string, history: Array<{ question: string; answer: string }>) => {
-    if (!detail) throw new Error('The group is still loading.');
+    if (!detail) throw new Error(t('people.groupStillLoading'));
     const key = `${detail.id}:${detail.meetings.map((meeting) => meeting.meetingId).join(',')}:${openItems?.length ?? 0}`;
     if (contextCache.current?.key !== key) contextCache.current = { key, text: await groupContext(detail, openItems ?? []) };
-    if (!contextCache.current.text.trim()) throw new Error('This group has no meetings to read yet.');
+    if (!contextCache.current.text.trim()) throw new Error(t('people.groupNoMeetingsToRead'));
     const guidance = [
       `The context is a series of meetings in the group "${detail.name}", newest first, with their summaries, notes and the group's open action items. Name the meeting and date when you rely on one.`,
       history.length
@@ -180,7 +182,7 @@ export function GroupDetailView({ groupId }: { groupId: string }) {
       <div className="mx-auto w-full max-w-5xl px-8 pb-24 pt-8 animate-af-rise">
         <Link href="/groups" className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-af-text-3 transition-colors hover:bg-af-hover hover:text-af-text">
           <ArrowLeft className="h-3.5 w-3.5" />
-          Groups
+          {t('people.groupsTitle')}
         </Link>
 
         <header className="mt-3 flex flex-wrap items-start gap-4">
@@ -189,7 +191,12 @@ export function GroupDetailView({ groupId }: { groupId: string }) {
               <>
                 <h1 className="truncate text-2xl font-semibold tracking-tight text-af-text">{detail.name}</h1>
                 <p className="mt-1 text-sm text-af-text-3">
-                  {[kindLabel(detail.kind), `${detail.meetingCount} meeting${detail.meetingCount === 1 ? '' : 's'}`].filter(Boolean).join(' · ')}
+                  {[
+                    kindLabelKey(detail.kind) ? t(kindLabelKey(detail.kind)!) : null,
+                    t(detail.meetingCount === 1 ? 'people.meetingCountOne' : 'people.meetingCountMany', { count: detail.meetingCount }),
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </p>
                 {detail.description && <p className="mt-2 max-w-2xl text-sm leading-relaxed text-af-text-2">{detail.description}</p>}
               </>
@@ -203,26 +210,26 @@ export function GroupDetailView({ groupId }: { groupId: string }) {
           <div className="flex shrink-0 items-center gap-1.5">
             <Button variant="record" size="sm" onClick={record} disabled={!detail}>
               <Mic />
-              Record
+              {t('people.record')}
             </Button>
             <Button variant="secondary" size="sm" onClick={() => openGroupEditor({ groupId })} disabled={!detail}>
               <Pencil />
-              Edit
+              {t('common.edit')}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon-sm" aria-label="More group actions" disabled={!detail}>
+                <Button variant="ghost" size="icon-sm" aria-label={t('people.moreGroupActions')} disabled={!detail}>
                   <MoreHorizontal />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-52">
                 <DropdownMenuItem onSelect={() => setAdding(true)}>
                   <Plus />
-                  Add meetings…
+                  {t('people.addMeetingsEllipsis')}
                 </DropdownMenuItem>
                 <DropdownMenuItem variant="danger" onSelect={() => setConfirmDelete(true)}>
                   <Trash2 />
-                  Delete group…
+                  {t('people.deleteGroupEllipsis')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -237,12 +244,12 @@ export function GroupDetailView({ groupId }: { groupId: string }) {
                 <span className="text-af-text">{describeSchedule(schedule.schedule)}</span>
                 {schedule.next && (
                   <span className="text-af-text-3">
-                    · Next {formatRelativeFuture(schedule.next)}, {formatWhen(schedule.next)}
+                    · {t('people.nextMeeting', { relative: formatRelativeFuture(schedule.next), when: formatWhen(schedule.next) })}
                   </span>
                 )}
                 {schedule.source === 'detected' && (
                   <span className="rounded-full bg-af-hover px-2 py-0.5 text-[11px] text-af-text-3">
-                    Detected from {schedule.detected?.occurrences ?? 'several'} meetings
+                    {t('people.detectedFrom', { occurrences: schedule.detected?.occurrences ?? t('people.several') })}
                   </span>
                 )}
                 <button
@@ -250,18 +257,18 @@ export function GroupDetailView({ groupId }: { groupId: string }) {
                   onClick={() => openGroupEditor({ groupId, suggestedSchedule: schedule.source === 'detected' ? schedule.detected : undefined })}
                   className="ml-auto rounded-md px-2 py-1 text-xs text-af-text-3 transition-colors hover:bg-af-hover hover:text-af-text"
                 >
-                  {schedule.source === 'detected' ? 'Confirm or change' : 'Change'}
+                  {schedule.source === 'detected' ? t('people.confirmOrChange') : t('people.change')}
                 </button>
               </>
             ) : (
               <>
-                <span className="text-af-text-3">No regular time. Meetily suggests one after a few meetings at the same time, or you can set it.</span>
+                <span className="text-af-text-3">{t('people.noRegularTime')}</span>
                 <button
                   type="button"
                   onClick={() => openGroupEditor({ groupId })}
                   className="ml-auto rounded-md px-2 py-1 text-xs text-af-text-3 transition-colors hover:bg-af-hover hover:text-af-text"
                 >
-                  Set a schedule
+                  {t('people.setSchedule')}
                 </button>
               </>
             )}
@@ -271,36 +278,36 @@ export function GroupDetailView({ groupId }: { groupId: string }) {
         <div className="mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
           <div className="flex min-w-0 flex-col gap-4">
             <Panel
-              title="Still open"
+              title={t('people.stillOpen')}
               action={openItems && openItems.length > 0 ? <span className="text-xs tabular-nums text-af-text-4">{openItems.length}</span> : undefined}
             >
               {openItems === null ? (
                 <Skeleton className="h-16" />
               ) : openItems.length === 0 ? (
-                <p className="py-2 text-[13px] leading-relaxed text-af-text-3">Nothing open. Action items from this group's meetings carry over here until they're done.</p>
+                <p className="py-2 text-[13px] leading-relaxed text-af-text-3">{t('people.nothingOpen')}</p>
               ) : (
                 <ActionItemsList items={openItems} onItemsChange={setOpenItems} className="-mx-2" />
               )}
             </Panel>
 
             <Panel
-              title="Meetings"
+              title={t('people.meetingsTitle')}
               action={
                 <Button size="xs" variant="ghost" onClick={() => setAdding(true)} disabled={!detail}>
                   <Plus />
-                  Add meetings
+                  {t('people.addMeetings')}
                 </Button>
               }
             >
               <div className="relative mb-2">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-af-text-4" />
-                <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search words said or people" className="h-8 pl-9 text-xs" />
+                <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('people.searchGroupMeetings')} className="h-8 pl-9 text-xs" />
               </div>
               {!detail ? (
                 <Skeleton className="h-24" />
               ) : detail.meetings.length === 0 ? (
                 <p className="py-3 text-[13px] text-af-text-3">
-                  {query.trim() ? 'No meetings match.' : 'No meetings yet. Record one, or add meetings you already have.'}
+                  {query.trim() ? t('people.noMeetingsMatch') : t('people.noMeetingsYet')}
                 </p>
               ) : (
                 <ul className="af-appear -mx-1.5">
@@ -330,11 +337,11 @@ export function GroupDetailView({ groupId }: { groupId: string }) {
           </div>
 
           <div className="flex min-w-0 flex-col gap-4">
-            <Panel title="People">
+            <Panel title={t('people.peopleTitle')}>
               {!detail ? (
                 <Skeleton className="h-16" />
               ) : members.length === 0 ? (
-                <p className="py-2 text-[13px] leading-relaxed text-af-text-3">People show up once speakers in this group's meetings have names.</p>
+                <p className="py-2 text-[13px] leading-relaxed text-af-text-3">{t('people.peopleShowUp')}</p>
               ) : (
                 <ul className="af-appear -mx-1.5">
                   {members.map((member) => (
@@ -346,7 +353,7 @@ export function GroupDetailView({ groupId }: { groupId: string }) {
                         <Avatar name={member.displayName} size="sm" />
                         <span className="min-w-0 flex-1 truncate text-[13px] text-af-text">{member.displayName}</span>
                         <span className="shrink-0 text-[11px] tabular-nums text-af-text-4">
-                          {member.frequent ? 'Usually here' : `${member.meetingCount}×`}
+                          {member.frequent ? t('people.usuallyHere') : `${member.meetingCount}×`}
                         </span>
                       </Link>
                     </li>
@@ -355,15 +362,15 @@ export function GroupDetailView({ groupId }: { groupId: string }) {
               )}
             </Panel>
 
-            <Panel title="Ask about this group" className="flex h-[26rem] flex-col p-0 pt-4 [&>header]:px-4">
+            <Panel title={t('people.askAboutGroup')} className="flex h-[26rem] flex-col p-0 pt-4 [&>header]:px-4">
               <ChatThread
                 historyKey={`group:${groupId}`}
                 ask={ask}
                 compact
-                emptyTitle="Ask across its meetings"
-                emptyHint="Answers use the group's recent summaries, notes and open action items."
-                suggestions={['What happened last time?', 'What is still open?', 'What have we decided so far?']}
-                placeholder="Ask about this group…"
+                emptyTitle={t('people.groupAskEmptyTitle')}
+                emptyHint={t('people.groupAskEmptyHint')}
+                suggestions={[t('people.suggestionWhatHappened'), t('people.suggestionStillOpen'), t('people.suggestionDecided')]}
+                placeholder={t('people.askAboutGroupPlaceholder')}
                 className="min-h-0 flex-1"
               />
             </Panel>
@@ -377,18 +384,18 @@ export function GroupDetailView({ groupId }: { groupId: string }) {
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
         variant="danger"
-        title={`Delete ${detail?.name ?? 'this group'}?`}
-        description="Its meetings stay in your library, just without a group. Nothing else is deleted."
-        confirmLabel="Delete group"
+        title={t('people.deleteGroupTitle', { name: detail?.name ?? t('people.thisGroup') })}
+        description={t('people.deleteGroupDescription')}
+        confirmLabel={t('people.deleteGroup')}
         onConfirm={async () => {
           try {
             await deleteGroup(groupId);
             announceChange('groups');
             announceChange('meetings');
-            toast.success('Group deleted');
+            toast.success(t('people.groupDeleted'));
             router.push('/groups');
           } catch (error) {
-            toast.error('Could not delete the group', { description: error instanceof Error ? error.message : String(error) });
+            toast.error(t('people.couldNotDeleteGroup'), { description: error instanceof Error ? error.message : String(error) });
           }
         }}
       />

@@ -15,6 +15,7 @@ import {
   getClaudeCliStatus,
   testClaudeCliConnection,
 } from '@/lib/claude-cli';
+import { useI18n } from '@/i18n';
 
 interface ClaudeCliSettingsProps {
   /** Path override the user is editing; empty string means auto-discover. */
@@ -39,6 +40,7 @@ export function ClaudeCliSettings({
   model,
   onStatusChange,
 }: ClaudeCliSettingsProps) {
+  const { t } = useI18n();
   const [status, setStatus] = useState<ClaudeCliStatus | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
@@ -100,9 +102,9 @@ export function ClaudeCliSettings({
       <div>
         <h4 className="text-sm font-semibold">Claude Code CLI</h4>
         <p className="text-xs text-muted-foreground mt-1">
-          Summaries run through the <code className="text-[11px]">claude</code> command on this
-          computer, so they use your Claude subscription instead of a pay-as-you-go API key. No key
-          is stored here — the CLI handles sign-in.
+          {t('labs.claudeCliDescriptionPrefix')}
+          <code className="text-[11px]">claude</code>
+          {t('labs.claudeCliDescriptionSuffix')}
         </p>
       </div>
 
@@ -111,29 +113,30 @@ export function ClaudeCliSettings({
         {isChecking && !status ? (
           <div className="flex items-center text-muted-foreground">
             <Spinner className="mr-2 h-4 w-4" />
-            Looking for the Claude Code CLI…
+            {t('labs.claudeLookingForCli')}
           </div>
         ) : status?.installed ? (
           <div className="space-y-1">
             <div className="flex items-center font-medium text-af-success">
               <CheckCircle2 className="mr-2 h-4 w-4 shrink-0" />
-              Found {status.version}
+              {t('labs.claudeFound', { version: status.version ?? '' })}
             </div>
             {status.path && (
               <p className="break-all text-xs text-muted-foreground">{status.path}</p>
             )}
             {auth?.loggedIn ? (
               <p className="text-xs text-muted-foreground">
-                Signed in
-                {auth.email ? ` as ${auth.email}` : ''}
-                {auth.subscriptionType ? ` · ${auth.subscriptionType} plan` : ''}
-                {auth.orgName ? ` · ${auth.orgName}` : ''}
+                {t('labs.claudeSignedIn')}
+                {auth.email ? t('labs.claudeSignedInAs', { email: auth.email }) : ''}
+                {auth.subscriptionType ? t('labs.claudePlan', { plan: auth.subscriptionType }) : ''}
+                {auth.orgName ? t('labs.claudeOrg', { org: auth.orgName }) : ''}
               </p>
             ) : (
               <p className="flex items-start text-xs text-af-warning">
                 <AlertTriangle className="mr-1.5 mt-0.5 h-3.5 w-3.5 shrink-0" />
-                Not signed in. Run <code className="mx-1">claude auth login</code> in a terminal,
-                then re-check.
+                {t('labs.claudeNotSignedInRun')}
+                <code className="mx-1">claude auth login</code>
+                {t('labs.claudeNotSignedInTail')}
               </p>
             )}
           </div>
@@ -141,7 +144,7 @@ export function ClaudeCliSettings({
           <div className="space-y-2">
             <div className="flex items-start font-medium text-af-danger">
               <XCircle className="mr-2 mt-0.5 h-4 w-4 shrink-0" />
-              <span>{status?.error ?? 'Claude Code CLI not found.'}</span>
+              <span>{status?.error ?? t('labs.claudeCliNotFound')}</span>
             </div>
             <Button
               type="button"
@@ -152,7 +155,7 @@ export function ClaudeCliSettings({
               }
             >
               <ExternalLink className="mr-2 h-3.5 w-3.5" />
-              Install Claude Code
+              {t('labs.claudeInstall')}
             </Button>
           </div>
         )}
@@ -164,25 +167,25 @@ export function ClaudeCliSettings({
         <p className="flex items-start rounded-lg bg-af-warning/10 p-2 text-xs text-af-text">
           <AlertTriangle className="mr-1.5 mt-0.5 h-3.5 w-3.5 shrink-0 text-af-warning" />
           <span>
-            <code>ANTHROPIC_API_KEY</code> is set in this app&apos;s environment. The CLI prefers
-            that key over your subscription, so summaries would be billed per token. Unset it to use
-            the subscription.
+            <code>ANTHROPIC_API_KEY</code>
+            {t('labs.claudeApiKeySet')}
           </span>
         </p>
       )}
 
       <div>
-        <Label htmlFor="claude-cli-path">CLI path (optional)</Label>
+        <Label htmlFor="claude-cli-path">{t('labs.claudeCliPathLabel')}</Label>
         <Input
           id="claude-cli-path"
           value={path}
           onChange={(e) => onPathChange(e.target.value)}
-          placeholder="Leave empty to find claude automatically"
+          placeholder={t('labs.claudeCliPathPlaceholder')}
           className="mt-1"
         />
         <p className="text-xs text-muted-foreground mt-1">
-          Only needed when <code className="text-[11px]">claude</code> is installed somewhere
-          unusual.
+          {t('labs.claudeOnlyNeededWhen')}
+          <code className="text-[11px]">claude</code>
+          {t('labs.claudeInstalledSomewhereUnusual')}
         </p>
       </div>
 
@@ -198,10 +201,10 @@ export function ClaudeCliSettings({
           {isChecking ? (
             <>
               <Spinner className="mr-2 h-4 w-4" />
-              Checking…
+              {t('labs.claudeChecking')}
             </>
           ) : (
-            'Re-check'
+            t('labs.claudeRecheck')
           )}
         </Button>
         <Button
@@ -211,15 +214,15 @@ export function ClaudeCliSettings({
           onClick={runTest}
           disabled={isTesting || !!blockingReason}
           className="flex-1"
-          title={blockingReason ?? 'Send a one-word prompt through the CLI'}
+          title={blockingReason ?? t('labs.claudeTestCallTitle')}
         >
           {isTesting ? (
             <>
               <Spinner className="mr-2 h-4 w-4" />
-              Testing…
+              {t('labs.claudeTesting')}
             </>
           ) : (
-            'Test summary call'
+            t('labs.claudeTestCall')
           )}
         </Button>
       </div>

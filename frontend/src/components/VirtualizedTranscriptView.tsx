@@ -28,6 +28,7 @@ import { TranscriptSegmentData } from '@/types';
 import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import { cleanTranscriptText } from '@/lib/labs';
+import { useI18n } from '@/i18n';
 import { displaySpeaker, isUserSpeaker, speakerColor, speakerColorIndexMap, speakerColorValue, speakerDot, speakerKey } from '@/utils/speakerUtils';
 
 /**
@@ -172,10 +173,19 @@ const TurnRow = memo(function TurnRow({
   onMergeSpeaker?: VirtualizedTranscriptViewProps['onMergeSpeaker'];
   onSeek?: VirtualizedTranscriptViewProps['onSeek'];
 }) {
+  const { t } = useI18n();
   const speaker = turn.speaker;
   const isYou = isUserSpeaker(speaker);
-  const label = speaker ? displaySpeaker(speaker, userName) : '';
-  const shown = shownText(text, textMode) || (text.trim() === '' ? '[Silence]' : text);
+  // "Speaker 2" / "Guest" are stored as canonical labels; only the display text changes.
+  const label = (speaker ? displaySpeaker(speaker, userName) : '')
+    .split(' + ')
+    .map((part) => {
+      const numbered = /^speaker\s+(\d+)$/i.exec(part.trim());
+      if (numbered) return t('meeting.speakerNumber', { number: numbered[1] });
+      return /^guest$/i.test(part.trim()) ? t('meeting.guestSpeaker') : part;
+    })
+    .join(' + ');
+  const shown = shownText(text, textMode) || (text.trim() === '' ? t('meeting.silence') : text);
   const clickable = !!speaker && (!!onSpeakerClick || !!onRenameSpeaker);
 
   return (
@@ -205,7 +215,7 @@ const TurnRow = memo(function TurnRow({
                 <button
                   type="button"
                   onClick={() => onMergeSpeaker(speaker)}
-                  aria-label={`Merge ${label} into another speaker`}
+                  aria-label={t('meeting.mergeSpeaker', { label })}
                   className="rounded p-0.5 text-af-text-4 opacity-0 transition-opacity hover:text-af-accent group-hover/speaker:opacity-100"
                 >
                   <GitMerge size={12} />
@@ -218,7 +228,7 @@ const TurnRow = memo(function TurnRow({
               type="button"
               onClick={() => onSeek(turn.timestamp)}
               className="rounded px-1 text-[11px] tabular-nums text-af-text-4 transition-colors hover:bg-af-hover hover:text-af-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-af-accent/60"
-              aria-label={`Play from ${clock(turn.timestamp)}`}
+              aria-label={t('meeting.playFrom', { time: clock(turn.timestamp) })}
             >
               {clock(turn.timestamp)}
             </button>
@@ -268,6 +278,7 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
   textMode = 'tidy',
   colorIndices: givenColorIndices,
 }) => {
+  const { t } = useI18n();
   const userName = useUserName();
   const turns = useMemo(() => mergeTurns(segments), [segments]);
   // One colour per speaker in first-spoken order, so a renamed speaker keeps theirs.
@@ -394,11 +405,11 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
         <div ref={loadMoreTriggerRef} className="mt-2 flex items-center justify-center py-4">
           {isLoadingMore ? (
             <span className="flex items-center gap-2 text-xs text-af-text-3">
-              <Spinner className="h-4 w-4" /> Loading more…
+              <Spinner className="h-4 w-4" /> {t('meeting.loadingMore')}
             </span>
           ) : hasMore && totalCount > 0 ? (
             <span className="text-xs text-af-text-4">
-              Showing {loadedCount} of {totalCount} lines
+              {t('meeting.showingLines', { shown: loadedCount, total: totalCount })}
             </span>
           ) : null}
         </div>
@@ -406,11 +417,11 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
       {!isStopping && isRecording && !isProcessing && turns.length > 0 && (
         <div className="mb-2 mt-4 flex min-h-[1.25rem] items-center gap-2 text-af-text-3">
           {isPaused ? (
-            <span className="text-xs text-af-warning">Paused</span>
+            <span className="text-xs text-af-warning">{t('meeting.paused')}</span>
           ) : (
             <>
               <span className="h-2 w-2 animate-af-breathe rounded-full bg-af-accent" />
-              <span className="text-xs">Listening…</span>
+              <span className="text-xs">{t('meeting.listening')}</span>
             </>
           )}
         </div>
@@ -431,11 +442,11 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
               <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-af-accent/[0.12] text-af-accent">
                 <Mic className={cn('h-4 w-4', !isPaused && 'animate-af-breathe')} />
               </span>
-              <p className="text-sm font-medium text-af-text">{isPaused ? 'Recording paused' : 'Listening for speech…'}</p>
-              <p className="mt-1 text-xs text-af-text-3">{isPaused ? 'Resume to keep transcribing.' : 'Lines appear here as people talk.'}</p>
+              <p className="text-sm font-medium text-af-text">{isPaused ? t('meeting.recordingPaused') : t('meeting.listeningForSpeech')}</p>
+              <p className="mt-1 text-xs text-af-text-3">{isPaused ? t('meeting.resumeToTranscribe') : t('meeting.linesAppear')}</p>
             </motion.div>
           ) : (
-            emptyState ?? <p className="mt-10 text-center text-sm text-af-text-3">No transcript yet.</p>
+            emptyState ?? <p className="mt-10 text-center text-sm text-af-text-3">{t('meeting.noTranscriptYet')}</p>
           )
         ) : useVirtualization ? (
           <>

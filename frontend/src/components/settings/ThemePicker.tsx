@@ -2,7 +2,15 @@
 
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { THEMES, useAppTheme, type ThemeInfo } from '@/lib/app-theme';
+import { THEMES, useAppTheme, type AppTheme, type ThemeInfo } from '@/lib/app-theme';
+import { useI18n, type MessageKey } from '@/i18n';
+
+/** Names and descriptions are translated by theme id; the ids themselves are stored as-is. */
+const THEME_MESSAGES: Record<AppTheme, { label: MessageKey; description: MessageKey }> = {
+  midnight: { label: 'settings.themeMidnight', description: 'settings.themeMidnightDescription' },
+  vanilla: { label: 'settings.themeVanilla', description: 'settings.themeVanillaDescription' },
+  charcoal: { label: 'settings.themeCharcoal', description: 'settings.themeCharcoalDescription' },
+};
 
 /** A tiny rendition of the app in the theme's own colors. */
 function ThemePreview({ theme }: { theme: ThemeInfo }) {
@@ -29,10 +37,11 @@ function ThemePreview({ theme }: { theme: ThemeInfo }) {
 }
 
 export function ThemePicker() {
+  const { t } = useI18n();
   const [current, setTheme] = useAppTheme();
 
   return (
-    <div role="radiogroup" aria-label="Theme" className="grid gap-3 sm:grid-cols-3">
+    <div role="radiogroup" aria-label={t('settings.themeTitle')} className="grid gap-3 sm:grid-cols-3">
       {THEMES.map((theme) => {
         const selected = theme.id === current;
         return (
@@ -53,8 +62,8 @@ export function ThemePicker() {
             <ThemePreview theme={theme} />
             <div className="flex items-start justify-between gap-2 px-1 pb-0.5 pt-2.5">
               <div className="min-w-0">
-                <p className="text-sm font-medium text-af-text">{theme.label}</p>
-                <p className="mt-0.5 text-xs text-af-text-3">{theme.description}</p>
+                <p className="text-sm font-medium text-af-text">{t(THEME_MESSAGES[theme.id].label)}</p>
+                <p className="mt-0.5 text-xs text-af-text-3">{t(THEME_MESSAGES[theme.id].description)}</p>
               </div>
               <span
                 className={cn(

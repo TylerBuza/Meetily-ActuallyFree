@@ -27,6 +27,7 @@ import { automaticTitle, onLiveSessionChange, readLiveTitle, writeLiveTitle, typ
 import { formatClock } from '@/lib/dates';
 import type { LiveLine } from '@/lib/live-context';
 import { speakerKey, replaceSpeakerComponent } from '@/utils/speakerUtils';
+import { useI18n } from '@/i18n';
 
 const PANEL_KEY = 'af-live-panel-open';
 const PANEL_WIDTH = 340;
@@ -45,6 +46,7 @@ export function LiveSession({
   isStopping: boolean;
   onLanguageSettings: () => void;
 }) {
+  const { t } = useI18n();
   const {
     transcripts,
     detectedSpeakers,
@@ -187,7 +189,7 @@ export function LiveSession({
         <header className="shrink-0 border-b border-af-border px-5 pb-3 pt-4">
           <div className="flex items-start gap-3">
             <div className="min-w-0 flex-1">
-              <EditableTitle value={title} onCommit={rename} label="Meeting title" />
+              <EditableTitle value={title} onCommit={rename} label={t('recording.meetingTitleLabel')} />
               <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-af-text-3">
                 <span className="inline-flex items-center gap-1.5 font-medium">
                   <span
@@ -197,11 +199,11 @@ export function LiveSession({
                     )}
                   />
                   <span className={isStopping ? 'text-af-text-3' : isPaused ? 'text-af-warning' : 'text-af-record'}>
-                    {isStopping || isProcessingStop ? 'Finishing' : isPaused ? 'Paused' : 'Recording'}
+                    {isStopping || isProcessingStop ? t('recording.statusFinishing') : isPaused ? t('recording.statusPaused') : t('recording.statusRecording')}
                   </span>
                   <span className="tabular-nums text-af-text-3">{formatClock(elapsed)}</span>
                 </span>
-                <GroupPicker value={pendingGroup?.id ?? null} onChange={changeGroup} placeholder="Add to group" />
+                <GroupPicker value={pendingGroup?.id ?? null} onChange={changeGroup} placeholder={t('recording.addToGroup')} />
                 {detectedSpeakers.length > 0 && (
                   <button
                     type="button"
@@ -211,11 +213,11 @@ export function LiveSession({
                     {named.length > 0 && <AvatarStack names={named} max={4} size="sm" />}
                     <span>
                       {[
-                        named.length > 0 ? `${named.length} named` : null,
-                        unnamed > 0 ? `${unnamed} to name` : null,
+                        named.length > 0 ? t('recording.namedCount', { count: named.length }) : null,
+                        unnamed > 0 ? t('recording.toNameCount', { count: unnamed }) : null,
                       ]
                         .filter(Boolean)
-                        .join(' · ') || 'Just you so far'}
+                        .join(' · ') || t('recording.justYouSoFar')}
                     </span>
                   </button>
                 )}
@@ -225,21 +227,21 @@ export function LiveSession({
               {transcriptModelConfig.provider === 'localWhisper' && (
                 <Button variant="ghost" size="sm" onClick={onLanguageSettings}>
                   <Globe />
-                  Language
+                  {t('recording.languageLabel')}
                 </Button>
               )}
-              <Hint label="Copy transcript">
-                <Button variant="ghost" size="icon-sm" onClick={copyTranscript} disabled={transcripts.length === 0} aria-label="Copy transcript">
+              <Hint label={t('recording.copyTranscript')}>
+                <Button variant="ghost" size="icon-sm" onClick={copyTranscript} disabled={transcripts.length === 0} aria-label={t('recording.copyTranscript')}>
                   <Copy />
                 </Button>
               </Hint>
-              <Hint label={shown ? 'Hide the side panel' : 'Speakers, notes and Ask AI'}>
+              <Hint label={shown ? t('recording.hideSidePanel') : t('recording.sidePanelDescription')}>
                 <Button
                   variant={shown ? 'soft' : 'ghost'}
                   size="icon-sm"
                   onClick={togglePanel}
                   aria-pressed={shown}
-                  aria-label="Toggle the side panel"
+                  aria-label={t('recording.toggleSidePanel')}
                 >
                   <PanelRight />
                 </Button>
@@ -268,13 +270,13 @@ export function LiveSession({
       {narrow && overlayOpen && (
         <button
           type="button"
-          aria-label="Close the side panel"
+          aria-label={t('recording.closeSidePanel')}
           onClick={() => setOverlayOpen(false)}
           className="absolute inset-0 z-40 bg-[var(--af-scrim-color)] animate-in fade-in-0"
         />
       )}
       <aside
-        aria-label="Speakers, notes and Ask AI"
+        aria-label={t('recording.sidePanelDescription')}
         aria-hidden={!shown}
         className={cn(
           'h-full shrink-0 overflow-hidden bg-af-panel motion-reduce:transition-none',

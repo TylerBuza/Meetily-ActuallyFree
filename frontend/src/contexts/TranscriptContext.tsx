@@ -10,6 +10,7 @@ import { recordingService } from '@/services/recordingService';
 import { indexedDBService } from '@/services/indexedDBService';
 import { isUserSpeaker, speakerColorIndexMap, speakerKey } from '@/utils/speakerUtils';
 import { activeSpeakerMeeting, editedSpeaker, persistSpeakerRename, persistTurnSpeaker } from '@/lib/live-speaker-edits';
+import { tNow } from '@/i18n/translate';
 
 interface TranscriptContextType {
   transcripts: Transcript[];
@@ -319,7 +320,9 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
         console.log('✅ MAIN transcript listener setup complete');
       } catch (error) {
         console.error('❌ Failed to setup MAIN transcript listener:', error);
-        toast.error('Live transcript is unavailable', { description: 'Restart Meetily. If it keeps happening, check the logs.' });
+        toast.error(tNow('feedback.liveTranscriptUnavailable'), {
+          description: tNow('feedback.restartMeetilyCheckLogs'),
+        });
       }
     };
 
@@ -455,7 +458,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
       .join('\n');
     navigator.clipboard.writeText(fullTranscript);
 
-    toast.success("Transcript copied to clipboard");
+    toast.success(tNow('feedback.transcriptCopiedToClipboard'));
   }, [transcripts]);
 
   // Force flush buffer (for final transcript processing)
@@ -475,7 +478,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
       const id = activeSpeakerMeeting();
       if (!id) throw new Error('No active meeting');
       persistSpeakerRename(id, trimmedOld, trimmedNew);
-    } catch { toast.error('Could not save speaker name. Please retry.'); return; }
+    } catch { toast.error(tNow('feedback.couldNotSaveSpeakerName')); return; }
 
     setSpeakerMap(prev => {
       const next = { ...prev, [trimmedOld]: trimmedNew };
@@ -513,7 +516,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
       const turn = transcriptsRef.current.find(t => t.id === segmentId);
       if (!id || turn?.sequence_id === undefined) throw new Error('No active transcript');
       persistTurnSpeaker(id, turn.sequence_id, nextSpeaker);
-    } catch { toast.error('Could not save speaker assignment. Please retry.'); return; }
+    } catch { toast.error(tNow('feedback.couldNotSaveSpeakerAssignment')); return; }
     const speaker = nextSpeaker || undefined;
     transcriptsRef.current = transcriptsRef.current.map((t) =>
       t.id === segmentId ? { ...t, speaker } : t
@@ -535,7 +538,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
       const id = activeSpeakerMeeting();
       if (!id) throw new Error('No active meeting');
       persistSpeakerRename(id, trimmedSource, trimmedTarget);
-    } catch { toast.error('Could not save speaker merge. Please retry.'); return; }
+    } catch { toast.error(tNow('feedback.couldNotSaveSpeakerMerge')); return; }
 
     setSpeakerMap(prev => {
       const next = { ...prev, [trimmedSource]: trimmedTarget };
@@ -564,7 +567,7 @@ export function TranscriptProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    toast.success(`Merged "${trimmedSource}" into "${trimmedTarget}"`);
+    toast.success(tNow('feedback.mergedSpeakers', { source: trimmedSource, target: trimmedTarget }));
   }, []);
 
   // Dynamic list of detected speakers in this meeting

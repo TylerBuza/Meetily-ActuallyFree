@@ -6,6 +6,7 @@ import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button, type ButtonProps } from "@/components/ui/button"
 import { Hint } from "@/components/ui/tooltip"
+import { useI18n } from "@/i18n"
 
 type IconSize = "icon-xs" | "icon-sm" | "icon" | "icon-lg"
 
@@ -42,17 +43,20 @@ IconButton.displayName = "IconButton"
 const CloseButton = React.forwardRef<
   HTMLButtonElement,
   Omit<IconButtonProps, "icon" | "label"> & { label?: string }
->(({ label = "Close", size = "icon-sm", className, tooltip = false, ...props }, ref) => (
-  <IconButton
-    ref={ref}
-    label={label}
-    size={size}
-    tooltip={tooltip}
-    icon={<X className={size === "icon-xs" ? "size-3.5" : "size-4"} />}
-    className={cn("text-af-text-3 hover:text-af-text", className)}
-    {...props}
-  />
-))
+>(({ label, size = "icon-sm", className, tooltip = false, ...props }, ref) => {
+  const { t } = useI18n()
+  return (
+    <IconButton
+      ref={ref}
+      label={label ?? t('ui.closeDialog')}
+      size={size}
+      tooltip={tooltip}
+      icon={<X className={size === "icon-xs" ? "size-3.5" : "size-4"} />}
+      className={cn("text-af-text-3 hover:text-af-text", className)}
+      {...props}
+    />
+  )
+})
 CloseButton.displayName = "CloseButton"
 
 export { IconButton, CloseButton }

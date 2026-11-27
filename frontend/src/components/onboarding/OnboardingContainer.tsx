@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { ProgressIndicator } from './shared/ProgressIndicator';
 import { useOnboarding } from '@/contexts/OnboardingContext';
 import type { OnboardingContainerProps } from '@/types/onboarding';
+import { useI18n } from '@/i18n';
 
 export function OnboardingContainer({
   title,
@@ -21,6 +22,7 @@ export function OnboardingContainer({
   canGoPrevious = true,
 }: OnboardingContainerProps) {
   const { goToStep, goPrevious, goNext } = useOnboarding();
+  const { t } = useI18n();
 
   const handlePrevious = () => {
     if (onPrevious) {
@@ -72,7 +74,7 @@ export function OnboardingContainer({
                 <button
                   onClick={handleNext}
                   disabled={!canGoNext}
-                  aria-label={step === totalSteps ? 'Finish' : 'Next'}
+                  aria-label={step === totalSteps ? t('common.finish') : t('common.next')}
                   className={cn(
                     'pointer-events-auto w-8 h-8 rounded-full bg-af-panel border border-af-border shadow-sm flex items-center justify-center transition-all duration-200',
                     canGoNext
